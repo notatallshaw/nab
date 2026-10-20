@@ -14,6 +14,12 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#partial-so
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections",
+    "operator",
+    "weakref",
+)
+
 import operator
 from collections import defaultdict
 from collections.abc import Mapping

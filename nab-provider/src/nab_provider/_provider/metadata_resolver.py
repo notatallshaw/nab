@@ -8,6 +8,22 @@ each ``Requires-Dist`` entry into base deps vs per-extra deps.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.environment",
+    "nab_provider.errors",
+    "nab_provider.extra_keys",
+    "nab_provider.metadata",
+    "nab_provider.policy",
+    "nab_provider.project_requirements",
+    "nab_provider.records",
+    "nab_provider.store",
+    "nab_provider.tags",
+    "nab_provider.vcs_admission",
+    "urllib.parse",
+)
+
 import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard

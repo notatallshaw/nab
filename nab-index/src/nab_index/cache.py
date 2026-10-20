@@ -40,6 +40,21 @@ source trees:
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "contextlib",
+    "hashlib",
+    "json",
+    "nab_index._json_decode",
+    "nab_index.atomic",
+    "nab_index.parsed_listing",
+    "nab_provider.digest",
+    "os",
+    "pathlib",
+    "shutil",
+    "stat",
+    "time",
+)
+
 import hashlib
 import json
 import logging

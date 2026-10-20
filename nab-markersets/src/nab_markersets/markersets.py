@@ -12,6 +12,12 @@ with the decision procedures.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "functools",
+    "nab_markersets.errors",
+    "nab_markersets.python_versions",
+)
+
 from functools import wraps
 from typing import TYPE_CHECKING, ParamSpec, TypeVar
 

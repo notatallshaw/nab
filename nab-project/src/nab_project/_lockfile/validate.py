@@ -31,6 +31,19 @@ lock and runs both stages, so a caller never handles a parsed lock itself.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_project",
+    "nab_provider._vendor.packaging.markers",
+    "nab_provider._vendor.packaging.pylock",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.marker_holds",
+    "nab_provider.metadata",
+    "nab_provider.pep508",
+    "nab_provider.target",
+    "tomli",
+)
+
 from typing import TYPE_CHECKING, Final
 
 import tomli

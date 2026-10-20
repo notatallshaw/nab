@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.metadata",
+    "nab_provider.pep508",
+)
+
 from typing import TYPE_CHECKING
 
 from nab_provider._vendor.packaging.utils import canonicalize_name

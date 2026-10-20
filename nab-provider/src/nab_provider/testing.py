@@ -18,6 +18,15 @@ keywords cannot express, and read the calls back with
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.errors",
+    "nab_provider.overrides",
+    "nab_provider.pep508",
+    "nab_provider.records",
+    "nab_provider.store",
+)
+
 import threading
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar
 

@@ -7,6 +7,24 @@ into nab-resolver Range types.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "bisect",
+    "collections",
+    "itertools",
+    "nab_provider._vendor.packaging.markers",
+    "nab_provider._vendor.packaging.ranges",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.conflict_kind",
+    "nab_provider.declarations",
+    "nab_provider.environment",
+    "nab_provider.errors",
+    "nab_provider.extra_keys",
+    "nab_provider.metadata",
+    "nab_provider.records",
+    "nab_provider.vcs_admission",
+)
+
 import bisect
 import logging
 import operator

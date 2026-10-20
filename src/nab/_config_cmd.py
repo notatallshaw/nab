@@ -7,6 +7,15 @@ rendering; these commands discover the layers and print the result.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab._run",
+    "nab.config.ladder",
+    "nab.config.values",
+    "nab.flagtypes",
+    "nab.output",
+    "sys",
+)
+
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING

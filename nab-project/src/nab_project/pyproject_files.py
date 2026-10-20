@@ -12,6 +12,11 @@ document to each, since a wrapper per table parses the file per table.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_project",
+    "nab_provider.requirements_file",
+)
+
 from typing import TYPE_CHECKING, Any
 
 from nab_provider.requirements_file import (

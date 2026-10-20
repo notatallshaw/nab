@@ -19,6 +19,17 @@ report metadata for the target or for someone else.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_markersets.markersets",
+    "nab_markersets.python_versions",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.version",
+    "nab_provider.conflict_kind",
+    "nab_provider.environment",
+    "nab_provider.marker_holds",
+    "nab_provider.tags",
+)
+
 import re
 from functools import lru_cache
 from typing import TYPE_CHECKING, ClassVar, Final

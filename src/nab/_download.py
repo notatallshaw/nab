@@ -12,6 +12,16 @@ everything else is imported from the module that defines it.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab._resolve",
+    "nab._run",
+    "nab.flagtypes",
+    "nab.output",
+    "nab_project.download",
+    "nab_project.resolve",
+    "sys",
+)
+
 import sys
 from pathlib import Path
 

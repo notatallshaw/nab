@@ -6,6 +6,11 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab._cli.definition.model",
+    "nab.config.values",
+)
+
 from typing import TYPE_CHECKING, Any
 
 from .._cli.definition.model import Opt, Tokens

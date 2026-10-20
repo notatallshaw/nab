@@ -8,6 +8,16 @@ and takes the marker predicate as an argument.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.errors",
+    "nab_provider.extra_keys",
+    "nab_provider.vcs_admission",
+    "nab_resolver.errors",
+    "nab_resolver.types",
+)
+
 import logging
 from collections import defaultdict
 from collections.abc import Mapping

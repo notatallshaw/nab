@@ -6,6 +6,13 @@ partway leaves any existing file untouched.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "os",
+    "pathlib",
+    "shutil",
+    "tempfile",
+)
+
 import contextlib
 import os
 import shutil

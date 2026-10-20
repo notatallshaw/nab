@@ -8,6 +8,24 @@ module owns the project side.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "datetime",
+    "nab.config.hooks",
+    "nab.config.ladder",
+    "nab.config.values",
+    "nab_project",
+    "nab_project.build_policy",
+    "nab_project.conflicts",
+    "nab_project.inputs",
+    "nab_project.paths",
+    "nab_project.workspace",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider._vendor.packaging.version",
+    "nab_provider.errors",
+    "tomli",
+)
+
 import logging
 from datetime import datetime, timezone
 from types import MappingProxyType

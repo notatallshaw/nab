@@ -10,6 +10,21 @@ PKG-INFO are treated as immutable (cached forever; never revalidated).
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "asyncio",
+    "datetime",
+    "hashlib",
+    "nab_index._json_decode",
+    "nab_index.cache",
+    "nab_index.lazy_wheel",
+    "nab_index.parsed_listing",
+    "nab_index.transport",
+    "nab_provider.records",
+    "nab_provider.store",
+    "packaging.utils",
+    "time",
+)
+
 import asyncio
 import hashlib
 import logging

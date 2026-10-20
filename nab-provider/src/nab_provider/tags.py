@@ -21,6 +21,8 @@ interpreter and abi, which is what pip's ``--python-version`` does.
 
 from __future__ import annotations
 
+__lazy_modules__ = ("nab_provider._vendor.packaging.version",)
+
 import enum
 import re
 from collections.abc import Callable, Iterable

@@ -202,17 +202,15 @@ def test_the_output_layer_is_untouched_until_a_command_runs(
     assert "nab.output" not in added
 
 
-# The most a page may cost: the renderer, the module holding the colour
-# rule, and the one import that module makes.  A ``TYPE_CHECKING`` block in
-# ``nab.env`` would be an ``import typing``, and this bound is what says it
-# has none.
-_PAGE_COST = frozenset({"collections.abc", "nab._cli.render", "nab.env"})
+# The parser and version may load on first use under Python 3.15.
+_PARSE_COST = frozenset({"nab._cli", "nab._cli.parse", "nab._cli.spec"})
+_PAGE_COST = _PARSE_COST | {"collections.abc", "nab._cli.render", "nab.env"}
 
 
 @pytest.mark.parametrize(
     ("line", "expected"),
     [
-        (("--version",), frozenset[str]()),
+        (("--version",), _PARSE_COST | {"nab._version"}),
         (("--help",), _PAGE_COST),
         (("lock", "--help"), _PAGE_COST),
     ],
@@ -220,7 +218,7 @@ _PAGE_COST = frozenset({"collections.abc", "nab._cli.render", "nab.env"})
 def test_a_page_or_a_version_adds_only_what_writes_it(
     line: tuple[str, ...], expected: frozenset[str]
 ) -> None:
-    """Probe D bounds ``--help`` imports to renderer and colour support.
+    """Probe D bounds help and version imports to their readers.
 
     A bound rather than a list, because ``collections.abc`` is already
     loaded on some interpreters.  It is a claim about which modules the line

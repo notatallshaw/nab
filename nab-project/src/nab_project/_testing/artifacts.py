@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = ("nab_project.lockfile",)
+
 from nab_project.lockfile import SdistArtifact, WheelArtifact
 
 

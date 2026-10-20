@@ -19,6 +19,14 @@ version scope and no marker.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "asyncio",
+    "nab_index.cache",
+    "nab_provider.records",
+    "packaging.utils",
+    "threading",
+)
+
 import asyncio
 import threading
 from typing import TYPE_CHECKING, Protocol

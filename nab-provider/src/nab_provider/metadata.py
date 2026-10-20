@@ -9,6 +9,13 @@ LRU cache so repeated dep strings parse once.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "contextlib",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.version",
+    "nab_provider.pep508",
+)
+
 import re
 from contextlib import suppress
 from functools import lru_cache

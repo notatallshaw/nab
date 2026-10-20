@@ -22,6 +22,44 @@ from ``build.env.IsolatedEnv``.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "asyncio",
+    "concurrent.futures",
+    "email",
+    "glob",
+    "installer",
+    "installer.sources",
+    "installer.utils",
+    "json",
+    "nab_index.client",
+    "nab_index.local_index",
+    "nab_index.urllib3_async_transport",
+    "nab_project._build.errors",
+    "nab_project.download",
+    "nab_project.inputs",
+    "nab_project.lockfile",
+    "nab_provider._vendor.packaging.requirements",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider._vendor.packaging.version",
+    "nab_provider.errors",
+    "nab_provider.marker_holds",
+    "nab_provider.metadata",
+    "nab_provider.pep508",
+    "nab_provider.policy",
+    "nab_provider.requirements_file",
+    "nab_provider.tags",
+    "nab_provider.target",
+    "nab_provider.vcs_admission",
+    "os",
+    "pathlib",
+    "subprocess",
+    "sys",
+    "tempfile",
+    "tomli_w",
+    "venv",
+)
+
 import asyncio
 import glob
 import json

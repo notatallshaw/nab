@@ -20,6 +20,17 @@ Rust implementation: https://github.com/pubgrub-rs/pubgrub
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections",
+    "collections.abc",
+    "nab_resolver",
+    "nab_resolver.decision_queue",
+    "nab_resolver.errors",
+    "nab_resolver.partial_solution",
+    "nab_resolver.result",
+    "nab_resolver.root",
+)
+
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final, Generic, Protocol

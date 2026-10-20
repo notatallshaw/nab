@@ -8,6 +8,32 @@ names it by, so one wording serves every rung of the ladder: a bad
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections",
+    "datetime",
+    "itertools",
+    "nab_index.file_urls",
+    "nab_markersets.python_versions",
+    "nab_project.paths",
+    "nab_project.workspace",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider._vendor.packaging.version",
+    "nab_provider.archive",
+    "nab_provider.iso8601",
+    "nab_provider.overrides",
+    "nab_provider.pep508",
+    "nab_provider.policy",
+    "nab_provider.records",
+    "nab_provider.serialization",
+    "nab_provider.subdir",
+    "nab_provider.tags",
+    "nab_provider.target",
+    "nab_provider.vcs_admission",
+    "pathlib",
+    "urllib.parse",
+)
+
 import itertools
 import re
 from collections import defaultdict

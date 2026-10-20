@@ -10,6 +10,19 @@ Reports show configured winners. With ``--include-rejected``, ``list`` and
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab",
+    "nab._cli.definition.model",
+    "nab.config.hooks",
+    "nab.config.subflags",
+    "nab.config.values",
+    "nab_project",
+    "nab_project.paths",
+    "nab_provider.policy",
+    "pathlib",
+    "tomli",
+)
+
 import enum
 import logging
 from pathlib import Path

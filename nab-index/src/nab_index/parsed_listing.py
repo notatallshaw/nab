@@ -16,6 +16,13 @@ treats this representation as opaque.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "json",
+    "nab_index._json_decode",
+    "nab_provider.records",
+    "sys",
+)
+
 import json
 import sys
 from typing import TYPE_CHECKING, NamedTuple

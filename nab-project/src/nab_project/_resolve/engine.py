@@ -10,6 +10,24 @@ that path.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections",
+    "functools",
+    "itertools",
+    "nab_index.cache",
+    "nab_project.lockfile",
+    "nab_provider._vendor.packaging.ranges",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.errors",
+    "nab_provider.provider",
+    "nab_provider.resolver_inputs",
+    "nab_provider.target",
+    "nab_provider.yanked_resolution",
+    "nab_resolver.errors",
+    "nab_resolver.types",
+    "time",
+)
+
 import itertools
 import logging
 import time

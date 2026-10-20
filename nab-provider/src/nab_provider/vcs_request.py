@@ -7,6 +7,8 @@ vocabulary.
 
 from __future__ import annotations
 
+__lazy_modules__ = ("nab_provider.subdir",)
+
 import re
 from typing import TYPE_CHECKING
 

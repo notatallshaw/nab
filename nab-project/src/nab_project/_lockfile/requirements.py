@@ -9,6 +9,13 @@ cannot install a single requirements.txt across multiple
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_index.atomic",
+    "nab_project._lockfile.builder",
+    "pathlib",
+    "urllib.parse",
+)
+
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote

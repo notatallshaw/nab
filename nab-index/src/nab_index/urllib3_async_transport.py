@@ -8,6 +8,18 @@ where users already have urllib3 in their environment.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "asyncio",
+    "json",
+    "nab_index.retry",
+    "nab_index.retry_limits",
+    "nab_index.transport",
+    "ssl",
+    "threading",
+    "time",
+    "urllib.parse",
+)
+
 import asyncio
 import http.client
 import json as _json

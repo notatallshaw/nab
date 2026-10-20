@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_provider.errors",
+    "nab_provider.policy",
+)
+
 import logging
 from typing import TYPE_CHECKING
 

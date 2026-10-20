@@ -19,6 +19,15 @@ message.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_project",
+    "nab_project._toml",
+    "nab_project.paths",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.policy",
+    "tomli",
+)
+
 import logging
 from typing import TYPE_CHECKING, Any, Final
 

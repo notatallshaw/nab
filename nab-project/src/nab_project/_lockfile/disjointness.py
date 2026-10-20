@@ -20,6 +20,15 @@ the ``powerset(extras) x powerset(groups)`` grid.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections",
+    "itertools",
+    "nab_markersets.errors",
+    "nab_markersets.markersets",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.conflict_kind",
+)
+
 import itertools
 from collections import defaultdict
 from typing import TYPE_CHECKING

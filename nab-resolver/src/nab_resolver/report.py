@@ -9,6 +9,8 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#error-repo
 
 from __future__ import annotations
 
+__lazy_modules__ = ("nab_resolver.root",)
+
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from .root import ROOT

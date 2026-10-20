@@ -11,6 +11,28 @@ schedules puts on the loop with ``call_soon_threadsafe``.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "asyncio",
+    "nab_index.cache",
+    "nab_index.cached_client",
+    "nab_index.lazy_wheel",
+    "nab_index.local_index",
+    "nab_index.multi_index",
+    "nab_index.transport",
+    "nab_project._build_remote",
+    "nab_project._sources",
+    "nab_project._toml",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.metadata",
+    "nab_provider.policy",
+    "nab_provider.records",
+    "nab_provider.serialization",
+    "nab_provider.store",
+    "packaging.utils",
+    "threading",
+    "urllib.parse",
+)
+
 import asyncio
 import enum
 import logging

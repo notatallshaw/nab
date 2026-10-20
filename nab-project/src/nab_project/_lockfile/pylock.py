@@ -10,6 +10,31 @@ disjointness validation lives in
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections",
+    "datetime",
+    "itertools",
+    "nab_index.atomic",
+    "nab_markersets.conversions",
+    "nab_markersets.errors",
+    "nab_markersets.markersets",
+    "nab_project._lockfile.builder",
+    "nab_project._lockfile.coverage",
+    "nab_project._lockfile.disjointness",
+    "nab_project._lockfile.groups",
+    "nab_project.conflicts",
+    "nab_provider._vendor.packaging.markers",
+    "nab_provider._vendor.packaging.pylock",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider._vendor.packaging.version",
+    "nab_provider.conflict_kind",
+    "nab_provider.marker_holds",
+    "os",
+    "pathlib",
+    "tomli_w",
+)
+
 import os
 import re
 from collections import Counter, defaultdict

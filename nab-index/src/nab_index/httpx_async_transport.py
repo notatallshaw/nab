@@ -2,6 +2,17 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "asyncio",
+    "httpx",
+    "json",
+    "nab_index.retry",
+    "nab_index.retry_limits",
+    "nab_index.transport",
+    "ssl",
+    "truststore",
+)
+
 import asyncio
 import json as _json
 import ssl

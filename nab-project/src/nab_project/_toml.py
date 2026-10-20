@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_project",
+    "tomli",
+)
+
 from typing import TYPE_CHECKING, Any
 
 import tomli

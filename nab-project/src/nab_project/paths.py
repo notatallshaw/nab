@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "os",
+    "pathlib",
+    "stat",
+)
+
 import errno
 import os
 import stat

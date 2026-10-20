@@ -9,6 +9,17 @@ dependency lookup, and the missing-extra fallback.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_provider._provider.listing_diagnosis",
+    "nab_provider._provider.lookahead",
+    "nab_provider._provider.metadata_resolver",
+    "nab_provider._vendor.packaging.ranges",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.errors",
+    "nab_provider.extra_keys",
+    "nab_provider.policy",
+)
+
 import logging
 from typing import TYPE_CHECKING
 

@@ -8,6 +8,12 @@ class, so the fetching side and the resolving side can both name them.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_provider.digest",
+    "sys",
+    "urllib.parse",
+)
+
 import enum
 import sys
 from typing import TYPE_CHECKING, Any, Final

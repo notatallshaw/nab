@@ -9,6 +9,27 @@ be read directly without a second fetch.  This module also owns the
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections",
+    "datetime",
+    "nab_project",
+    "nab_project._lockfile.groups",
+    "nab_project._toml",
+    "nab_project.paths",
+    "nab_provider._vendor.packaging.pylock",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.digest",
+    "nab_provider.extra_keys",
+    "nab_provider.iso8601",
+    "nab_provider.metadata",
+    "nab_provider.policy",
+    "nab_provider.records",
+    "pathlib",
+    "tomli",
+    "urllib.parse",
+)
+
 import logging
 from collections import defaultdict
 from datetime import datetime, timezone

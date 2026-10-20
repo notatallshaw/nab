@@ -10,10 +10,31 @@ resolver and the lockfile readers off ``nab cache`` and ``nab config``.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "functools",
+    "gc",
+    "importlib",
+    "nab._run",
+    "nab.config.model",
+    "nab.output",
+    "nab_project.lockfile",
+    "nab_project.pyproject_files",
+    "nab_project.resolve",
+    "nab_project.workspace",
+    "nab_provider.errors",
+    "nab_provider.provider",
+    "nab_provider.requirements_file",
+    "nab_provider.target",
+    "nab_resolver.errors",
+    "sys",
+    "tomli",
+)
+
 import gc
 import sys
 from contextlib import contextmanager
 from functools import partial
+from importlib import import_module
 from typing import TYPE_CHECKING
 
 import tomli
@@ -152,6 +173,8 @@ def _make_transport(backend: str) -> AsyncHttpTransport:
     make_transport: Callable[[], AsyncHttpTransport]
     if backend in {"httpx", "httpx2"}:
         try:
+            # Distinguish a missing backend from missing HTTP/2 dependencies.
+            import_module(backend)
             if backend == "httpx":
                 from nab_index.httpx_async_transport import (  # noqa: PLC0415 - optional dependency
                     HttpxAsyncTransport,

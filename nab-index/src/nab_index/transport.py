@@ -7,6 +7,13 @@ wrapped in to_thread, etc.).
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "gzip",
+    "nab_index.retry_limits",
+    "nab_provider.errors",
+    "zlib",
+)
+
 import gzip
 import zlib
 from typing import TYPE_CHECKING, Any, Final, Protocol

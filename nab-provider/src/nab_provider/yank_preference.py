@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections",
+    "nab_provider._vendor.packaging.ranges",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.extra_keys",
+    "nab_provider.yank_candidates",
+    "nab_resolver.ranges",
+)
+
 from collections import deque
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Final

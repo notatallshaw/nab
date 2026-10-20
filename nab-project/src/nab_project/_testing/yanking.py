@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections",
+    "nab_project._testing.coordinator_fake",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.pep508",
+    "nab_provider.records",
+    "nab_provider.yanking",
+)
+
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING

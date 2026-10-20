@@ -15,6 +15,14 @@ so :func:`nab_provider._provider.lookahead.look_ahead_ok` can skip the version.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_provider._provider.metadata_resolver",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.errors",
+    "nab_provider.store",
+)
+
 from typing import TYPE_CHECKING
 
 from nab_provider._vendor.packaging.specifiers import SpecifierSet

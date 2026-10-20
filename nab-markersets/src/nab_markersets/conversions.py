@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_markersets.markersets",
+    "sys",
+)
+
 import re
 import sys
 from typing import TYPE_CHECKING

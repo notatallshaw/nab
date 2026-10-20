@@ -9,6 +9,8 @@ calls in the order a full scan made them.
 
 from __future__ import annotations
 
+__lazy_modules__ = ("heapq",)
+
 from heapq import heapify, heappop, heappush
 from typing import TYPE_CHECKING, Any, Generic
 

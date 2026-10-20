@@ -14,6 +14,19 @@ programmatically after :func:`~nab_project.resolve.build_lock_input`.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "asyncio",
+    "hashlib",
+    "nab_index.atomic",
+    "nab_index.client",
+    "nab_index.local_index",
+    "nab_project.lockfile",
+    "nab_provider.errors",
+    "pathlib",
+    "posixpath",
+    "urllib.parse",
+)
+
 import asyncio
 import hashlib
 import logging

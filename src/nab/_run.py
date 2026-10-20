@@ -11,6 +11,22 @@ resolver.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "datetime",
+    "nab",
+    "nab._cli.parse",
+    "nab.config.hooks",
+    "nab.config.subflags",
+    "nab.output",
+    "nab_markersets.python_versions",
+    "nab_project",
+    "nab_project.paths",
+    "nab_provider.policy",
+    "pathlib",
+    "sys",
+    "tomli",
+)
+
 import sys
 from datetime import datetime
 from pathlib import Path

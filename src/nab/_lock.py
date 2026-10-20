@@ -12,6 +12,29 @@ defines it.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "datetime",
+    "errno",
+    "nab._cli.parse",
+    "nab._resolve",
+    "nab._run",
+    "nab._version",
+    "nab.config.model",
+    "nab.flagtypes",
+    "nab.output",
+    "nab_project",
+    "nab_project.lockfile",
+    "nab_project.paths",
+    "nab_project.pyproject_files",
+    "nab_project.resolve",
+    "nab_provider.requirements_file",
+    "nab_provider.target",
+    "os",
+    "stat",
+    "string",
+    "tempfile",
+)
+
 import contextlib
 import errno
 import os

@@ -9,6 +9,11 @@ Retained fatal override conflicts get tier -1.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_provider._vendor.packaging.ranges",
+    "nab_provider.errors",
+)
+
 from typing import TYPE_CHECKING
 
 from nab_provider._vendor.packaging.ranges import VersionRange

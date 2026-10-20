@@ -10,6 +10,14 @@ Reached only through
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_index.client",
+    "nab_provider.errors",
+    "nab_provider.store",
+    "pathlib",
+    "tempfile",
+)
+
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING

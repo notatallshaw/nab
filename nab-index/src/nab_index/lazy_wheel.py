@@ -20,6 +20,19 @@ obtain metadata returns a result whose ``text`` is ``None``.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "asyncio",
+    "bisect",
+    "hashlib",
+    "io",
+    "nab_index.client",
+    "nab_index.local_index",
+    "nab_index.transport",
+    "nab_provider.errors",
+    "nab_provider.records",
+    "urllib.parse",
+)
+
 import asyncio
 import bisect
 import enum

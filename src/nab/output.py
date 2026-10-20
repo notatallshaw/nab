@@ -7,6 +7,12 @@ per run.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab.env",
+    "sys",
+    "threading",
+)
+
 import enum
 import logging
 import sys

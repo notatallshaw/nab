@@ -20,6 +20,31 @@ input; the search lives in :mod:`nab_project._resolve.engine`.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "asyncio",
+    "collections",
+    "concurrent.futures",
+    "itertools",
+    "nab_project",
+    "nab_project._resolve.engine",
+    "nab_project.conflicts",
+    "nab_project.inputs",
+    "nab_project.lockfile",
+    "nab_provider._vendor.packaging.markers",
+    "nab_provider._vendor.packaging.ranges",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.errors",
+    "nab_provider.marker_holds",
+    "nab_provider.pep508",
+    "nab_provider.provider",
+    "nab_provider.requirements_file",
+    "nab_provider.resolver_inputs",
+    "nab_provider.target",
+    "nab_resolver.errors",
+    "pathlib",
+    "tempfile",
+)
+
 import asyncio
 import itertools
 import logging

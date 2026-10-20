@@ -18,6 +18,12 @@ witness, and validation names the uncovered interpreter.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "functools",
+    "nab_markersets.markersets",
+    "nab_provider.target",
+)
+
 from functools import reduce
 from typing import TYPE_CHECKING
 

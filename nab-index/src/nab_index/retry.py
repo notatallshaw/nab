@@ -10,6 +10,12 @@ transports take the policy here instead of their library's default.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "random",
+    "ssl",
+    "urllib3.exceptions",
+)
+
 import random
 import ssl
 from typing import TYPE_CHECKING

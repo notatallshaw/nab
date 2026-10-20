@@ -14,6 +14,12 @@ after admission lets the URL through.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_provider.vcs_request",
+    "posixpath",
+    "urllib.parse",
+)
+
 import enum
 import posixpath
 import re

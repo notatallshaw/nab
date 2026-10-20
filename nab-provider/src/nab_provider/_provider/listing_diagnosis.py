@@ -19,6 +19,15 @@ than passed over.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_provider._provider",
+    "nab_provider._vendor.packaging.version",
+    "nab_provider.errors",
+    "nab_provider.policy",
+    "nab_provider.records",
+    "re",
+)
+
 import re
 from typing import TYPE_CHECKING, Final
 

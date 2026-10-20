@@ -7,6 +7,19 @@ already-cached metadata where possible.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "functools",
+    "nab_provider._provider.metadata_resolver",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.version",
+    "nab_provider.errors",
+    "nab_provider.iso8601",
+    "nab_provider.metadata",
+    "nab_provider.policy",
+    "nab_provider.records",
+    "nab_provider.vcs_admission",
+)
+
 from functools import partial
 from typing import TYPE_CHECKING, Final, TypeGuard
 

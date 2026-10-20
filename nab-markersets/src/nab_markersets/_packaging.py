@@ -17,6 +17,8 @@ written here could not be waived.
 
 from __future__ import annotations
 
+__lazy_modules__ = ("importlib",)
+
 from importlib import import_module
 from typing import TYPE_CHECKING
 

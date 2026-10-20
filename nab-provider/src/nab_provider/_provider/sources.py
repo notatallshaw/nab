@@ -9,6 +9,14 @@ from ``[project].version`` or took from the build backend.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.archive",
+    "nab_provider.errors",
+    "nab_provider.records",
+    "nab_provider.vcs_admission",
+)
+
 from typing import TYPE_CHECKING
 
 from nab_provider._vendor.packaging.utils import canonicalize_name

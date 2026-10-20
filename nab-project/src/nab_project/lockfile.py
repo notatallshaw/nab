@@ -12,6 +12,19 @@ the marker when every target agrees.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "datetime",
+    "nab_project._lockfile.builder",
+    "nab_project._lockfile.disjointness",
+    "nab_project._lockfile.groups",
+    "nab_project._lockfile.pylock",
+    "nab_project._lockfile.requirements",
+    "nab_project._lockfile.validate",
+    "nab_provider._vendor.packaging.pylock",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider._vendor.packaging.version",
+)
+
 import logging
 from datetime import timezone
 from typing import TYPE_CHECKING, Any, ClassVar, Final

@@ -11,6 +11,21 @@ Reached only through
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_index",
+    "nab_index.client",
+    "nab_project.paths",
+    "nab_provider.archive",
+    "nab_provider.errors",
+    "nab_provider.policy",
+    "nab_provider.vcs_request",
+    "os",
+    "pathlib",
+    "shutil",
+    "stat",
+    "tempfile",
+)
+
 import os
 import shutil
 import stat

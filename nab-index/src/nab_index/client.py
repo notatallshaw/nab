@@ -8,6 +8,22 @@ implementing the :class:`AsyncHttpTransport` protocol can be used.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "hashlib",
+    "io",
+    "nab_index._json_decode",
+    "nab_index._pep503",
+    "nab_index.transport",
+    "nab_provider.errors",
+    "nab_provider.records",
+    "nab_provider.serialization",
+    "packaging.utils",
+    "packaging.version",
+    "sys",
+    "urllib.parse",
+    "zlib",
+)
+
 import hashlib
 import io
 import re

@@ -20,6 +20,18 @@ multi-index router can treat local and remote indexes uniformly.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_index._pep503",
+    "nab_index.client",
+    "nab_index.file_urls",
+    "nab_provider.value",
+    "os",
+    "packaging.utils",
+    "pathlib",
+    "stat",
+    "urllib.parse",
+)
+
 import errno
 import os
 import re

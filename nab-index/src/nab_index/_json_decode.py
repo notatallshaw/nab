@@ -7,6 +7,11 @@ a handler written for the first kind does not catch.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "json",
+    "typing",
+)
+
 import json
 from typing import Any
 

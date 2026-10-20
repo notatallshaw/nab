@@ -23,6 +23,32 @@ covered by skipping the prepare step for that combination; see
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "build",
+    "email",
+    "lzma",
+    "nab_index.local_index",
+    "nab_project",
+    "nab_project._build.env",
+    "nab_project._build.errors",
+    "nab_project.paths",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider._vendor.packaging.version",
+    "nab_provider.errors",
+    "nab_provider.metadata",
+    "nab_provider.pep508",
+    "nab_provider.requirements_file",
+    "nab_resolver.errors",
+    "os",
+    "pathlib",
+    "pyproject_hooks",
+    "tempfile",
+    "tomli",
+    "zipfile",
+    "zlib",
+)
+
 import logging
 import lzma
 import os
