@@ -39,7 +39,13 @@ from nab_provider.provider import (
 from nab_provider.records import SdistFile, WheelFile
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
-from nab_provider.testing import FakeFetchPort, make_coordinator, pkg_override
+from nab_provider.testing import (
+    FakeFetchPort,
+    make_coordinator,
+    make_sdist,
+    make_wheel,
+    pkg_override,
+)
 from nab_resolver.resolver import Resolver
 
 if TYPE_CHECKING:
@@ -62,23 +68,14 @@ def _make_wheel(
     requires_python: str | None = None,
     upload_time: str | None = None,
 ) -> WheelFile:
-    return WheelFile(
-        filename=f"{package}-{version}-py3-none-any.whl",
+    """Build a declared-target wheel at this suite's short fixture URL."""
+    return make_wheel(
+        version,
+        package=package,
         url=f"https://example.com/{package}-{version}.whl",
-        version=version,
         requires_python=requires_python,
-        has_metadata=True,
         upload_time=upload_time,
     )
-
-
-def _make_coordinator(
-    wheels: Sequence[WheelFile | SdistFile],
-    *,
-    package: str = "pkg",
-) -> FakeFetchPort:
-    """Fetch port with a pre-loaded listing for ``package``."""
-    return make_coordinator(wheels, package=package, auto_metadata=True)
 
 
 _ANY_VERSION = VersionRange.full()
@@ -183,7 +180,7 @@ class TestEnvironmentOverlay:
 
     def test_user_keys_override_host_defaults(self) -> None:
         """The target's marker overrides take precedence over the host env."""
-        coordinator = _make_coordinator([])
+        coordinator = make_coordinator([], auto_metadata=True)
         provider = Provider(
             coordinator,
             ResolveTarget.for_host().with_marker_overrides(
@@ -195,7 +192,7 @@ class TestEnvironmentOverlay:
 
     def test_keys_not_supplied_keep_default(self) -> None:
         """Markers the user did not supply fall back to ``default_environment()``."""
-        coordinator = _make_coordinator([])
+        coordinator = make_coordinator([], auto_metadata=True)
         provider = Provider(
             coordinator,
             ResolveTarget.for_host().with_marker_overrides({"python_version": "3.11"}),
@@ -206,7 +203,7 @@ class TestEnvironmentOverlay:
 
     def test_env_with_extra_is_refreshed(self) -> None:
         """The hot-path ``env_with_extra`` cache reflects the overlay."""
-        coordinator = _make_coordinator([])
+        coordinator = make_coordinator([], auto_metadata=True)
         provider = Provider(
             coordinator,
             ResolveTarget.for_host().with_marker_overrides({"sys_platform": "win32"}),
@@ -218,12 +215,12 @@ class TestTrustUnverifiedSdistDeps:
     """The trust-unverified flag reaches the provider from its caller."""
 
     def test_defaults_false(self) -> None:
-        coordinator = _make_coordinator([])
+        coordinator = make_coordinator([], auto_metadata=True)
         provider = Provider(coordinator, _LINUX_TARGET)
         assert provider.trust_unverified_sdist_deps is False
 
     def test_taken_from_the_argument(self) -> None:
-        coordinator = _make_coordinator([])
+        coordinator = make_coordinator([], auto_metadata=True)
         provider = Provider(
             coordinator,
             _LINUX_TARGET,
@@ -237,7 +234,7 @@ class TestStrategyValidation:
 
     def test_unknown_strategy_raises(self) -> None:
         """Anything other than highest/lowest/lowest-direct is a user error."""
-        coordinator = _make_coordinator([])
+        coordinator = make_coordinator([], auto_metadata=True)
         with pytest.raises(ValueError, match="resolution_strategy"):
             Provider(
                 coordinator,
@@ -251,7 +248,7 @@ class TestPreferences:
 
     def test_preferences_keys_are_canonicalized(self) -> None:
         """Lookups by canonical name should hit a preference."""
-        coordinator = _make_coordinator([])
+        coordinator = make_coordinator([], auto_metadata=True)
         provider = Provider(
             coordinator,
             _LINUX_TARGET,
@@ -262,7 +259,7 @@ class TestPreferences:
     def test_preference_used_when_in_range(self) -> None:
         """The preferred version wins over highest if the range allows it."""
         wheels = [_make_wheel(v) for v in ("1.0", "2.0", "3.0")]
-        coordinator = _make_coordinator(wheels)
+        coordinator = make_coordinator(wheels, auto_metadata=True)
         provider = Provider(
             coordinator,
             _LINUX_TARGET,
@@ -274,7 +271,7 @@ class TestPreferences:
     def test_preference_skipped_when_outside_range(self) -> None:
         """An out-of-range preference falls back to the strategy default."""
         wheels = [_make_wheel(v) for v in ("1.0", "2.0", "3.0")]
-        coordinator = _make_coordinator(wheels)
+        coordinator = make_coordinator(wheels, auto_metadata=True)
         provider = Provider(
             coordinator,
             _LINUX_TARGET,
@@ -444,7 +441,7 @@ class TestStrategyChoiceVersion:
     def test_lowest_picks_minimum(self) -> None:
         """``lowest`` returns the smallest candidate."""
         wheels = [_make_wheel(v) for v in ("1.0", "2.0", "3.0")]
-        coordinator = _make_coordinator(wheels)
+        coordinator = make_coordinator(wheels, auto_metadata=True)
         provider = Provider(
             coordinator,
             _LINUX_TARGET,
@@ -455,7 +452,7 @@ class TestStrategyChoiceVersion:
 
     def test_lowest_returns_none_for_empty_range(self) -> None:
         """``lowest`` returns None when the range admits nothing."""
-        coordinator = _make_coordinator([])
+        coordinator = make_coordinator([], auto_metadata=True)
         provider = Provider(
             coordinator,
             _LINUX_TARGET,
@@ -466,7 +463,7 @@ class TestStrategyChoiceVersion:
     def test_lowest_direct_picks_min_for_direct(self) -> None:
         """``lowest-direct`` returns minimum when the package is direct."""
         wheels = [_make_wheel(v) for v in ("1.0", "2.0", "3.0")]
-        coordinator = _make_coordinator(wheels)
+        coordinator = make_coordinator(wheels, auto_metadata=True)
         provider = Provider(
             coordinator,
             _LINUX_TARGET,
@@ -479,7 +476,7 @@ class TestStrategyChoiceVersion:
     def test_lowest_direct_picks_max_for_transitive(self) -> None:
         """``lowest-direct`` returns highest for transitive packages."""
         wheels = [_make_wheel(v) for v in ("1.0", "2.0", "3.0")]
-        coordinator = _make_coordinator(wheels)
+        coordinator = make_coordinator(wheels, auto_metadata=True)
         provider = Provider(
             coordinator,
             _LINUX_TARGET,
@@ -488,31 +485,6 @@ class TestStrategyChoiceVersion:
         )
         chosen = provider.choose_version("pkg", VersionRange.full())
         assert chosen == Version("3.0")
-
-
-def _platform_wheel(version: str, tag: str, *, package: str = "pkg") -> WheelFile:
-    """Build a wheel with an explicit ``cpXY-cpXY-<platform>`` tag."""
-    filename = f"{package}-{version}-{tag}.whl"
-    return WheelFile(
-        filename=filename,
-        url=f"https://example.com/{filename}",
-        version=version,
-        requires_python=None,
-        has_metadata=True,
-        upload_time=None,
-    )
-
-
-def _sdist(version: str, *, package: str = "pkg") -> SdistFile:
-    """Build a tar.gz sdist for a specific version."""
-    filename = f"{package}-{version}.tar.gz"
-    return SdistFile(
-        filename=filename,
-        url=f"https://example.com/{filename}",
-        version=version,
-        requires_python=None,
-        upload_time=None,
-    )
 
 
 def _index_with_files(
@@ -527,7 +499,7 @@ class TestWheelTagFiltering:
 
     def test_no_target_keeps_every_wheel(self) -> None:
         """With no target nothing has said which machine to filter for."""
-        wheels = [_platform_wheel("1.0", "cp311-cp311-win_amd64")]
+        wheels = [make_wheel("1.0", tag="cp311-cp311-win_amd64")]
         provider = Provider(_index_with_files(wheels))
         result = provider.filter_distributions("pkg", wheels)
         assert [v for v, _ in result] == [Version("1.0")]
@@ -540,7 +512,7 @@ class TestWheelTagFiltering:
         not the one the markers now name, so filtering by it would drop
         wheels the impersonated target installs.
         """
-        wheels = [_platform_wheel("1.0", "cp311-cp311-win_amd64")]
+        wheels = [make_wheel("1.0", tag="cp311-cp311-win_amd64")]
         provider = Provider(
             _index_with_files(wheels),
             _LINUX_TARGET.with_marker_overrides({"sys_platform": "win32"}),
@@ -551,7 +523,7 @@ class TestWheelTagFiltering:
 
     def test_overlay_of_the_targets_own_value_keeps_the_filter(self) -> None:
         """An overlay that moves nothing leaves the tag set describing the target."""
-        wheels = [_platform_wheel("1.0", "cp311-cp311-win_amd64")]
+        wheels = [make_wheel("1.0", tag="cp311-cp311-win_amd64")]
         provider = Provider(
             _index_with_files(wheels),
             _LINUX_TARGET.with_marker_overrides({"sys_platform": "linux"}),
@@ -562,8 +534,8 @@ class TestWheelTagFiltering:
     def test_incompatible_wheel_dropped_when_alternative_exists(self) -> None:
         """A win wheel is dropped on a linux tuple that has a linux wheel too."""
         wheels = [
-            _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
-            _platform_wheel("1.0", "cp311-cp311-win_amd64"),
+            make_wheel("1.0", tag="cp311-cp311-manylinux_2_17_x86_64"),
+            make_wheel("1.0", tag="cp311-cp311-win_amd64"),
         ]
         provider = Provider(
             _index_with_files(wheels),
@@ -577,8 +549,8 @@ class TestWheelTagFiltering:
     def test_version_dropped_when_no_compatible_wheel_under_never(self) -> None:
         """All-incompatible wheels with NEVER build_policy makes version unavailable."""
         wheels = [
-            _platform_wheel("2.0", "cp311-cp311-win_amd64"),
-            _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
+            make_wheel("2.0", tag="cp311-cp311-win_amd64"),
+            make_wheel("1.0", tag="cp311-cp311-manylinux_2_17_x86_64"),
         ]
         provider = Provider(
             _index_with_files(wheels),
@@ -593,8 +565,8 @@ class TestWheelTagFiltering:
     def test_version_kept_via_sdist_under_allow(self) -> None:
         """Under ALLOW, a version with only an sdist survives the filter."""
         files: list[WheelFile | SdistFile] = [
-            _platform_wheel("2.0", "cp311-cp311-win_amd64"),
-            _sdist("2.0"),
+            make_wheel("2.0", tag="cp311-cp311-win_amd64"),
+            make_sdist("2.0"),
         ]
         provider = Provider(
             _index_with_files(files),
@@ -610,7 +582,7 @@ class TestWheelTagFiltering:
 
     def test_pure_python_wheel_compatible_with_every_platform(self) -> None:
         """``py3-none-any`` wheels match every tuple."""
-        wheels = [_platform_wheel("1.0", "py3-none-any")]
+        wheels = [make_wheel("1.0", tag="py3-none-any")]
         provider = Provider(
             _index_with_files(wheels),
             _linux_target(PlatformSpec("linux_x86_64")),
@@ -622,7 +594,7 @@ class TestWheelTagFiltering:
     def test_higher_glibc_wheel_dropped_when_it_needs_newer(self) -> None:
         """A manylinux 2.34 wheel needs newer glibc than a 2.17 runs-on system."""
         wheels = [
-            _platform_wheel("1.0", "cp311-cp311-manylinux_2_34_x86_64"),
+            make_wheel("1.0", tag="cp311-cp311-manylinux_2_34_x86_64"),
         ]
         provider = Provider(
             _index_with_files(wheels),
@@ -636,7 +608,7 @@ class TestWheelTagFiltering:
     def test_higher_glibc_wheel_admitted_when_runs_on_has_it(self) -> None:
         """The same wheel passes once runs-on-libc names glibc 2.34 to run on."""
         wheels = [
-            _platform_wheel("1.0", "cp311-cp311-manylinux_2_34_x86_64"),
+            make_wheel("1.0", tag="cp311-cp311-manylinux_2_34_x86_64"),
         ]
         provider = Provider(
             _index_with_files(wheels),
@@ -649,8 +621,8 @@ class TestWheelTagFiltering:
     def test_sdist_only_under_no_dist_policy_drops_version(self) -> None:
         """``WHEEL_ONLY`` plus no compatible wheel removes the version."""
         files: list[WheelFile | SdistFile] = [
-            _platform_wheel("2.0", "cp311-cp311-win_amd64"),
-            _sdist("2.0"),
+            make_wheel("2.0", tag="cp311-cp311-win_amd64"),
+            make_sdist("2.0"),
         ]
         provider = Provider(
             _index_with_files(files),
@@ -671,8 +643,8 @@ class TestWheelTagFiltering:
         not this filter, rejects the dynamic-no-fallback case.
         """
         files: list[WheelFile | SdistFile] = [
-            _platform_wheel("2.0", "cp311-cp311-win_amd64"),
-            _sdist("2.0"),
+            make_wheel("2.0", tag="cp311-cp311-win_amd64"),
+            make_sdist("2.0"),
         ]
         provider = Provider(
             _index_with_files(files),
@@ -694,7 +666,7 @@ class TestWheelTagFiltering:
         one pins the path production takes.
         """
         files: list[WheelFile | SdistFile] = [
-            _platform_wheel("2.0", "cp311-cp311-win_amd64"),
+            make_wheel("2.0", tag="cp311-cp311-win_amd64"),
         ]
         provider = Provider(
             _index_with_files(files),
@@ -712,9 +684,9 @@ class TestPerVersionPruneCounter:
     def test_count_matches_the_resolve_wide_tally(self) -> None:
         """The per-version counts and the resolve's counter share one event."""
         wheels = [
-            _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
-            _platform_wheel("1.0", "cp311-cp311-win_amd64"),
-            _platform_wheel("2.0", "cp311-cp311-win_amd64"),
+            make_wheel("1.0", tag="cp311-cp311-manylinux_2_17_x86_64"),
+            make_wheel("1.0", tag="cp311-cp311-win_amd64"),
+            make_wheel("2.0", tag="cp311-cp311-win_amd64"),
         ]
         provider = Provider(
             _index_with_files(wheels),
@@ -728,10 +700,10 @@ class TestPerVersionPruneCounter:
     def test_count_sums_every_wheel_one_version_loses(self) -> None:
         """A version's several lost wheels add up in its count and in the total."""
         wheels = [
-            _platform_wheel("1.0", "cp311-cp311-win_amd64"),
-            _platform_wheel("1.0", "cp311-cp311-macosx_11_0_arm64"),
-            _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
-            _platform_wheel("2.0", "cp311-cp311-win_amd64"),
+            make_wheel("1.0", tag="cp311-cp311-win_amd64"),
+            make_wheel("1.0", tag="cp311-cp311-macosx_11_0_arm64"),
+            make_wheel("1.0", tag="cp311-cp311-manylinux_2_17_x86_64"),
+            make_wheel("2.0", tag="cp311-cp311-win_amd64"),
         ]
         provider = Provider(
             _index_with_files(wheels),
@@ -745,7 +717,7 @@ class TestPerVersionPruneCounter:
 
     def test_no_prune_leaves_zero(self) -> None:
         """A version whose every wheel the target keeps has a zero count."""
-        wheels = [_platform_wheel("1.0", "py3-none-any")]
+        wheels = [make_wheel("1.0", tag="py3-none-any")]
         provider = Provider(
             _index_with_files(wheels),
             _linux_target(PlatformSpec("linux_x86_64")),
@@ -756,7 +728,7 @@ class TestPerVersionPruneCounter:
     def test_unseen_version_is_zero(self) -> None:
         """A version the funnel never saw has no recorded count."""
         provider = Provider(
-            _index_with_files([_platform_wheel("1.0", "py3-none-any")]),
+            _index_with_files([make_wheel("1.0", tag="py3-none-any")]),
             _linux_target(PlatformSpec("linux_x86_64")),
         )
         assert provider.tag_excluded_wheel_count("pkg", Version("9.9")) == 0
@@ -794,7 +766,7 @@ class TestWheelTagFilterProperty:
         rng = random.Random(20260722)  # noqa: S311
         for _ in range(60):
             tags = [t for t in _TAG_CATALOG if rng.random() < 0.5]
-            wheels = [_platform_wheel("1.0", t) for t in tags]
+            wheels = [make_wheel("1.0", tag=t) for t in tags]
             provider = Provider(_index_with_files(wheels), target)
             result = provider.filter_distributions("pkg", wheels)
             kept = {dist.filename for _, dist in result}
@@ -809,8 +781,8 @@ class TestEqualVersionCanonicalization:
     def _files() -> list[WheelFile | SdistFile]:
         """A release whose wheel says ``1.0`` and whose sdist says ``1.0.0``."""
         return [
-            _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
-            _sdist("1.0.0"),
+            make_wheel("1.0", tag="cp311-cp311-manylinux_2_17_x86_64"),
+            make_sdist("1.0.0"),
         ]
 
     def _provider(self, spec: PlatformSpec, cache: ListingFilterCache) -> Provider:
@@ -845,8 +817,8 @@ class TestEqualVersionCanonicalization:
         a single uninstallable version behind, not two.
         """
         wheels = [
-            _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
-            _platform_wheel("1.0.0", "cp311-cp311-manylinux_2_17_aarch64"),
+            make_wheel("1.0", tag="cp311-cp311-manylinux_2_17_x86_64"),
+            make_wheel("1.0.0", tag="cp311-cp311-manylinux_2_17_aarch64"),
         ]
         windows = Provider(
             _index_with_files(wheels),
@@ -958,7 +930,7 @@ class TestListingFilterSharedAcrossPythons:
             _make_wheel(
                 "3.0", requires_python="<3.12", upload_time="2026-06-01T00:00:00Z"
             ),
-            _sdist("4.0"),
+            make_sdist("4.0"),
         ]
         cutoff = datetime(2026, 3, 1, tzinfo=timezone.utc)
 
@@ -1205,8 +1177,8 @@ class TestListingWalkCounters:
             _make_wheel("1.0"),
             _make_wheel("2.0", requires_python=">=3.12"),
             _make_wheel("3.0.oops"),
-            _sdist("4.0"),
-            _sdist("5.0"),
+            make_sdist("4.0"),
+            make_sdist("5.0"),
         ]
 
         provider = self._provider(files, shared=shared)
@@ -1228,7 +1200,7 @@ class TestListingWalkCounters:
         """
         files: list[WheelFile | SdistFile] = [
             _make_wheel("1.0", upload_time="2026-01-01T00:00:00Z"),
-            _sdist("2.0"),
+            make_sdist("2.0"),
             _make_wheel("3.0", upload_time="2026-01-01T00:00:00"),
             _make_wheel("4.0", upload_time="2026-01-01T00:00:00Z"),
         ]
@@ -1252,7 +1224,7 @@ class TestUnsetKnobAcceptsAnyLevel:
 
     def test_default_macos_keeps_a_newer_wheel(self) -> None:
         """A macosx_14_0 wheel on a default macos_arm64 target is kept."""
-        files = [_platform_wheel("2.0", "cp311-cp311-macosx_14_0_arm64")]
+        files = [make_wheel("2.0", tag="cp311-cp311-macosx_14_0_arm64")]
         provider = Provider(
             _index_with_files(files),
             ResolveTarget.for_declared(
@@ -1265,7 +1237,7 @@ class TestUnsetKnobAcceptsAnyLevel:
 
     def test_default_linux_keeps_a_newer_wheel(self) -> None:
         """A manylinux_2_34 wheel on a default linux target is kept."""
-        files = [_platform_wheel("2.0", "cp311-cp311-manylinux_2_34_x86_64")]
+        files = [make_wheel("2.0", tag="cp311-cp311-manylinux_2_34_x86_64")]
         provider = Provider(
             _index_with_files(files),
             _linux_target(PlatformSpec("linux_x86_64")),
@@ -1286,7 +1258,9 @@ class TestRequiresPythonPatch:
     def test_dist_kept_when_patch_satisfies_requires_python(self) -> None:
         """python_full_version 3.13.4 keeps a dist that requires >=3.13.1."""
         provider = Provider(
-            _make_coordinator([_make_wheel("1.0", requires_python=">=3.13.1")]),
+            make_coordinator(
+                [_make_wheel("1.0", requires_python=">=3.13.1")], auto_metadata=True
+            ),
             ResolveTarget.for_declared(
                 python_version="3.13",
                 spec=PlatformSpec("linux_x86_64"),
@@ -1303,7 +1277,9 @@ class TestRequiresPythonPatch:
         which micro of it the deployment runs is the installer's business.
         """
         provider = Provider(
-            _make_coordinator([_make_wheel("1.0", requires_python=">=3.13.5")]),
+            make_coordinator(
+                [_make_wheel("1.0", requires_python=">=3.13.5")], auto_metadata=True
+            ),
             ResolveTarget.for_declared(
                 python_version="3.13",
                 spec=PlatformSpec("linux_x86_64"),
@@ -1316,7 +1292,9 @@ class TestRequiresPythonPatch:
     def test_patch_pin_excludes_a_disjoint_dist(self) -> None:
         """A 3.13.1 python-patches tuple still excludes a >=3.14 dist."""
         provider = Provider(
-            _make_coordinator([_make_wheel("1.0", requires_python=">=3.14")]),
+            make_coordinator(
+                [_make_wheel("1.0", requires_python=">=3.14")], auto_metadata=True
+            ),
             ResolveTarget.for_declared(
                 python_version="3.13",
                 spec=PlatformSpec("linux_x86_64"),
@@ -1328,7 +1306,9 @@ class TestRequiresPythonPatch:
     def test_minor_interval_keeps_a_dist_its_floor_would_fail(self) -> None:
         """A bare 3.13 minor keeps a >=3.13.1 dist: the floor is 3.13."""
         provider = Provider(
-            _make_coordinator([_make_wheel("1.0", requires_python=">=3.13.1")]),
+            make_coordinator(
+                [_make_wheel("1.0", requires_python=">=3.13.1")], auto_metadata=True
+            ),
             ResolveTarget.for_declared(
                 python_version="3.13", spec=PlatformSpec("linux_x86_64")
             ),
@@ -1339,7 +1319,9 @@ class TestRequiresPythonPatch:
     def test_minor_interval_excludes_a_disjoint_dist(self) -> None:
         """A bare 3.13 minor still excludes a >=3.14 dist: a later language."""
         provider = Provider(
-            _make_coordinator([_make_wheel("1.0", requires_python=">=3.14")]),
+            make_coordinator(
+                [_make_wheel("1.0", requires_python=">=3.14")], auto_metadata=True
+            ),
             ResolveTarget.for_declared(
                 python_version="3.13", spec=PlatformSpec("linux_x86_64")
             ),
@@ -1360,7 +1342,7 @@ class TestVcsConfigPlumbing:
         it proves ``vcs_config`` was threaded through to the
         :class:`Provider` base instead of silently defaulting.
         """
-        coordinator = _make_coordinator([])
+        coordinator = make_coordinator([], auto_metadata=True)
         source = VcsSource(
             name="pkg",
             url=f"git+https://example.com/pkg.git@{_FORTY_SHA}",
@@ -1381,7 +1363,7 @@ class TestVcsConfigPlumbing:
         default :class:`VcsConfig` (BLOCK) would raise here.  Reaching
         registration proves the kwarg is honored.
         """
-        coordinator = _make_coordinator([])
+        coordinator = make_coordinator([], auto_metadata=True)
         source = VcsSource(
             name="pkg",
             url=f"git+https://example.com/pkg.git@{_FORTY_SHA}",
@@ -1407,7 +1389,7 @@ class TestVcsConfigPlumbing:
         default ``allowed-schemes`` (deny-all) rejects the source even under
         ALLOW.
         """
-        coordinator = _make_coordinator([])
+        coordinator = make_coordinator([], auto_metadata=True)
         source = VcsSource(
             name="pkg",
             url=f"git+https://example.com/pkg.git@{_FORTY_SHA}",
@@ -1427,7 +1409,7 @@ class TestVcsConfigPlumbing:
         ``materialize_source`` sends it in the :class:`SourceRequest`, so a
         ``None`` here raises ``UnsupportedSdistError`` at clone time.
         """
-        coordinator = _make_coordinator([])
+        coordinator = make_coordinator([], auto_metadata=True)
         cache = tmp_path / "vcs"
         provider = Provider(
             coordinator,
@@ -1439,7 +1421,7 @@ class TestVcsConfigPlumbing:
 
     def test_vcs_cache_dir_defaults_to_none(self) -> None:
         """When omitted, ``vcs_cache_dir`` remains ``None`` on the provider."""
-        coordinator = _make_coordinator([])
+        coordinator = make_coordinator([], auto_metadata=True)
         provider = Provider(
             coordinator,
             _LINUX_TARGET,
@@ -1489,8 +1471,8 @@ def _wheel_and_sdist_targets(
     """
     coordinator = make_coordinator(
         [
-            _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
-            _sdist("1.0"),
+            make_wheel("1.0", tag="cp311-cp311-manylinux_2_17_x86_64"),
+            make_sdist("1.0"),
         ],
         package="pkg",
         metadata_text=wheel_metadata,
@@ -1572,8 +1554,8 @@ class TestSharedMetadataSlot:
         assert set(macos.get_dependencies("pkg", Version("1.0"))) == {"dep-from-wheel"}
 
 
-_LINUX_WHEEL = _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64")
-_WIN_WHEEL = _platform_wheel("1.0", "cp311-cp311-win_amd64")
+_LINUX_WHEEL = make_wheel("1.0", tag="cp311-cp311-manylinux_2_17_x86_64")
+_WIN_WHEEL = make_wheel("1.0", tag="cp311-cp311-win_amd64")
 
 _LINUX_WHEEL_METADATA = (
     "Metadata-Version: 2.4\nName: pkg\nVersion: 1.0\nRequires-Dist: linuxdep\n\n"
@@ -1661,7 +1643,7 @@ class TestSiblingWheelDependencies:
         sidecar the Windows target has yet to fetch.
         """
         coordinator = make_coordinator(
-            [_WIN_WHEEL, _sdist("1.0")],
+            [_WIN_WHEEL, make_sdist("1.0")],
             package="pkg",
             metadata_by_url={_sidecar(_WIN_WHEEL): _WIN_WHEEL_METADATA},
             sdist_pkg_info=(
@@ -1685,7 +1667,7 @@ class TestSiblingWheelDependencies:
         assert set(windows.get_dependencies("pkg", Version("1.0"))) == {"windep"}
 
 
-_PURE_WHEEL = _platform_wheel("1.0", "py3-none-any")
+_PURE_WHEEL = make_wheel("1.0", tag="py3-none-any")
 
 _PURE_WHEEL_METADATA = (
     "Metadata-Version: 2.4\nName: pkg\nVersion: 1.0\nRequires-Dist: puredep\n\n"
@@ -1778,7 +1760,7 @@ class TestTwoInstallableSiblingWheels:
         2.0 publishes only a pure wheel and the listing prefetch already
         warmed it, so 1.0 is the version the walk-ahead batch carries.
         """
-        pure_two = _platform_wheel("2.0", "py3-none-any")
+        pure_two = make_wheel("2.0", tag="py3-none-any")
         coordinator = make_coordinator(
             [pure_two, _PURE_WHEEL, _LINUX_WHEEL],
             package="pkg",

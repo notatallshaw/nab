@@ -18,6 +18,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from nab_project._testing.artifacts import make_sdist_artifact, make_wheel_artifact
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:  # pragma: no cover - 3.10 fallback
@@ -28,7 +30,6 @@ from nab_project.lockfile import (
     LocalPin,
     LockInput,
     PinShape,
-    SdistArtifact,
     TargetLock,
     VcsPin,
     WheelArtifact,
@@ -82,17 +83,6 @@ def _targets(
     }
 
 
-def _wheel(name: str, version: str, sha: str) -> WheelArtifact:
-    """Build a ``WheelArtifact`` with PEP 427-compliant filename."""
-    norm = name.replace("-", "_")
-    return WheelArtifact(
-        filename=f"{norm}-{version}-py3-none-any.whl",
-        url=f"https://example.com/{norm}-{version}-py3-none-any.whl",
-        hashes=(("sha256", sha),),
-        size=1024,
-    )
-
-
 def _wheel_named(filename: str, sha: str) -> WheelArtifact:
     """Build a ``WheelArtifact`` from a literal filename."""
     return WheelArtifact(
@@ -100,17 +90,6 @@ def _wheel_named(filename: str, sha: str) -> WheelArtifact:
         url=f"https://example.com/{filename}",
         hashes=(("sha256", sha),),
         size=1024,
-    )
-
-
-def _sdist(name: str, version: str, sha: str) -> SdistArtifact:
-    """Build an ``SdistArtifact`` with PEP 625-compliant filename."""
-    norm = name.replace("-", "_")
-    return SdistArtifact(
-        filename=f"{norm}-{version}.tar.gz",
-        url=f"https://example.com/{norm}-{version}.tar.gz",
-        hashes=(("sha256", sha),),
-        size=2048,
     )
 
 
@@ -124,8 +103,8 @@ def index_pins(draw: st.DrawFn) -> IndexPin:
         name=name,
         version=version,
         index="pypi",
-        sdist=_sdist(name, version, sha),
-        wheels=(_wheel(name, version, sha),),
+        sdist=make_sdist_artifact(name.replace("-", "_"), version, sha256=sha),
+        wheels=(make_wheel_artifact(name.replace("-", "_"), version, sha256=sha),),
     )
 
 
@@ -380,7 +359,11 @@ class TestQuoteMarkerCollisionOrdering:
                     name="foo",
                     version="1.0",
                     index="https://linux.example/simple",
-                    wheels=(_wheel("foo", "1.0", "a" * 64),),
+                    wheels=(
+                        make_wheel_artifact(
+                            "foo".replace("-", "_"), "1.0", sha256="a" * 64
+                        ),
+                    ),
                 )
             },
             "macos_arm64": {
@@ -388,7 +371,11 @@ class TestQuoteMarkerCollisionOrdering:
                     name="foo",
                     version="1.0",
                     index="https://darwin.example/simple",
-                    wheels=(_wheel("foo", "1.0", "b" * 64),),
+                    wheels=(
+                        make_wheel_artifact(
+                            "foo".replace("-", "_"), "1.0", sha256="b" * 64
+                        ),
+                    ),
                 )
             },
         }
@@ -496,7 +483,11 @@ class TestQuoteUniversalPerTargetPackages:
                                 name=name,
                                 version=version_a,
                                 index="pypi",
-                                wheels=(_wheel(name, version_a, sha_a),),
+                                wheels=(
+                                    make_wheel_artifact(
+                                        name.replace("-", "_"), version_a, sha256=sha_a
+                                    ),
+                                ),
                             )
                             for name in names
                         },
@@ -508,7 +499,11 @@ class TestQuoteUniversalPerTargetPackages:
                                 name=name,
                                 version=version_b,
                                 index="pypi",
-                                wheels=(_wheel(name, version_b, sha_b),),
+                                wheels=(
+                                    make_wheel_artifact(
+                                        name.replace("-", "_"), version_b, sha256=sha_b
+                                    ),
+                                ),
                             )
                             for name in names
                         },

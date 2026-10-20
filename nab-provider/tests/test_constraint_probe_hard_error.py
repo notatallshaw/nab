@@ -34,23 +34,12 @@ from nab_provider.errors import (
 from nab_provider.provider import Provider
 from nab_provider.records import WheelFile
 from nab_provider.target import ResolveTarget
-from nab_provider.testing import make_coordinator
+from nab_provider.testing import make_coordinator, make_wheel
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility
 
 V = Version
 _PY312 = ResolveTarget.for_host_python("3.12.0")
-
-
-def _wheel(name: str, version: str, *, has_metadata: bool = True) -> WheelFile:
-    return WheelFile(
-        filename=f"{name}-{version}-py3-none-any.whl",
-        url=f"https://example.com/{name}-{version}-py3-none-any.whl",
-        version=version,
-        requires_python=None,
-        has_metadata=has_metadata,
-        upload_time=None,
-    )
 
 
 def _tie_wheel(tag: str) -> WheelFile:
@@ -85,8 +74,11 @@ class TestConstraintProbeContainsHardError:
         version out of the resolve, so its integrity is irrelevant.
         """
         listings = {
-            "baz": [_wheel("baz", "2.0"), _wheel("baz", "1.0")],
-            "foo": [_wheel("foo", "3.0")],
+            "baz": [
+                make_wheel("2.0", package="baz"),
+                make_wheel("1.0", package="baz"),
+            ],
+            "foo": [make_wheel("3.0", package="foo")],
         }
         metadata = {
             "2.0": (
@@ -116,8 +108,11 @@ class TestConstraintProbeContainsHardError:
         full-body read fails the listing's digest.
         """
         listings = {
-            "baz": [_wheel("baz", "2.0"), _wheel("baz", "1.0")],
-            "foo": [_wheel("foo", "3.0", has_metadata=False)],
+            "baz": [
+                make_wheel("2.0", package="baz"),
+                make_wheel("1.0", package="baz"),
+            ],
+            "foo": [make_wheel("3.0", package="foo", has_metadata=False)],
         }
         metadata = {
             "2.0": (
@@ -144,7 +139,7 @@ class TestConstraintProbeContainsHardError:
 
     def test_probe_contains_hard_error(self) -> None:
         """A failed sidecar hash inside the probe returns False, it does not raise."""
-        listings = {"foo": [_wheel("foo", "3.0")]}
+        listings = {"foo": [make_wheel("3.0", package="foo")]}
         coordinator = make_coordinator(listings=listings)
         coordinator.index.store_metadata_error(
             "foo", "3.0", MetadataHashMismatchError("metadata sha256 mismatch")
@@ -170,7 +165,7 @@ class TestConstraintProbeContainsHardError:
         clipped away, so ``has_satisfying_version`` must return ``False`` rather
         than abort the resolve.
         """
-        listings = {"foo": [_wheel("foo", "3.0")]}
+        listings = {"foo": [make_wheel("3.0", package="foo")]}
         coordinator = make_coordinator(listings=listings)
         coordinator.index.store_metadata_error("foo", "3.0", error)
         root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
@@ -185,7 +180,7 @@ class TestConstraintProbeContainsHardError:
         "this version has no satisfying candidate" would let the resolve carry
         on and pin a different-but-valid answer, so it must escape the probe.
         """
-        listings = {"foo": [_wheel("foo", "3.0")]}
+        listings = {"foo": [make_wheel("3.0", package="foo")]}
         coordinator = make_coordinator(listings=listings)
         coordinator.index.store_metadata_error(
             "foo", "3.0", HttpError("HTTP 503 for https://example.com/foo-3.0.metadata")
@@ -232,8 +227,11 @@ class TestConstraintProbeDropsItsRejections:
         emptied the queue, so the probe has to drop it.
         """
         listings = {
-            "foo": [_wheel("foo", "3.0"), _wheel("foo", "2.0")],
-            "bar": [_wheel("bar", "2.0")],
+            "foo": [
+                make_wheel("3.0", package="foo"),
+                make_wheel("2.0", package="foo"),
+            ],
+            "bar": [make_wheel("2.0", package="bar")],
         }
         metadata = {
             "3.0": (
@@ -265,11 +263,11 @@ class TestConstraintProbeDropsItsRejections:
         """
         listings = {
             "foo": [
-                _wheel("foo", "3.0"),
-                _wheel("foo", "2.5", has_metadata=False),
-                _wheel("foo", "2.0"),
+                make_wheel("3.0", package="foo"),
+                make_wheel("2.5", package="foo", has_metadata=False),
+                make_wheel("2.0", package="foo"),
             ],
-            "bar": [_wheel("bar", "2.0")],
+            "bar": [make_wheel("2.0", package="bar")],
         }
         metadata = {
             "3.0": (

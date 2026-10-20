@@ -9,6 +9,7 @@ from packaging.utils import canonicalize_name as canonical
 
 from nab_index.client import WheelFile
 from nab_index.multi_index import MultiIndexClient
+from nab_provider.testing import make_wheel
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -19,17 +20,6 @@ _T = TypeVar("_T")
 
 def run(coro: Coroutine[Any, Any, _T]) -> _T:
     return asyncio.run(coro)
-
-
-def _wheel(name: str, version: str = "1.0") -> WheelFile:
-    return WheelFile(
-        filename=f"{name}-{version}-py3-none-any.whl",
-        url=f"https://example.com/{name}-{version}-py3-none-any.whl",
-        version=version,
-        requires_python=None,
-        has_metadata=False,
-        upload_time=None,
-    )
 
 
 class _RecordingClient:
@@ -71,7 +61,9 @@ class _RecordingClient:
 
 def test_get_sdist_archive_forwards_to_routed_client() -> None:
     empty = _RecordingClient({}, b"")
-    holder = _RecordingClient({"foo": [_wheel("foo")]}, b"ARCHIVE")
+    holder = _RecordingClient(
+        {"foo": [make_wheel(package="foo", has_metadata=False)]}, b"ARCHIVE"
+    )
     client = MultiIndexClient({"a": empty, "b": holder}, ["a", "b"], {})
 
     # get_files routes "foo" to the index that lists it; get_sdist_archive

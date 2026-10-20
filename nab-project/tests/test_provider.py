@@ -97,7 +97,7 @@ from nab_provider.records import DistFile, rehydrated_wheel
 from nab_provider.store import sdist_artifact_key
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
-from nab_provider.testing import pkg_override
+from nab_provider.testing import make_metadata, make_sdist, make_wheel, pkg_override
 from nab_provider.yanking import mark_yanked
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver
@@ -153,66 +153,6 @@ def metadata_blocks(**blocks: str) -> dict[Version, diagnosis_mod.MetadataBlock]
         V(version): diagnosis_mod.MetadataBlock(message)
         for version, message in blocks.items()
     }
-
-
-def make_wheel(
-    version: str = "1.0",
-    requires_python: str | None = None,
-    has_metadata: bool = True,
-    upload_time: str | None = None,
-    local_path: Path | None = None,
-    metadata_hash: tuple[str, str] | None = None,
-) -> WheelFile:
-    """Build a WheelFile for testing."""
-    return WheelFile(
-        filename=f"pkg-{version}-py3-none-any.whl",
-        url=f"https://example.com/pkg-{version}-py3-none-any.whl",
-        version=version,
-        requires_python=requires_python,
-        has_metadata=has_metadata,
-        upload_time=upload_time,
-        local_path=local_path,
-        metadata_hash=metadata_hash,
-    )
-
-
-def make_metadata(name: str, version: str, *reqs: str) -> str:
-    """Minimal METADATA text carrying the given Requires-Dist lines."""
-    lines = ["Metadata-Version: 2.1", f"Name: {name}", f"Version: {version}"]
-    lines += [f"Requires-Dist: {r}" for r in reqs]
-    return "\n".join(lines) + "\n"
-
-
-def make_tagged_wheel(tag: str, *, has_metadata: bool = True) -> WheelFile:
-    """Build a 1.0 WheelFile carrying an explicit PEP 425 tag."""
-    filename = f"pkg-1.0-{tag}.whl"
-    return WheelFile(
-        filename=filename,
-        url=f"https://example.com/{filename}",
-        version="1.0",
-        requires_python=None,
-        has_metadata=has_metadata,
-        upload_time=None,
-    )
-
-
-def make_sdist(
-    version: str = "1.0",
-    requires_python: str | None = None,
-    upload_time: str | None = None,
-    local_path: Path | None = None,
-    hashes: tuple[tuple[str, str], ...] = (),
-) -> SdistFile:
-    """Build a SdistFile for testing."""
-    return SdistFile(
-        filename=f"pkg-{version}.tar.gz",
-        url=f"https://example.com/pkg-{version}.tar.gz",
-        version=version,
-        requires_python=requires_python,
-        upload_time=upload_time,
-        local_path=local_path,
-        hashes=hashes,
-    )
 
 
 class _CountingVersion(Version):
@@ -10731,8 +10671,8 @@ class TestPickDistForMetadata:
         tags = ResolveTarget.for_declared(
             python_version="3.12", spec=PlatformSpec("linux_x86_64")
         ).tags
-        abi3 = make_tagged_wheel("cp312-abi3-manylinux_2_17_x86_64")
-        full_abi = make_tagged_wheel("cp312-cp312-manylinux_2_17_x86_64")
+        abi3 = make_wheel(tag="cp312-abi3-manylinux_2_17_x86_64")
+        full_abi = make_wheel(tag="cp312-cp312-manylinux_2_17_x86_64")
         versions = [(V("1.0"), abi3), (V("1.0"), full_abi)]
         assert pick_dist_for_metadata(versions, V("1.0"), tags) is full_abi
 
@@ -10751,8 +10691,8 @@ class TestPickDistForMetadata:
         tags = ResolveTarget.for_declared(
             python_version="3.12", spec=PlatformSpec("linux_x86_64")
         ).tags
-        no_sidecar = make_tagged_wheel("py2.py3-none-any", has_metadata=False)
-        sidecar = make_tagged_wheel("py3-none-any")
+        no_sidecar = make_wheel(tag="py2.py3-none-any", has_metadata=False)
+        sidecar = make_wheel(tag="py3-none-any")
         versions = [(V("1.0"), no_sidecar), (V("1.0"), sidecar)]
         assert pick_dist_for_metadata(versions, V("1.0"), tags) is sidecar
 

@@ -17,6 +17,7 @@ from typing import Any, ClassVar
 import pytest
 
 from nab_markersets._compat import get_int_max_str_digits
+from nab_project._testing.artifacts import make_sdist_artifact, make_wheel_artifact
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -164,24 +165,6 @@ def _env_signature(target: ResolveTarget) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(target.marker_env.items()))
 
 
-def _wheel(name: str = "foo", version: str = "1.0") -> WheelArtifact:
-    return WheelArtifact(
-        filename=f"{name}-{version}-py3-none-any.whl",
-        url=f"https://example.com/{name}-{version}-py3-none-any.whl",
-        hashes=(("sha256", "a" * 64),),
-        size=1024,
-    )
-
-
-def _sdist(name: str = "foo", version: str = "1.0") -> SdistArtifact:
-    return SdistArtifact(
-        filename=f"{name}-{version}.tar.gz",
-        url=f"https://example.com/{name}-{version}.tar.gz",
-        hashes=(("sha256", "b" * 64),),
-        size=2048,
-    )
-
-
 def _index_pin(
     name: str = "foo",
     version: str = "1.0",
@@ -191,8 +174,8 @@ def _index_pin(
         name=name,
         version=version,
         index=index,
-        sdist=_sdist(name, version),
-        wheels=(_wheel(name, version),),
+        sdist=make_sdist_artifact(name, version),
+        wheels=(make_wheel_artifact(name, version),),
         requires_python=">=3.10",
     )
 
@@ -532,7 +515,7 @@ class TestPerTargetMarkerSimplification:
 
     def test_requires_python_drops_when_targets_disagree(self) -> None:
         """``requires_python`` survives merging only when every target agrees."""
-        wheel = _wheel()
+        wheel = make_wheel_artifact()
         text = write_lock(
             LockInput(
                 targets=_targets(
@@ -569,8 +552,8 @@ class TestPerTargetMarkerSimplification:
 
     def test_sdist_filled_from_any_target(self) -> None:
         """An sdist appearing in only some targets is preserved on the merge."""
-        sdist = _sdist()
-        wheel = _wheel()
+        sdist = make_sdist_artifact()
+        wheel = make_wheel_artifact()
         text = write_lock(
             LockInput(
                 targets=_targets(
@@ -1458,8 +1441,8 @@ class TestConflictForkRequiresPythonMerge:
             name="foo",
             version="1.0",
             index="pypi",
-            sdist=_sdist("foo", "1.0"),
-            wheels=(_wheel("foo", "1.0"),),
+            sdist=make_sdist_artifact("foo", "1.0"),
+            wheels=(make_wheel_artifact("foo", "1.0"),),
             requires_python=requires_python,
         )
 
@@ -4625,7 +4608,9 @@ class TestArtifactSize:
         )
 
     @pytest.mark.parametrize(
-        "artifact_factory", [_wheel, _sdist], ids=["wheel", "sdist"]
+        "artifact_factory",
+        [make_wheel_artifact, make_sdist_artifact],
+        ids=["wheel", "sdist"],
     )
     def test_writer_rejects_negative_size_before_writing(
         self,
@@ -4645,7 +4630,9 @@ class TestArtifactSize:
         assert output.read_text(encoding="utf-8") == "existing lock"
 
     @pytest.mark.parametrize(
-        "artifact_factory", [_wheel, _sdist], ids=["wheel", "sdist"]
+        "artifact_factory",
+        [make_wheel_artifact, make_sdist_artifact],
+        ids=["wheel", "sdist"],
     )
     @pytest.mark.parametrize("size", [0, 1], ids=["empty", "one-byte"])
     def test_writer_emits_non_negative_size(
@@ -4688,7 +4675,7 @@ class TestUploadTime:
     def test_writer_upload_times_in_utc(
         self, tmp_path: Path, timestamp: datetime | None, *, local: bool
     ) -> None:
-        wheel, sdist = _wheel(), _sdist()
+        wheel, sdist = make_wheel_artifact(), make_sdist_artifact()
         for artifact in (wheel, sdist):
             artifact.upload_time = timestamp
             artifact.local_path = tmp_path / artifact.filename if local else None
@@ -4710,7 +4697,9 @@ class TestUploadTime:
 
     @pytest.mark.parametrize("local", [False, True], ids=["url", "path"])
     @pytest.mark.parametrize(
-        "artifact_factory", [_wheel, _sdist], ids=["wheel", "sdist"]
+        "artifact_factory",
+        [make_wheel_artifact, make_sdist_artifact],
+        ids=["wheel", "sdist"],
     )
     @pytest.mark.parametrize(
         ("timestamp", "message"),

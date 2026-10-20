@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, NoReturn, cast
 
 import pytest
 
-from nab_index.client import WheelFile
 from nab_project._packaging_provider import PackagingProvider
 from nab_project._testing.coordinator_fake import make_coordinator
 from nab_provider._vendor.packaging.ranges import VersionRange
@@ -33,6 +32,7 @@ from nab_provider.provider import (
     VcsSource,
 )
 from nab_provider.target import ResolveTarget
+from nab_provider.testing import make_metadata, make_wheel
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver
 from nab_resolver.root import ROOT
@@ -44,24 +44,10 @@ if TYPE_CHECKING:
 
 V = Version
 
-_METADATA = "Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
-
 
 def _refuse_fetch(*args: object) -> NoReturn:
     """Fail the test rather than serve a fetch it should never have made."""
     raise AssertionError("the provider fetched")
-
-
-def _wheel(package: str, version: str) -> WheelFile:
-    """Build a WheelFile for ``package`` at ``version``."""
-    return WheelFile(
-        filename=f"{package}-{version}-py3-none-any.whl",
-        url=f"https://example.com/{package}-{version}-py3-none-any.whl",
-        version=version,
-        requires_python=None,
-        has_metadata=True,
-        upload_time=None,
-    )
 
 
 def _graph_coordinator(
@@ -77,16 +63,14 @@ def _graph_coordinator(
     """
     unreadable = unreadable or set()
     listings = {
-        package: [_wheel(package, version) for version in versions]
+        package: [make_wheel(version, package=package) for version in versions]
         for package, versions in graph.items()
     }
     coordinator = make_coordinator(listings=listings)
     for package, versions in graph.items():
         for version, requires in versions.items():
             stored = "not-a-version" if (package, version) in unreadable else version
-            text = _METADATA.format(name=package, version=stored)
-            for requirement in requires:
-                text += f"Requires-Dist: {requirement}\n"
+            text = make_metadata(package, stored, *requires)
             coordinator.index.store_metadata(package, version, text + "\n")
     return coordinator
 
@@ -198,7 +182,7 @@ class TestWidenDecision:
         provider.vcs_sources["bar"] = VcsSource(
             "bar", "git+https://example.com/bar.git@abc123"
         )
-        provider.versions_cache["bar"] = [(V("1.0"), _wheel("bar", "1.0"))]
+        provider.versions_cache["bar"] = [(V("1.0"), make_wheel("1.0", package="bar"))]
         assert provider.widen_decision("bar", V("1.0")) is None
 
     def test_none_for_archive_source(self) -> None:
@@ -207,7 +191,7 @@ class TestWidenDecision:
         provider.archive_sources["baz"] = ArchiveSource(
             "baz", "https://example.com/baz-1.0.tar.gz#sha256=00"
         )
-        provider.versions_cache["baz"] = [(V("1.0"), _wheel("baz", "1.0"))]
+        provider.versions_cache["baz"] = [(V("1.0"), make_wheel("1.0", package="baz"))]
         assert provider.widen_decision("baz", V("1.0")) is None
 
 

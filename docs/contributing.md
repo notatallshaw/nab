@@ -45,6 +45,27 @@ and consumer outcomes, such as a parsed index record reaching a lockfile. Scope 
 smallest suite that uses them; return fresh mutable data for each case. Test lint settings are
 shared through `tests/ruff.toml`.
 
+Reuse `nab_provider.testing.make_wheel`, `make_sdist` and `make_metadata` for ordinary record and
+metadata setup. They construct real objects; targets, policies and the dependency scenario belong at
+the caller. Project lock tests can use the artifact factories in `nab_project._testing.artifacts`.
+Keep deliberately malformed records and archive layouts explicit.
+
+For example, a sidecar-backed listing can be set up with:
+
+```python
+from nab_provider.testing import make_coordinator, make_metadata, make_wheel
+
+wheel = make_wheel("2.0", package="app")
+coordinator = make_coordinator(
+    listings={"app": [wheel]},
+    metadata_text=make_metadata("app", "2.0", "dep>=1"),
+)
+```
+
+Use `pending_listings` when a provider test needs a listing to arrive only after its request event
+is waited on. This shares the event behavior between provider and engine tests while keeping request
+assertions in the test.
+
 Use `pytest.mark.parametrize` when cases share an operation and assertion. Give boundary and
 malformed inputs descriptive `pytest.param` IDs so failures identify the case. Keep different
 outcomes in separate tests, and avoid Cartesian products when the dimensions do not exercise

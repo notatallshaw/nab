@@ -54,7 +54,7 @@ from nab_provider.overrides import IndexOverride
 from nab_provider.policy import BuildPolicy
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.store import sdist_artifact_key
-from nab_provider.testing import pkg_override
+from nab_provider.testing import make_wheel, pkg_override
 
 
 @pytest.fixture
@@ -108,23 +108,14 @@ class _FailingTransport:
         raise self._failure
 
 
-def _make_wheel(name: str = "foo", version: str = "1.0") -> WheelFile:
-    """Build a minimal WheelFile for InMemoryIndex round-trip tests."""
-    return WheelFile(
-        filename=f"{name}-{version}-py3-none-any.whl",
-        url=f"https://example.com/{name}-{version}-py3-none-any.whl",
-        version=version,
-        requires_python=None,
-        has_metadata=False,
-        upload_time=None,
-    )
-
-
 class TestInMemoryIndex:
     def test_listing_roundtrip(self) -> None:
         idx = InMemoryIndex()
         assert idx.get_listing("foo") is None
-        wheels = [_make_wheel("foo", v) for v in ("1.0", "2.0", "3.0")]
+        wheels = [
+            make_wheel(v, package="foo", has_metadata=False)
+            for v in ("1.0", "2.0", "3.0")
+        ]
         idx.store_listing("foo", wheels)
         assert idx.get_listing("foo") == wheels
 
@@ -307,7 +298,7 @@ class TestInMemoryIndex:
         event, existed = idx.get_or_create_pending("listing:foo")
         assert not existed
         assert not event.is_set()
-        wheels = [_make_wheel("foo")]
+        wheels = [make_wheel(package="foo", has_metadata=False)]
         idx.store_listing("foo", wheels)
         assert event.is_set()
         assert idx.get_listing("foo") == wheels
@@ -693,7 +684,10 @@ class TestFetchCoordinator:
     @respx.mock
     def test_request_listing_cached(self) -> None:
         with _coord() as coord:
-            coord.index.store_listing("cached", [_make_wheel("cached", "1.0")])
+            coord.index.store_listing(
+                "cached",
+                [make_wheel("1.0", package="cached", has_metadata=False)],
+            )
             event = coord.request_listing("cached")
             assert event.is_set()
 

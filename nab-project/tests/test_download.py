@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from nab_index.transport import HttpError
+from nab_project._testing.artifacts import make_sdist_artifact, make_wheel_artifact
 from nab_project.download import (
     DownloadEntry,
     DownloadError,
@@ -62,24 +63,6 @@ def _targets(
     }
 
 
-def _wheel(name: str, version: str, *, sha256: str) -> WheelArtifact:
-    return WheelArtifact(
-        filename=f"{name}-{version}-py3-none-any.whl",
-        url=f"https://example.com/{name}-{version}.whl",
-        hashes=(("sha256", sha256),),
-        size=4,
-    )
-
-
-def _sdist(name: str, version: str, *, sha256: str) -> SdistArtifact:
-    return SdistArtifact(
-        filename=f"{name}-{version}.tar.gz",
-        url=f"https://example.com/{name}-{version}.tar.gz",
-        hashes=(("sha256", sha256),),
-        size=4,
-    )
-
-
 def _index_pin(
     name: str = "foo",
     version: str = "1.0",
@@ -87,10 +70,22 @@ def _index_pin(
     sdist_sha: str | None = None,
     wheel_sha: str | None = None,
 ) -> IndexPin:
-    sdist = _sdist(name, version, sha256=sdist_sha) if sdist_sha else None
+    sdist = (
+        make_sdist_artifact(name, version, sha256=sdist_sha, size=4)
+        if sdist_sha
+        else None
+    )
     wheels = ()
     if wheel_sha is not None:
-        wheels = (_wheel(name, version, sha256=wheel_sha),)
+        wheels = (
+            make_wheel_artifact(
+                name,
+                version,
+                sha256=wheel_sha,
+                size=4,
+                url=f"https://example.com/{name}-{version}.whl",
+            ),
+        )
     return IndexPin(
         name=name,
         version=version,
@@ -298,7 +293,13 @@ class TestDownloadLock:
     def test_filename_collision_closes_transport(
         self, tmp_path: Path, second_filename: str
     ) -> None:
-        first = _wheel("foo", "1.0", sha256="a" * 64)
+        first = make_wheel_artifact(
+            "foo",
+            "1.0",
+            sha256="a" * 64,
+            size=4,
+            url=f"https://example.com/{'foo'}-{'1.0'}.whl",
+        )
         second = WheelArtifact(
             filename=second_filename,
             url="https://other.example.com/foo-1.0.whl",

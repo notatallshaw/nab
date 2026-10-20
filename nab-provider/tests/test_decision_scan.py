@@ -24,7 +24,6 @@ scan decides is what tells their two roles apart.
 
 from __future__ import annotations
 
-import threading
 from typing import TYPE_CHECKING
 
 from nab_provider._provider.priority import (
@@ -35,9 +34,9 @@ from nab_provider._provider.priority import (
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import DecisionOrder, Provider
-from nab_provider.records import DEFAULT_INDEX_NAME, WheelFile
+from nab_provider.records import WheelFile
 from nab_provider.store import InMemoryIndex
-from nab_provider.testing import FakeFetchPort, make_coordinator
+from nab_provider.testing import FakeFetchPort, make_coordinator, make_wheel
 from nab_resolver import decide
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
@@ -47,18 +46,6 @@ if TYPE_CHECKING:
 
     from nab_provider.records import SdistFile
     from nab_resolver.types import RangeProtocol
-
-
-def _wheel(package: str, version: str = "1.0") -> WheelFile:
-    """Build a WheelFile for ``package``."""
-    return WheelFile(
-        filename=f"{package}-{version}-py3-none-any.whl",
-        url=f"https://example.com/{package}-{version}-py3-none-any.whl",
-        version=version,
-        requires_python=None,
-        has_metadata=True,
-        upload_time=None,
-    )
 
 
 class _ArrivesOnReadIndex(InMemoryIndex):
@@ -125,45 +112,6 @@ def _coordinator(
     return coordinator
 
 
-class _LandsOnWait(threading.Event):
-    """The fetcher's event, carrying the store it does just before setting it.
-
-    A synchronous double cannot race its reader, so the arrival hangs off
-    ``wait`` itself.  A caller that does not wait then sees no listing, which
-    is what it would see against a fetcher that had not finished.
-    """
-
-    def __init__(
-        self,
-        index: InMemoryIndex,
-        package: str,
-        files: Sequence[WheelFile | SdistFile],
-    ) -> None:
-        super().__init__()
-        self._index = index
-        self._package = package
-        self._files = files
-
-    def wait(self, timeout: float | None = None) -> bool:
-        self._index.store_listing(self._package, self._files)
-        self._index.store_listing_index(self._package, DEFAULT_INDEX_NAME)
-        self.set()
-        return super().wait(timeout)
-
-
-def _fetching_coordinator(
-    pending: Mapping[str, Sequence[WheelFile | SdistFile]],
-) -> FakeFetchPort:
-    """Coordinator whose listings land only for a caller that waits."""
-    coordinator = make_coordinator(None)
-    index = coordinator.index
-    coordinator.override(
-        "request_listing",
-        lambda package, _speculative: _LandsOnWait(index, package, pending[package]),
-    )
-    return coordinator
-
-
 def _two_package_resolver(
     *, resident: bool, decision_order: DecisionOrder
 ) -> tuple[Resolver[str, Version], _ScanRecordingProvider]:
@@ -173,9 +121,11 @@ def _two_package_resolver(
     project against this index: whether ``beta``'s listing had already
     landed when the scan opened, or lands during it.
     """
-    beta = [_wheel("beta")]
+    beta = [make_wheel(package="beta")]
     resident_listings: dict[str, Sequence[WheelFile | SdistFile]] = {
-        "alpha": [_wheel("alpha", version) for version in ("1.0", "2.0", "3.0")]
+        "alpha": [
+            make_wheel(version, package="alpha") for version in ("1.0", "2.0", "3.0")
+        ]
     }
     arrivals: dict[str, Sequence[WheelFile | SdistFile]] = {}
     if resident:
@@ -239,7 +189,7 @@ class TestOneKeyHoldsTogether:
 
     def test_priority_and_readiness_agree_within_a_scan(self) -> None:
         """The half that misses first makes the other half miss too."""
-        coordinator = _coordinator({"foo": [_wheel("foo")]})
+        coordinator = _coordinator({"foo": [make_wheel(package="foo")]})
         provider = Provider(coordinator)
         rng = VersionRange.full()
 
@@ -251,7 +201,7 @@ class TestOneKeyHoldsTogether:
 
     def test_readiness_holds_for_the_rest_of_the_scan(self) -> None:
         """A name seen in flight stays in flight however often it is read."""
-        coordinator = _coordinator({"foo": [_wheel("foo")]})
+        coordinator = _coordinator({"foo": [make_wheel(package="foo")]})
         provider = Provider(coordinator)
 
         provider.begin_decision_scan()
@@ -263,7 +213,7 @@ class TestOneKeyHoldsTogether:
 
     def test_the_extras_proxy_reads_like_its_base(self) -> None:
         """A proxy and its base answer from the same frozen view."""
-        coordinator = _coordinator({"foo": [_wheel("foo")]})
+        coordinator = _coordinator({"foo": [make_wheel(package="foo")]})
         provider = Provider(coordinator)
         rng = VersionRange.full()
 
@@ -275,7 +225,14 @@ class TestOneKeyHoldsTogether:
 
     def test_the_next_scan_picks_the_arrival_up(self) -> None:
         """The freeze lasts one scan, so the listing is not lost."""
-        coordinator = _coordinator({"foo": [_wheel("foo"), _wheel("foo", "2.0")]})
+        coordinator = _coordinator(
+            {
+                "foo": [
+                    make_wheel(package="foo"),
+                    make_wheel("2.0", package="foo"),
+                ]
+            }
+        )
         provider = Provider(coordinator)
         rng = VersionRange.full()
 
@@ -291,7 +248,7 @@ class TestTheArrivalProbe:
     """The probe ``begin_decision_scan`` hands back for in-flight keys."""
 
     def test_a_name_still_in_flight_denies_the_probe(self) -> None:
-        provider = Provider(_coordinator({"foo": [_wheel("foo")]}))
+        provider = Provider(_coordinator({"foo": [make_wheel(package="foo")]}))
 
         probe = provider.begin_decision_scan()
 
@@ -299,7 +256,7 @@ class TestTheArrivalProbe:
         assert probe("foo") is False
 
     def test_the_next_scan_probes_the_arrival(self) -> None:
-        provider = Provider(_coordinator({"foo": [_wheel("foo")]}))
+        provider = Provider(_coordinator({"foo": [make_wheel(package="foo")]}))
         provider.begin_decision_scan()
         assert provider.is_ready("foo") is False
 
@@ -315,7 +272,7 @@ class TestTheArrivalProbe:
         and ``prioritize`` writes that only once the listing lands, so a probe
         reading it would hold the proxy past the arrival it waits on.
         """
-        provider = Provider(_coordinator({"foo": [_wheel("foo")]}))
+        provider = Provider(_coordinator({"foo": [make_wheel(package="foo")]}))
         provider.begin_decision_scan()
         assert provider.is_ready("foo") is False
 
@@ -327,7 +284,7 @@ class TestTheArrivalProbe:
 
     def test_a_cached_base_lands_without_the_index(self) -> None:
         provider = Provider(_coordinator({}))
-        provider.versions_cache["foo"] = [(Version("1.0"), _wheel("foo"))]
+        provider.versions_cache["foo"] = [(Version("1.0"), make_wheel(package="foo"))]
 
         probe = provider.begin_decision_scan()
 
@@ -337,7 +294,7 @@ class TestTheArrivalProbe:
     def test_settling_listings_offers_no_probe(self) -> None:
         """A scan that waits for the listing has nothing to wait on between scans."""
         provider = Provider(
-            _coordinator({"foo": [_wheel("foo")]}),
+            _coordinator({"foo": [make_wheel(package="foo")]}),
             decision_order=DecisionOrder.STABLE,
         )
 
@@ -349,11 +306,16 @@ class TestScanKeysShareOneView:
 
     def _resolver(self) -> tuple[Resolver[str, Version], _ScanRecordingProvider]:
         coordinator = _coordinator(
-            {"pending-a": [_wheel("pending-a")], "pending-b": [_wheel("pending-b")]},
-            {"arriving": [_wheel("arriving")]},
+            {
+                "pending-a": [make_wheel(package="pending-a")],
+                "pending-b": [make_wheel(package="pending-b")],
+            },
+            {"arriving": [make_wheel(package="arriving")]},
         )
         provider = _ScanRecordingProvider(coordinator)
-        provider.versions_cache["cached"] = [(Version("1.0"), _wheel("cached"))]
+        provider.versions_cache["cached"] = [
+            (Version("1.0"), make_wheel(package="cached"))
+        ]
         resolver: Resolver[str, Version] = Resolver(
             provider, range_type=VersionRange, root_version="0"
         )
@@ -394,7 +356,7 @@ class TestStableOrderIgnoresArrival:
     def test_a_listing_that_lands_mid_scan_is_counted_now(self) -> None:
         """The count reflects the listing after its in-flight sentinel clears."""
         provider = Provider(
-            _coordinator({"foo": [_wheel("foo")]}),
+            _coordinator({"foo": [make_wheel(package="foo")]}),
             decision_order=DecisionOrder.STABLE,
         )
 
@@ -406,7 +368,7 @@ class TestStableOrderIgnoresArrival:
     def test_settling_waits_for_the_fetch(self) -> None:
         """The count comes from the wait, not from a second look at the index."""
         provider = Provider(
-            _fetching_coordinator({"foo": [_wheel("foo")]}),
+            make_coordinator(pending_listings={"foo": [make_wheel(package="foo")]}),
             decision_order=DecisionOrder.STABLE,
         )
 
@@ -417,7 +379,7 @@ class TestStableOrderIgnoresArrival:
 
     def test_a_resident_listing_is_read_without_a_request(self) -> None:
         """Settling costs nothing once the listing is in the index."""
-        coordinator = _coordinator({}, {"foo": [_wheel("foo")]})
+        coordinator = _coordinator({}, {"foo": [make_wheel(package="foo")]})
         provider = Provider(coordinator, decision_order=DecisionOrder.STABLE)
 
         listing = provider.settled_listing("foo")

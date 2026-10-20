@@ -39,7 +39,7 @@ from nab_provider.provider import (
 from nab_provider.records import SdistFile, WheelFile
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
-from nab_provider.testing import make_coordinator, pkg_override
+from nab_provider.testing import make_coordinator, make_sdist, make_wheel, pkg_override
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -75,14 +75,8 @@ def wheel(
     upload_time: str | None = BEFORE,
 ) -> WheelFile:
     """A listing wheel; ``version`` doubles as the filename's version field."""
-    filename = f"pkg-{version}-{tag}.whl"
-    return WheelFile(
-        filename=filename,
-        url=f"https://example.com/{filename}",
-        version=version,
-        requires_python=requires_python,
-        has_metadata=True,
-        upload_time=upload_time,
+    return make_wheel(
+        version, tag=tag, requires_python=requires_python, upload_time=upload_time
     )
 
 
@@ -93,14 +87,7 @@ def sdist(
     upload_time: str | None = BEFORE,
 ) -> SdistFile:
     """A listing sdist, shaped like :func:`wheel`."""
-    filename = f"pkg-{version}.tar.gz"
-    return SdistFile(
-        filename=filename,
-        url=f"https://example.com/{filename}",
-        version=version,
-        requires_python=requires_python,
-        upload_time=upload_time,
-    )
+    return make_sdist(version, requires_python=requires_python, upload_time=upload_time)
 
 
 def build(files: Sequence[WheelFile | SdistFile], **kwargs: object) -> Provider:

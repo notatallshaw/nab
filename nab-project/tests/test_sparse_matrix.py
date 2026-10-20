@@ -15,28 +15,21 @@ from nab_provider._vendor.packaging.tags import Tag
 from nab_provider.provider import BuildPolicy
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ImplementationOverride, Matrix, ResolveTarget
+from nab_provider.testing import make_metadata, make_wheel
 
-
-def _wheel(package: str, version: str, *, tag: str = "py3-none-any") -> WheelFile:
-    """A wheel served by the in-memory index."""
-    return WheelFile(
-        filename=f"{package}-{version}-{tag}.whl",
-        url=f"https://example.com/{package}-{version}-{tag}.whl",
-        version=version,
-        requires_python=None,
-        has_metadata=True,
-        upload_time=None,
-        hashes=(("sha256", "a" * 64),),
-    )
+HASHES = (("sha256", "a" * 64),)
 
 
 def _interpreter_graph() -> FakeFetchPort:
     """Serve divergent interpreter pins and independent platform dependencies."""
     listings = {
-        "base": [_wheel("base", "1.0")],
-        "variant": [_wheel("variant", "1.0"), _wheel("variant", "2.0")],
-        "pypydep": [_wheel("pypydep", "1.0")],
-        "windowsdep": [_wheel("windowsdep", "1.0")],
+        "base": [make_wheel("1.0", package="base", hashes=HASHES)],
+        "variant": [
+            make_wheel("1.0", package="variant", hashes=HASHES),
+            make_wheel("2.0", package="variant", hashes=HASHES),
+        ],
+        "pypydep": [make_wheel("1.0", package="pypydep", hashes=HASHES)],
+        "windowsdep": [make_wheel("1.0", package="windowsdep", hashes=HASHES)],
     }
     requires = {
         "base": (
@@ -57,12 +50,8 @@ def _graph(
     for name, wheels in listings.items():
         for wheel in wheels:
             assert wheel.metadata_url is not None
-            dependencies = "".join(
-                f"Requires-Dist: {dep}\n" for dep in requires.get(name, ())
-            )
             metadata[wheel.metadata_url] = (
-                f"Metadata-Version: 2.1\nName: {name}\nVersion: {wheel.version}\n"
-                f"{dependencies}\n"
+                make_metadata(name, wheel.version, *requires.get(name, ())) + "\n"
             )
     return make_coordinator(listings=listings, metadata_by_url=metadata)
 
@@ -132,7 +121,8 @@ def test_sparse_lock_restricts_implementations_with_identical_pins() -> None:
         },
     ).expand()
     coordinator = make_coordinator(
-        listings={"base": [_wheel("base", "1.0")]}, auto_metadata=True
+        listings={"base": [make_wheel("1.0", package="base", hashes=HASHES)]},
+        auto_metadata=True,
     )
     inputs = ResolveInputs(build_policy=BuildPolicy.NEVER)
     result = resolve_with_coordinator(
@@ -172,15 +162,19 @@ def test_sparse_lock_restricts_implementations_with_identical_pins() -> None:
 
 def test_platform_override_keeps_native_wheel_eligibility() -> None:
     """PyPy Windows and free-threaded CPython Linux select their native wheels."""
-    gil_wheel = _wheel("native", "4.0", tag="cp313-cp313-manylinux_2_17_x86_64")
-    pypy_wheel = _wheel("native", "3.0", tag="pp311-pypy311_pp73-win_amd64")
-    free_threaded_wheel = _wheel(
-        "native", "2.0", tag="cp313-cp313t-manylinux_2_17_x86_64"
+    gil_wheel = make_wheel(
+        "4.0", package="native", tag="cp313-cp313-manylinux_2_17_x86_64", hashes=HASHES
+    )
+    pypy_wheel = make_wheel(
+        "3.0", package="native", tag="pp311-pypy311_pp73-win_amd64", hashes=HASHES
+    )
+    free_threaded_wheel = make_wheel(
+        "2.0", package="native", tag="cp313-cp313t-manylinux_2_17_x86_64", hashes=HASHES
     )
     coordinator = _graph(
         {
             "native": [gil_wheel, pypy_wheel, free_threaded_wheel],
-            "runtime": [_wheel("runtime", "1.0")],
+            "runtime": [make_wheel("1.0", package="runtime", hashes=HASHES)],
         },
         {"native": ("runtime",)},
     )
@@ -231,8 +225,12 @@ def test_platform_override_keeps_native_wheel_eligibility() -> None:
 
 def test_platform_override_replaces_libc_for_same_platform_id() -> None:
     """Implementation-specific tag settings distinguish glibc and musl wheels."""
-    glibc_wheel = _wheel("native", "4.0", tag="py3-none-manylinux_2_17_x86_64")
-    musl_wheel = _wheel("native", "3.0", tag="py3-none-musllinux_1_2_x86_64")
+    glibc_wheel = make_wheel(
+        "4.0", package="native", tag="py3-none-manylinux_2_17_x86_64", hashes=HASHES
+    )
+    musl_wheel = make_wheel(
+        "3.0", package="native", tag="py3-none-musllinux_1_2_x86_64", hashes=HASHES
+    )
     targets = Matrix(
         python="==3.12.*",
         platforms=(PlatformSpec("linux_x86_64", runs_on_libc=(2, 17)),),

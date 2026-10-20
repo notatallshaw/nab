@@ -13,8 +13,8 @@ from nab_provider.errors import OverrideConflictError
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import DecisionOrder, DistPolicy
 from nab_provider.provider import Provider
-from nab_provider.records import DEFAULT_INDEX_NAME, WheelFile
-from nab_provider.testing import make_coordinator, pkg_override
+from nab_provider.records import DEFAULT_INDEX_NAME
+from nab_provider.testing import make_coordinator, make_wheel, pkg_override
 from nab_resolver.resolver import Resolver
 
 _PROBE = """
@@ -63,22 +63,10 @@ else:
 """
 
 
-def _wheel(package: str, version: str = "1.0") -> WheelFile:
-    """Build a wheel record for resolver integration tests."""
-    return WheelFile(
-        filename=f"{package}-{version}-py3-none-any.whl",
-        version=version,
-        url=f"https://example.com/{package}-{version}-py3-none-any.whl",
-        requires_python=None,
-        has_metadata=True,
-        upload_time=None,
-    )
-
-
 def _provider(decision_order: DecisionOrder) -> Provider:
     """Build a provider whose resident wheel has conflicting distribution policies."""
     return Provider(
-        make_coordinator(listings={"alpha": [_wheel("alpha")]}),
+        make_coordinator(listings={"alpha": [make_wheel(package="alpha")]}),
         decision_order=decision_order,
         package_overrides=(pkg_override("alpha", dist_policy=DistPolicy.WHEEL_ONLY),),
         index_overrides={
@@ -136,9 +124,9 @@ def test_override_conflict_remains_fatal(
 @pytest.mark.parametrize("scenario", ["unavailable-root", "backtracking"])
 @pytest.mark.parametrize("package", ["bravo", "bravo[feature]"])
 def test_override_conflict_preempts_no_versions(scenario: str, package: str) -> None:
-    parent_new = _wheel("parent", "2.0")
-    parent_old = _wheel("parent")
-    bravo = _wheel("bravo")
+    parent_new = make_wheel("2.0", package="parent")
+    parent_old = make_wheel(package="parent")
+    bravo = make_wheel(package="bravo")
     requirements = (
         {"parent": VersionRange.full()}
         if scenario == "backtracking"
