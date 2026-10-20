@@ -144,6 +144,13 @@ Each target keeps its own wheel ranking, metadata validation and dependency-mark
 Prepared views contain no learned clauses or pending rejections. Their cache lives for one project
 resolve.
 
+## Imports on Python 3.15
+
+Nab modules use explicit
+[`__lazy_modules__` declarations](https://peps.python.org/pep-0810/#semantics) to defer selected
+dependencies until first use, including when you import a library directly. Third-party modules keep
+their own import behavior. Earlier Python versions load imports eagerly.
+
 ## Why the provider is separate
 
 Resolution logic with no HTTP client in its import graph can be tested alone. CI runs
