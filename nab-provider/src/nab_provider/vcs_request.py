@@ -10,8 +10,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from ._value import SlottedValue
 from .subdir import subdirectory_escapes
+from .value import SlottedValue
 
 if TYPE_CHECKING:
     from pathlib import Path

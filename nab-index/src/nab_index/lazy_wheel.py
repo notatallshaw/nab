@@ -27,12 +27,12 @@ import hashlib
 import io
 import os
 import re
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from nab_provider.errors import WheelHashMismatchError
 from nab_provider.records import RangeMetadataResult, RangeOutcome
+from nab_provider.value import Record
 
 from .client import MalformedSimpleResponseError
 from .local_index import UnsupportedWheelError, wheel_metadata_member
@@ -220,14 +220,23 @@ class _SparseFile:
         return bytes(result)
 
 
-@dataclass(frozen=True, slots=True)
-class _SuffixOutcome:
+class _SuffixOutcome(Record, frozen=True):
     """The result of one suffix-range attempt."""
 
+    __slots__ = __match_args__ = ("kind", "total", "low", "body")
+
     kind: str  # "suffix", "full", or "downgrade"
-    total: int = 0
-    low: int = 0
-    body: bytes = b""
+    total: int
+    low: int
+    body: bytes
+
+    def __init__(
+        self, kind: str, total: int = 0, low: int = 0, body: bytes = b""
+    ) -> None:
+        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "total", total)
+        object.__setattr__(self, "low", low)
+        object.__setattr__(self, "body", body)
 
 
 class _AcqKind(enum.Enum):

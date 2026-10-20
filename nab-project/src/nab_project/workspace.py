@@ -20,13 +20,13 @@ message.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import tomli
 
 from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
 from nab_provider.policy import LocalSource
+from nab_provider.value import Record
 
 from . import toml_io
 from ._toml import tool_nab_section
@@ -93,8 +93,7 @@ def _workspace_declaration(data: dict[str, Any], project_file: Path) -> tuple[An
     return nab.get("workspace"), label
 
 
-@dataclass(frozen=True, slots=True)
-class WorkspaceConfig:
+class WorkspaceConfig(Record, frozen=True):
     """Parsed workspace table.
 
     ``members`` is the literal list of paths declared at the workspace
@@ -102,7 +101,12 @@ class WorkspaceConfig:
     :func:`workspace_local_sources`.
     """
 
+    __slots__ = __match_args__ = ("members",)
+
     members: tuple[str, ...]
+
+    def __init__(self, members: tuple[str, ...]) -> None:  # noqa: D107 - Field-only constructor documented by its class.
+        object.__setattr__(self, "members", members)
 
 
 def discover_workspace_root(member_pyproject: Path) -> Path | None:

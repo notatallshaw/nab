@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -15,6 +15,7 @@ from nab_index.client import AsyncSimpleClient, SdistFile, WheelFile
 from nab_index.multi_index import MultiIndexClient
 from nab_index.parsed_listing import decode
 from nab_index.transport import HttpError
+from nab_provider.value import replace
 
 _INDEX = "https://primary.example/simple/"
 _PROJECT_URL = f"{_INDEX}foo-bar/"

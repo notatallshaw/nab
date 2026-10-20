@@ -15,7 +15,6 @@ import hashlib
 import logging
 import re
 import time
-from dataclasses import dataclass, replace
 from datetime import timezone
 from typing import TYPE_CHECKING
 
@@ -24,6 +23,7 @@ from packaging.utils import canonicalize_name
 from nab_provider.records import select_artifact_hash
 from nab_provider.serialization import SimpleSerialization, simple_accept_header
 from nab_provider.store import sdist_artifact_key
+from nab_provider.value import Record, replace
 
 from ._json_decode import decode_json
 from .cache import (
@@ -86,8 +86,7 @@ logger = logging.getLogger(__name__)
 _MAX_POLICY_WRITES = 4
 
 
-@dataclass(slots=True)
-class ParsedCacheStats:
+class ParsedCacheStats(Record):
     """Mutable counters for parsed-listing cache outcomes on the fetcher thread.
 
     One instance is shared across every per-index client in a run and read once
@@ -105,9 +104,16 @@ class ParsedCacheStats:
     304 the fallback reparses the raw body and leaves the blob in place.
     """
 
-    hit: int = 0
-    miss: int = 0
-    rebuild: int = 0
+    __slots__ = __match_args__ = ("hit", "miss", "rebuild")
+
+    hit: int
+    miss: int
+    rebuild: int
+
+    def __init__(self, hit: int = 0, miss: int = 0, rebuild: int = 0) -> None:  # noqa: D107 - Field-only constructor documented by its class.
+        self.hit = hit
+        self.miss = miss
+        self.rebuild = rebuild
 
 
 _DEFAULT_MAX_AGE = 600

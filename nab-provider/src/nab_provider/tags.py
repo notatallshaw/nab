@@ -24,7 +24,6 @@ from __future__ import annotations
 import enum
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
 from functools import cache, cached_property, lru_cache
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeVar
@@ -32,7 +31,7 @@ from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeVar
 from nab_provider._vendor.packaging import tags as ptags
 from nab_provider._vendor.packaging.version import Version
 
-from ._value import SlottedValue
+from .value import Record, SlottedValue
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -133,8 +132,7 @@ _OTHER_GLIBC2_MINOR_FLOOR = 17
 
 
 # PlatformSpec is a cache key and needs frozen fields and copy/pickle support.
-@dataclass(frozen=True)
-class PlatformSpec:
+class PlatformSpec(Record, frozen=True):
     """Concrete tag knobs for one matrix platform_id.
 
     ``libc`` names the C library the Linux target runs; a machine links one,
@@ -158,14 +156,46 @@ class PlatformSpec:
     ``abi3``) of a CPython 3.13+ free-threaded build.
     """
 
+    __match_args__ = (
+        "platform_id",
+        "libc",
+        "runs_on_libc",
+        "runs_on_macos",
+        "platform_release",
+        "platform_version",
+        "free_threaded",
+        "pypy_abi",
+    )
+
     platform_id: str
-    libc: Libc = DEFAULT_LIBC
-    runs_on_libc: tuple[int, int] | None = None  # any libc version
-    runs_on_macos: tuple[int, int] | None = None  # any macOS version
-    platform_release: str = ""
-    platform_version: str = ""
-    free_threaded: bool = False
-    pypy_abi: str | None = None
+    libc: Libc
+    runs_on_libc: tuple[int, int] | None  # any libc version
+    runs_on_macos: tuple[int, int] | None  # any macOS version
+    platform_release: str
+    platform_version: str
+    free_threaded: bool
+    pypy_abi: str | None
+
+    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+        self,
+        platform_id: str,
+        libc: Libc = DEFAULT_LIBC,
+        runs_on_libc: tuple[int, int] | None = None,
+        runs_on_macos: tuple[int, int] | None = None,
+        platform_release: str = "",
+        platform_version: str = "",
+        free_threaded: bool = False,  # noqa: FBT001, FBT002 - Preserve the positional record constructor.
+        pypy_abi: str | None = None,
+    ) -> None:
+        object.__setattr__(self, "platform_id", platform_id)
+        object.__setattr__(self, "libc", libc)
+        object.__setattr__(self, "runs_on_libc", runs_on_libc)
+        object.__setattr__(self, "runs_on_macos", runs_on_macos)
+        object.__setattr__(self, "platform_release", platform_release)
+        object.__setattr__(self, "platform_version", platform_version)
+        object.__setattr__(self, "free_threaded", free_threaded)
+        object.__setattr__(self, "pypy_abi", pypy_abi)
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         """Reject a knob the declared platform cannot carry.

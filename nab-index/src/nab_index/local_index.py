@@ -24,7 +24,6 @@ import errno
 import os
 import re
 import stat
-from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import unquote, urljoin, urlparse, urlsplit
@@ -32,6 +31,7 @@ from urllib.parse import unquote, urljoin, urlparse, urlsplit
 from packaging.utils import canonicalize_name as _canonical
 
 from nab_provider.errors import IndexAccessError, UnsupportedWheelError
+from nab_provider.value import replace
 
 from ._pep503 import hash_fragment, metadata_declaration, read_page
 from .client import (

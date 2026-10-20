@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import errno
 import re
-from dataclasses import fields, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -86,6 +85,7 @@ from nab_provider.target import (
     host_environment,
 )
 from nab_provider.testing import pkg_override
+from nab_provider.value import field_names, replace
 from nab_provider.vcs_admission import admit_vcs_url
 
 requires_int_limit = pytest.mark.skipif(
@@ -3363,7 +3363,7 @@ class TestVcsDocExample:
         """The example names each key ``[tool.nab.vcs]`` accepts."""
         example = tomli.loads(section_doc_example("VCS policy"))
         shown = set(example["tool"]["nab"]["vcs"])
-        assert shown == {f.name.replace("_", "-") for f in fields(VcsConfig)}
+        assert shown == {name.replace("_", "-") for name in field_names(VcsConfig)}
 
     def test_allowlists_admit_the_repo_they_name(self, tmp_path: Path) -> None:
         """Opened to ``allow``, the example admits a pinned URL to its own repo."""

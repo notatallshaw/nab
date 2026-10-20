@@ -12,8 +12,9 @@ import logging
 import sys
 import threading
 import time
-from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING
+
+from nab_provider.value import Record
 
 from ._compat import override
 from .env import (
@@ -466,13 +467,24 @@ class OutputOptionError(ValueError):
     """A malformed ``--color`` value or ``NAB_VERBOSITY``."""
 
 
-@dataclass(frozen=True, slots=True)
-class OutputOptions:
+class OutputOptions(Record, frozen=True):
     """The output knobs parsed from the global flags, before the subcommand."""
+
+    __slots__ = __match_args__ = ("verbosity", "color", "progress")
 
     verbosity: Verbosity
     color: ColorChoice
     progress: bool
+
+    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+        self,
+        verbosity: Verbosity,
+        color: ColorChoice,
+        progress: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+    ) -> None:
+        object.__setattr__(self, "verbosity", verbosity)
+        object.__setattr__(self, "color", color)
+        object.__setattr__(self, "progress", progress)
 
 
 _VERBOSITY_NAMES: dict[str, Verbosity] = {v.name.lower(): v for v in Verbosity}

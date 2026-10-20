@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 from hypothesis import event, example, given
 from hypothesis import strategies as st
+
+from nab_provider.value import replace
 
 from .strategies import PROPERTY_SETTINGS
 from .yanking_harness import Harness

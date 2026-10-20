@@ -18,3 +18,17 @@ keeping [`nab-index`](https://pypi.org/project/nab-index/) out of the import gra
 [`nab`](https://pypi.org/project/nab/) instead.
 
 The API is currently under rapid experimentation, if you use it pin to an exact version.
+
+## Value records
+
+Nab's record constructors declare their fields explicitly. `nab_provider.value` shares value
+comparison, copying and refusal to change frozen fields across the provider, index and project
+layers. `replace()` calls the concrete constructor, including validation and derived fields:
+
+```python
+from nab_provider.tags import PlatformSpec
+from nab_provider.value import replace
+
+platform = PlatformSpec("linux_x86_64")
+platform = replace(platform, runs_on_libc=(2, 28))
+```

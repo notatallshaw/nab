@@ -11,7 +11,6 @@ import subprocess
 import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,6 +37,7 @@ from nab_index.cache import (
 )
 from nab_index.vcs import VcsRequest, prepare_clone
 from nab_provider.serialization import SimpleSerialization
+from nab_provider.value import replace
 
 # Derived so a bucket-version bump does not need every path updated.
 SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"

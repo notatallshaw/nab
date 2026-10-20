@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from ._provider.extras import version_provides_extra
 from ._provider.metadata_resolver import classify_requirement, dists_at_version
@@ -13,6 +12,7 @@ from .extra_keys import split_extra
 from .metadata import intern_version
 from .policy import DistPolicy, ExtrasMode
 from .records import SdistFile, WheelFile
+from .value import Record, field_names
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -23,14 +23,31 @@ if TYPE_CHECKING:
     from .provider import DistFile, Provider, ProviderStats
 
 
-@dataclass(frozen=True, slots=True)
-class Candidate:
+class Candidate(Record, frozen=True):
     """A package version restricted to its yanked or non-yanked files."""
+
+    __record_fields__: ClassVar[tuple[str, ...] | None]
+
+    __slots__ = __record_fields__ = ("package", "version", "withdrawn", "label")
+
+    __record_init_fields__: ClassVar[tuple[str, ...] | None] = (
+        "package",
+        "version",
+        "withdrawn",
+    )
+
+    __match_args__ = ("package", "version", "withdrawn")
 
     package: str
     version: Version
     withdrawn: bool
-    label: str = field(init=False)
+    label: str
+
+    def __init__(self, package: str, version: Version, withdrawn: bool) -> None:  # noqa: D107, FBT001 - Preserve the positional record constructor.
+        object.__setattr__(self, "package", package)
+        object.__setattr__(self, "version", version)
+        object.__setattr__(self, "withdrawn", withdrawn)
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         """Keep the version text for arbitrary equality comparisons."""
@@ -42,13 +59,24 @@ class Candidate:
         return split_extra(self.package)[0]
 
 
-@dataclass(slots=True)
-class CandidateData:
+class CandidateData(Record):
     """Dependencies and the provider selecting the candidate's files."""
+
+    __slots__ = __match_args__ = ("provider", "dependencies", "pins")
 
     provider: Provider
     dependencies: dict[str, VersionRange]
     pins: tuple[Requirement, ...]
+
+    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+        self,
+        provider: Provider,
+        dependencies: dict[str, VersionRange],
+        pins: tuple[Requirement, ...],
+    ) -> None:
+        self.provider = provider
+        self.dependencies = dependencies
+        self.pins = pins
 
 
 class UnavailableMetadataError(Exception):
@@ -325,6 +353,5 @@ def candidate_dependencies(
 
 def merge_stats(target: ProviderStats, source: ProviderStats) -> None:
     """Accumulate counters from a candidate's preparation provider."""
-    for counter in fields(source):
-        name = counter.name
+    for name in field_names(source):
         setattr(target, name, getattr(target, name) + getattr(source, name))

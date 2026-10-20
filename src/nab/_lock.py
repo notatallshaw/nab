@@ -19,7 +19,6 @@ import shlex
 import stat
 import sys
 import tempfile
-from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from string import Formatter
@@ -70,6 +69,7 @@ from nab_provider.requirements_file import (
     resolve_groups_to_requirements,
 )
 from nab_provider.target import IntractableMarkerError, UnevaluableMarkerError
+from nab_provider.value import Record, replace
 
 from ._cli.parse import is_option, option_tokens
 from ._resolve import (
@@ -486,13 +486,27 @@ _join_command: Callable[[Iterable[str]], str] = (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class _LockRun:
+class _LockRun(Record, frozen=True):
     """The flags that decide which file ``nab lock`` writes and what goes in it.
 
     ``--locked`` writes nothing, so its failure has to name the run that would
     rewrite the file it just read.
     """
+
+    __slots__ = __match_args__ = (
+        "path",
+        "output",
+        "groups",
+        "all_groups",
+        "extras",
+        "all_extras",
+        "offline",
+        "build_requirements",
+        "workspace_discovery",
+        "no_emit_workspace",
+        "cli_overrides",
+        "upgrade",
+    )
 
     path: Path
     output: Path | None
@@ -506,6 +520,34 @@ class _LockRun:
     no_emit_workspace: bool
     cli_overrides: Mapping[str, object]
     upgrade: bool
+
+    def __init__(  # noqa: PLR0913, PLR0917 - Preserve the positional record constructor.
+        self,
+        path: Path,
+        output: Path | None,
+        groups: tuple[str, ...],
+        all_groups: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        extras: tuple[str, ...],
+        all_extras: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        offline: bool | None,  # noqa: FBT001 - Preserve the positional record constructor.
+        build_requirements: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        workspace_discovery: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        no_emit_workspace: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        cli_overrides: Mapping[str, object],
+        upgrade: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+    ) -> None:
+        object.__setattr__(self, "path", path)
+        object.__setattr__(self, "output", output)
+        object.__setattr__(self, "groups", groups)
+        object.__setattr__(self, "all_groups", all_groups)
+        object.__setattr__(self, "extras", extras)
+        object.__setattr__(self, "all_extras", all_extras)
+        object.__setattr__(self, "offline", offline)
+        object.__setattr__(self, "build_requirements", build_requirements)
+        object.__setattr__(self, "workspace_discovery", workspace_discovery)
+        object.__setattr__(self, "no_emit_workspace", no_emit_workspace)
+        object.__setattr__(self, "cli_overrides", cli_overrides)
+        object.__setattr__(self, "upgrade", upgrade)
 
     def refresh_command(self) -> str:
         """Render this run without ``--locked``, ready to paste into a shell."""

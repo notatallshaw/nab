@@ -14,7 +14,6 @@ import itertools
 import logging
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
@@ -25,6 +24,7 @@ from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
 from nab_provider.provider import ListingFilterCache, Provider, join_extra, split_extra
 from nab_provider.resolver_inputs import ProxyConstraints, build_resolver_inputs
 from nab_provider.target import micro_boundary_points, slices_from_points
+from nab_provider.value import FACTORY, FactoryDefault, Record, factory_value, replace
 from nab_provider.yanked_resolution import YankProxyProvider
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 from nab_resolver.resolver import Resolver, ResolverObserver
@@ -103,8 +103,7 @@ class _ResolveObserver(ResolverObserver[str, "Version"]):
             self._sink.on_pin(to_level)
 
 
-@dataclass(frozen=True, slots=True)
-class InstallContexts:
+class InstallContexts(Record, frozen=True):
     """A fork's requirements, split back into the contexts PEP 751 installs.
 
     ``project`` is the project's own dependencies, empty in a fork a
@@ -118,15 +117,25 @@ class InstallContexts:
     selected.
     """
 
-    project: tuple[Requirement, ...] = ()
-    selectors: Mapping[tuple[str, str], tuple[Requirement, ...]] = field(
-        default_factory=dict
-    )
-    name_project: bool = False
+    __slots__ = __match_args__ = ("project", "selectors", "name_project")
+
+    project: tuple[Requirement, ...]
+    selectors: Mapping[tuple[str, str], tuple[Requirement, ...]]
+    name_project: bool
+
+    def __init__(
+        self,
+        project: tuple[Requirement, ...] = (),
+        selectors: Mapping[tuple[str, str], tuple[Requirement, ...]]
+        | FactoryDefault = FACTORY,
+        name_project: bool = False,  # noqa: FBT001, FBT002 - Preserve the positional record constructor.
+    ) -> None:
+        object.__setattr__(self, "project", project)
+        object.__setattr__(self, "selectors", factory_value(selectors, dict))
+        object.__setattr__(self, "name_project", name_project)
 
 
-@dataclass(frozen=True, slots=True)
-class ResolveFork:
+class ResolveFork(Record, frozen=True):
     """A conflict fork's resolver input: a selection and its requirements.
 
     ``selection`` is the conflicting members active in this fork, empty
@@ -140,32 +149,89 @@ class ResolveFork:
     a bare requirement list with no project to split.
     """
 
+    __slots__ = __match_args__ = ("selection", "requirements", "contexts")
+
     selection: tuple[tuple[str, str], ...]
     requirements: tuple[Requirement, ...]
-    contexts: InstallContexts | None = None
+    contexts: InstallContexts | None
+
+    def __init__(
+        self,
+        selection: tuple[tuple[str, str], ...],
+        requirements: tuple[Requirement, ...],
+        contexts: InstallContexts | None = None,
+    ) -> None:
+        object.__setattr__(self, "selection", selection)
+        object.__setattr__(self, "requirements", requirements)
+        object.__setattr__(self, "contexts", contexts)
 
 
-@dataclass
-class TargetResult:
+class TargetResult(Record):
     """One target's resolve: its pins, or why it has none.
 
     ``lock`` is present exactly when the resolve succeeded.  ``consulted``
     is every marker the resolve read: root, constraint and dependency.
     """
 
+    __match_args__ = (
+        "target",
+        "success",
+        "pins",
+        "error",
+        "consulted",
+        "lock",
+        "decisions",
+        "rounds",
+        "conflicts",
+        "backjumps",
+        "metadata_fetched",
+        "distributions_seen",
+        "wall_time",
+    )
+
     target: ResolveTarget
     success: bool
-    pins: dict[str, Version] = field(default_factory=dict)
-    error: ResolutionError | None = None
-    consulted: frozenset[Marker] = frozenset()
-    lock: TargetLock | None = None
-    decisions: int = 0
-    rounds: int = 0
-    conflicts: int = 0
-    backjumps: int = 0
-    metadata_fetched: int = 0
-    distributions_seen: int = 0
-    wall_time: float = 0.0
+    pins: dict[str, Version]
+    error: ResolutionError | None
+    consulted: frozenset[Marker]
+    lock: TargetLock | None
+    decisions: int
+    rounds: int
+    conflicts: int
+    backjumps: int
+    metadata_fetched: int
+    distributions_seen: int
+    wall_time: float
+
+    def __init__(  # noqa: PLR0913, PLR0917 - Preserve the positional record constructor.
+        self,
+        target: ResolveTarget,
+        success: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        pins: dict[str, Version] | FactoryDefault = FACTORY,
+        error: ResolutionError | None = None,
+        consulted: frozenset[Marker] = frozenset(),
+        lock: TargetLock | None = None,
+        decisions: int = 0,
+        rounds: int = 0,
+        conflicts: int = 0,
+        backjumps: int = 0,
+        metadata_fetched: int = 0,
+        distributions_seen: int = 0,
+        wall_time: float = 0.0,
+    ) -> None:
+        self.target = target
+        self.success = success
+        self.pins = factory_value(pins, dict)
+        self.error = error
+        self.consulted = consulted
+        self.lock = lock
+        self.decisions = decisions
+        self.rounds = rounds
+        self.conflicts = conflicts
+        self.backjumps = backjumps
+        self.metadata_fetched = metadata_fetched
+        self.distributions_seen = distributions_seen
+        self.wall_time = wall_time
 
     def dependency_requirements(
         self,
@@ -187,8 +253,7 @@ class TargetResult:
         return requirements
 
 
-@dataclass
-class ResolveResult:
+class ResolveResult(Record):
     """The finished resolve: one :class:`TargetResult` per target per fork.
 
     ``base_results`` and ``env_base_names`` are populated only when
@@ -197,10 +262,24 @@ class ResolveResult:
     incomplete, so it counts against :attr:`success`.
     """
 
+    __match_args__ = ("targets", "target_results", "base_results", "env_base_names")
+
     targets: tuple[ResolveTarget, ...]
-    target_results: list[TargetResult] = field(default_factory=list)
-    base_results: list[TargetResult] = field(default_factory=list)
-    env_base_names: dict[EnvSignature, frozenset[str]] = field(default_factory=dict)
+    target_results: list[TargetResult]
+    base_results: list[TargetResult]
+    env_base_names: dict[EnvSignature, frozenset[str]]
+
+    def __init__(
+        self,
+        targets: tuple[ResolveTarget, ...],
+        target_results: list[TargetResult] | FactoryDefault = FACTORY,
+        base_results: list[TargetResult] | FactoryDefault = FACTORY,
+        env_base_names: dict[EnvSignature, frozenset[str]] | FactoryDefault = FACTORY,
+    ) -> None:
+        self.targets = targets
+        self.target_results = factory_value(target_results, list)
+        self.base_results = factory_value(base_results, list)
+        self.env_base_names = factory_value(env_base_names, dict)
 
     @property
     def success(self) -> bool:
@@ -504,9 +583,23 @@ def env_signature(target: ResolveTarget) -> EnvSignature:
     return tuple(sorted(target.marker_env.items()))
 
 
-@dataclass(frozen=True, slots=True)
-class _EngineSettings:
+class _EngineSettings(Record, frozen=True):
     """What every per-target resolve in one run shares."""
+
+    __slots__ = __match_args__ = (
+        "coordinator",
+        "inputs",
+        "source_root",
+        "align",
+        "resolution",
+        "marker_holds",
+        "progress",
+        "listing_filter_cache",
+        "release_refused_wheels",
+        "include_dependency_requirements",
+        "warned_dropped_markers",
+        "artifacts",
+    )
 
     coordinator: FetchCoordinator
     inputs: ResolveInputs
@@ -522,23 +615,59 @@ class _EngineSettings:
     # this module.
     marker_holds: MarkerHolds
 
-    progress: ProgressSink | None = None
+    progress: ProgressSink | None
 
     # Safe to share: the coordinator and the policy config the pre-tag half
     # of the listing filter reads are fixed for the run.
-    listing_filter_cache: ListingFilterCache = field(default_factory=ListingFilterCache)
+    listing_filter_cache: ListingFilterCache
 
     # Whether the wheel-tag filter may release what it refuses; see
     # ``resolve_with_coordinator``.
-    release_refused_wheels: bool = False
-    include_dependency_requirements: bool = False
+    release_refused_wheels: bool
+    include_dependency_requirements: bool
 
     # The (kind, text) pairs already reported, so an entry read once per
     # target per fork and again in the base pass warns once.
-    warned_dropped_markers: set[tuple[str, str]] = field(default_factory=set)
+    warned_dropped_markers: set[tuple[str, str]]
 
     # Lock artifacts shared by the targets of one resolve.
-    artifacts: ArtifactMemo = field(default_factory=ArtifactMemo)
+    artifacts: ArtifactMemo
+
+    def __init__(  # noqa: PLR0913, PLR0917 - Preserve the positional record constructor.
+        self,
+        coordinator: FetchCoordinator,
+        inputs: ResolveInputs,
+        source_root: Path | None,
+        align: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        resolution: ResolutionStrategy,
+        marker_holds: MarkerHolds,
+        progress: ProgressSink | None = None,
+        listing_filter_cache: ListingFilterCache | FactoryDefault = FACTORY,
+        release_refused_wheels: bool = False,  # noqa: FBT001, FBT002 - Preserve the positional record constructor.
+        include_dependency_requirements: bool = False,  # noqa: FBT001, FBT002 - Preserve the positional record constructor.
+        warned_dropped_markers: set[tuple[str, str]] | FactoryDefault = FACTORY,
+        artifacts: ArtifactMemo | FactoryDefault = FACTORY,
+    ) -> None:
+        object.__setattr__(self, "coordinator", coordinator)
+        object.__setattr__(self, "inputs", inputs)
+        object.__setattr__(self, "source_root", source_root)
+        object.__setattr__(self, "align", align)
+        object.__setattr__(self, "resolution", resolution)
+        object.__setattr__(self, "marker_holds", marker_holds)
+        object.__setattr__(self, "progress", progress)
+        object.__setattr__(
+            self,
+            "listing_filter_cache",
+            factory_value(listing_filter_cache, ListingFilterCache),
+        )
+        object.__setattr__(self, "release_refused_wheels", release_refused_wheels)
+        object.__setattr__(
+            self, "include_dependency_requirements", include_dependency_requirements
+        )
+        object.__setattr__(
+            self, "warned_dropped_markers", factory_value(warned_dropped_markers, set)
+        )
+        object.__setattr__(self, "artifacts", factory_value(artifacts, ArtifactMemo))
 
 
 def _threaded_preferences(

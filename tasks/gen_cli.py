@@ -12,7 +12,6 @@ import enum
 import inspect
 import sys
 import textwrap
-from dataclasses import MISSING, fields, is_dataclass
 from pathlib import Path
 from types import FunctionType, MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -21,11 +20,11 @@ from nab._cli.definition import model
 from nab._cli.definition.model import COMMANDS, UNSET, Kind, Opt
 from nab._cli.definition.options import ALL
 from nab.config.ladder import docs_path
+from nab_provider.value import field_names, is_record
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from _typeshed import DataclassInstance
 
 _ROOT = Path(__file__).resolve().parents[1]
 _SPEC = _ROOT / "src" / "nab" / "_cli" / "spec.py"
@@ -455,7 +454,7 @@ def _spell(value: object, imports: _Imports, row: Opt) -> str:
         return f"({inner},)" if len(value) == 1 else f"({inner})"
     if isinstance(value, MappingProxyType):
         return _proxy(value, imports, row)
-    if is_dataclass(value) and not isinstance(value, type):
+    if is_record(value) and not isinstance(value, type):
         return _instance(value, imports, row)
 
     msg = f"{row.name} holds {value!r}, which the generator cannot render"
@@ -477,12 +476,14 @@ def _proxy(value: MappingProxyType[Any, Any], imports: _Imports, row: Opt) -> st
     return f"{call}({{{entries}}})"
 
 
-def _instance(value: DataclassInstance, imports: _Imports, row: Opt) -> str:
-    """Write a dataclass instance as the call that builds it, by the fields it sets."""
+def _instance(value: object, imports: _Imports, row: Opt) -> str:
+    """Write a record as the constructor arguments differing from its defaults."""
+    parameters = inspect.signature(type(value)).parameters
     written = ", ".join(
-        f"{field.name}={_spell(getattr(value, field.name), imports, row)}"
-        for field in fields(value)
-        if field.default is MISSING or getattr(value, field.name) != field.default
+        f"{name}={_spell(getattr(value, name), imports, row)}"
+        for name in field_names(value)
+        if parameters[name].default is inspect.Parameter.empty
+        or getattr(value, name) != parameters[name].default
     )
     return f"{_named(type(value), imports)}({written})"
 

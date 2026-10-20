@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import re
 from contextlib import suppress
-from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_provider.pep508 import parse_requirement
+
+from .value import FACTORY, FactoryDefault, Record, factory_value
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -168,17 +169,44 @@ def intern_version(version_str: str) -> Version:
     return Version(version_str)
 
 
-@dataclass
-class WheelMetadata:
+class WheelMetadata(Record):
     """Parsed fields from a wheel's METADATA file."""
+
+    __match_args__ = (
+        "name",
+        "version",
+        "requires_python",
+        "requires_dist",
+        "provides_extra",
+        "metadata_version",
+        "dynamic",
+    )
 
     name: str
     version: Version
-    requires_python: SpecifierSet | None = None
-    requires_dist: list[Requirement] = field(default_factory=list)
-    provides_extra: list[str] = field(default_factory=list)
-    metadata_version: str | None = None
-    dynamic: frozenset[str] = field(default_factory=frozenset)
+    requires_python: SpecifierSet | None
+    requires_dist: list[Requirement]
+    provides_extra: list[str]
+    metadata_version: str | None
+    dynamic: frozenset[str]
+
+    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+        self,
+        name: str,
+        version: Version,
+        requires_python: SpecifierSet | None = None,
+        requires_dist: list[Requirement] | FactoryDefault = FACTORY,
+        provides_extra: list[str] | FactoryDefault = FACTORY,
+        metadata_version: str | None = None,
+        dynamic: frozenset[str] | FactoryDefault = FACTORY,
+    ) -> None:
+        self.name = name
+        self.version = version
+        self.requires_python = requires_python
+        self.requires_dist = factory_value(requires_dist, list)
+        self.provides_extra = factory_value(provides_extra, list)
+        self.metadata_version = metadata_version
+        self.dynamic = factory_value(dynamic, frozenset)
 
 
 # The header names parse_metadata reads, lowercased.

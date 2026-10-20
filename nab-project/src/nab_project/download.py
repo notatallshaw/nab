@@ -18,7 +18,6 @@ import asyncio
 import hashlib
 import logging
 import posixpath
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
@@ -27,6 +26,7 @@ from nab_index.atomic import atomic_write
 from nab_index.client import AsyncSimpleClient
 from nab_index.local_index import parse_file_url
 from nab_provider.errors import HttpError
+from nab_provider.value import Record
 
 from .lockfile import ArchivePin, IndexPin, LocalPin, LockInput, VcsPin
 
@@ -53,8 +53,7 @@ class DownloadError(Exception):
     """A downloaded artefact failed hash verification or the HTTP fetch."""
 
 
-@dataclass(frozen=True, slots=True)
-class DownloadEntry:
+class DownloadEntry(Record, frozen=True):
     """One artefact to fetch into the output directory.
 
     ``hash_algo`` is one of ``sha256``, ``sha384``, ``sha512`` and
@@ -68,21 +67,54 @@ class DownloadEntry:
     ``file://``.
     """
 
+    __slots__ = __match_args__ = (
+        "package",
+        "version",
+        "filename",
+        "url",
+        "hash_algo",
+        "digest",
+        "local_path",
+    )
+
     package: str
     version: str
     filename: str
     url: str
     hash_algo: str
     digest: str
-    local_path: Path | None = None
+    local_path: Path | None
+
+    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+        self,
+        package: str,
+        version: str,
+        filename: str,
+        url: str,
+        hash_algo: str,
+        digest: str,
+        local_path: Path | None = None,
+    ) -> None:
+        object.__setattr__(self, "package", package)
+        object.__setattr__(self, "version", version)
+        object.__setattr__(self, "filename", filename)
+        object.__setattr__(self, "url", url)
+        object.__setattr__(self, "hash_algo", hash_algo)
+        object.__setattr__(self, "digest", digest)
+        object.__setattr__(self, "local_path", local_path)
 
 
-@dataclass(frozen=True, slots=True)
-class DownloadResult:
+class DownloadResult(Record, frozen=True):
     """Summary of a download run."""
+
+    __slots__ = __match_args__ = ("written", "skipped")
 
     written: tuple[Path, ...]
     skipped: tuple[Path, ...]
+
+    def __init__(self, written: tuple[Path, ...], skipped: tuple[Path, ...]) -> None:  # noqa: D107 - Field-only constructor documented by its class.
+        object.__setattr__(self, "written", written)
+        object.__setattr__(self, "skipped", skipped)
 
 
 def iter_artifacts(lock_input: LockInput) -> Iterable[DownloadEntry]:

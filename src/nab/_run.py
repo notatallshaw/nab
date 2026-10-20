@@ -12,7 +12,6 @@ resolver.
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
@@ -23,6 +22,7 @@ from nab_markersets.python_versions import validate_python_version
 from nab_project import toml_io
 from nab_project.paths import PathState, path_state
 from nab_provider.policy import ResolveMode
+from nab_provider.value import Record
 
 from . import env
 from ._cli.parse import option_tokens
@@ -165,9 +165,17 @@ def lock_anchor(ladder: ConfigLadder) -> datetime | None:
     return value if isinstance(value, datetime) else None
 
 
-@dataclass(frozen=True, slots=True)
-class RunSettings:
+class RunSettings(Record, frozen=True):
     """The run knobs a subcommand reads from the layered config for one run."""
+
+    __slots__ = __match_args__ = (
+        "resolution",
+        "offline",
+        "cache_dir",
+        "http_backend",
+        "max_concurrency",
+        "cli_project_overrides",
+    )
 
     resolution: ResolutionStrategy | None
     offline: bool
@@ -176,6 +184,22 @@ class RunSettings:
     max_concurrency: int
     # Explicit --project-* overrides as rendered flag/value pairs.
     cli_project_overrides: tuple[tuple[str, str], ...]
+
+    def __init__(
+        self,
+        resolution: ResolutionStrategy | None,
+        offline: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        cache_dir: Path | None,
+        http_backend: str,
+        max_concurrency: int,
+        cli_project_overrides: tuple[tuple[str, str], ...],
+    ) -> None:
+        object.__setattr__(self, "resolution", resolution)
+        object.__setattr__(self, "offline", offline)
+        object.__setattr__(self, "cache_dir", cache_dir)
+        object.__setattr__(self, "http_backend", http_backend)
+        object.__setattr__(self, "max_concurrency", max_concurrency)
+        object.__setattr__(self, "cli_project_overrides", cli_project_overrides)
 
 
 _BOTH_PYTHON_AXES = (

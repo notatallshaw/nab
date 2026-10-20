@@ -15,7 +15,6 @@ import time
 import zipfile
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
-from dataclasses import replace
 from email.utils import formatdate
 from pathlib import Path
 from typing import Any
@@ -61,6 +60,7 @@ from nab_provider.records import (
 )
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.store import sdist_artifact_key
+from nab_provider.value import replace
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"

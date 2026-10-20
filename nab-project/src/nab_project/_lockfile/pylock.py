@@ -13,12 +13,11 @@ from __future__ import annotations
 import os
 import re
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field, replace
 from datetime import timezone
 from functools import lru_cache, reduce
 from itertools import product
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
 
 import tomli_w
 
@@ -45,6 +44,7 @@ from nab_provider._vendor.packaging.utils import canonicalize_name, is_normalize
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_provider.conflict_kind import KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 from nab_provider.marker_holds import intractable_as_error
+from nab_provider.value import FACTORY, FactoryDefault, Record, factory_value, replace
 
 from ..conflicts import conflict_exclusion_groups, conflict_member_groups
 from .builder import require_artifact_hashes, validate_artifact_hashes
@@ -92,8 +92,7 @@ _PEER_CACHE_FIXED_UNITS = 12
 _CONDITION_CACHE_FIXED_UNITS = 6
 
 
-@dataclass(frozen=True, slots=True)
-class _ForkAxes:
+class _ForkAxes(Record, frozen=True):
     """The declared conflict sets a lock's forks vary along.
 
     ``exclusion_groups`` are the ``(kind, name)`` member sets an install
@@ -108,6 +107,37 @@ class _ForkAxes:
     when the factoring has no table to read (:func:`_emission_scope`).
     """
 
+    __slots__ = __match_args__ = (
+        "exclusion_groups",
+        "forks",
+        "targets",
+        "env_signatures",
+        "markers",
+        "gates",
+        "env_rows",
+        "environment_markers",
+    )
+
+    __record_compare_fields__: ClassVar[tuple[str, ...] | None] = (
+        "exclusion_groups",
+        "forks",
+        "targets",
+        "env_signatures",
+        "markers",
+        "gates",
+        "env_rows",
+    )
+
+    __record_repr_fields__: ClassVar[tuple[str, ...] | None] = (
+        "exclusion_groups",
+        "forks",
+        "targets",
+        "env_signatures",
+        "markers",
+        "gates",
+        "env_rows",
+    )
+
     exclusion_groups: tuple[AbstractSet[tuple[str, str]], ...]
     forks: Mapping[_ForkKey, str]
     targets: Mapping[str, TargetLock]
@@ -115,9 +145,29 @@ class _ForkAxes:
     markers: Mapping[str, str]
     gates: Mapping[tuple[str, str], _Members]
     env_rows: tuple[Mapping[str, str], ...] | None
-    environment_markers: dict[tuple[str, ...], Marker] = field(
-        default_factory=dict, repr=False, compare=False
-    )
+    environment_markers: dict[tuple[str, ...], Marker]
+
+    def __init__(
+        self,
+        exclusion_groups: tuple[AbstractSet[tuple[str, str]], ...],
+        forks: Mapping[_ForkKey, str],
+        targets: Mapping[str, TargetLock],
+        env_signatures: Mapping[str, _EnvSignature],
+        markers: Mapping[str, str],
+        gates: Mapping[tuple[str, str], _Members],
+        env_rows: tuple[Mapping[str, str], ...] | None,
+        environment_markers: dict[tuple[str, ...], Marker] | FactoryDefault = FACTORY,
+    ) -> None:
+        object.__setattr__(self, "exclusion_groups", exclusion_groups)
+        object.__setattr__(self, "forks", forks)
+        object.__setattr__(self, "targets", targets)
+        object.__setattr__(self, "env_signatures", env_signatures)
+        object.__setattr__(self, "markers", markers)
+        object.__setattr__(self, "gates", gates)
+        object.__setattr__(self, "env_rows", env_rows)
+        object.__setattr__(
+            self, "environment_markers", factory_value(environment_markers, dict)
+        )
 
     def environment_marker(self, labels: Sequence[str]) -> Marker:
         """Reuse a validated environment marker within this emission."""
@@ -133,19 +183,25 @@ class _ForkAxes:
             return marker
 
 
-@dataclass(frozen=True, slots=True)
-class _GatedMarker:
+class _GatedMarker(Record, frozen=True):
     """The environments paired with one package selection condition.
 
     ``marker`` is ``None`` when the condition holds in all of them.
     """
 
+    __slots__ = __match_args__ = ("marker", "gate")
+
     marker: Marker | None
     gate: tuple[tuple[str, str], ...]
 
+    def __init__(
+        self, marker: Marker | None, gate: tuple[tuple[str, str], ...]
+    ) -> None:
+        object.__setattr__(self, "marker", marker)
+        object.__setattr__(self, "gate", gate)
 
-@dataclass(frozen=True, slots=True)
-class _Projection:
+
+class _Projection(Record, frozen=True):
     """One package's marker shape at one fork.
 
     ``dropped`` are the selection members whose clauses fall away. The
@@ -153,8 +209,14 @@ class _Projection:
     once they do (:func:`_merged_fork_gate`).
     """
 
+    __slots__ = __match_args__ = ("dropped", "gate")
+
     dropped: _Members
     gate: _Members
+
+    def __init__(self, dropped: _Members, gate: _Members) -> None:
+        object.__setattr__(self, "dropped", dropped)
+        object.__setattr__(self, "gate", gate)
 
 
 class _ProjectionPeers:

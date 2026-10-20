@@ -11,7 +11,6 @@ keeps the walk off a lead that would discard it.
 from __future__ import annotations
 
 import re
-from dataclasses import fields
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -40,6 +39,7 @@ from nab_provider.records import SdistFile, WheelFile
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import make_coordinator, make_sdist, make_wheel, pkg_override
+from nab_provider.value import field_names
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -361,8 +361,8 @@ class TestTheWalkLeavesNoTrace:
         provider.fetch_versions("pkg")
 
         counters = {
-            field.name: getattr(provider.stats, field.name)
-            for field in fields(ProviderStats)
+            field: getattr(provider.stats, field)
+            for field in field_names(ProviderStats)
         }
         tallies = dict(provider.tag_excluded_wheels_by_version)
 
@@ -370,8 +370,8 @@ class TestTheWalkLeavesNoTrace:
         provider.diagnose_listing("pkg")
 
         assert counters == {
-            field.name: getattr(provider.stats, field.name)
-            for field in fields(ProviderStats)
+            field: getattr(provider.stats, field)
+            for field in field_names(ProviderStats)
         }
         assert tallies == provider.tag_excluded_wheels_by_version
         assert counters["excluded_by_wheel_tags"] > 0

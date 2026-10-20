@@ -24,7 +24,6 @@ import threading
 import zipfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
-from dataclasses import replace
 from datetime import datetime, timezone
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -94,6 +93,7 @@ from nab_provider.provider import (
 from nab_provider.tags import PlatformSpec, TagSet
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import pkg_override
+from nab_provider.value import replace
 from nab_resolver.errors import ResolutionError, ResolutionLimitError
 
 requires_int_limit = pytest.mark.skipif(

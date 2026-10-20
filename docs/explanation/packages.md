@@ -62,6 +62,10 @@ Only `packaging` is shown among the third-party dependencies because it exists h
 `nab-index` depends on `nab-provider` because `WheelFile`, `SdistFile`, `IndexConfig`, and the fetch
 errors live with the side that must never fetch.
 
+The provider also owns `nab_provider.value`, shared record behavior used by the index, project and
+CLI layers. Concrete records keep their typed constructors in the package owning their data; the
+shared code handles comparison, frozen fields and copying.
+
 ## Why the provider is separate
 
 Resolution logic with no HTTP client in its import graph can be tested alone. CI runs

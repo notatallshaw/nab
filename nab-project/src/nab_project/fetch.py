@@ -15,7 +15,6 @@ import asyncio
 import enum
 import logging
 import threading
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
@@ -49,6 +48,7 @@ from nab_provider.store import (
     range_pending_key,
     sdist_artifact_key,
 )
+from nab_provider.value import Record
 
 from ._build_remote import build_remote_sdist
 from ._sources import materialize_source
@@ -119,8 +119,7 @@ class FetchKind(enum.Enum):
     DIRECT_ARCHIVE = "direct-archive"
 
 
-@dataclass(frozen=True, slots=True)
-class IndexRoute:
+class IndexRoute(Record, frozen=True):
     """Per-package index routing rule (a strict pin to one index).
 
     ``name`` is the package name (canonicalised internally).  ``index``
@@ -131,8 +130,14 @@ class IndexRoute:
     route per package.
     """
 
+    __slots__ = __match_args__ = ("name", "index")
+
     name: str
     index: str
+
+    def __init__(self, name: str, index: str) -> None:  # noqa: D107 - Field-only constructor documented by its class.
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "index", index)
 
 
 def _resolve_routes(routes: list[IndexRoute]) -> dict[str, str]:
@@ -187,21 +192,47 @@ def _builds_remote_sdists(inputs: ResolveInputs | None) -> bool:
     return any(o.build_policy is BuildPolicy.BUILD_REMOTE for o in overrides)
 
 
-@dataclass(frozen=True, slots=True)
-class FetchRequest:
+class FetchRequest(Record, frozen=True):
     """A single fetch request, carried across the sync->async boundary."""
+
+    __slots__ = __match_args__ = (
+        "kind",
+        "package",
+        "version",
+        "url",
+        "metadata_hash",
+        "sdist_hashes",
+        "wheel_hashes",
+    )
 
     kind: FetchKind
     package: str
-    version: str | None = None
-    url: str | None = None
-    metadata_hash: tuple[str, str] | None = None
-    sdist_hashes: tuple[tuple[str, str], ...] = ()
-    wheel_hashes: tuple[tuple[str, str], ...] = ()
+    version: str | None
+    url: str | None
+    metadata_hash: tuple[str, str] | None
+    sdist_hashes: tuple[tuple[str, str], ...]
+    wheel_hashes: tuple[tuple[str, str], ...]
+
+    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+        self,
+        kind: FetchKind,
+        package: str,
+        version: str | None = None,
+        url: str | None = None,
+        metadata_hash: tuple[str, str] | None = None,
+        sdist_hashes: tuple[tuple[str, str], ...] = (),
+        wheel_hashes: tuple[tuple[str, str], ...] = (),
+    ) -> None:
+        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "package", package)
+        object.__setattr__(self, "version", version)
+        object.__setattr__(self, "url", url)
+        object.__setattr__(self, "metadata_hash", metadata_hash)
+        object.__setattr__(self, "sdist_hashes", sdist_hashes)
+        object.__setattr__(self, "wheel_hashes", wheel_hashes)
 
 
-@dataclass
-class WarmSyncStats:
+class WarmSyncStats(Record):
     """Counters for the synchronous warm-hit listing path.
 
     A sync hit bumps ``listing_hits``; a decline bumps ``listing_declines`` and
@@ -209,15 +240,43 @@ class WarmSyncStats:
     resolver thread, so the counters need no lock.
     """
 
-    listing_hits: int = 0
-    listing_declines: int = 0
-    declined_ineligible: int = 0
-    declined_no_policy: int = 0
-    declined_stale_online: int = 0
+    __match_args__ = (
+        "listing_hits",
+        "listing_declines",
+        "declined_ineligible",
+        "declined_no_policy",
+        "declined_stale_online",
+        "declined_no_blob",
+        "declined_small_blob",
+    )
+
+    listing_hits: int
+    listing_declines: int
+    declined_ineligible: int
+    declined_no_policy: int
+    declined_stale_online: int
     # No blob, or one the read helper would not serve: a foreign build, a
     # non-binding digest, corruption, or a blob holding no records.
-    declined_no_blob: int = 0
-    declined_small_blob: int = 0
+    declined_no_blob: int
+    declined_small_blob: int
+
+    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+        self,
+        listing_hits: int = 0,
+        listing_declines: int = 0,
+        declined_ineligible: int = 0,
+        declined_no_policy: int = 0,
+        declined_stale_online: int = 0,
+        declined_no_blob: int = 0,
+        declined_small_blob: int = 0,
+    ) -> None:
+        self.listing_hits = listing_hits
+        self.listing_declines = listing_declines
+        self.declined_ineligible = declined_ineligible
+        self.declined_no_policy = declined_no_policy
+        self.declined_stale_online = declined_stale_online
+        self.declined_no_blob = declined_no_blob
+        self.declined_small_blob = declined_small_blob
 
 
 # Queue items: single request, batch of requests, or None (shutdown).

@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ._compat import override
-from ._value import SlottedValue
+from .value import SlottedValue
 
 if TYPE_CHECKING:
     from datetime import datetime

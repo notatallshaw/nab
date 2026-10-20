@@ -11,7 +11,6 @@ import bisect
 import logging
 import operator
 from collections import defaultdict, deque
-from dataclasses import dataclass, fields
 from itertools import chain
 from typing import TYPE_CHECKING, TypeVar, cast
 
@@ -66,6 +65,7 @@ from .policy import (
     ResolveMode as ResolveMode,  # noqa: PLC0414  (re-export, importable from here)
 )
 from .records import DistFile, SdistFile, WheelFile
+from .value import Record, field_names
 from .vcs_admission import (
     UnsupportedVcsError,
     VcsConfig,
@@ -122,8 +122,7 @@ logger = logging.getLogger(__name__)
 _PreparedT = TypeVar("_PreparedT")
 
 
-@dataclass
-class ProviderStats:
+class ProviderStats(Record):
     """Counters describing what the provider did during a resolve.
 
     Complements :class:`nab_resolver.resolver.ResolverStats` by tracking the
@@ -131,30 +130,102 @@ class ProviderStats:
     Used by benchmarks to measure prefetch and look-ahead wins.
     """
 
-    listings_fetched: int = 0
-    metadata_fetched: int = 0
-    sdist_pkg_info_fetched: int = 0
-    wheel_metadata_range_fetched: int = 0
-    wheel_metadata_range_full_body: int = 0
-    wheel_metadata_range_unsupported: int = 0
-    wheel_metadata_range_missing: int = 0
-    distributions_seen: int = 0
-    wheels_seen: int = 0
-    sdists_seen: int = 0
-    excluded_by_python: int = 0
-    excluded_by_time: int = 0
-    excluded_by_dist_policy: int = 0
-    excluded_by_build_policy: int = 0
-    excluded_by_wheel_tags: int = 0
-    excluded_versions_no_compatible_wheel: int = 0
-    sdist_pyproject_fallbacks: int = 0
-    get_dependencies_calls: int = 0
-    choose_version_calls: int = 0
-    prioritize_calls: int = 0
-    look_ahead_rejections: int = 0
+    __match_args__ = (
+        "listings_fetched",
+        "metadata_fetched",
+        "sdist_pkg_info_fetched",
+        "wheel_metadata_range_fetched",
+        "wheel_metadata_range_full_body",
+        "wheel_metadata_range_unsupported",
+        "wheel_metadata_range_missing",
+        "distributions_seen",
+        "wheels_seen",
+        "sdists_seen",
+        "excluded_by_python",
+        "excluded_by_time",
+        "excluded_by_dist_policy",
+        "excluded_by_build_policy",
+        "excluded_by_wheel_tags",
+        "excluded_versions_no_compatible_wheel",
+        "sdist_pyproject_fallbacks",
+        "get_dependencies_calls",
+        "choose_version_calls",
+        "prioritize_calls",
+        "look_ahead_rejections",
+    )
+
+    listings_fetched: int
+    metadata_fetched: int
+    sdist_pkg_info_fetched: int
+    wheel_metadata_range_fetched: int
+    wheel_metadata_range_full_body: int
+    wheel_metadata_range_unsupported: int
+    wheel_metadata_range_missing: int
+    distributions_seen: int
+    wheels_seen: int
+    sdists_seen: int
+    excluded_by_python: int
+    excluded_by_time: int
+    excluded_by_dist_policy: int
+    excluded_by_build_policy: int
+    excluded_by_wheel_tags: int
+    excluded_versions_no_compatible_wheel: int
+    sdist_pyproject_fallbacks: int
+    get_dependencies_calls: int
+    choose_version_calls: int
+    prioritize_calls: int
+    look_ahead_rejections: int
+
+    def __init__(  # noqa: D107, PLR0913, PLR0917 - Preserve the positional record constructor.
+        self,
+        listings_fetched: int = 0,
+        metadata_fetched: int = 0,
+        sdist_pkg_info_fetched: int = 0,
+        wheel_metadata_range_fetched: int = 0,
+        wheel_metadata_range_full_body: int = 0,
+        wheel_metadata_range_unsupported: int = 0,
+        wheel_metadata_range_missing: int = 0,
+        distributions_seen: int = 0,
+        wheels_seen: int = 0,
+        sdists_seen: int = 0,
+        excluded_by_python: int = 0,
+        excluded_by_time: int = 0,
+        excluded_by_dist_policy: int = 0,
+        excluded_by_build_policy: int = 0,
+        excluded_by_wheel_tags: int = 0,
+        excluded_versions_no_compatible_wheel: int = 0,
+        sdist_pyproject_fallbacks: int = 0,
+        get_dependencies_calls: int = 0,
+        choose_version_calls: int = 0,
+        prioritize_calls: int = 0,
+        look_ahead_rejections: int = 0,
+    ) -> None:
+        self.listings_fetched = listings_fetched
+        self.metadata_fetched = metadata_fetched
+        self.sdist_pkg_info_fetched = sdist_pkg_info_fetched
+        self.wheel_metadata_range_fetched = wheel_metadata_range_fetched
+        self.wheel_metadata_range_full_body = wheel_metadata_range_full_body
+        self.wheel_metadata_range_unsupported = wheel_metadata_range_unsupported
+        self.wheel_metadata_range_missing = wheel_metadata_range_missing
+        self.distributions_seen = distributions_seen
+        self.wheels_seen = wheels_seen
+        self.sdists_seen = sdists_seen
+        self.excluded_by_python = excluded_by_python
+        self.excluded_by_time = excluded_by_time
+        self.excluded_by_dist_policy = excluded_by_dist_policy
+        self.excluded_by_build_policy = excluded_by_build_policy
+        self.excluded_by_wheel_tags = excluded_by_wheel_tags
+        self.excluded_versions_no_compatible_wheel = (
+            excluded_versions_no_compatible_wheel
+        )
+        self.sdist_pyproject_fallbacks = sdist_pyproject_fallbacks
+        self.get_dependencies_calls = get_dependencies_calls
+        self.choose_version_calls = choose_version_calls
+        self.prioritize_calls = prioritize_calls
+        self.look_ahead_rejections = look_ahead_rejections
 
 
-_STAT_FIELDS = tuple(stat.name for stat in fields(ProviderStats))
+_STAT_FIELDS = field_names(ProviderStats)
 
 # Every counter of a ProviderStats, in _STAT_FIELDS order.
 _counters = operator.attrgetter(*_STAT_FIELDS)
@@ -314,14 +385,7 @@ _UNSET = object()
 
 
 def _unset_if_none(value: object) -> object:
-    """Map ``None`` to ``_UNSET``, passing every other value through.
-
-    Most policy fields store ``None`` to mean "unset" on the override
-    dataclasses, so wrapping their attribute access in this helper yields
-    the ``_UNSET``-or-value shape :meth:`Provider._effective_field`
-    expects.  :func:`_uploaded_prior_to_value` builds that shape itself,
-    because there ``None`` is a real value (a disabled cutoff).
-    """
+    """Map ``None`` to ``_UNSET``, retaining other values."""
     if value is None:
         return _UNSET
     return value

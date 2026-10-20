@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import TYPE_CHECKING
 from zipfile import ZipFile
@@ -21,6 +21,7 @@ from nab_provider.policy import LocalSource
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import pkg_override
+from nab_provider.value import replace
 from nab_resolver.errors import ResolutionError
 
 if TYPE_CHECKING:

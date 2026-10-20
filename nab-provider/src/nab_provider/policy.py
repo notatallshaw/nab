@@ -5,7 +5,7 @@ from __future__ import annotations
 import enum
 from typing import TYPE_CHECKING
 
-from ._value import SlottedValue
+from .value import SlottedValue
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -181,8 +181,7 @@ class VcsSource(SlottedValue):
     read for metadata as a :class:`LocalSource` is.
     """
 
-    __slots__ = ("name", "url")
-    __match_args__ = ("name", "url")
+    __slots__ = __match_args__ = ("name", "url")
 
     def __init__(self, name: str, url: str) -> None:
         """Record the repository at ``url`` as the only candidate for ``name``."""
@@ -204,8 +203,7 @@ class ArchiveSource(SlottedValue):
     :class:`LocalSource` is.
     """
 
-    __slots__ = ("name", "url")
-    __match_args__ = ("name", "url")
+    __slots__ = __match_args__ = ("name", "url")
 
     def __init__(self, name: str, url: str) -> None:
         """Record the archive at ``url`` as the only candidate for ``name``."""

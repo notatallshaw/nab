@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import enum
 import sys
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
 
 from ._compat import override
 from .digest import is_hex_digest
 from .serialization import SimpleSerialization
+from .value import Record
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -190,10 +190,7 @@ class _DeferredIntegrity:
 
 
 class _WheelIntegrity(_DeferredIntegrity):
-    """Hold raw tables and the metadata URL memo outside dataclass fields.
-
-    ``@dataclass(slots=True)`` rejects ``__slots__`` in the dataclass body.
-    """
+    """Keep raw integrity tables and the metadata URL memo outside value fields."""
 
     __slots__ = ("_metadata_url", "_raw_metadata")
 
@@ -242,23 +239,16 @@ def defer_sidecar_hash(wheel: WheelFile, table: object) -> None:
 
 
 def _slot_writer(cls: type, name: str) -> Callable[[object, object], None]:
-    """Return the setter for one of ``cls``'s slots.
-
-    A frozen dataclass refuses ``self.field = value``, so its generated
-    ``__init__`` writes every field through ``object.__setattr__``. A record
-    fills its slots through these instead, leaving ``__setattr__`` frozen for
-    callers.
-    """
+    """Return a slot setter that bypasses frozen assignment checks."""
     slot: MemberDescriptorType = cls.__dict__[name]
     return slot.__set__
 
 
-@dataclass(frozen=True, slots=True, init=False)
-class WheelFile(_WheelIntegrity):
+class WheelFile(_WheelIntegrity, Record, frozen=True):
     """Wheel file record returned by the Simple-API client.
 
     ``hashes`` is a tuple of ``(algorithm, hex_digest)`` pairs in the
-    order PEP 691 declared them (tuple form keeps the dataclass
+    order PEP 691 declared them (tuple form keeps the record
     hashable).  ``has_metadata`` says whether the index advertised a
     PEP 658/714 sidecar.
 
@@ -275,16 +265,29 @@ class WheelFile(_WheelIntegrity):
     :func:`rehydrated_wheel`).
     """
 
+    __slots__ = __match_args__ = (
+        "filename",
+        "url",
+        "version",
+        "requires_python",
+        "has_metadata",
+        "upload_time",
+        "hashes",
+        "size",
+        "local_path",
+        "metadata_hash",
+    )
+
     filename: str
     url: str
     version: str
     requires_python: str | None
     has_metadata: bool
     upload_time: str | None
-    hashes: tuple[tuple[str, str], ...] = ()
-    size: int | None = None
-    local_path: Path | None = None
-    metadata_hash: tuple[str, str] | None = None
+    hashes: tuple[tuple[str, str], ...]
+    size: int | None
+    local_path: Path | None
+    metadata_hash: tuple[str, str] | None
 
     # Ordinary frozen records share the flag instead of allocating a slot.
     if TYPE_CHECKING:
@@ -292,7 +295,7 @@ class WheelFile(_WheelIntegrity):
     else:
         yanked = False
 
-    def __init__(  # noqa: PLR0913, PLR0917 - the dataclass's own fields, in its own order
+    def __init__(  # noqa: PLR0913, PLR0917 - the positional record fields
         self,
         filename: str,
         url: str,
@@ -417,22 +420,32 @@ def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its ow
     return wheel
 
 
-@dataclass(frozen=True, slots=True, init=False)
-class SdistFile(_DeferredIntegrity):
+class SdistFile(_DeferredIntegrity, Record, frozen=True):
     """A source distribution from the Simple API.
 
     See :class:`WheelFile` for the meaning of ``hashes``, ``size`` and
     ``local_path``.
     """
 
+    __slots__ = __match_args__ = (
+        "filename",
+        "url",
+        "version",
+        "requires_python",
+        "upload_time",
+        "hashes",
+        "size",
+        "local_path",
+    )
+
     filename: str
     url: str
     version: str
     requires_python: str | None
     upload_time: str | None
-    hashes: tuple[tuple[str, str], ...] = ()
-    size: int | None = None
-    local_path: Path | None = None
+    hashes: tuple[tuple[str, str], ...]
+    size: int | None
+    local_path: Path | None
 
     # Ordinary frozen records share the flag instead of allocating a slot.
     if TYPE_CHECKING:
@@ -507,8 +520,7 @@ def rehydrated_sdist(
 DistFile = WheelFile | SdistFile
 
 
-@dataclass(frozen=True, slots=True)
-class IndexConfig:
+class IndexConfig(Record, frozen=True):
     """Declares one index in the ordered list of indexes.
 
     ``name`` is the index identifier used by overrides and lockfile
@@ -518,9 +530,21 @@ class IndexConfig:
     Simple-API serialization this index is asked for and read as.
     """
 
+    __slots__ = __match_args__ = ("name", "url", "serialization")
+
     name: str
     url: str
-    serialization: SimpleSerialization = SimpleSerialization.NEGOTIATE
+    serialization: SimpleSerialization
+
+    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+        self,
+        name: str,
+        url: str,
+        serialization: SimpleSerialization = SimpleSerialization.NEGOTIATE,
+    ) -> None:
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "url", url)
+        object.__setattr__(self, "serialization", serialization)
 
 
 # The index a run uses when nothing declares one.
@@ -537,9 +561,14 @@ class RangeOutcome(enum.Enum):
     MISSING = "missing"
 
 
-@dataclass(frozen=True, slots=True)
-class RangeMetadataResult:
+class RangeMetadataResult(Record, frozen=True):
     """The recovered METADATA text and the outcome that produced it."""
+
+    __slots__ = __match_args__ = ("text", "outcome")
 
     text: str | None
     outcome: RangeOutcome
+
+    def __init__(self, text: str | None, outcome: RangeOutcome) -> None:  # noqa: D107 - Field-only constructor documented by its class.
+        object.__setattr__(self, "text", text)
+        object.__setattr__(self, "outcome", outcome)

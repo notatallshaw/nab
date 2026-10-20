@@ -19,7 +19,6 @@ from typing import Any, NamedTuple
 
 import pytest
 
-from nab_provider._value import SlottedValue
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.archive import ArchiveRequest
@@ -34,6 +33,7 @@ from nab_provider.policy import (
     SourceRequest,
     VcsSource,
 )
+from nab_provider.value import SlottedValue
 from nab_provider.vcs_request import VcsClone, VcsRequest
 
 SHA = "0" * 40

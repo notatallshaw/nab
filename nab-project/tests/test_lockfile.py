@@ -9,7 +9,6 @@ import re
 import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, ClassVar
@@ -18,6 +17,7 @@ import pytest
 
 from nab_markersets._compat import get_int_max_str_digits
 from nab_project._testing.artifacts import make_sdist_artifact, make_wheel_artifact
+from nab_provider.value import replace
 
 if sys.version_info >= (3, 11):
     import tomllib

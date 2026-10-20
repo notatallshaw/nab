@@ -27,7 +27,6 @@ import tempfile
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -57,6 +56,7 @@ from nab_provider.target import (
     micro_boundary_points,
     slices_from_points,
 )
+from nab_provider.value import FACTORY, FactoryDefault, Record, factory_value
 from nab_resolver.errors import ResolutionError
 
 from . import pyproject_files, toml_io
@@ -116,8 +116,7 @@ __all__ = [
 _logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class _ConfiguredContext:
+class _ConfiguredContext(Record, frozen=True):
     """An install context ``[tool.nab]`` configures rather than a run selects.
 
     ``name`` is ``None`` for the project's own dependencies when no
@@ -125,8 +124,14 @@ class _ConfiguredContext:
     so every fork carries them.
     """
 
+    __slots__ = __match_args__ = ("name", "requirements")
+
     name: str | None
     requirements: tuple[Requirement, ...]
+
+    def __init__(self, name: str | None, requirements: tuple[Requirement, ...]) -> None:
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "requirements", requirements)
 
 
 def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
@@ -463,15 +468,37 @@ def _declared_environments(
     ]
 
 
-@dataclass(frozen=True, slots=True)
-class _ProjectTables:
+class _ProjectTables(Record, frozen=True):
     """The pyproject tables a resolve reads, read once."""
+
+    __slots__ = __match_args__ = (
+        "dependencies",
+        "groups",
+        "optional",
+        "project_name",
+        "build_requires",
+    )
 
     dependencies: list[Requirement]
     groups: Mapping[str, Sequence[str | Mapping[str, str]]]
     optional: Mapping[str, Sequence[str]]
     project_name: str | None
-    build_requires: list[Requirement] = field(default_factory=list)
+    build_requires: list[Requirement]
+
+    def __init__(
+        self,
+        dependencies: list[Requirement],
+        groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+        optional: Mapping[str, Sequence[str]],
+        project_name: str | None,
+        build_requires: list[Requirement] | FactoryDefault = FACTORY,
+    ) -> None:
+        object.__setattr__(self, "dependencies", dependencies)
+        object.__setattr__(self, "groups", groups)
+        object.__setattr__(self, "optional", optional)
+        object.__setattr__(self, "project_name", project_name)
+        object.__setattr__(self, "build_requires", factory_value(build_requires, list))
+
     """``[build-system].requires``, read only when ``[tool.nab].build-group``
     names a group for them.  A ``--build-requirements`` resolve carries them
     in ``dependencies`` instead and leaves this empty."""
@@ -964,27 +991,54 @@ def _group_package_ranges(
     return ranges, sources
 
 
-@dataclass(frozen=True, slots=True)
-class _SelfEmptyGroup:
+class _SelfEmptyGroup(Record, frozen=True):
     """One group whose own requirements on a package leave no version."""
+
+    __slots__ = __match_args__ = ("group", "package", "reqs")
 
     group: str
     package: str
     reqs: str
 
+    def __init__(self, group: str, package: str, reqs: str) -> None:
+        object.__setattr__(self, "group", group)
+        object.__setattr__(self, "package", package)
+        object.__setattr__(self, "reqs", reqs)
 
-@dataclass(frozen=True, slots=True)
-class _GroupConflict:
+
+class _GroupConflict(Record, frozen=True):
     """One direct group-vs-group conflict on a single package.
 
     Group names are stored sorted so the conflict has a stable identity.
     """
+
+    __slots__ = __match_args__ = (
+        "left_group",
+        "right_group",
+        "package",
+        "left_req",
+        "right_req",
+    )
 
     left_group: str
     right_group: str
     package: str
     left_req: str
     right_req: str
+
+    def __init__(
+        self,
+        left_group: str,
+        right_group: str,
+        package: str,
+        left_req: str,
+        right_req: str,
+    ) -> None:
+        object.__setattr__(self, "left_group", left_group)
+        object.__setattr__(self, "right_group", right_group)
+        object.__setattr__(self, "package", package)
+        object.__setattr__(self, "left_req", left_req)
+        object.__setattr__(self, "right_req", right_req)
 
 
 def _find_self_empty_groups(

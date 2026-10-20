@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +18,7 @@ from nab_resolver.resolver import BaseProvider, Resolver, ResolverStats
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.utils import canonicalize_name
 from .extra_keys import split_extra
+from .value import Record
 from .yank_candidates import Candidate, UnavailableMetadataError
 
 if TYPE_CHECKING:
@@ -32,13 +32,24 @@ if TYPE_CHECKING:
     from .yank_candidates import YankCandidates
 
 
-@dataclass(frozen=True, slots=True)
-class PreferenceScope:
+class PreferenceScope(Record, frozen=True):
     """Keep selected ancestors fixed and selected non-yanked packages non-yanked."""
 
-    fixed: frozenset[Candidate] = frozenset()
-    live: frozenset[str] = frozenset()
-    target: str = ""
+    __slots__ = __match_args__ = ("fixed", "live", "target")
+
+    fixed: frozenset[Candidate]
+    live: frozenset[str]
+    target: str
+
+    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+        self,
+        fixed: frozenset[Candidate] = frozenset(),
+        live: frozenset[str] = frozenset(),
+        target: str = "",
+    ) -> None:
+        object.__setattr__(self, "fixed", fixed)
+        object.__setattr__(self, "live", live)
+        object.__setattr__(self, "target", target)
 
 
 class PreparationStatus(Enum):
@@ -58,12 +69,17 @@ class _NeedLiveProofError(Exception):
         self.scope = scope
 
 
-@dataclass(frozen=True, slots=True)
-class _Context:
+class _Context(Record, frozen=True):
     """A selected assignment whose known metadata may already establish failure."""
+
+    __slots__ = __match_args__ = ("scope", "selected")
 
     scope: PreferenceScope
     selected: frozenset[Candidate]
+
+    def __init__(self, scope: PreferenceScope, selected: frozenset[Candidate]) -> None:
+        object.__setattr__(self, "scope", scope)
+        object.__setattr__(self, "selected", selected)
 
 
 class _NeedContextProofError(Exception):

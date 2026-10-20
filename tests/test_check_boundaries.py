@@ -155,6 +155,25 @@ def test_private_sibling_import_is_reported(
     assert "pkg_a._guts is private (_guts)" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(("module", "status"), [("value", 0), ("_value", 1)])
+def test_shared_records_use_the_public_provider_module(
+    workspace: FakeWorkspace,
+    capsys: pytest.CaptureFixture[str],
+    module: str,
+    status: int,
+) -> None:
+    workspace.add("nab-provider", value=THING, _value=THING)
+    workspace.add(
+        "nab-project",
+        requires=("nab-provider>=1",),
+        use=f"from nab_provider.{module} import Thing\n",
+    )
+
+    assert check_boundaries.main() == status
+    if status:
+        assert "nab_provider._value is private" in capsys.readouterr().err
+
+
 def test_vendored_tree_is_off_limits(
     workspace: FakeWorkspace, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -20,9 +20,8 @@ report metadata for the target or for someone else.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field, replace
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from nab_markersets.markersets import variable_names
 from nab_markersets.python_versions import validate_python_version
@@ -47,6 +46,7 @@ from .tags import (
     TagSet,
     supports_free_threading,
 )
+from .value import Record, replace
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -825,8 +825,7 @@ def _check_comparable(label: str, name: str, value: str) -> None:
         raise ValueError(msg) from exc
 
 
-@dataclass(frozen=True)
-class ResolveTarget:
+class ResolveTarget(Record, frozen=True):
     """One environment a resolve runs against: markers, wheel tags, a name.
 
     ``label`` names the target (``host``, ``py312-linux_x86_64``) and is
@@ -855,25 +854,65 @@ class ResolveTarget:
     tag: see there.
     """
 
+    __record_compare_fields__: ClassVar[tuple[str, ...] | None] = ("label", "selection")
+
+    __match_args__ = (
+        "label",
+        "marker_env",
+        "tags",
+        "host_faithful",
+        "selection",
+        "platform_spec",
+        "multi_implementation",
+        "tags_faithful",
+        "concrete_micro",
+        "micro_clauses",
+    )
+
     label: str
-    marker_env: Mapping[str, str] = field(compare=False)
-    tags: TagSet = field(compare=False)
-    host_faithful: bool = field(compare=False)
-    selection: tuple[tuple[str, str], ...] = ()
-    platform_spec: PlatformSpec | None = field(default=None, compare=False)
-    multi_implementation: bool = field(default=False, compare=False)
-    tags_faithful: bool = field(default=True, compare=False)
+    marker_env: Mapping[str, str]
+    tags: TagSet
+    host_faithful: bool
+    selection: tuple[tuple[str, str], ...]
+    platform_spec: PlatformSpec | None
+    multi_implementation: bool
+    tags_faithful: bool
     # python_full_version was pinned to a concrete micro (a matrix python-patches
     # value or a declared patch level), not synthesized as a bare minor's ``.0``
     # floor.  A pinned ``X.Y.0`` equals that floor by value, so only this flag
     # tells the two apart.
-    concrete_micro: bool = field(default=False, compare=False)
+    concrete_micro: bool
     # The python_full_version clauses bounding this target's micro slice, set
     # by :func:`slices_from_points` when a consulted marker splits the minor.
     # Empty for an ordinary target.  Appended to
     # :attr:`environment_marker_string` so the per-package pins of one slice
     # do not leak onto another slice of the same python/platform.
-    micro_clauses: tuple[str, ...] = field(default=(), compare=False)
+    micro_clauses: tuple[str, ...]
+
+    def __init__(  # noqa: D107, PLR0913, PLR0917 - Preserve the positional record constructor.
+        self,
+        label: str,
+        marker_env: Mapping[str, str],
+        tags: TagSet,
+        host_faithful: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        selection: tuple[tuple[str, str], ...] = (),
+        platform_spec: PlatformSpec | None = None,
+        multi_implementation: bool = False,  # noqa: FBT001, FBT002 - Preserve the positional record constructor.
+        tags_faithful: bool = True,  # noqa: FBT001, FBT002 - Preserve the positional record constructor.
+        concrete_micro: bool = False,  # noqa: FBT001, FBT002 - Preserve the positional record constructor.
+        micro_clauses: tuple[str, ...] = (),
+    ) -> None:
+        object.__setattr__(self, "label", label)
+        object.__setattr__(self, "marker_env", marker_env)
+        object.__setattr__(self, "tags", tags)
+        object.__setattr__(self, "host_faithful", host_faithful)
+        object.__setattr__(self, "selection", selection)
+        object.__setattr__(self, "platform_spec", platform_spec)
+        object.__setattr__(self, "multi_implementation", multi_implementation)
+        object.__setattr__(self, "tags_faithful", tags_faithful)
+        object.__setattr__(self, "concrete_micro", concrete_micro)
+        object.__setattr__(self, "micro_clauses", micro_clauses)
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         """Reject a python the resolve cannot compare Requires-Python against.
@@ -1215,24 +1254,39 @@ def declared_environment(
     }
 
 
-@dataclass
-class ImplementationOverride:
+class ImplementationOverride(Record):
     """Replace selected matrix defaults for one interpreter implementation."""
 
-    python: str | None = None
-    platforms: tuple[PlatformSpec, ...] | None = None
+    __match_args__ = ("python", "platforms")
+
+    python: str | None
+    platforms: tuple[PlatformSpec, ...] | None
+
+    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+        self,
+        python: str | None = None,
+        platforms: tuple[PlatformSpec, ...] | None = None,
+    ) -> None:
+        self.python = python
+        self.platforms = platforms
 
 
-@dataclass
-class _ImplementationAxes:
+class _ImplementationAxes(Record):
     """The effective Python minors and platform specifications for one expansion."""
+
+    __match_args__ = ("python_versions", "platforms")
 
     python_versions: tuple[str, ...]
     platforms: tuple[PlatformSpec, ...]
 
+    def __init__(
+        self, python_versions: tuple[str, ...], platforms: tuple[PlatformSpec, ...]
+    ) -> None:
+        self.python_versions = python_versions
+        self.platforms = platforms
 
-@dataclass
-class Matrix:
+
+class Matrix(Record):
     """The declared set of targets a resolve covers.
 
     Expands a python range, a platform list, and an implementation list
@@ -1262,12 +1316,37 @@ class Matrix:
     for the shared ``python`` and ``platforms`` defaults.
     """
 
+    __match_args__ = (
+        "python",
+        "platforms",
+        "python_order",
+        "python_patches",
+        "implementations",
+        "implementation_overrides",
+    )
+
     python: str
     platforms: tuple[PlatformSpec, ...]
-    python_order: str = "asc"
-    python_patches: dict[str, str] | None = None
-    implementations: tuple[str, ...] = ("cpython",)
-    implementation_overrides: Mapping[str, ImplementationOverride] | None = None
+    python_order: str
+    python_patches: dict[str, str] | None
+    implementations: tuple[str, ...]
+    implementation_overrides: Mapping[str, ImplementationOverride] | None
+
+    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+        self,
+        python: str,
+        platforms: tuple[PlatformSpec, ...],
+        python_order: str = "asc",
+        python_patches: dict[str, str] | None = None,
+        implementations: tuple[str, ...] = ("cpython",),
+        implementation_overrides: Mapping[str, ImplementationOverride] | None = None,
+    ) -> None:
+        self.python = python
+        self.platforms = platforms
+        self.python_order = python_order
+        self.python_patches = python_patches
+        self.implementations = implementations
+        self.implementation_overrides = implementation_overrides
 
     def expand(self) -> list[ResolveTarget]:
         """Expand the matrix into concrete targets.

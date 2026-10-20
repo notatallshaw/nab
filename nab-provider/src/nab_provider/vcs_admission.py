@@ -17,10 +17,11 @@ from __future__ import annotations
 import enum
 import posixpath
 import re
-from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit
 
 from nab_provider.vcs_request import FULL_GIT_SHA_RE
+
+from .value import Record
 
 __all__ = [
     "UnsupportedVcsError",
@@ -59,18 +60,31 @@ class UnsupportedVcsError(Exception):
     """
 
 
-@dataclass(frozen=True)
-class VcsConfig:
+class VcsConfig(Record, frozen=True):
     """Bundle of VCS opt-in knobs passed through the resolver stack.
 
     Default is fully restrictive (``BLOCK`` policy, empty allowlists,
     pin required).
     """
 
-    policy: VcsPolicy = VcsPolicy.BLOCK
-    allowed_schemes: frozenset[str] = frozenset()
-    allowed_repos: tuple[str, ...] = ()
-    require_pin: bool = True
+    __match_args__ = ("policy", "allowed_schemes", "allowed_repos", "require_pin")
+
+    policy: VcsPolicy
+    allowed_schemes: frozenset[str]
+    allowed_repos: tuple[str, ...]
+    require_pin: bool
+
+    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+        self,
+        policy: VcsPolicy = VcsPolicy.BLOCK,
+        allowed_schemes: frozenset[str] = frozenset(),
+        allowed_repos: tuple[str, ...] = (),
+        require_pin: bool = True,  # noqa: FBT001, FBT002 - Preserve the positional record constructor.
+    ) -> None:
+        object.__setattr__(self, "policy", policy)
+        object.__setattr__(self, "allowed_schemes", allowed_schemes)
+        object.__setattr__(self, "allowed_repos", allowed_repos)
+        object.__setattr__(self, "require_pin", require_pin)
 
 
 _VCS_SCHEMES: frozenset[str] = frozenset(

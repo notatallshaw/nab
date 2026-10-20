@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
@@ -14,6 +13,7 @@ from ._compat import override
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.utils import canonicalize_name
 from .extra_keys import split_extra
+from .value import Record
 from .yank_candidates import Candidate, YankCandidates, add_range, is_pin, merge_stats
 from .yank_preference import (
     IncompletePreferenceError,
@@ -36,18 +36,26 @@ _MAX_STEPS = 100_000
 _ROOT_SCOPE = PreferenceScope()
 
 
-@dataclass(frozen=True, slots=True)
-class PermissionProxy:
+class PermissionProxy(Record, frozen=True):
     """Choose selected parents that permit a yanked candidate."""
 
+    __slots__ = __match_args__ = ("candidate",)
+
     candidate: int
 
+    def __init__(self, candidate: int) -> None:
+        object.__setattr__(self, "candidate", candidate)
 
-@dataclass(frozen=True, slots=True)
-class MetadataProxy:
+
+class MetadataProxy(Record, frozen=True):
     """Expose a candidate's dependencies after establishing permission."""
 
+    __slots__ = __match_args__ = ("candidate",)
+
     candidate: int
+
+    def __init__(self, candidate: int) -> None:
+        object.__setattr__(self, "candidate", candidate)
 
 
 Package = str | PermissionProxy | MetadataProxy

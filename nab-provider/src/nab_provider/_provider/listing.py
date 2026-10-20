@@ -7,7 +7,6 @@ already-cached metadata where possible.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Final, TypeGuard
 
@@ -23,6 +22,7 @@ from ..errors import (
 from ..iso8601 import fast_iso_parser, parse_iso_datetime
 from ..metadata import intern_version as _intern_version
 from ..policy import DistPolicy
+from ..value import Record
 from ..vcs_admission import UnsupportedVcsError
 from .metadata_resolver import pick_dist_for_metadata, version_dists
 
@@ -359,8 +359,7 @@ def base_distributions(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class ListingPolicy:
+class ListingPolicy(Record, frozen=True):
     """The policy config one listing's files are judged under.
 
     ``overridden`` is true when a per-package or per-index override can
@@ -370,6 +369,16 @@ class ListingPolicy:
     ``default_dist_policy``'s artifact-kind verdict, taken once.
     """
 
+    __slots__ = __match_args__ = (
+        "index_name",
+        "overridden",
+        "default_dist_policy",
+        "default_cutoff",
+        "time_filter_active",
+        "default_drops_wheels",
+        "default_drops_sdists",
+    )
+
     index_name: str | None
     overridden: bool
     default_dist_policy: DistPolicy
@@ -377,6 +386,24 @@ class ListingPolicy:
     time_filter_active: bool
     default_drops_wheels: bool
     default_drops_sdists: bool
+
+    def __init__(
+        self,
+        index_name: str | None,
+        overridden: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        default_dist_policy: DistPolicy,
+        default_cutoff: datetime | None,
+        time_filter_active: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        default_drops_wheels: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        default_drops_sdists: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+    ) -> None:
+        object.__setattr__(self, "index_name", index_name)
+        object.__setattr__(self, "overridden", overridden)
+        object.__setattr__(self, "default_dist_policy", default_dist_policy)
+        object.__setattr__(self, "default_cutoff", default_cutoff)
+        object.__setattr__(self, "time_filter_active", time_filter_active)
+        object.__setattr__(self, "default_drops_wheels", default_drops_wheels)
+        object.__setattr__(self, "default_drops_sdists", default_drops_sdists)
 
 
 def listing_policy(provider: Provider, normalized: str) -> ListingPolicy:
