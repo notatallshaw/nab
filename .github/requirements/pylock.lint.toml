@@ -641,8 +641,8 @@ size = 301667
 sha256 = "89ca642c5bf0101157a09366be69fad0379db1f700ae39a920e103234573670e"
 
 [tool.nab]
-nab-version = "0.0.22.dev0"
-created-at = 2026-10-15 15:32:00.112319+00:00
+nab-version = "0.0.23.dev0"
+created-at = 2026-10-19 15:48:41.181839+00:00
 command-line = [
     "nab",
     "lock",
@@ -651,12 +651,12 @@ command-line = [
     "--project-default-group",
     "lint",
     "--no-emit-workspace",
+    "--output",
+    ".github/requirements/pylock.lint.toml",
     "--project-mode",
     "specific",
     "--python",
     "3.13",
-    "--output",
-    ".github/requirements/pylock.lint.toml",
     "--upgrade",
     "--project-uploaded-prior-to",
     "P0D",

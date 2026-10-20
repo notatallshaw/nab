@@ -19,11 +19,13 @@ tests exercise:
 from __future__ import annotations
 
 import os
+from string import ascii_lowercase, digits
 
 from hypothesis import HealthCheck, settings
 from hypothesis import strategies as st
 
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
@@ -70,11 +72,10 @@ LINUX_TARGET = ResolveTarget.for_declared(
 """The CPython 3.11 linux_x86_64 target the property fixtures resolve against."""
 
 
-# PEP 503 forbids a trailing separator in canonical names; the regex
-# enforces that names start with a letter and end alphanumeric.
-canonical_names = st.from_regex(
-    r"[a-z][a-z0-9]{0,3}(-[a-z0-9]+)*",
-    fullmatch=True,
+canonical_names = st.builds(
+    lambda initial, tail: canonicalize_name(initial + tail.rstrip("-")),
+    st.sampled_from(ascii_lowercase),
+    st.text(ascii_lowercase + digits + "-"),
 )
 versions = st.sampled_from(["0.1", "1.0", "1.0.0", "1.2.3", "2.0.0", "9.9"])
 sha256s = st.from_regex(r"[0-9a-f]{64}", fullmatch=True)

@@ -45,7 +45,7 @@ Changelog = "https://github.com/notatallshaw/nab/releases"
 nab = "nab._entry:console_entry"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.32.4"]
 build-backend = "hatchling.build"
 
 # The umbrella sdist ships only the CLI package and its own tests. Without this
@@ -83,33 +83,34 @@ exclude = [
 [dependency-groups]
 editable-build = [
     # Hatchling's editable hook requires this beyond [build-system].requires.
-    "editables~=0.3",
+    "editables~=0.6",
 ]
 http-backends = [
-    "httpx[http2]>=0.28",
-    "httpx2[http2]>=2.0",
+    "httpx[http2]>=0.28.1",
+    "httpx2[http2]>=2.14.0",
 ]
 tests = [
     {include-group = "editable-build"},
     {include-group = "http-backends"},
-    "pytest>=9",
-    "pytest-cov>=7",
-    "pytest-timeout>=2.3",
-    "pytest-xdist>=3.8",
-    "coverage>=7",
-    "hypothesis>=6.100",
-    "respx>=0.22",
-    "tomlkit>=0.13",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "pytest-timeout>=2.4.0",
+    "pytest-xdist>=3.8.0",
+    "coverage>=7.16.2",
+    "hypothesis>=6.168.5; python_version < '3.11'",
+    "hypothesis>=6.170.2; python_version >= '3.11'",
+    "respx>=0.23.1",
+    "tomlkit>=0.15.2",
 ]
 crosshair = [
     {include-group = "tests"},
-    "crosshair-tool>=0.0.104",
-    "hypothesis-crosshair>=0.0.28",
+    "crosshair-tool>=0.0.111",
+    "hypothesis-crosshair>=0.0.31",
 ]
 type-common = [
     {include-group = "editable-build"},
     {include-group = "http-backends"},
-    "typing_extensions>=4.10",
+    "typing_extensions>=4.16.0",
 ]
 mypy = [
     {include-group = "type-common"},
@@ -122,15 +123,15 @@ pyright = [
 ]
 ty = [
     {include-group = "type-common"},
-    "ty>=0.0.85",
+    "ty>=0.0.89",
 ]
 pyrefly = [
     {include-group = "type-common"},
-    "pyrefly>=1.3.2",
+    "pyrefly>=1.4.0",
 ]
 zuban = [
     {include-group = "type-common"},
-    "zuban>=0.10.0",
+    "zuban>=0.10.1",
 ]
 types = [
     {include-group = "mypy"},
@@ -140,20 +141,21 @@ types = [
     {include-group = "zuban"},
 ]
 lint = [
-    "ruff>=0.16.10",
+    "ruff>=0.17.1",
     "mdformat>=1.0.0",
     "mdformat-myst>=0.3.0",
     "mdformat-gfm-alerts>=2.1.0",
     "mdformat-deflist>=0.1.4",
 ]
 pre-commit = [
-    "pre-commit>=4.6.2",
+    "pre-commit>=4.6.2; python_version < '3.11'",
+    "pre-commit>=4.7.0; python_version >= '3.11'",
 ]
 # Nox drives the workspace tests and the type-check matrix; see
 # noxfile.py. Each session installs its own lock (pylock.tests.toml or
 # pylock.types.toml), so this only bootstraps the runner.
 nox = [
-    "nox>=2025.5.1",
+    "nox>=2026.8.17",
 ]
 # Locked as a single resolution for one interpreter, not against the project's
 # universal matrix; see tasks/refresh-locks.sh.  myst-parser 5.1 is the floor
@@ -161,24 +163,24 @@ nox = [
 # syntax the guides use; it needs Python 3.11 or newer.
 docs = [
     "sphinx>=9.1.0",
-    "furo>=2024.8",
-    "myst-parser>=5.1",
-    "linkify-it-py>=2",
-    "sphinx-design>=0.6",
-    "sphinx-copybutton>=0.5",
+    "furo>=2025.12.19",
+    "myst-parser>=5.1.0",
+    "linkify-it-py>=2.2.0",
+    "sphinx-design>=0.7.0",
+    "sphinx-copybutton>=0.5.2",
 ]
 release = [
-    "packaging>=24.0",
-    "tomlkit>=0.13",
-    "build>=1.2",
-    "twine>=6.1",
-    "pypi-attestations>=0.0.21",
+    "packaging>=26.3",
+    "tomlkit>=0.15.2",
+    "build>=1.6.1",
+    "twine>=7.0.0",
+    "pypi-attestations>=0.0.30",
 ]
 # The dists nox session builds every distribution and installs it. It needs the
 # build frontend; the backend comes from pylock.build.toml, locked from
 # [build-system].requires, since the build runs without isolation.
 dists = [
-    "build>=1.2",
+    "build>=1.6.1",
 ]
 
 # `nab lock` config: universal mode resolves the full matrix in one
@@ -577,6 +579,50 @@ matches = "nab-project/src/nab_project/build_backend.py"
 [tool.pyrefly.sub-config.errors]
 # Normalize strings at the caller-supplied project metadata boundary.
 unnecessary-type-conversion = "ignore"
+
+[[tool.pyrefly.sub-config]]
+matches = "nab-markersets/src/nab_markersets/_markersets.py"
+[tool.pyrefly.sub-config.errors]
+# Atom initializes its interned instances in __new__.
+uninitialized-instance-variable = "ignore"
+
+[[tool.pyrefly.sub-config]]
+matches = "nab-markersets/src/nab_markersets/markersets.py"
+[tool.pyrefly.sub-config.errors]
+# MarkerSet refuses direct construction; _wrap initializes the tree.
+uninitialized-instance-variable = "ignore"
+
+[[tool.pyrefly.sub-config]]
+matches = "nab-provider/src/nab_provider/records.py"
+[tool.pyrefly.sub-config.errors]
+# Frozen records use slot setters; raw integrity slots are populated on demand.
+uninitialized-instance-variable = "ignore"
+
+[[tool.pyrefly.sub-config]]
+matches = "nab-resolver/src/nab_resolver/resolver.py"
+[tool.pyrefly.sub-config.errors]
+# Solution initializes frozen fields through object.__setattr__.
+uninitialized-instance-variable = "ignore"
+
+[[tool.pyrefly.sub-config]]
+matches = "nab-resolver/src/nab_resolver/types.py"
+[tool.pyrefly.sub-config.errors]
+# RootRequirement initializes frozen fields through object.__setattr__.
+uninitialized-instance-variable = "ignore"
+# Equality accepts requirements with any generic package type.
+unknown-attribute-access = "ignore"
+
+[[tool.pyrefly.sub-config]]
+matches = "src/nab/_cli/definition/build.py"
+[tool.pyrefly.sub-config.errors]
+# Enum.value is dynamic; mirror and default checks compare it to declared tokens.
+unknown-attribute-access = "ignore"
+
+[[tool.pyrefly.sub-config]]
+matches = "src/nab/_cli/definition/types.py"
+[tool.pyrefly.sub-config.errors]
+# Enum.value is dynamic; shape renders each value as a choice token.
+unknown-attribute-access = "ignore"
 
 # https://docs.astral.sh/ty/reference/configuration/
 [tool.ty.rules]

@@ -572,8 +572,8 @@ size = 10582
 sha256 = "8979f52d874162f485ff2981e3891f3a3317b7a3dd43ff1e1775b9304f307a9c"
 
 [tool.nab]
-nab-version = "0.0.22.dev0"
-created-at = 2026-10-15 15:21:17.360561+00:00
+nab-version = "0.0.23.dev0"
+created-at = 2026-10-19 15:48:42.458600+00:00
 command-line = [
     "nab",
     "lock",

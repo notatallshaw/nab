@@ -108,28 +108,28 @@ sha256 = "ecd351a4be9d35a9eaaba244a7687143c9c7d4aea6ac964e7e7ddab20cbcf4e7"
 
 [[packages]]
 name = "certifi"
-version = "2026.7.22"
+version = "2026.10.18"
 marker = "\"pyrefly\" in dependency_groups"
 requires-python = ">=3.7"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "certifi-2026.7.22.tar.gz"
-upload-time = 2026-07-22 03:35:12.644458+00:00
-url = "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz"
-size = 138112
+name = "certifi-2026.10.18.tar.gz"
+upload-time = 2026-10-18 16:21:07.655710+00:00
+url = "https://files.pythonhosted.org/packages/7e/eb/a2aa1ac3ea30dd3f30ca57f40232138b6b0040719316ecb85daf61167771/certifi-2026.10.18.tar.gz"
+size = 135227
 
 [packages.sdist.hashes]
-sha256 = "741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55"
+sha256 = "b9995d97b64d0431a5af837d8ca8cd6238104d1f319f04bd93ea43124d6c861e"
 
 [[packages.wheels]]
-name = "certifi-2026.7.22-py3-none-any.whl"
-upload-time = 2026-07-22 03:35:11.276376+00:00
-url = "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl"
-size = 136983
+name = "certifi-2026.10.18-py3-none-any.whl"
+upload-time = 2026-10-18 16:21:06.276884+00:00
+url = "https://files.pythonhosted.org/packages/08/ba/95dd616042484f7c83a06974388b37b837732740ee70bc5dc715b5fcd55a/certifi-2026.10.18-py3-none-any.whl"
+size = 134093
 
 [packages.wheels.hashes]
-sha256 = "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775"
+sha256 = "73191c47aaa79da394e8fee2dbc2ec827432cab56311122c9e47abf79e390f62"
 
 [[packages]]
 name = "colorama"
@@ -319,7 +319,7 @@ sha256 = "2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55"
 
 [[packages]]
 name = "httpcore2"
-version = "2.13.1"
+version = "2.14.0"
 marker = "\"pyrefly\" in dependency_groups"
 requires-python = ">=3.10"
 dependencies = [
@@ -329,22 +329,22 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "httpcore2-2.13.1.tar.gz"
-upload-time = 2026-09-23 07:47:22.372427+00:00
-url = "https://files.pythonhosted.org/packages/cb/f3/1db7aa2bc2524062192bb0e0323969492d1883152a232fe36eea65f4e35c/httpcore2-2.13.1.tar.gz"
-size = 68071
+name = "httpcore2-2.14.0.tar.gz"
+upload-time = 2026-10-18 16:29:21.898231+00:00
+url = "https://files.pythonhosted.org/packages/30/ff/b53af1b49bb2cb5fa97c92215614b173ca5c1a99ded80e2d52f15a94fa6d/httpcore2-2.14.0.tar.gz"
+size = 69096
 
 [packages.sdist.hashes]
-sha256 = "e0aa977abe17e69a3b820a24542a6fa88702676d83880b8d194dcd18408e5103"
+sha256 = "4f57a1a8249fe6af589d935cfd456f1d13bbdcb0f0fc72af9142368fc94811d7"
 
 [[packages.wheels]]
-name = "httpcore2-2.13.1-py3-none-any.whl"
-upload-time = 2026-09-23 07:47:19.365487+00:00
-url = "https://files.pythonhosted.org/packages/09/ba/a4568248771ce81957bfb7cc600264a40fbcda092391ee1c415c50be4bea/httpcore2-2.13.1-py3-none-any.whl"
-size = 83423
+name = "httpcore2-2.14.0-py3-none-any.whl"
+upload-time = 2026-10-18 16:29:19.743442+00:00
+url = "https://files.pythonhosted.org/packages/02/06/a8d6a8f90d11b76d9086242b6bb0ee4b503473bfc8be34c2d5b067275c22/httpcore2-2.14.0-py3-none-any.whl"
+size = 84291
 
 [packages.wheels.hashes]
-sha256 = "e1e05d4f25f7d7d496bfb96748f6f4b67657b03da069b3a68c36069f3db73d0a"
+sha256 = "4c4f64f4b544afeb778c42c0ffb5941b29e671157e90ed3f6dc787c4bca90cd1"
 
 [[packages]]
 name = "httpx"
@@ -380,7 +380,7 @@ sha256 = "d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad"
 
 [[packages]]
 name = "httpx2"
-version = "2.13.1"
+version = "2.14.0"
 marker = "\"pyrefly\" in dependency_groups"
 requires-python = ">=3.10"
 dependencies = [
@@ -394,22 +394,22 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "httpx2-2.13.1.tar.gz"
-upload-time = 2026-09-23 07:47:23.052504+00:00
-url = "https://files.pythonhosted.org/packages/d5/44/474bef2a0e9d90f1715d32cb98b0738695ca17ba324095fb2497ed7fbd59/httpx2-2.13.1.tar.gz"
-size = 100405
+name = "httpx2-2.14.0.tar.gz"
+upload-time = 2026-10-18 16:29:22.627225+00:00
+url = "https://files.pythonhosted.org/packages/e8/67/58353f1848b4ba568e1ec22ea1e0d8e039f0bca5fde7e2d1f07739fd83e7/httpx2-2.14.0.tar.gz"
+size = 102036
 
 [packages.sdist.hashes]
-sha256 = "e48744a19e3af5ee48313d0ce5fe941d5422fae5705ea922a4aabf94d7800dfa"
+sha256 = "47ad61a3c40282cd8d0dc96311531f00f5bfc71a066c6fe3b36d8f63fb9e4f6e"
 
 [[packages.wheels]]
-name = "httpx2-2.13.1-py3-none-any.whl"
-upload-time = 2026-09-23 07:47:20.995722+00:00
-url = "https://files.pythonhosted.org/packages/d8/9c/6fe8931fd9f381042a9e4c7d5a7b4cbf7016b252bec0c99a49fce42c3326/httpx2-2.13.1-py3-none-any.whl"
-size = 95597
+name = "httpx2-2.14.0-py3-none-any.whl"
+upload-time = 2026-10-18 16:29:20.819777+00:00
+url = "https://files.pythonhosted.org/packages/69/5a/469616aa8c2cbb0bb9dd67a3c18d07c01ab604cc0b236ee1c47d260c7f6e/httpx2-2.14.0-py3-none-any.whl"
+size = 96901
 
 [packages.wheels.hashes]
-sha256 = "6dff50fabc270ee5fd25d845d0b078ed20564579744d6d962850975996d2f9a4"
+sha256 = "9d20c13a10bae1773a0be3b0f1e5beeb4bdd549bc3a2ba18efa32897c65403e4"
 
 [[packages]]
 name = "hyperframe"
@@ -563,64 +563,64 @@ sha256 = "5fc53fdac9f7bd63fbcdc868fb5f90b4784d78a53a3d3388cd738b807441a20b"
 
 [[packages]]
 name = "pyrefly"
-version = "1.3.2"
+version = "1.4.0"
 marker = "\"pyrefly\" in dependency_groups"
 requires-python = ">=3.8"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "pyrefly-1.3.2.tar.gz"
-upload-time = 2026-09-28 22:10:06.292676+00:00
-url = "https://files.pythonhosted.org/packages/4d/78/b6ec12acb586606618c71ebe1008af59e1ca50e667895f1946fa7b656619/pyrefly-1.3.2.tar.gz"
-size = 6679591
+name = "pyrefly-1.4.0.tar.gz"
+upload-time = 2026-10-15 16:54:11.819474+00:00
+url = "https://files.pythonhosted.org/packages/b3/3e/ea6893be167fa14307d7f9a924bed9ecbbbd91b01953890b9b3c58ed5359/pyrefly-1.4.0.tar.gz"
+size = 6962062
 
 [packages.sdist.hashes]
-sha256 = "30a68ff5429a1546ec08a2d913dfe442c9553a2940d274de18833d8eda939b5e"
+sha256 = "bb57c004a4842cfe93f93aebb5203ca6209a5f0c8bda47e8bc289e70940fd910"
 
 [[packages.wheels]]
-name = "pyrefly-1.3.2-py3-none-macosx_10_12_x86_64.whl"
-upload-time = 2026-09-28 22:09:40.743521+00:00
-url = "https://files.pythonhosted.org/packages/24/01/144a78839822abad55628881bcb45f8173e6d8b87976897c9105884b5a6b/pyrefly-1.3.2-py3-none-macosx_10_12_x86_64.whl"
-size = 15088488
+name = "pyrefly-1.4.0-py3-none-macosx_10_12_x86_64.whl"
+upload-time = 2026-10-15 16:53:43.412855+00:00
+url = "https://files.pythonhosted.org/packages/6a/17/dfce6611acc00cb26667e5e1011438cc510f3067f961e0f07f7a0c68f416/pyrefly-1.4.0-py3-none-macosx_10_12_x86_64.whl"
+size = 15705624
 
 [packages.wheels.hashes]
-sha256 = "626dbaee16ae1169a10a4ba3293583b5ab0320102f35efaad9e03457a2fc646c"
+sha256 = "460cec39bc8743915e9c2c8c10ba926ad0b29b099d89c1859fb97e0059f42fa7"
 
 [[packages.wheels]]
-name = "pyrefly-1.3.2-py3-none-macosx_11_0_arm64.whl"
-upload-time = 2026-09-28 22:09:43.316186+00:00
-url = "https://files.pythonhosted.org/packages/23/aa/599756bd42e6533ee9261ebd288f846ab453b00debaef2b4789893967809/pyrefly-1.3.2-py3-none-macosx_11_0_arm64.whl"
-size = 14429996
+name = "pyrefly-1.4.0-py3-none-macosx_11_0_arm64.whl"
+upload-time = 2026-10-15 16:53:46.546009+00:00
+url = "https://files.pythonhosted.org/packages/a6/78/a7b96442123fa6ed733de0d1ea933e35d6fc6b7c9cf16e05279abb493493/pyrefly-1.4.0-py3-none-macosx_11_0_arm64.whl"
+size = 14978669
 
 [packages.wheels.hashes]
-sha256 = "2d5fc704dbf0e990dc4f15cb1ead64f1a325ae27383a50c76cfcaf0387f926bb"
+sha256 = "5a6370d686b6cbbac8869832f09a52012888371956fbc68d446a349bc85ccd43"
 
 [[packages.wheels]]
-name = "pyrefly-1.3.2-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
-upload-time = 2026-09-28 22:09:45.420798+00:00
-url = "https://files.pythonhosted.org/packages/90/0c/4b0678889136b1514ecd25cec11974d5bfdaeaaf9f5fe8a766ca45ec4ab5/pyrefly-1.3.2-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
-size = 14871810
+name = "pyrefly-1.4.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+upload-time = 2026-10-15 16:53:48.904138+00:00
+url = "https://files.pythonhosted.org/packages/23/97/dfcfec6a9d8948ab4b2746f7e87558a82bffabb7a54c22e7d3ce4bdc1932/pyrefly-1.4.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+size = 15438858
 
 [packages.wheels.hashes]
-sha256 = "89dbe8a33e735fa96023c33ce5dfd81af9b0bdd2ee771e8d69b2ebffc7e0fbc7"
+sha256 = "8f1b16923a6583a6764e8aec07787e2ef4df644c7030294cba71339783a9451c"
 
 [[packages.wheels]]
-name = "pyrefly-1.3.2-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-upload-time = 2026-09-28 22:09:52.560746+00:00
-url = "https://files.pythonhosted.org/packages/4f/d1/52d9ea1b7048c7316d9ff7594c170b1c06d37547a75d140c8deea7b9ddfd/pyrefly-1.3.2-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-size = 15437183
+name = "pyrefly-1.4.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+upload-time = 2026-10-15 16:53:57.436069+00:00
+url = "https://files.pythonhosted.org/packages/2c/65/b44a1cb23667bcbcdc88558cbef79fa9e07a1152c2a1da148036b1a2e0d1/pyrefly-1.4.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+size = 16066345
 
 [packages.wheels.hashes]
-sha256 = "cb94365fe5f854cb4fe82f600c4e2453160d328610b12981004851ee0b6e8aeb"
+sha256 = "b6951f51687304caebfedf13dd1a943aeafdbc95abcc4e24a683b97467a77007"
 
 [[packages.wheels]]
-name = "pyrefly-1.3.2-py3-none-win_amd64.whl"
-upload-time = 2026-09-28 22:10:02.099358+00:00
-url = "https://files.pythonhosted.org/packages/9d/20/466333e7f2891f8c357b5c226559c39ba8dde4f90be09189ecc771a086f5/pyrefly-1.3.2-py3-none-win_amd64.whl"
-size = 15067523
+name = "pyrefly-1.4.0-py3-none-win_amd64.whl"
+upload-time = 2026-10-15 16:54:07.452920+00:00
+url = "https://files.pythonhosted.org/packages/03/02/18f075d4de0e255f184f42fc28c1f0ecc9f49dd528678479fc90cf12246c/pyrefly-1.4.0-py3-none-win_amd64.whl"
+size = 15726220
 
 [packages.wheels.hashes]
-sha256 = "693960cdb247d1f76b9e09b3f2554dae20034f7d442ccd4e9b3e8962a3622363"
+sha256 = "7aff37c2b711c8240ed650da0c6148237b327bf7e5dfacee65884f1adea22305"
 
 [[packages]]
 name = "tomli"
@@ -993,8 +993,8 @@ size = 10582
 sha256 = "8979f52d874162f485ff2981e3891f3a3317b7a3dd43ff1e1775b9304f307a9c"
 
 [tool.nab]
-nab-version = "0.0.22.dev0"
-created-at = 2026-10-15 16:12:34.512589+00:00
+nab-version = "0.0.23.dev0"
+created-at = 2026-10-19 15:48:30.037136+00:00
 command-line = [
     "nab",
     "lock",
@@ -1005,6 +1005,7 @@ command-line = [
     "--no-emit-workspace",
     "--output",
     ".github/requirements/pylock.pyrefly.toml",
+    "--upgrade",
     "--project-uploaded-prior-to",
     "P0D",
 ]

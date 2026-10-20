@@ -108,28 +108,28 @@ sha256 = "ecd351a4be9d35a9eaaba244a7687143c9c7d4aea6ac964e7e7ddab20cbcf4e7"
 
 [[packages]]
 name = "certifi"
-version = "2026.7.22"
+version = "2026.10.18"
 marker = "\"ty\" in dependency_groups"
 requires-python = ">=3.7"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "certifi-2026.7.22.tar.gz"
-upload-time = 2026-07-22 03:35:12.644458+00:00
-url = "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz"
-size = 138112
+name = "certifi-2026.10.18.tar.gz"
+upload-time = 2026-10-18 16:21:07.655710+00:00
+url = "https://files.pythonhosted.org/packages/7e/eb/a2aa1ac3ea30dd3f30ca57f40232138b6b0040719316ecb85daf61167771/certifi-2026.10.18.tar.gz"
+size = 135227
 
 [packages.sdist.hashes]
-sha256 = "741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55"
+sha256 = "b9995d97b64d0431a5af837d8ca8cd6238104d1f319f04bd93ea43124d6c861e"
 
 [[packages.wheels]]
-name = "certifi-2026.7.22-py3-none-any.whl"
-upload-time = 2026-07-22 03:35:11.276376+00:00
-url = "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl"
-size = 136983
+name = "certifi-2026.10.18-py3-none-any.whl"
+upload-time = 2026-10-18 16:21:06.276884+00:00
+url = "https://files.pythonhosted.org/packages/08/ba/95dd616042484f7c83a06974388b37b837732740ee70bc5dc715b5fcd55a/certifi-2026.10.18-py3-none-any.whl"
+size = 134093
 
 [packages.wheels.hashes]
-sha256 = "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775"
+sha256 = "73191c47aaa79da394e8fee2dbc2ec827432cab56311122c9e47abf79e390f62"
 
 [[packages]]
 name = "colorama"
@@ -319,7 +319,7 @@ sha256 = "2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55"
 
 [[packages]]
 name = "httpcore2"
-version = "2.13.1"
+version = "2.14.0"
 marker = "\"ty\" in dependency_groups"
 requires-python = ">=3.10"
 dependencies = [
@@ -329,22 +329,22 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "httpcore2-2.13.1.tar.gz"
-upload-time = 2026-09-23 07:47:22.372427+00:00
-url = "https://files.pythonhosted.org/packages/cb/f3/1db7aa2bc2524062192bb0e0323969492d1883152a232fe36eea65f4e35c/httpcore2-2.13.1.tar.gz"
-size = 68071
+name = "httpcore2-2.14.0.tar.gz"
+upload-time = 2026-10-18 16:29:21.898231+00:00
+url = "https://files.pythonhosted.org/packages/30/ff/b53af1b49bb2cb5fa97c92215614b173ca5c1a99ded80e2d52f15a94fa6d/httpcore2-2.14.0.tar.gz"
+size = 69096
 
 [packages.sdist.hashes]
-sha256 = "e0aa977abe17e69a3b820a24542a6fa88702676d83880b8d194dcd18408e5103"
+sha256 = "4f57a1a8249fe6af589d935cfd456f1d13bbdcb0f0fc72af9142368fc94811d7"
 
 [[packages.wheels]]
-name = "httpcore2-2.13.1-py3-none-any.whl"
-upload-time = 2026-09-23 07:47:19.365487+00:00
-url = "https://files.pythonhosted.org/packages/09/ba/a4568248771ce81957bfb7cc600264a40fbcda092391ee1c415c50be4bea/httpcore2-2.13.1-py3-none-any.whl"
-size = 83423
+name = "httpcore2-2.14.0-py3-none-any.whl"
+upload-time = 2026-10-18 16:29:19.743442+00:00
+url = "https://files.pythonhosted.org/packages/02/06/a8d6a8f90d11b76d9086242b6bb0ee4b503473bfc8be34c2d5b067275c22/httpcore2-2.14.0-py3-none-any.whl"
+size = 84291
 
 [packages.wheels.hashes]
-sha256 = "e1e05d4f25f7d7d496bfb96748f6f4b67657b03da069b3a68c36069f3db73d0a"
+sha256 = "4c4f64f4b544afeb778c42c0ffb5941b29e671157e90ed3f6dc787c4bca90cd1"
 
 [[packages]]
 name = "httpx"
@@ -380,7 +380,7 @@ sha256 = "d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad"
 
 [[packages]]
 name = "httpx2"
-version = "2.13.1"
+version = "2.14.0"
 marker = "\"ty\" in dependency_groups"
 requires-python = ">=3.10"
 dependencies = [
@@ -394,22 +394,22 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "httpx2-2.13.1.tar.gz"
-upload-time = 2026-09-23 07:47:23.052504+00:00
-url = "https://files.pythonhosted.org/packages/d5/44/474bef2a0e9d90f1715d32cb98b0738695ca17ba324095fb2497ed7fbd59/httpx2-2.13.1.tar.gz"
-size = 100405
+name = "httpx2-2.14.0.tar.gz"
+upload-time = 2026-10-18 16:29:22.627225+00:00
+url = "https://files.pythonhosted.org/packages/e8/67/58353f1848b4ba568e1ec22ea1e0d8e039f0bca5fde7e2d1f07739fd83e7/httpx2-2.14.0.tar.gz"
+size = 102036
 
 [packages.sdist.hashes]
-sha256 = "e48744a19e3af5ee48313d0ce5fe941d5422fae5705ea922a4aabf94d7800dfa"
+sha256 = "47ad61a3c40282cd8d0dc96311531f00f5bfc71a066c6fe3b36d8f63fb9e4f6e"
 
 [[packages.wheels]]
-name = "httpx2-2.13.1-py3-none-any.whl"
-upload-time = 2026-09-23 07:47:20.995722+00:00
-url = "https://files.pythonhosted.org/packages/d8/9c/6fe8931fd9f381042a9e4c7d5a7b4cbf7016b252bec0c99a49fce42c3326/httpx2-2.13.1-py3-none-any.whl"
-size = 95597
+name = "httpx2-2.14.0-py3-none-any.whl"
+upload-time = 2026-10-18 16:29:20.819777+00:00
+url = "https://files.pythonhosted.org/packages/69/5a/469616aa8c2cbb0bb9dd67a3c18d07c01ab604cc0b236ee1c47d260c7f6e/httpx2-2.14.0-py3-none-any.whl"
+size = 96901
 
 [packages.wheels.hashes]
-sha256 = "6dff50fabc270ee5fd25d845d0b078ed20564579744d6d962850975996d2f9a4"
+sha256 = "9d20c13a10bae1773a0be3b0f1e5beeb4bdd549bc3a2ba18efa32897c65403e4"
 
 [[packages]]
 name = "hyperframe"
@@ -860,64 +860,64 @@ sha256 = "9aaaedaefaf06d8b206278cf8b5012bc897f485a874503501e12d776df78951c"
 
 [[packages]]
 name = "ty"
-version = "0.0.88"
+version = "0.0.89"
 marker = "\"ty\" in dependency_groups"
 requires-python = ">=3.8"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "ty-0.0.88.tar.gz"
-upload-time = 2026-10-15 09:41:07.334122+00:00
-url = "https://files.pythonhosted.org/packages/f5/e8/303e333a45289c2f1f006661c9aa535de83b316a6bfc2d2f97ba815be143/ty-0.0.88.tar.gz"
-size = 7968779
+name = "ty-0.0.89.tar.gz"
+upload-time = 2026-10-16 10:35:05.249809+00:00
+url = "https://files.pythonhosted.org/packages/67/ea/dfb9bdbc168c50a568809466596751afa0c7da60da03b8c12906d1decde4/ty-0.0.89.tar.gz"
+size = 7978241
 
 [packages.sdist.hashes]
-sha256 = "5e3165a05b3757edd5a08b1fc6cb4a00c3b067100416d50afb2d13a5ec102206"
+sha256 = "bc1027b1ea95cca25c2a3a0b41433c809cf4b86a384d2b2434eba4bcd34548d4"
 
 [[packages.wheels]]
-name = "ty-0.0.88-py3-none-macosx_10_12_x86_64.whl"
-upload-time = 2026-10-15 09:40:26.292116+00:00
-url = "https://files.pythonhosted.org/packages/77/b0/ca23cf93931c6dcf790376c2dac6d2cbcbc1c5fbbead6a536c52eae6ac22/ty-0.0.88-py3-none-macosx_10_12_x86_64.whl"
-size = 13755861
+name = "ty-0.0.89-py3-none-macosx_10_12_x86_64.whl"
+upload-time = 2026-10-16 10:34:27.672672+00:00
+url = "https://files.pythonhosted.org/packages/e5/d5/5afe09bf5c83c4e3a9e5913386a460e240a7029f2ae5fc96df5b43563a91/ty-0.0.89-py3-none-macosx_10_12_x86_64.whl"
+size = 13790417
 
 [packages.wheels.hashes]
-sha256 = "957f0db83b9b0f837b86fe4a0a8fb98db8da89444555246871e6eb2820629c1b"
+sha256 = "47ebc98480c8a301955e18a8bdd67ef07090071ad47349b3254f325d3d5ab4e7"
 
 [[packages.wheels]]
-name = "ty-0.0.88-py3-none-macosx_11_0_arm64.whl"
-upload-time = 2026-10-15 09:40:28.913138+00:00
-url = "https://files.pythonhosted.org/packages/8c/a6/91d2aa967a69535845445660d3a9412f7f4f746597c650e5d3a799c9e286/ty-0.0.88-py3-none-macosx_11_0_arm64.whl"
-size = 12771934
+name = "ty-0.0.89-py3-none-macosx_11_0_arm64.whl"
+upload-time = 2026-10-16 10:34:29.871849+00:00
+url = "https://files.pythonhosted.org/packages/7e/f9/88648f0ba9400dfd642c1e8dc0aeecb87945b121f3ff51f3902883c016d6/ty-0.0.89-py3-none-macosx_11_0_arm64.whl"
+size = 12856900
 
 [packages.wheels.hashes]
-sha256 = "021bd4a6d01d4a39e48a87e308161e7adea851b8cab9f4c71452dde6e365aa15"
+sha256 = "b0631291af5c850a15007c0ffb906d813966466e4ec12173c44977c0c5a2d51d"
 
 [[packages.wheels]]
-name = "ty-0.0.88-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
-upload-time = 2026-10-15 09:40:31.490218+00:00
-url = "https://files.pythonhosted.org/packages/2e/a4/266f2dacbded7fac1f567292363ad05d4d03b246a8bd5ccd68206d0c9ce0/ty-0.0.88-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
-size = 13638979
+name = "ty-0.0.89-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+upload-time = 2026-10-16 10:34:32.296105+00:00
+url = "https://files.pythonhosted.org/packages/6a/89/baae2b407101c4cb02f19216123900c147af8fd87cdb1ed7eba139472734/ty-0.0.89-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+size = 13653330
 
 [packages.wheels.hashes]
-sha256 = "bcd956e6c3c8b038a3725f2bf255a45a284ece64a012a4e790fbf23db862af84"
+sha256 = "3d768300ae16274ce656006e9199869ad68684b74400d963e1c82deddf3a22ad"
 
 [[packages.wheels]]
-name = "ty-0.0.88-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-upload-time = 2026-10-15 09:40:44.842025+00:00
-url = "https://files.pythonhosted.org/packages/e4/9e/a8a0af89ce94e87f6b4fdec62dce473d2858223ba7298276911c568f413c/ty-0.0.88-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-size = 14447671
+name = "ty-0.0.89-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+upload-time = 2026-10-16 10:34:44.063367+00:00
+url = "https://files.pythonhosted.org/packages/3e/61/da22c714fd4f4dff642d60fb0d8bf8da1985d126f21cc89237f8bf707c92/ty-0.0.89-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+size = 14510395
 
 [packages.wheels.hashes]
-sha256 = "6ec0c364abad7e81013c1b4ec788d811078b9b20a8a2e07ac8613499eb6f104f"
+sha256 = "95a410f10b26cc3861757b626727db9d979deba7d2a3ab59f964fac8f0514fdc"
 
 [[packages.wheels]]
-name = "ty-0.0.88-py3-none-win_amd64.whl"
-upload-time = 2026-10-15 09:41:02.379304+00:00
-url = "https://files.pythonhosted.org/packages/49/a1/db4113fa72d44a28aeeccf3a71f9a803b278d945b11fa7b070a703d8bffd/ty-0.0.88-py3-none-win_amd64.whl"
-size = 13690632
+name = "ty-0.0.89-py3-none-win_amd64.whl"
+upload-time = 2026-10-16 10:35:00.150438+00:00
+url = "https://files.pythonhosted.org/packages/b4/14/1ee663c422e3a2d910c5cc27e7d84bd7709a3df0aca28a713843c6c3fa5d/ty-0.0.89-py3-none-win_amd64.whl"
+size = 13727433
 
 [packages.wheels.hashes]
-sha256 = "c76f1c65a492fed594bc14a1c70a1fdacd8a3165440a1eaa5af7f3c248fee963"
+sha256 = "9fc56322a1aff29a19088d2025f3c42a6d25a7035668048bb908c9f8b66f480d"
 
 [[packages]]
 name = "typing-extensions"
@@ -993,8 +993,8 @@ size = 10582
 sha256 = "8979f52d874162f485ff2981e3891f3a3317b7a3dd43ff1e1775b9304f307a9c"
 
 [tool.nab]
-nab-version = "0.0.22.dev0"
-created-at = 2026-10-15 16:12:33.977803+00:00
+nab-version = "0.0.23.dev0"
+created-at = 2026-10-19 15:48:29.504992+00:00
 command-line = [
     "nab",
     "lock",
@@ -1005,6 +1005,7 @@ command-line = [
     "--no-emit-workspace",
     "--output",
     ".github/requirements/pylock.ty.toml",
+    "--upgrade",
     "--project-uploaded-prior-to",
     "P0D",
 ]

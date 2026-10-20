@@ -36,6 +36,7 @@ from nab_project.lockfile import (
     write_lock,
 )
 from nab_provider._vendor.packaging.pylock import Pylock
+from nab_provider._vendor.packaging.utils import is_normalized_name
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 
@@ -166,6 +167,13 @@ def lock_inputs(draw: st.DrawFn) -> LockInput:
         if pin.name not in by_name:
             by_name[pin.name] = pin
     return LockInput(targets=_one(by_name))
+
+
+@given(name=canonical_names)
+@PROPERTY_SETTINGS
+def test_generated_names_are_normalized(name: str) -> None:
+    """Generated names satisfy the lock format's normalized-name requirement."""
+    assert is_normalized_name(name)
 
 
 class TestQuoteSpecCompliantOutput:
