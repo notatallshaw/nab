@@ -7,6 +7,8 @@ The top-level `environments` entries record that scope. A PEP 751 consumer refus
 not cover its environment. nab also refuses to emit a lock whose declaration misses a resolved
 target and names the uncovered interpreter.
 
+## Recorded marker values
+
 Each declaration pins `python_version`, `sys_platform`, and `platform_machine`. It adds
 `implementation_name` for a non-CPython target or a matrix with several implementations.
 
@@ -14,8 +16,19 @@ It also pins each PEP 508 variable consulted by a dependency, root requirement, 
 marker. This prevents a consumer that answers a relevant marker differently from using the lock. The
 variables below are exceptions.
 
+## Patch-release boundaries
+
 `python_full_version` and `implementation_version` are not declared as one micro version. A target
 naming a minor stands for every micro in that minor, so a single value would reject the others.
+
+For a target spanning Python 3.13, this requirement changes at a patch release:
+
+```toml
+[project]
+dependencies = [
+    'pytest ; python_full_version >= "3.13.4"',
+]
+```
 
 A consulted `python_full_version` boundary inside the minor splits it into slices. On a 3.13 target,
 `pytest ; python_full_version >= "3.13.4"` creates `< "3.13.4"` and `>= "3.13.4.dev0"` slices; only
@@ -25,6 +38,8 @@ The bounds meet at `3.13.4.dev0` with no gap or overlap. A verbatim `< "3.13.4"`
 pair would exclude prereleases such as `3.13.4rc1` from both slices. Starting the upper slice at
 `3.13.4.dev0` gives those interpreters the 3.13.4 pins.
 
+### CPython implementation versions
+
 On CPython, `implementation_version` matches `python_full_version` and can split the minor the same
 way. A slice that consulted it carries both sets of bounds; otherwise it carries only
 `python_full_version`.
@@ -32,14 +47,25 @@ way. A slice that consulted it carries both sets of bounds; otherwise it carries
 For example, `implementation_version >= "3.13.4"` gives the lower slice matching `< "3.13.4"`
 clauses and the upper slice matching `>= "3.13.4.dev0"` clauses for both variables.
 
+### Unsplit targets
+
 A minor with no marker boundary uses a plain `python_version == "3.13"` row with no
 `python_full_version` clause: a marker whose boundary lies outside the minor, or a prerelease of the
 minor's floor (`<= "3.11.0a6"`), reads the same for every real micro, so it names no in-minor
 boundary and its dependency is simply kept or dropped for the whole minor.
 
+To resolve one patch release without splitting it:
+
+```toml
+[tool.nab.matrix.python-patches]
+"3.13" = "3.13.4"
+```
+
 A whole target is never split: the host interpreter nab reads names a real micro, and a
 `[tool.nab.matrix.python-patches]` pin names one concrete deployment micro. Both resolve at that
 single micro and emit the plain `python_version == "X.Y"` row.
+
+### Unsupported boundaries
 
 A consulted full-version marker must describe intervals. nab rejects:
 
@@ -53,6 +79,8 @@ post-release on `>=`, `==`, `!=` and `~=`. Every other operator lands the bounda
 `<= "3.12.4rc1"` and `> "3.12.4rc1"` cut at 3.12.4, and `< "3.12.4.post1"`, `<= "3.12.4.post1"` and
 `> "3.12.4.post1"` at 3.12.5.
 
+## Unrecorded marker values
+
 `platform_release` and `platform_version` are never declared because they name one machine's kernel
 build. Recording the resolving machine would reject other machines.
 
@@ -64,6 +92,8 @@ A marker that consults a dropped axis is reported as a warning at lock time, one
 and one for `implementation_version` on a non-CPython target. The lock stays open on that axis: an
 installer whose value differs still accepts the lock, and misses the dependencies selected by that
 marker.
+
+## Project Python support
 
 `requires-python` is the project's declaration (`[tool.nab].requires-python`, or
 `[project].requires-python`), not the target's Python. It bounds what the project supports; the

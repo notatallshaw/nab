@@ -18,6 +18,8 @@ current working directory. Absolute paths are recorded as-is.
 The target project's name must canonicalise to the declared `name`. A `path` that lands on a
 different project fails the resolve.
 
+### Version and source selection
+
 The directory is read once. nab reads the version from `[project].version` in the local
 pyproject.toml. A `version` listed in `[project].dynamic` comes from the build backend instead, one
 of the cases under "Dynamic metadata" below.

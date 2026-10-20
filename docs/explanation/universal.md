@@ -17,12 +17,32 @@ A matrix expands into a list of resolve targets, one target per `(python, platfo
 point it names. nab resolves the targets one at a time, each on the same engine and the same
 single-environment resolve a project without a matrix runs once for the host.
 
+```text
+declared matrix
+      |
+      v
+Python x platform x implementation targets
+      |
+      v
+resolve each target, sharing fetches
+      |
+      v
+merge pins and environment markers
+      |
+      v
+pylock.toml
+```
+
+### Shared fetches
+
 The targets share one fetcher, so a package's listing is read once for the whole matrix rather than
 once per target. Metadata is shared per wheel rather than per package, so a release publishing one
 wheel per interpreter or per platform costs one read for each wheel the matrix picks (see Where a
 version's metadata comes from below).
 
 An sdist's `PKG-INFO` stands for the whole version, so one read serves every target that picks it.
+
+### Pin preferences
 
 After a target resolves, its pins flow forward as preferences for the next, giving best-effort
 alignment across targets.
@@ -53,6 +73,8 @@ That holds until a dependency marker changes inside the minor. For example,
 
 nab splits the 3.11 target at 3.11.4 and resolves each side. Each slice gets its own pins and
 `environments` row.
+
+### Split a minor at a marker boundary
 
 Take a project that targets just 3.11 on one platform:
 
@@ -95,11 +117,15 @@ version = "1.2.0"
 marker = 'python_full_version < "3.11.4"'
 ```
 
+### Prerelease boundaries
+
 The slices meet at `3.11.4.dev0`, not `3.11.4`. A plain `>= "3.11.4"` upper edge would leave
 prereleases such as `3.11.4rc1` in neither slice: PEP 440 also excludes them from `< "3.11.4"`.
 
 Starting the upper slice at `3.11.4.dev0` closes that gap and gives a 3.11.4 prerelease the pins
 intended for 3.11.4.
+
+### Repeated splits and unsupported markers
 
 A split can pull in a dependency the whole minor did not, and that dependency's marker can name a
 fresh boundary, so nab re-splits a target until a pass finds no new one.
@@ -110,6 +136,8 @@ and the ones naming a region (`==`, `!=`, `~=`, `== V.*`).
 A `python_full_version` marker nab cannot turn into an interval is a loud error rather than a silent
 guess: a membership test (`in`, `not in`), a verbatim `===`, a non-version comparison, a comparison
 against another marker variable, or certain pre- or post-release literals strictly inside the minor.
+
+### Pin one patch release
 
 To resolve a minor as one real release rather than split it, set the patch you deploy on:
 
@@ -147,6 +175,8 @@ implementations = ["cpython", "pypy"]
 python = "==3.11"
 ```
 
+### Per-implementation overrides
+
 This declares 14 targets: six CPython minors and one PyPy minor on each platform. The keyed
 `overrides.implementations` table replaces `python` or `platforms` for one interpreter; omitted
 fields inherit the shared matrix values. For example, adding `platforms = ["linux_x86_64"]` to the
@@ -158,13 +188,15 @@ minors together. Declare implementation overrides in the project file; the share
 change only inherited values. `--project-matrix-implementations cpython` selects only CPython for
 one run, leaving the PyPy override inactive.
 
+### PyPy markers and wheel tags
+
 A PyPy target sets `platform_python_implementation = "PyPy"` / `implementation_name = "pypy"` for
 marker evaluation and accepts `ppXY-pypyXY_ppNN` wheel tags instead of `cpXY`. Labels use the `pp`
 interpreter prefix (`pp311-linux_x86_64`).
 
-A CPython-only matrix leaves `implementation_name` open. A matrix with PyPy, or with more than one
-implementation, writes the name into every target marker and `environments` entry. This keeps
-CPython and PyPy entries disjoint, and a PyPy-only lock refuses CPython.
+A matrix containing PyPy records `implementation_name` in its target environment declarations. A
+CPython-only matrix also records it when a consulted marker names it. Package markers distinguish
+implementations when their selections differ; a PyPy-only lock refuses CPython.
 
 PyPy's `implementation_version` is modelled as its Python level rather than its own release. A
 marker comparing that value with a PyPy release can misevaluate during resolution. The lock leaves

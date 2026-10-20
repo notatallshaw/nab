@@ -3,15 +3,6 @@
 Set these keys under `[tool.nab]` in `pyproject.toml`, or at the top level of a project-directory
 `nab.toml`. See [Configuration sources](configuration-sources.md) for precedence and CLI overrides.
 
-| Key                 | Default                             | Meaning                                                                                                                                                                              |
-| ------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `mode`              | `"specific"`                        | Resolve one environment. `"universal"` resolves a [target matrix](target-matrix.md); its multi-target lock format is experimental.                                                   |
-| `resolution`        | `"highest"`                         | Prefer the newest allowed version. `"lowest"` prefers the oldest; `"lowest-direct"` prefers the oldest for direct dependencies and the newest for transitive dependencies.           |
-| `constraints`       | `[]`                                | Bound versions without adding packages to the resolve. Entries accept a package name, optional version specifier and optional marker; extras and direct-reference URLs are rejected. |
-| `requires-python`   | `[project].requires-python`, if set | Declare the supported Python range as a PEP 440 specifier, such as `">=3.10"`. It is checked against the target and recorded in the lock; it does not select the target.             |
-| `uploaded-prior-to` | unset                               | Exclude distributions uploaded after a timestamp. Accepts an ISO 8601 string or TOML datetime with an explicit timezone, or a `P<n>D` duration relative to the resolve anchor.       |
-| `decision-order`    | `"arrival"`                         | Choose whether response timing can affect package decision order; see below.                                                                                                         |
-
 ```toml
 [tool.nab]
 resolution = "lowest-direct"
@@ -20,6 +11,36 @@ requires-python = ">=3.10"
 uploaded-prior-to = "2026-05-01T00:00:00Z"
 decision-order = "stable"
 ```
+
+## Mode
+
+`mode` defaults to `"specific"`, which resolves one environment. `"universal"` resolves a
+[target matrix](target-matrix.md); its multi-target lock format is experimental.
+
+## Version preference
+
+`resolution` defaults to `"highest"`, preferring the newest allowed version. `"lowest"` prefers the
+oldest; `"lowest-direct"` prefers the oldest for direct dependencies and the newest for transitive
+dependencies.
+
+## Constraints
+
+`constraints` defaults to `[]`. A constraint bounds versions without adding a package to the
+resolve. Entries accept a name, optional version specifier and optional marker; extras and
+direct-reference URLs are rejected.
+
+## Python support
+
+`requires-python` falls back to `[project].requires-python`, if set. It takes a
+[version specifier](https://packaging.python.org/en/latest/specifications/version-specifiers/), such
+as `">=3.10"`. Nab checks it against the target and records it in the lock; it does not select the
+target.
+
+## Upload cutoff
+
+`uploaded-prior-to` is unset by default. It excludes distributions uploaded after the cutoff. Set an
+ISO 8601 string or TOML datetime with an explicit timezone, or a `P<n>D` duration relative to the
+resolve anchor.
 
 A cutoff excludes files without upload times, except local `file://` and find-links artifacts. An
 HTML index may lack upload times; see {ref}`Index serialization <index-serialization>`.

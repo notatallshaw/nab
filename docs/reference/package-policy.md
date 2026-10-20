@@ -93,6 +93,8 @@ dist-policy = "wheel-only"
 
 A package can have at most one index route, because routing requires a bare-name selector.
 
+(per-index-policy)=
+
 ## Per-index overrides
 
 `[tool.nab.index.<name>]` is keyed by a declared index name. Each entry sets policy only

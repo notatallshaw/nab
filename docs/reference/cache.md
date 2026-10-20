@@ -20,6 +20,8 @@ The one exception is `sdist-v1/`, which nab still reads.
 | `sdist-v2/`         | an sdist's `PKG-INFO` and `pyproject.toml`, immutable      |
 | `sdist-v1/`         | the same records in the retired JSON format                |
 
+### Index records
+
 A matching `sdist-v1/` record is copied into `sdist-v2/` when the newer bucket misses. The original
 remains in `sdist-v1/`.
 
@@ -32,6 +34,8 @@ them. If an offline resolve reports missing source metadata, run the same comman
 A listing body is stored as PEP 691 JSON; when the index answers in PEP 503 HTML the stored body is
 nab's own JSON rendering of the page. An index pinned to one `serialization` gets its own listing
 directories, since the stored body records nothing about which form it came from.
+
+### Source checkouts
 
 A declared VCS or archive source (see [Dependency sources](dependency-sources.md)) fills a bucket of
 its own:
@@ -68,9 +72,21 @@ while offline still answers from the record.
 Turning a listing body into records means a JSON decode plus wheel and sdist filename parsing, which
 a warm resolve would otherwise repeat on every run.
 
+```text
+listing body + policy digest
+            |
+            v
+      parsed records
+            |
+            v
+     warm resolve input
+```
+
 The `simple-parsed-v0/` bucket stores those records so a warm hit rehydrates them and never reads
 the large raw body. A stale entry is served the same way once the index answers `304 Not Modified`,
 since that confirms the body the blob is bound to.
+
+### When a parsed listing is rebuilt
 
 Each parsed blob is bound to the exact body it came from by a `body_digest` that the `.policy` also
 carries. On a hit the two digests are compared; they match only while the body is unchanged, so any
@@ -83,11 +99,18 @@ it was written by a different nab build, or is corrupt.
 The raw body remains authoritative. The accelerator is a derived copy, and a rebuild reparses the
 body on disk.
 
+### Sharing across interpreters
+
 Blobs are stored as JSON, so one entry serves every interpreter sharing the cache. A listing nab
 reads no files from gets no blob, since an empty one could never be served: only the raw body
 records whether the page held formats nab cannot read.
 
 ## Verifying and clearing
+
+```bash
+nab cache dir
+nab cache verify
+```
 
 `nab cache verify` walks the record buckets read-only and lists on stdout every entry that will not
 parse, including a parsed blob that is not decodable, exiting 1 when the listing is not empty.
@@ -95,6 +118,12 @@ parse, including a parsed blob that is not decodable, exiting 1 when the listing
 It checks structure only, not freshness: a stale-but-valid parsed blob is not corrupt, since the
 digest binding retires it at read time. Clones and extracted archives hold no nab records, so
 `verify` skips them.
+
+To delete cached records, clones and extracted archives:
+
+```bash
+nab cache clear
+```
 
 `nab cache clear` removes every bucket, clones and archives included, returning the cache to cold.
 `verify` and `clear` both refuse a root that does not look like a nab cache and never follow a

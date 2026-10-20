@@ -44,6 +44,8 @@ The first command performs a fresh resolve; it does not convert `pylock.toml`. K
 The file records hashes, not the index that supplied each package. Configure pip to select each
 package from the same index nab used.
 
+### Hash-checking limits
+
 Use this path only when every requirement is hash-checkable. nab refuses the format if a recorded
 index file lacks an accepted hash; archive pins carry their digest in the URL. Local and VCS pins
 are not hashable.

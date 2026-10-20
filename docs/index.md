@@ -4,32 +4,27 @@ nab generates universal lockfiles for Python projects. Declare the Python versio
 support, then use one PEP 751 `pylock.toml` to share dependency selections across those
 environments.
 
+```toml
+[tool.nab]
+mode = "universal"
+
+[tool.nab.matrix]
+python = ">=3.12,<3.16"
+platforms = ["linux_x86_64", "macos_arm64"]
+```
+
 An installer such as pip uses the lock to install packages for its current environment. nab resolves
 and records dependencies; it does not install them or manage virtual environments. Both nab and its
 multi-target lockfile support are experimental.
 
-New to locking? Read [What nab locks](explanation/locking.md), then
+Start with [What nab locks](explanation/locking.md), then
 [make your first universal lock](tutorial/getting-started.md). The tutorial declares a target
 matrix, generates the lock and installs from it. Universal mode is opt-in; an unconfigured
 `nab lock` resolves only for the Python and platform running nab.
 
-## Start with a task
-
-- [Find a feature](explanation/features.md), or
-  [choose requirements, markers, extras and groups](how-to/choose-dependencies.md).
-- [Make your first universal lock](tutorial/getting-started.md), then install its dependencies.
-- [Change the target matrix](how-to/lock-multiple-environments.md), or
-  {ref}`resolve for one environment <the-resolve-environment>`.
-- [Use a lock](how-to/use-the-lock.md) with pip, hashed requirements, or an offline wheelhouse.
-- [Configure a resolve](reference/configuration.md) and inspect effective values.
-- Use [local projects](how-to/local-sources.md), [git sources](how-to/vcs.md),
-  [multiple indexes](how-to/multi-index.md), or [workspaces](how-to/workspaces.md).
-- [Use a direct archive source](how-to/archive-sources.md) with a required digest.
-- [Reason about PEP 508 markers](how-to/reason-about-markers.md) as sets of environments.
-- [Diagnose a failed resolve](reference/diagnostics.md) from its error and `Diagnostics:` section.
-- [Check the CLI](reference/cli.md), output [formats](reference/formats.md), or
-  [cache](reference/cache.md).
-- [Embed the generic resolver](how-to/embed-the-resolver.md) in another tool.
+For an existing project, [browse the guides](how-to/index.md) to choose dependencies and targets,
+use other package sources, or install from a lock. Use the
+[configuration reference](reference/configuration.md) to look up settings.
 
 ## Status
 
@@ -48,27 +43,10 @@ stability warnings.
 ```{toctree}
 ---
 maxdepth: 1
-caption: Tutorial
+caption: Start here
 ---
 tutorial/getting-started
-```
-
-```{toctree}
----
-maxdepth: 1
-caption: How-to guides
----
-how-to/install
-how-to/use-the-lock
-how-to/choose-dependencies
-how-to/lock-multiple-environments
-how-to/local-sources
-how-to/archive-sources
-how-to/vcs
-how-to/multi-index
-how-to/workspaces
-how-to/embed-the-resolver
-how-to/reason-about-markers
+how-to/index
 ```
 
 ```{toctree}
@@ -93,7 +71,6 @@ maxdepth: 1
 caption: Explanation
 ---
 explanation/locking
-explanation/features
 explanation/universal
 explanation/conflicts
 explanation/packages

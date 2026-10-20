@@ -71,8 +71,8 @@ platforms and minimum system versions.
 Use [requirements and markers](https://nab.readthedocs.io/en/stable/how-to/choose-dependencies.html)
 to select dependencies by environment, and extras or groups for optional sets. Nab also supports
 scoped policies and metadata overrides, multiple indexes, workspaces, pinned Git sources and hashed
-archives. The [feature guide](https://nab.readthedocs.io/en/stable/explanation/features.html) links
-to each workflow and reference.
+archives. [Browse the guides](https://nab.readthedocs.io/en/stable/how-to/index.html) for these
+workflows.
 
 ## Libraries
 

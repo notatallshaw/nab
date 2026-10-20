@@ -19,6 +19,13 @@ package. Pins for inactive extras or other environments do not apply.
 
 ## Dependencies and alternatives
 
+For example, a project can request a yanked release explicitly:
+
+```toml
+[project]
+dependencies = ["lib==1.2"]
+```
+
 If `app==2` requires yanked `lib==2`, nab can keep that combination even when older `app==1` would
 use non-yanked `lib==1`. You do not need to repeat the dependency's pin yourself.
 

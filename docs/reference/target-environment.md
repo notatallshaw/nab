@@ -43,6 +43,8 @@ platform = { id = "macos_arm64", runs-on-macos = "14.0" }
 accepts wheels of any level. Declare `runs-on-macos` to set the oldest supported macOS; wheels
 needing a newer one are dropped.
 
+## Marker evaluation and wheel compatibility
+
 PEP 508 markers condition dependencies; PEP 425 tags filter wheels. A version with only incompatible
 wheels and no sdist is not a candidate (`pywin32` on Linux). The lockfile records only wheels the
 target can install.
@@ -55,6 +57,8 @@ The resolve is still for one environment. A lock made for `linux_x86_64` is a lo
 `linux_x86_64`; it says so in its PEP 751 `environments` (see [lockfiles](lockfile.md)), and a
 conforming installer refuses it elsewhere. To lock for several machines at once, use
 `mode = "universal"`.
+
+## Combining target settings
 
 `[tool.nab.environment]` and `[tool.nab.matrix]` cannot both be set: the matrix already declares one
 environment per target. The rule holds however each was declared, in a file or by a flag.

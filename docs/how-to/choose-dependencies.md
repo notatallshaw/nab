@@ -82,9 +82,13 @@ nab lock --extras cli --groups dev
 The project's regular dependencies are included too. `--all-extras` and `--all-groups` select every
 declared extra or group. `[tool.nab].default-groups` selects groups on every resolve.
 
+### Include other extras
+
 An extra can include another extra from the same project. Here `--extras all` also selects `cli`
 through `example[cli]`. Use the project's declared name for this self-reference; markers on it are
 evaluated per target too.
+
+### Conflicts and installation
 
 Selected sets normally resolve together, so their requirements must be compatible. Declare
 [conflicting extras or groups](../explanation/conflicts.md) when they are alternatives that need

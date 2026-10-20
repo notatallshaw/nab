@@ -19,6 +19,15 @@ Set these keys in `[tool.nab]` or the project-directory `nab.toml`:
 | `base-group`     | unset   | Give the project's regular dependencies a lockfile group name so an installer can select other groups separately.                  |
 | `build-group`    | unset   | Resolve the static `[build-system].requires` list alongside runtime dependencies under this lockfile group. Requires `base-group`. |
 
+For a project declaring a `dev` group and build requirements:
+
+```toml
+[tool.nab]
+default-groups = ["runtime", "dev"]
+base-group = "runtime"
+build-group = "build"
+```
+
 The synthetic `base-group` and `build-group` names must differ from each other and from declared
 dependency groups. They are accepted in `default-groups`, but not by `--groups`. An explicit
 `default-groups` replaces the implicit base-group default; include the base or build name if it

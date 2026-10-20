@@ -1,8 +1,8 @@
 # Metadata overrides
 
 `dependencies`, `requires-python`, and `provides-extra` replace published metadata for the selected
-versions, like uv's `dependency-metadata`. Use them when metadata is wrong, absent, dynamic, or
-unbuildable. nab trusts the replacement and does not verify it against the artifact.
+versions. Use them when metadata is wrong, absent, dynamic, or unbuildable. nab trusts the
+replacement and does not verify it against the artifact.
 
 Each field replaces its own field independently, so a `dependencies` override on one range and a
 `requires-python` override on another (overlapping) range coexist; only two entries setting the
@@ -46,9 +46,10 @@ field, so two entries setting `dependencies` over overlapping ranges are a
 
 ## `requires-python`
 
-`requires-python` is a single PEP 440 specifier that replaces the package's declared Python
-requirement for the selected versions. A bare version like `"3.13"` is rejected (it is not a
-specifier); write `">=3.13"` or `"==3.13"`.
+`requires-python` is a
+[version specifier](https://packaging.python.org/en/latest/specifications/version-specifiers/) that
+replaces the package's declared Python requirement for the selected versions. A bare version like
+`"3.13"` is rejected (it is not a specifier); write `">=3.13"` or `"==3.13"`.
 
 ```toml
 [tool.nab.packages.flask]

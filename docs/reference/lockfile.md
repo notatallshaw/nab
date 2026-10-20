@@ -23,6 +23,8 @@ locations and hashes.
 Index digests come from the listing; nab does not fetch every index artifact to re-hash it. A direct
 archive's digest comes from its configured URL and is verified before metadata is read.
 
+### Metadata selection
+
 When several wheels fit the target, nab reads the one whose PEP 425 tags rank highest. It prefers a
 [PEP 658] metadata sidecar, then reads the wheel itself through HTTP ranges or a full fetch. With no
 wheel, it reads the sdist; dynamic metadata may require a [permitted build](build-policy.md).
@@ -78,6 +80,8 @@ Each recorded digest gets one `--hash` line. nab records `sha256`, `sha384`, and
 sorts by algorithm and digest rather than artifact.
 
 Output therefore does not depend on discovery order. Continuation backslashes match pip-compile.
+
+### Source URL lines
 
 Local and VCS pins have no hashes. Editable local pins use `-e`; workspace members are editable by
 default, while `[[tool.nab.local-sources]]` entries are not unless configured. A subdirectory uses

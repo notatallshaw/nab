@@ -56,20 +56,7 @@ Both fetch the wheel into an ephemeral environment and run the CLI against it.
 
 ## Installing from a checkout
 
-To run a revision that has not been released, build the six wheels and install from the result:
+Use the [development install](../contributing.md) to run an unreleased revision from a checkout.
+Hatch installs the six workspace distributions together.
 
-```bash
-git clone https://github.com/notatallshaw/nab.git
-cd nab
-mkdir -p /tmp/nab-wheels
-uv build --wheel --out-dir /tmp/nab-wheels nab-resolver
-uv build --wheel --out-dir /tmp/nab-wheels nab-markersets
-uv build --wheel --out-dir /tmp/nab-wheels nab-provider
-uv build --wheel --out-dir /tmp/nab-wheels nab-index
-uv build --wheel --out-dir /tmp/nab-wheels nab-project
-uv build --wheel --out-dir /tmp/nab-wheels .
-uv tool install --find-links /tmp/nab-wheels nab
-```
-
-Once `nab --version` succeeds, [make your first lock](../tutorial/getting-started.md). To work on
-nab itself, see [contributing](../contributing.md).
+Once `nab --version` succeeds, [make your first lock](../tutorial/getting-started.md).

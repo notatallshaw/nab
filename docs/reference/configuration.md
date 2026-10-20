@@ -14,34 +14,25 @@ nab config explain resolution
 [Configuration sources](configuration-sources.md) for file locations, precedence and environment
 variables.
 
-## Choose a topic
+## Dependencies and resolution
 
-[Resolution settings](resolution-settings.md): Constraints, version selection and upload cutoffs.
+- [Select extras and groups](selection.md).
+- [Choose versions and constrain dependencies](resolution-settings.md).
+- [Configure lockfile groups](lockfile-groups.md).
 
-[Target environment](target-environment.md): Resolve for one Python and platform.
+## Target environments
 
-[Target matrix](target-matrix.md): Declare several Python, platform and implementation targets.
+- [Resolve for one environment](target-environment.md).
+- [Declare a target matrix](target-matrix.md).
+- [Set platform and ABI requirements](platform-tags.md).
 
-[Platform tags](platform-tags.md): Set libc, macOS and interpreter ABI requirements.
+## Sources and policy
 
-[Indexes](indexes.md): Order package indexes and select their API serialization.
-
-[Package and index policy](package-policy.md): Apply policy to particular packages or indexes.
-
-[Metadata overrides](metadata-overrides.md): Replace published dependencies, Python requirements or
-extras.
-
-[Distribution policy](distribution-policy.md): Choose wheels, sdists and recorded artifacts.
-
-[Dependency sources](dependency-sources.md): Configure local checkouts, pinned git repositories and
-archives.
-
-[Configuration sources](configuration-sources.md): Find file locations, precedence and runtime
-environment variables.
-
-[Dependency selection](selection.md) covers extras and groups. [Lockfile groups](lockfile-groups.md)
-explains `default-groups`, `base-group` and `build-group`. [Build policy](build-policy.md) controls
-backend execution and nested build environments.
+- [Configure indexes](indexes.md) or [direct sources](dependency-sources.md).
+- [Apply package and index policies](package-policy.md).
+- [Choose wheels and sdists](distribution-policy.md).
+- [Control backend execution](build-policy.md).
+- [Replace published metadata](metadata-overrides.md).
 
 ```{toctree}
 ---

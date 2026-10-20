@@ -69,7 +69,7 @@ through that one attributing index, not through every index that could also serv
 
 A mirror that stamps its listings short-lived makes nab revalidate them once per package on every
 warm run. Set `assume-fresh-seconds` on that index to skip those round trips; see the
-{ref}`Index serialization <index-serialization>`.
+{ref}`Per-index policy <per-index-policy>`.
 
 ## Policy across both surfaces is an error, not a precedence
 

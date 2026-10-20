@@ -62,11 +62,6 @@ with matching hashes are kept; local and VCS packages are skipped.
 
 Download into `DIR`. Default: `wheels/`. Multi-target resolves download every target's artifacts.
 
-### `--max-concurrency N`
-
-Allow up to `N` simultaneous HTTP fetches. Default: `8`; minimum: `1`. Also available to `config`.
-Environment variable: `NAB_MAX_CONCURRENCY`.
-
 ## Selection options
 
 These options apply to `lock` and `download`. See [Selecting what to lock](selection.md) for
@@ -93,6 +88,11 @@ Find and use workspace members during resolution. Enabled by default.
 
 `lock`, `download`, and `config` accept these settings; `cache` also accepts `--cache-dir`.
 Configuration files and environment variables can supply their defaults.
+
+### `--max-concurrency N`
+
+Allow up to `N` simultaneous HTTP fetches. Default: `8`; minimum: `1`. Environment variable:
+`NAB_MAX_CONCURRENCY`.
 
 ### `--cache-dir PATH`
 

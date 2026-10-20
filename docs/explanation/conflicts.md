@@ -45,6 +45,8 @@ conflicts = [
 ]
 ```
 
+### Member and name rules
+
 A table without a `policy` key defaults to `at-most-one`, the same as the bare-list form.
 
 A member may appear in only one conflict set. Naming the same extra or group in two sets is refused
@@ -85,6 +87,8 @@ Conflicting `build-group` against an ordinary group instead, say
 `[[{ group = "build" }, { group = "dev" }]]`, separates the build requirements from that group but
 not from the project's dependencies, which stay in every fork.
 
+### Always-active groups
+
 A configured name is active on every run rather than selected, so a set holding only configured
 names engages always: every `nab lock` for that project forks, and `at-most-one` and `exactly-one`
 say the same thing there. An `at-least-one` set that names either of them is refused, since a group
@@ -93,6 +97,8 @@ that is always active means the set can never fail.
 Selecting an extra never deselects the project's own dependencies, so pairing `base-group` with an
 extra is refused when the config is read, under `at-most-one` and `exactly-one` alike. `build-group`
 pairs with an extra fine: the project's own dependencies stay in every fork of that set.
+
+### Separating build, runtime and development groups
 
 A member belongs to at most one set, so putting the build requirements in a set with both the
 project's dependencies and `dev` is one three-member declaration, and it makes all three mutually
@@ -137,6 +143,8 @@ version = "23.12.0"
 marker = "... and \"black23\" in dependency_groups and \"black22\" not in dependency_groups and \"black24\" not in dependency_groups"
 ```
 
+### Requirements output files
+
 The requirements formats name a fork with the `{selection}` variable in an `--output` template
 (`--output 'req-{selection}.txt'` writes `req-extra-cpu.txt` and `req-extra-gpu.txt`), since two
 forks of one target share every other axis and would otherwise collide onto one file.
@@ -144,6 +152,8 @@ forks of one target share every other axis and would otherwise collide onto one 
 When several sets are engaged at once, the forks are the cartesian product across them (one member
 chosen per set), so `black{22,23,24}` crossed with `isort{5,6,7}` is nine forks. Non-conflicting
 selections stay active in every fork.
+
+### Indirect selections
 
 Forking needs one member per fork. If a single selection forces two members of one exclusive set
 together, no fork can separate them, so the resolve is refused before any network work:
@@ -161,6 +171,8 @@ rejected.
 The require-one policies still raise. Declaring `exactly-one` or `at-least-one` and selecting none
 of its members is rejected before the resolve, regardless of mode. Co-selection forks under
 `exactly-one`; `at-least-one` permits it, so its members stay active together in one resolve.
+
+### Default groups
 
 Groups named in `[tool.nab].default-groups` count as part of the selection for every conflict check.
 A project with `default-groups = ["a"]` and a `policy = "exactly-one"` set over groups `a` and `b`
@@ -180,6 +192,8 @@ A default install activates every default group at once. The emit-time disjointn
 context that activates two members of an exclusive set, so that install is never checked against the
 declared conflict. `at-least-one` permits co-selection, so all of its members may be defaults.
 
+### Shared and base dependencies
+
 A dependency required by every member of a set but not by the base keeps its membership marker, so
 it does not install when no member is selected (relevant under `at-most-one`, which permits
 selecting none). A base resolve names the deps that install regardless of the selection, which is
@@ -188,6 +202,8 @@ how the writer tells the two apart.
 When the forks of one environment pin a base dependency at different versions, no single entry can
 serve the no-member context; the writer raises a `DivergentBaseDependencyError` rather than emit a
 lock that silently skips the dependency.
+
+### Combining conflict sets
 
 With two or more sets engaged, each entry names only the sets its package varies over.
 
@@ -198,12 +214,16 @@ two sets is selected by either member alone.
 A package whose version does depend on the combination keeps the conjunction, and so does anything
 that requires it: an entry never fires where one of its own dependencies would not.
 
+### Unselected and shared members
+
 An exclusive set forks only over the members the selection activates. The rest of its declared
 members are absent from the lock's `extras` and `dependency-groups` arrays and from every marker, so
 a set with an unselected member excludes an entry exactly as one without it would.
 
 A dependency a member shares with a selection outside the set names both in its marker
 (`"cpu" in extras or "docs" in extras`), so selecting the member on its own still installs it.
+
+### Installer compatibility
 
 The lockfile stays within PEP 751: the membership markers use the standard `extras` and
 `dependency_groups` variables, and each fork's marker negates the other members it was forked

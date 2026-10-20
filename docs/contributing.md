@@ -62,6 +62,8 @@ coordinator = make_coordinator(
 )
 ```
 
+### Fixture and case design
+
 Use `pending_listings` when a provider test needs a listing to arrive only after its request event
 is waited on. This shares the event behavior between provider and engine tests while keeping request
 assertions in the test.
@@ -76,6 +78,8 @@ test. Shared coverage or an identical function body alone does not establish dup
 rejection cases, include a valid neighboring entry to prove the parser keeps usable data. When
 consolidating tests, use targeted mutations to confirm the retained assertions detect the faults
 they claim to cover.
+
+### Run the suite
 
 The default suite covers every module under `nab_resolver`, `nab_markersets`, `nab_provider`,
 `nab_project`, `nab_index`, and `nab`:
@@ -93,6 +97,8 @@ before reporting:
 .venv/bin/python -m coverage combine
 .venv/bin/python -m coverage report       # fails below 100 percent
 ```
+
+### Check one workspace
 
 CI checks each workspace's coverage from its own tests through nox (see `noxfile.py`). Reproduce a
 single workspace, or all of them, with:
@@ -200,6 +206,8 @@ to packages that still support the floor.
 The `pyproject.toml` `[tool.coverage.report] fail_under = 100` setting requires 100 percent branch
 coverage on every workspace package: `nab_resolver`, `nab_markersets`, `nab_provider`,
 `nab_project`, `nab_index`, and `nab`.
+
+### Workspace coverage
 
 The full local suite under `coverage run -m pytest` checks all six together. Nox splits them per
 workspace in CI and runs each suite once, appending to one coverage data file. Its result includes

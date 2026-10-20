@@ -21,6 +21,8 @@ come from:
   environment variable, or the CLI. They are rejected in `pyproject.toml`'s `[tool.nab]`, which is
   project-scope only.
 
+## Precedence
+
 Sources are consulted low to high; a higher source wins:
 
 1. built-in default
@@ -30,6 +32,8 @@ Sources are consulted low to high; a higher source wins:
    key in both files is covered below)
 5. `NAB_*` environment variables
 6. the CLI flag
+
+### Replacing values
 
 Winning is all-or-nothing. Whatever the key's type, the highest source that sets it supplies the
 whole value and nothing from a lower source survives.
@@ -42,6 +46,8 @@ file's table.
 The two project files share one rank. They may set the same key only to identical whole values; a
 difference is an error naming both files. This applies equally to lists, arrays of tables, and an
 `environment` table whose files set different subkeys.
+
+## File formats and locations
 
 The standalone `nab.toml` files use the same key names as `[tool.nab]`, but at the top level (no
 `[tool.nab]` table):

@@ -11,6 +11,8 @@ the lockfile. The default `wheel-or-sdist` treats wheels and sdists symmetricall
 | `sdist-only`               | no                         | yes                        | sdist                    |
 | `sdist-install`            | yes                        | yes                        | sdist                    |
 
+## Supported artifacts
+
 nab drops every sdist format but `.tar.gz` when it parses an index listing, before any policy sees
 it, so a version whose only sdist is a `.zip` counts as shipping none. A wheel-admitting policy sees
 only its wheels, and `sdist-only` and `sdist-install` skip it, since both need an sdist to lock.
@@ -18,9 +20,13 @@ only its wheels, and `sdist-only` and `sdist-install` skip it, since both need a
 `wheel-only` is the equivalent of pip's `--only-binary :all:` and `sdist-only` of
 `--no-binary :all:`, scoped per package or per index via an override.
 
+## Reading dependency metadata
+
 A wheel without a PEP 658 sidecar still resolves under any wheel-admitting policy. nab recovers its
 METADATA with an HTTP range read. If the index cannot serve usable ranges, nab downloads the whole
 wheel instead.
+
+## Lock an sdist for installation
 
 Use `sdist-install` when the lock must select an sdist, typically so an installer can link the
 package against system libraries.
@@ -43,6 +49,8 @@ dist-policy = "sdist-install"
 
 The same five values are accepted. Package names are canonicalised, so `Foo-Bar`, `foo_bar`, and
 `foo-bar` refer to the same package.
+
+## Trusting older sdist metadata
 
 To trust dependencies in a pre-PEP-643 sdist's `PKG-INFO` without verification, use the table form.
 This flag defaults to `false`; see [Build policy](build-policy.md) for when a backend is needed.

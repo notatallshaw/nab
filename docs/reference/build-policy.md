@@ -9,6 +9,8 @@ Three levels, strictest first. Each level reads static metadata from every sourc
 difference is what is permitted to fall through to a backend invocation when the static read returns
 nothing usable.
 
+## Defaults and supported archives
+
 An sdist below means a `.tar.gz`. nab drops every other format when it parses an index listing, so
 no policy sees one.
 
@@ -104,6 +106,8 @@ first one:
 build-requires-depth = 0   # the default
 ```
 
+### Nested build depth
+
 The default depth `0` refuses a build and reports the requirement and its build chain. At depth `1`,
 nab may build it from an sdist; that build's own requirements must be wheels. A value `n` permits
 `n` nested build environments.
@@ -117,6 +121,8 @@ A per-package or per-index `dist-policy` narrows the resolve the other way. `sdi
 publishes one this host installs, so satisfying it means building it, and the refusal names the
 policy rather than the listing.
 
+### Build outputs and cycles
+
 Build output must match the resolved release because its environment was chosen for that release. A
 wheel with another name or version is refused. PEP 440 treats `1.0` and `1.0.0` as one release, but
 not `1.0+local`.
@@ -128,6 +134,8 @@ cyclic build requirement: a 1.0 -> b 2.0 -> a 1.0
 ```
 
 Two versions of one package in a chain are not a cycle; that terminates.
+
+### Policy inside build environments
 
 A build environment reads its build requirements' metadata statically, so a per-package or per-index
 `build-policy` override may forbid a build there but never permit one. To keep a build requirement

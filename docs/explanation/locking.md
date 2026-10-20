@@ -13,6 +13,14 @@ lockfile support are experimental.
 many versions. The packages you list are direct dependencies; the packages they need are transitive
 dependencies. nab resolves both together.
 
+```toml
+[project]
+name = "example"
+version = "0.1.0"
+requires-python = ">=3.12,<3.16"
+dependencies = ["requests>=2,<3"]
+```
+
 The lock records selected versions and their sources, including artifact hashes. Commit it alongside
 `pyproject.toml` to share that selection with development machines and CI. Installing from the lock
 reuses the recorded versions. Running nab again performs a fresh resolve.
@@ -22,17 +30,33 @@ Use your environment tools and an installer such as pip for those steps.
 
 ## Requirements can be conditional
 
+```toml
+[project]
+dependencies = [
+    "requests>=2,<3",
+    'colorama>=0.4 ; sys_platform == "win32"',
+]
+```
+
 A [version specifier](https://packaging.python.org/en/latest/specifications/version-specifiers/)
 such as `>=2,<3` limits releases. A marker such as `sys_platform == "win32"` makes a dependency
 apply only to matching targets. Extras and dependency groups select optional sets of requirements.
 [Choose dependencies and conditions](../how-to/choose-dependencies.md) shows how to combine them;
-[Find a feature](features.md) covers the other workflows.
+[Browse the guides](../how-to/index.md) for other workflows.
 
 ## One lock, several targets
 
-A target is a Python version and platform, with an interpreter implementation such as CPython. A
-matrix can cover Python 3.12 through 3.15 on Linux x86-64 and Apple Silicon macOS. That describes
-eight targets in one lock.
+A target is a Python version and platform, with an interpreter implementation such as CPython. These
+settings declare eight targets:
+
+```toml
+[tool.nab]
+mode = "universal"
+
+[tool.nab.matrix]
+python = ">=3.12,<3.16"
+platforms = ["linux_x86_64", "macos_arm64"]
+```
 
 The Python running nab can differ from those targets. nab computes their dependency markers and
 wheel compatibility without launching each target interpreter. You can generate that matrix on Linux
@@ -59,8 +83,7 @@ If any declared target cannot resolve, the command fails without writing a new l
 
 `[project].requires-python` declares your project's supported Python range.
 `[tool.nab.matrix].python` chooses which Python minors to lock, within that range. `platforms`
-chooses the machines. Those settings have different jobs even when the two Python ranges are
-identical.
+chooses the machines.
 
 A bare platform ID accepts wheels without a minimum operating-system or libc version. Declare
 [platform tag settings](../reference/platform-tags.md) when you need that boundary, such as glibc
@@ -73,8 +96,14 @@ does not supply its build environment.
 
 ## Sharing and refreshing the result
 
-Use the same committed `pylock.toml` on machines it covers. [Use a lock](../how-to/use-the-lock.md)
-describes pip installation and its current extra and group selection limits.
+Use the same committed `pylock.toml` in a virtual environment it covers.
+[Use a lock](../how-to/use-the-lock.md) describes pip installation and its current extra and group
+selection limits.
+
+```bash
+nab lock
+python -m pip install -r pylock.toml
+```
 
 After changing dependencies or targets, run `nab lock` again and review the diff. Index contents can
 change between resolves; [Reproducible locks](../reference/reproducibility.md) explains upload

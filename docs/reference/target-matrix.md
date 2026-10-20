@@ -31,6 +31,8 @@ the example above declares 3 pythons, 2 platforms and 2 implementations, so it p
 | `python-order`    | `"asc"`       | Cross-target alignment direction                                                           |
 | `python-patches`  | none          | Pins a minor to one patch release, resolved whole instead of split into slices             |
 
+## Resolution order
+
 `python-order` resolves selected Python minors oldest first (`asc`, the default) or newest first
 (`desc`). Successful pins become preferences for later targets when compatible.
 
@@ -63,10 +65,14 @@ axes. Its explicit values replace the corresponding defaults, so they may add Py
 platform IDs outside those defaults. Every selected Python minor must still satisfy the project's
 `requires-python`. An empty effective Python range or platform list is a config error.
 
+### Inherited and disabled overrides
+
 Keys must name known implementations. An override does not enable its implementation, and overrides
 for disabled implementations are allowed. `python-order` orders selected minors across all
 implementations; `python-patches` pins every target of that minor to the same patch release. Shared
 platform IDs keep their matrix order, followed by new IDs in enabled-implementation order.
+
+### Accepted Python versions
 
 Python targets accept up to three release components with optional prerelease, development and local
 suffixes. Nonzero epochs and post releases are rejected in `environment.python`,
