@@ -30,11 +30,10 @@ Nab negotiates JSON or HTML through the
 [Simple repository API](https://packaging.python.org/en/latest/specifications/simple-repository-api/).
 Set `serialization` to `"json"` or `"html"` to require one format.
 
-The pin covers the `Accept` header and decoder together. The wrong serialization, including a strict
-406 response, is an error. The resolve ends; nab does not try the next index.
+nab requests and decodes the selected format. If the index returns another format or HTTP 406, nab
+fails the resolve without trying the next index.
 
-Listings fetched under one setting are not reused under another: a pinned index keeps its own
-listing cache.
+nab caches listings separately for each `serialization` setting.
 
 `serialization` is not settable on a `file://` index, `"negotiate"` included. A local index is read
 from disk with no `Accept` negotiation, so the key is rejected.

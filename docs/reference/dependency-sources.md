@@ -32,10 +32,10 @@ path = "../my-fork"
 workspace members instead default to editable; see [Lock a workspace](../how-to/workspaces.md).
 `subdirectory` locates the package below `path` in a monorepo.
 
-Reading static metadata from a local pyproject.toml works at every `build-policy` level. When the
-static read comes up empty, nab builds the checkout instead, which needs
-`build-policy = "build-local"` or `"build-remote"`. See [Build policy](build-policy.md) for what
-counts as empty.
+Reading static metadata from a local pyproject.toml works at every `build-policy` level. If that
+metadata is missing or dynamic, nab can invoke the checkout's backend only with
+`build-policy = "build-local"` or `"build-remote"`. See [Build policy](build-policy.md) for the
+metadata requirements.
 
 ## Pinned VCS sources
 
@@ -48,8 +48,9 @@ Each URL must satisfy the same `[tool.nab.vcs]` policy as a direct-URL requireme
 `vcs.allowed-repos`, and it must pin a 40-char commit hash unless `vcs.require-pin = false`. Both
 allow lists are empty by default, so each denies every URL until configured.
 
-Reading static metadata works at any `build-policy`. Building a clone whose static read comes up
-empty needs `build-policy = "build-remote"`; see [Build policy](build-policy.md).
+Reading static metadata works at any `build-policy`. If that metadata is missing or dynamic, nab
+needs `build-policy = "build-remote"` to invoke the clone's backend; see
+[Build policy](build-policy.md).
 
 ```toml
 [[tool.nab.vcs-sources]]

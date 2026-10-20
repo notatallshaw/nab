@@ -2,8 +2,8 @@
 
 # Configuration sources
 
-A few options can be set from more than one place. Each option has a scope that fixes where it may
-come from:
+nab separates project settings from settings for the machine running it. Each setting's scope
+determines which files, environment variables and flags nab reads:
 
 - Project-scope options describe the resolve itself, so they live with the project. Every
   `[tool.nab]` key is project-scope (`mode`, `indexes`, `constraints`, `vcs`, `workspace`,
@@ -35,8 +35,8 @@ Sources are consulted low to high; a higher source wins:
 
 ### Replacing values
 
-Winning is all-or-nothing. Whatever the key's type, the highest source that sets it supplies the
-whole value and nothing from a lower source survives.
+nab uses the complete value from the highest-precedence source that sets a key. It does not merge
+that value with lower-precedence sources.
 
 A CLI `constraints` list replaces every lower-precedence constraint. An `[environment]` table
 replaces every lower-precedence environment. No source adds to the one beneath it; to extend a list,

@@ -5,8 +5,9 @@
 nab resolves for the interpreter it is running on. The host is the target, like pip: the same lock
 command on a Python 3.14 machine resolves the markers a Python 3.14 install evaluates.
 
-`[tool.nab.environment]` retargets it. The table declares one target's axes, the same axes a matrix
-entry carries; every axis it leaves out keeps the host's value:
+`[tool.nab.environment]` selects a different target. A `python` setting alone changes the Python
+version while keeping the host platform. A `platform` setting makes nab model that platform, using
+the host's Python version if omitted and CPython if `implementation` is omitted:
 
 ```toml
 [tool.nab]
@@ -24,11 +25,12 @@ implementation = "cpython"  # "cpython" (default) or "pypy"
 - `platform` (with or without `implementation`) declares the machine, so the PEP 508 markers are
   synthesized from the platform id. `implementation` needs a `platform`: an interpreter is modelled
   on a declared machine, never on the host's.
-- A declared platform forbids host builds, so `build-policy` must be `never`. A python-only retarget
-  warns and permits. See [Build policy](build-policy.md).
+- For a declared platform, nab forces `build-policy = "never"` and rejects an explicit different
+  policy. Changing only Python produces a warning and keeps the configured build permissions. See
+  [Build policy](build-policy.md).
 
-`platform` takes the two shapes a `[tool.nab.matrix]` platform takes: a bare id at that platform's
-default tag knobs, or a table declaring them.
+`platform` accepts a platform ID with default settings, or a table containing the ID and explicit
+settings, just like an entry in `[tool.nab.matrix].platforms`.
 
 ```toml
 [tool.nab]
@@ -53,10 +55,9 @@ Tags filter wheels only, so a `.tar.gz` sdist keeps a version alive for any targ
 other sdist format when it parses the listing, so a version whose only sdist is a `.zip` and which
 ships no wheel is not a candidate either (`pyreadline==2.1`).
 
-The resolve is still for one environment. A lock made for `linux_x86_64` is a lock for
-`linux_x86_64`; it says so in its PEP 751 `environments` (see [lockfiles](lockfile.md)), and a
-conforming installer refuses it elsewhere. To lock for several machines at once, use
-`mode = "universal"`.
+The lock records this single target in PEP 751 `environments`; an installer rejects it on other
+platforms. See [Lockfiles](lockfile.md). `mode = "universal"` lets nab resolve several targets
+together.
 
 ## Combining target settings
 
@@ -69,8 +70,8 @@ The old overlay could combine one declared marker with the rest of the host, pro
 that does not exist. It is translated to `[tool.nab.environment]` with a warning. An unknown axis or
 unmapped `(sys_platform, platform_machine)` pair is a config error.
 
-`platform_release` and `platform_version` are knobs of the machine the pair names, so they translate
-into the platform table (`platform-release`, `platform-version`) and need the pair alongside them.
+`platform_release` and `platform_version` describe the declared platform, so they translate into the
+platform table (`platform-release`, `platform-version`) and need the pair alongside them.
 
 ## Python settings
 
@@ -82,7 +83,7 @@ into the platform table (`platform-release`, `platform-version`) and need the pa
   `Requires-Python` is read, so `==3.13` and `>=3.13.2` both admit a 3.13 target however precisely
   that target names its interpreter, and `!=3.13` excludes one however it is named.
 
-  A declaration that excludes the target is a config error naming the knob that moves it:
+  A declaration that excludes the target is a config error naming the setting to change:
   `[tool.nab.environment] python` for a single-environment resolve, `[tool.nab.matrix].python` and
   `[tool.nab.matrix.python-patches]` for a matrix target, since neither `--python` nor
   `[tool.nab.environment]` is allowed alongside a matrix.
@@ -94,7 +95,7 @@ into the platform table (`platform-release`, `platform-version`) and need the pa
 - `[tool.nab.matrix].python`: a range like `>=3.11,<3.14`, expanded into one target per minor
   version. Used only by universal mode. Pair with `[tool.nab.matrix].platforms`,
   `[tool.nab.matrix].implementations`, per-implementation overrides and (optionally)
-  `[tool.nab.matrix].python-patches` to control the resolve and marker shape across all targets.
+  `[tool.nab.matrix].python-patches` to select targets and their lockfile markers.
 
 Declaring a `[tool.nab.matrix]` table while `mode` is `specific` is an error: the matrix is the list
 of targets to resolve, so the project must set `mode = "universal"` too.

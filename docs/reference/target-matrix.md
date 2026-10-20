@@ -22,12 +22,12 @@ python-patches = { "3.11" = "3.11.4" }
 The matrix has three axes. Without implementation overrides, nab resolves the full cross product:
 the example above declares 3 pythons, 2 platforms and 2 implementations, so it plans 12 targets.
 
-## Explicit coverage
+## Targets nab includes
 
-Explicit is better than implicit: opt into each dimension you want to vary, then declare its values.
-`python` and `platforms` are required; `implementations` defaults to CPython only. Enabling
-universal mode does not add other platforms or implementations. An omitted optional setting keeps
-its default, not all possible values. See {ref}`What nab locks <explicit-is-better-than-implicit>`.
+nab requires `python` and `platforms` and resolves their listed combinations. `implementations`
+defaults to CPython only; nab includes PyPy only when you list `"pypy"`. nab uses the documented
+defaults for omitted platform settings; it does not expand them into extra targets. See
+{ref}`how nab chooses coverage <explicit-is-better-than-implicit>`.
 
 | Key               | Default       | Meaning                                                                                    |
 | ----------------- | ------------- | ------------------------------------------------------------------------------------------ |

@@ -46,10 +46,9 @@ platforms = ["linux_x86_64", "macos_arm64"]
 minors on each platform: eight targets. `mode = "universal"` tells nab to resolve them together into
 one file.
 
-Explicit is better than implicit: each dimension covers the values you select. Here, Python and
-platform vary; the implementation stays at its CPython default. Windows, PyPy, musl Linux and
-free-threaded CPython are not included. Without universal configuration, nab defaults to one
-environment.
+With `implementations` omitted, nab selects CPython. It does not add Windows, PyPy, musl Linux or
+free-threaded CPython unless you configure them. Without universal configuration, nab resolves for
+the Python and platform running it.
 
 Change the range and platform IDs to match your deployments when using your own project. See
 [Target matrix](../reference/target-matrix.md) for Windows, other architectures and PyPy, and
@@ -105,9 +104,7 @@ python -m pip install -r pylock.toml
 python -c "import requests; print(requests.__version__)"
 ```
 
-pip's pylock support is experimental. It selects the current environment from the lock, its default
-dependency groups, and no extras. This installs the locked dependencies; installing your own project
-is a separate step.
+This installs the locked dependencies; installing your own project is a separate step.
 
 ## Share and update the lock
 

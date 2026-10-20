@@ -3,22 +3,20 @@
 Some Python packages publish
 [dependency metadata](https://packaging.python.org/en/latest/specifications/core-metadata/) that nab
 can read without running any code; others require invoking a PEP 517 build backend.
-`[tool.nab].build-policy` is the single knob that controls how far nab is willing to go.
+`[tool.nab].build-policy` controls which sources nab may run a build backend for.
 
-Three levels, strictest first. Each level reads static metadata from every source it admits; the
-difference is what is permitted to fall through to a backend invocation when the static read returns
-nothing usable.
+nab first tries to read static metadata. When that metadata is unavailable, the three levels below
+determine whether nab may invoke a backend.
 
 ## Defaults and supported archives
 
 An sdist below means a `.tar.gz`. nab drops every other format when it parses an index listing, so
 no policy sees one.
 
-The default is `build-local`: local checkouts and workspace members may invoke a backend, but remote
-sources (PyPI sdists, VCS clones, archive sources) are read statically only. Lift a specific package
-to `build-remote` with a per-package override when you know it needs a real build
-(`[tool.nab.packages.<name>]`); keep the global default tight rather than enabling builds for the
-whole graph.
+The host-specific default is `build-local`: local checkouts and workspace members may invoke a
+backend, but remote sources (PyPI sdists, VCS clones, archive sources) are read statically only. In
+universal mode, nab defaults to `never` and rejects explicit non-`never` values, including package
+and index overrides.
 
 ## `never`
 
@@ -35,10 +33,10 @@ Static metadata only, from any source:
   read statically. A missing or malformed `[project]`, or a `dynamic` list covering `version`,
   `requires-python`, `dependencies`, or `optional-dependencies`, ends the resolve.
 - VCS clones declared via `[[tool.nab.vcs-sources]]`: the clone is fetched and its `pyproject.toml`
-  is read statically. Same failure when the static read comes up empty.
+  is read statically. Missing or dynamic metadata ends the resolve.
 - Archive sources declared via `[[tool.nab.archive-sources]]`: the `.tar.gz` is downloaded,
-  hash-verified, and extracted, then its `pyproject.toml` is read statically. Same failure when the
-  static read comes up empty.
+  hash-verified, and extracted, then its `pyproject.toml` is read statically. Missing or dynamic
+  metadata ends the resolve.
 
 `never` runs no build backend unless a per-package or per-index override raises the policy. It still
 reads configured indexes and source files.
@@ -96,10 +94,9 @@ The override permits a backend only for that package. If its dependencies are kn
 
 ## Building a build requirement
 
-A backend runs in a venv holding its project's `[build-system].requires`, and a venv takes wheels.
-When the version a requirement resolves to publishes none this host can install, satisfying it means
-building that first. `build-requires-depth` counts the build environments nab may open beneath the
-first one:
+nab installs `[build-system].requires` as wheels in an isolated build environment. If a selected
+build requirement has no compatible wheel, nab must build it from an sdist first.
+`build-requires-depth` limits these nested build environments:
 
 ```toml
 [tool.nab]
@@ -108,9 +105,9 @@ build-requires-depth = 0   # the default
 
 ### Nested build depth
 
-The default depth `0` refuses a build and reports the requirement and its build chain. At depth `1`,
-nab may build it from an sdist; that build's own requirements must be wheels. A value `n` permits
-`n` nested build environments.
+The default depth `0` refuses a nested build and reports the requirement and its build chain. At
+depth `1`, nab may build it from an sdist; that build's own requirements must be wheels. A value `n`
+permits `n` nested build environments.
 
 The resolve is never narrowed to wheels; that would settle on an older backend than
 `[build-system].requires` asked for without saying so. The requirement resolves as written and the
@@ -146,9 +143,9 @@ from being built, pin it to wheels:
 dist-policy = "wheel-only"
 ```
 
-`build-requires-depth` is inert only where no build can run. A declared platform makes every
-explicit non-`never` policy, including overrides, a config error. Global `build-policy = "never"`
-alone is insufficient: an override may still permit a build whose environment reads the same depth.
+`build-requires-depth` has no effect when no backend can run. A declared platform rejects any
+non-`never` policy, including overrides. In host-specific mode, the depth still applies to builds
+permitted by package or index overrides, even with a global `build-policy = "never"`.
 
 ## Overrides
 
@@ -200,6 +197,4 @@ A retarget of the Python axis alone (`[tool.nab.environment].python`, or `--pyth
 different: the machine is still the host. nab warns that a build would report the host interpreter's
 metadata, and permits it.
 
-This is a deliberate deviation from pip: the machine is still the host, so a build can run at all,
-and refusing every one of them would take the default case with it. Set `build-policy = "never"` to
-forbid it.
+Set `build-policy = "never"` to forbid it.

@@ -13,9 +13,9 @@ python = ">=3.12,<3.16"
 platforms = ["linux_x86_64", "macos_arm64"]
 ```
 
-Explicit is better than implicit: choose the dimensions and values to resolve universally. This
-matrix varies Python and platform; implementation defaults to CPython. Other implementations or
-platform variants require {ref}`explicit configuration <explicit-is-better-than-implicit>`.
+nab resolves eight CPython targets from this matrix. It includes other platforms or interpreter
+implementations only when you configure them; see
+{ref}`how nab chooses coverage <explicit-is-better-than-implicit>`.
 
 An installer such as pip uses the lock to install packages for its current environment. nab resolves
 and records dependencies; it does not install them or manage virtual environments. Both nab and its
@@ -42,7 +42,7 @@ stability warnings.
 | Sources               | Simple indexes, local checkouts, declared git sources, hash-pinned `.tar.gz` archives, and workspace members. Project-root `name @ git+...` requirements are not resolved yet. |
 | Output                | PEP 751 `pylock.toml`, requirements with recorded index hashes, and requirements without those hashes.                                                                         |
 | Experimental features | Universal locks, multiple indexes, and workspaces. Their feature pages state the current boundary.                                                                             |
-| Embedding             | `nab-resolver` has a path-stable public API. `nab-markersets` documents its supported surface but remains experimental; the other component APIs are experimental.             |
+| Embedding             | `nab-resolver` has stable public module paths. The other component APIs are experimental.                                                                                      |
 
 ```{toctree}
 ---

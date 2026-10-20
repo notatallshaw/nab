@@ -68,15 +68,13 @@ In a virtual environment covered by the lock, use pip 26.1 or newer:
 python -m pip install -r pylock.toml
 ```
 
-pip's pylock support is experimental. The
-[tutorial](https://nab.readthedocs.io/en/stable/tutorial/getting-started.html) includes environment
-setup and pip upgrading. Commit the project file and lock together; other covered environments can
-install from the same lock.
+The [tutorial](https://nab.readthedocs.io/en/stable/tutorial/getting-started.html) covers
+environment setup. Commit the project file and lock together; other covered environments can install
+from the same lock.
 
-Explicit is better than implicit. Choose which dimensions to resolve universally and declare their
-values. This example spans Python versions and platforms, with CPython as the default
-implementation; it does not also cover PyPy, musl Linux or free-threaded CPython. Select those
-explicitly through
+In nab, you choose which Python versions, platforms and interpreter implementations to resolve
+universally, because explicit is better than implicit. This example resolves CPython only. PyPy,
+musl Linux and free-threaded CPython require explicit
 [target configuration](https://nab.readthedocs.io/en/stable/reference/target-matrix.html) and
 [platform settings](https://nab.readthedocs.io/en/stable/reference/platform-tags.html).
 

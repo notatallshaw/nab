@@ -1,13 +1,13 @@
 # Reason about markers
 
-`nab-markersets` reads a PEP 508 marker as the set of environments it selects. Two markers that
-cannot both hold are disjoint sets; a marker no environment satisfies is the empty set; a marker you
-can drop is the full one. `packaging` evaluates a marker against one environment, and these are the
-questions you cannot answer that way.
+`nab-markersets` represents a PEP 508 marker as a set of environments. It can check whether two
+markers overlap, whether one implies another, or whether a marker is always true or always false.
+`packaging` evaluates a marker against one environment; nab-markersets compares the sets they
+select.
 
 Install it with `pip install "nab-markersets[packaging]"`. A set comes from `MarkerSet.from_marker`,
-`MarkerSet.full` or `MarkerSet.empty`; `intersection`, `union`, `complement` and `difference` also
-spell as `&`, `|`, `~` and `-`.
+`MarkerSet.full` or `MarkerSet.empty`; `intersection`, `union`, `complement` and `difference` are
+also available as `&`, `|`, `~` and `-`.
 
 ## Check whether two markers can both apply
 
@@ -45,8 +45,8 @@ False
 
 ## Compare two forms of one marker
 
-`==` is structural, over the tree a set was built from, so two forms of one set compare unequal.
-`equivalent` is the semantic test.
+`==` compares expression structure. Use `equivalent` to check whether two marker sets select the
+same environments.
 
 ```pycon
 >>> short = MarkerSet.from_marker('python_version >= "3.11"')
@@ -88,8 +88,8 @@ True
 
 ## Make a marker smaller
 
-`simplify` drops what a universe you name already rules out. Pass the environments your project
-supports. The result may differ outside `within`.
+`simplify(within=...)` removes conditions already guaranteed by the environments in `within`. Pass
+the environments your project supports; the result may differ outside that set.
 
 ```pycon
 >>> wide = MarkerSet.from_marker(
@@ -101,13 +101,13 @@ supports. The result may differ outside `within`.
 'python_version >= "3.10"'
 ```
 
-`MarkerSet.full()` as the universe gives a context-free factoring instead. The result need not be
-the smallest equivalent set and may be longer than the input.
+With `MarkerSet.full()` as `within`, simplification assumes no project-specific restrictions. The
+result may be longer than the input.
 
 ## Write a set back out
 
 `to_marker_string` returns `None` for the full set and raises for the empty set and for a complement
-PEP 508 cannot spell. `simplify` raises the same way: factoring pushes complements down to the
+PEP 508 cannot express. `simplify` raises the same way: factoring pushes complements down to the
 leaves first, and that step cannot always be represented in PEP 508.
 
 ```pycon
@@ -140,9 +140,8 @@ Names are PEP 685 normalised on both sides.
 
 ## Share work across decisions
 
-A `DecisionStore` is scratch several decisions can share. Answers never depend on it, so passing
-none is always correct. It is not safe to share across threads; build one per piece of work and drop
-it after.
+A `DecisionStore` reuses work across marker checks without changing their results. Create one for an
+operation and discard it when that operation finishes. Do not share it across threads.
 
 ```pycon
 >>> from nab_markersets.markersets import DecisionStore
@@ -191,17 +190,14 @@ Every decision runs under a cell budget and raises rather than hanging.
 too wide to decide
 ```
 
-`restrict` variables fixed before deciding: a substituted axis leaves the cell product.
+Call `restrict` with known variable values before checking the set to reduce the combinations nab
+must examine.
 
-## What the decisions do not decide
+## Limits of emptiness checks
 
-Emptiness enumerates representative points rather than solving, and one construction is read wrong
-on purpose.
-
-A `"lit" in var` test on a version-dispatch variable (`python_version`, `python_full_version`,
-`platform_release`, `implementation_version`) is decided as its own free boolean, independent of the
-same variable's value, because the versions that embed a literal cannot be enumerated from that
-literal. A contradiction between the two readings is not seen.
+`is_empty` checks representative environments. For `python_version`, `python_full_version`,
+`platform_release` and `implementation_version`, it evaluates substring tests independently of
+version comparisons. It can therefore miss a contradiction such as:
 
 ```pycon
 >>> MarkerSet.from_marker(
@@ -210,17 +206,17 @@ literal. A contradiction between the two readings is not seen.
 False
 ```
 
-A string variable has no such limit: its points carry both readings, so the same contradiction is
-decided.
+For string variables such as `os_name`, `is_empty` checks substring and equality conditions together
+and detects the contradiction:
 
 ```pycon
 >>> MarkerSet.from_marker('os_name == "posix" and "posix" not in os_name').is_empty()
 True
 ```
 
-So `is_empty` returning `True` is safe and `False` is the weak answer. `witness` and `evaluate`
-check a concrete environment against the set, so they do not inherit it; only a `None` witness is
-weaker than "empty".
+`is_empty()` returning `True` proves the set is empty; `False` can include the false positives
+above. `witness` and `evaluate` validate concrete environments. A returned witness satisfies the
+marker, but `witness()` returning `None` does not prove emptiness.
 
 ## The supported API
 

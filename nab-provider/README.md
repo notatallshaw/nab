@@ -17,7 +17,7 @@ Use `nab-provider` to embed nab's resolution in a host that already owns its net
 keeping [`nab-index`](https://pypi.org/project/nab-index/) out of the import graph. Most users want
 [`nab`](https://pypi.org/project/nab/) instead.
 
-The API is currently under rapid experimentation, if you use it pin to an exact version.
+The API is experimental. Pin an exact version when embedding it.
 
 ## Wheel tags
 

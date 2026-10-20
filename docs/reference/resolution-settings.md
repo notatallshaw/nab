@@ -61,10 +61,10 @@ cannot. See [Yanked releases](yanking.md).
 nab fetches listings in the background. Response timing and cache warmth can affect which valid
 solution the default search selects.
 
-| Value               | Behaviour                                                  |
-| ------------------- | ---------------------------------------------------------- |
-| `arrival` (default) | Rank a package on the listings that have already landed.   |
-| `stable`            | Wait for the listing, then rank on its real version count. |
+| Value               | Behaviour                                                               |
+| ------------------- | ----------------------------------------------------------------------- |
+| `arrival` (default) | Rank packages using the listings received so far.                       |
+| `stable`            | Wait for a package's listing before using its version count to rank it. |
 
 Use `stable` with `nab lock --locked` to keep fetch timing from changing the result. The index
 contents and other inputs must also stay fixed.

@@ -11,9 +11,9 @@ Declare the supported targets in a [target matrix](../reference/target-matrix.md
 [Lock for multiple environments](../how-to/lock-multiple-environments.md) gives the commands and
 output formats.
 
-Explicit is better than implicit: the matrix varies only the dimensions you select. Unselected
-implementations and platform variants are not added automatically; omitted optional settings retain
-their defaults. See {ref}`explicit coverage <explicit-is-better-than-implicit>`.
+nab builds targets from the matrix's Python range, platform list and selected implementations
+(CPython by default). Dependency markers do not add targets. See
+{ref}`how nab chooses coverage <explicit-is-better-than-implicit>`.
 
 ## How it works
 
@@ -51,10 +51,10 @@ An sdist's `PKG-INFO` stands for the whole version, so one read serves every tar
 After a target resolves, its pins flow forward as preferences for the next, giving best-effort
 alignment across targets.
 
-The lock a matrix produces is the lock a single environment produces, with more environments in it:
-the same shape, the same [environment declarations](../reference/lockfile-environments.md), and the
-same dependency edges. A target whose minor a marker splits contributes one declaration per slice
-(see Patch-release markers below).
+nab merges the resolved targets into one lock. It records
+[environment declarations](../reference/lockfile-environments.md) and dependency edges for those
+targets. When a marker splits a Python minor, nab records one declaration per slice; see
+Patch-release markers below.
 
 ## Where a version's metadata comes from
 
@@ -265,13 +265,13 @@ stays, subject to the build policy. Each tuple accepts three wheel-tag dimension
   for PyPy, and `none`.
 - platform: manylinux or musllinux for the declared libc family, macosx, and win.
 
-The tag knobs live on the platform, written as a table in `platforms` rather than a bare id.
+Wheel compatibility settings go in a platform table within `platforms`, alongside its `id`.
 [Platform tags](../reference/platform-tags.md) lists the defaults and constraints.
 
 ### What the axes do not cover
 
-The matrix keys and platform tag knobs cover every supported axis. Platform IDs and implementations
-are fixed enumerations, so unknown names are configuration errors.
+The matrix and platform settings define the supported targets. Platform IDs and implementations are
+fixed enumerations, so unknown names are configuration errors.
 
 `python` accepts a specifier over known minor versions. A range can extend beyond those versions;
 only a range matching none of them is an error.

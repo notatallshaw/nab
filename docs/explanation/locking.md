@@ -64,15 +64,14 @@ without a Mac.
 
 (explicit-is-better-than-implicit)=
 
-## Explicit is better than implicit
+## How nab chooses the lock's coverage
 
-Universal locking covers the dimensions and values you ask for. Enabling it does not select every
-Python environment. Set `mode = "universal"` and declare a
-[target matrix](../reference/target-matrix.md); omitted optional settings keep their documented
-defaults.
+nab resolves the Python versions and platforms listed in `[tool.nab.matrix]`. It uses CPython unless
+`implementations` selects another interpreter. You choose the environments to cover, because
+explicit is better than implicit; `mode = "universal"` does not add deployment targets on its own.
+See [Target matrix](../reference/target-matrix.md) for the settings and their defaults.
 
-The matrix above varies Python versions and platforms. It uses CPython only. To vary the
-implementation too, add PyPy to the same matrix table:
+To resolve for PyPy alongside CPython, add this to the same matrix table:
 
 ```toml
 implementations = ["cpython", "pypy"]

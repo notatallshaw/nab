@@ -3,7 +3,7 @@
 `nab` is one command built out of six distributions. Installing `nab` pulls all of them, so the
 split matters only when you embed part of nab elsewhere.
 
-Except for `nab-resolver`'s documented surface, these APIs are experimental. Pin exact versions when
+Except for `nab-resolver`'s documented API, these APIs are experimental. Pin exact versions when
 embedding them.
 
 ## Following a command
@@ -85,8 +85,8 @@ nab            ->  nab-markersets, nab-provider, nab-index, nab-project,
 
 Only `packaging` is shown among the third-party dependencies because it exists here in two copies.
 
-`nab-index` depends on `nab-provider` because `WheelFile`, `SdistFile`, `IndexConfig`, and the fetch
-errors live with the side that must never fetch.
+`nab-index` depends on `nab-provider` for `WheelFile`, `SdistFile`, `IndexConfig` and fetch error
+types. The provider owns these data contracts; the index client supplies their data.
 
 The provider also owns `nab_provider.value`, shared record behavior used by the index, project and
 CLI layers. Concrete records keep their typed constructors in the package owning their data; the

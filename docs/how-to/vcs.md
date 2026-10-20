@@ -1,8 +1,8 @@
 # Add a VCS dependency
 
 nab resolves dependencies pulled from git URLs through `[tool.nab.vcs]` and
-`[[tool.nab.vcs-sources]]`. Only git is supported; hg, svn, and bzr are not. The default posture is
-fully restrictive: nothing VCS-shaped resolves without an explicit policy.
+`[[tool.nab.vcs-sources]]`. Only git is supported. nab blocks Git sources by default; you must allow
+their schemes and repository URLs before resolving them.
 
 ## Default posture
 
@@ -27,7 +27,7 @@ allowed-repos = ["https://github.com/myorg/"]
 require-pin = true
 ```
 
-Three layers, each AND-checked:
+nab checks every URL against all three settings:
 
 1. `allowed-schemes`: the supported pip-style prefixes are `git+https`, `git+ssh`, `git+http`,
    `git+file`, and `git+git`. Empty means "no scheme is allowed". `git+http` and `git+git` are
@@ -63,12 +63,11 @@ repository, reads its static metadata, and treats the result as a normal depende
 the same admission as a project-root requirement, so it must pass `allowed-schemes`,
 `allowed-repos`, and `require-pin`.
 
-Reading static metadata from the cloned tree works at any `build-policy` level. When the static read
-comes up empty, nab builds the clone instead, which needs `build-policy = "build-remote"` (a clone
-counts as remote because the source bytes are network-fetched, even though they end up on disk
-before the backend runs).
+Reading static metadata from the cloned tree works at any `build-policy` level. If the clone lacks
+usable static metadata, nab can invoke its backend only with `build-policy = "build-remote"`. Cloned
+sources count as remote even after downloading.
 
-The [build policy](../reference/build-policy.md) page lists what counts as empty.
+See [build policy](../reference/build-policy.md) for the metadata requirements.
 
 ## Offline runs
 
@@ -94,9 +93,8 @@ The admission check (allowed schemes, allowed repos, required pin) fires on this
 resolver path is not implemented for the project-root case: nab raises `NotImplementedError`. Use a
 `[[tool.nab.vcs-sources]]` entry instead.
 
-## Lockfile shape
+## What nab records in the lock
 
-VCS pins land in the lockfile as `VcsPin` records carrying the repo URL, the resolved 40-char commit
-SHA, and an optional `subdirectory`. Annotated tags are dereferenced to their underlying commit so
-the lock never records a tag-object SHA. VcsPins do not carry a `sha256` (pip does not hash-check
-VCS forms), so `nab download` skips them.
+nab records the repository URL, resolved 40-character commit SHA and optional `subdirectory`.
+Annotated tags resolve to their underlying commit. Git entries have no artifact hash and are skipped
+by `nab download`.

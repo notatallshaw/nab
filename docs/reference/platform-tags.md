@@ -7,7 +7,7 @@ defines the tag formats.
 ## Configure a platform
 
 A `platforms` entry is either a bare platform id, which takes that platform's defaults, or a table
-declaring the wheel-tag knobs:
+declaring wheel compatibility settings:
 
 ```toml
 [tool.nab]
@@ -89,7 +89,7 @@ platforms = [
 ```
 
 Here `pp80` selects `pypy311_pp80` native wheels and excludes `pypy311_pp73`; pure-Python wheels
-remain eligible. The same knob works in `environment.platform` and as `pypy-abi=pp80` after a CLI
+remain eligible. The same setting works in `environment.platform` and as `pypy-abi=pp80` after a CLI
 platform ID. An explicit ABI requires every target using that platform table to be PyPy. ABI
 variants cannot be separate matrix targets for the same platform because PEP 508 markers cannot
 distinguish them. A host resolve uses the running interpreter's actual ABI.
@@ -119,14 +119,13 @@ target that does run that kernel has to say so.
 
 ## Matrix restrictions
 
-A knob belongs to its platform. `libc` and `runs-on-libc` are Linux knobs and `runs-on-macos` is a
-macOS one, so declaring one on a platform that cannot read it is a config error. It would select no
-wheel, and it would still record the machine the lock was resolved for.
+nab rejects settings for the wrong platform: `libc` and `runs-on-libc` apply only to Linux, and
+`runs-on-macos` applies only to macOS.
 
 Each implementation's platform list may name an id once. PEP 508 cannot distinguish libc families or
 free-threaded builds for the same interpreter, so duplicate ids would render the same lock marker.
 Lock another libc family or ABI for that interpreter in a separate run and file.
 
-Each target impersonates a platform, so universal mode cannot build on the host: `build-policy`
-defaults to `never` and cannot be raised. An explicit non-`never` value (global or in any override)
-is a config error. See [Build policy](build-policy.md).
+Universal resolution models declared platforms without running on them, so `build-policy` defaults
+to `never` and cannot be raised. An explicit non-`never` value (global or in any override) is a
+config error. See [Build policy](build-policy.md).

@@ -50,8 +50,7 @@ known, so a version specifier alongside `index` is rejected, and a package may h
   lists it (PyPI).
 - `torch` has a routing override, so nab consults only `torch-cpu`.
 
-If `torch-cpu` does not list `torch`, resolution fails for that requirement. Strict pinning is the
-point: silent fallthrough is a foot-gun on an index the override was meant to govern.
+If `torch-cpu` does not list `torch`, nab fails that requirement without trying another index.
 
 ## Per-index policy
 
@@ -63,19 +62,17 @@ that comes from PyPI is wheel-only, while packages from the torch index keep the
 dist-policy = "wheel-only"
 ```
 
-A package is attributed to a single serving index: its route target if it has one, otherwise the
-first index in declared order that lists it. A per-index override therefore governs a package only
-through that one attributing index, not through every index that could also serve it.
+nab applies per-index policy from the package's routed index, or the first index that lists it when
+there is no route. Policies from other indexes do not apply to that package.
 
 A mirror that stamps its listings short-lived makes nab revalidate them once per package on every
 warm run. Set `assume-fresh-seconds` on that index to skip those round trips; see the
 {ref}`Per-index policy <per-index-policy>`.
 
-## Policy across both surfaces is an error, not a precedence
+## Conflicting package and index policies
 
-The per-package and per-index surfaces are not ranked. If a per-package override and the per-index
-override for the serving index both set the same field for a candidate, the resolve raises a clear
-error rather than picking one:
+nab stops resolution if a package override and its serving-index override set the same field for the
+same candidate. Remove that field from one of the two overrides:
 
 ```toml
 # torch routes to torch-cpu and this per-package override sets its
@@ -97,7 +94,7 @@ dist-policy = "sdist-only"
 nab lock pyproject.toml
 ```
 
-## Notes
+## Index order and routing scope
 
 - Index ordering is significant. Reorder the `[[tool.nab.indexes]]` entries to change which index
   wins for any package without a route.

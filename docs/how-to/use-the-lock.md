@@ -1,14 +1,7 @@
 # Use a lock
 
-nab resolves and records dependencies; an installer consumes the result. Choose the path that
-matches the output you need.
-
-| Starting point                                   | Next step                                                             |
-| ------------------------------------------------ | --------------------------------------------------------------------- |
-| A committed `pylock.toml`                        | Install from it with pip 26.1 or newer.                               |
-| An index-only project needing `requirements.txt` | Resolve to hashed requirements, then install with `--require-hashes`. |
-| Hashed requirements for an offline machine       | Download compatible wheels before disconnecting.                      |
-| A committed lock to check in CI                  | Re-resolve with `--locked` under the same target and settings.        |
+`nab lock` writes `pylock.toml` by default, or requirements files with `--format requirements`. An
+installer reads those files to install the selected dependencies.
 
 Run installation commands in the project's virtual environment, using a Python and platform covered
 by the lock. See {ref}`Getting started <install-the-locked-dependencies>` for environment setup.
@@ -21,8 +14,8 @@ pip 26.1 and newer can install the dependencies selected from a PEP 751 lock:
 python -m pip install -r pylock.toml
 ```
 
-pip's `pylock.toml` support is experimental. It selects packages for the current interpreter and
-platform, uses the lock's default dependency groups, and selects no extras.
+pip selects packages for the current interpreter and platform, uses the lock's default dependency
+groups, and selects no extras.
 
 The command installs the locked dependencies, not the project that produced the lock. See
 [Selecting what to lock](../reference/selection.md) before using extras, non-default groups, or

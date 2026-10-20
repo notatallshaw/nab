@@ -3,8 +3,8 @@
 Start with the project in [Your first universal lock](../tutorial/getting-started.md). Keep
 `mode = "universal"` and change its matrix to match your deployments.
 
-Each dimension covers the values you select. Universal mode does not add unrequested platforms or
-implementations; see {ref}`explicit coverage <explicit-is-better-than-implicit>`.
+nab resolves the Python versions and platforms listed in the matrix, using CPython unless you select
+other implementations. See {ref}`how nab chooses coverage <explicit-is-better-than-implicit>`.
 
 ## Change the project matrix
 

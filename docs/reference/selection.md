@@ -1,7 +1,9 @@
 # Selecting what to lock
 
-Which dependency groups and extras a `nab lock` or `nab download` run covers, and what a workspace
-adds to it. `--build-requirements` and `--no-emit-workspace` are `nab lock` only.
+`nab lock` and `nab download` resolve regular project dependencies plus the extras and groups you
+select. With no selection settings or flags, nab selects no project extras or dependency groups.
+Workspace discovery can also supply local packages. `--build-requirements` and `--no-emit-workspace`
+apply only to `nab lock`.
 
 The commands themselves are on the [CLI](cli.md) page.
 
@@ -58,8 +60,8 @@ conflicting selection on the CLI can fork the resolve; see [Conflicts](../explan
 `base-group`, or `build-group`. An engaged set forks the run once per allowed member combination;
 see [Conflicting extras and groups](../explanation/conflicts.md).
 
-A package that only a selected extra or group reaches is emitted with a `'X' in extras` or
-`'X' in dependency_groups` marker, so an installer given neither leaves it out; see
+nab adds a `'X' in extras` or `'X' in dependency_groups` marker to a package needed only by a
+selected extra or group. An installer omits that package when the selection is inactive; see
 [Lockfiles](lockfile.md).
 
 (build-requirements)=

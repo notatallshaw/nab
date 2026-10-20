@@ -37,9 +37,8 @@ Wrote req-3.12-extra-cpu.txt (12 packages, tuple py312-linux_x86_64-extra-cpu)
 Wrote req-3.12-extra-gpu.txt (14 packages, tuple py312-linux_x86_64-extra-gpu)
 ```
 
-A template that maps two targets onto one path is rejected. The error names variables that can
-separate them. If no variable names the differing axis, such as libc or implementation, use pylock
-output instead.
+nab rejects a template when two targets would write to the same path. The error lists any template
+variables that distinguish them. If the templates cannot distinguish the targets, use pylock output.
 
 ## Universal output
 

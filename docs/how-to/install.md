@@ -1,8 +1,6 @@
 # Install nab
 
-`nab` ships as a CLI plus five importable libraries; see
-[the six distributions](../explanation/packages.md). The recommended path is to install it as an
-isolated tool.
+Install nab as an isolated tool. It runs on CPython 3.10 and newer.
 
 ## uv tool install
 
@@ -10,14 +8,11 @@ isolated tool.
 uv tool install nab
 ```
 
-Installs `nab` in a uv-managed tool environment and exposes the console script on `PATH`. uv
-resolves and installs all six distributions together. Confirm with:
+Check the installation:
 
 ```bash
 nab --version
 ```
-
-`nab` runs on CPython 3.10 and newer. Other interpreters are not tested.
 
 ## pipx
 
@@ -25,16 +20,13 @@ nab --version
 pipx install nab
 ```
 
-pipx creates a per-tool virtual environment and exposes `nab` on `PATH`.
-
-## Run without installing a persistent command
+## Run with uvx
 
 ```bash
 uvx nab lock pyproject.toml
 ```
 
-[`uvx` is an alias for `uv tool run`](https://docs.astral.sh/uv/guides/tools/). It runs nab in an
-isolated tool environment. Replace `nab` with `uvx nab` in commands throughout these guides.
+Replace `nab` with `uvx nab` in commands throughout these guides.
 
 With pipx, use `pipx run nab lock pyproject.toml`.
 
@@ -43,7 +35,7 @@ With pipx, use `pipx run nab lock pyproject.toml`.
 `nab-index` ships urllib3 by default. Install an extra to use httpx or httpx2:
 
 ```bash
-pip install 'nab[httpx2]'
+uv tool install 'nab[httpx2]'
 nab lock --http-backend httpx2
 ```
 
@@ -53,11 +45,10 @@ For httpx, install `nab[httpx]` and select `--http-backend httpx`. Each extra in
 package for HTTP/2 support. Missing dependencies produce an installation hint when selecting the
 backend.
 
-All backends use system certificates through truststore and send `User-Agent: nab-index/<version>`.
+All backends use system certificates through truststore.
 
 ## Installing from a checkout
 
 Use the [development install](../contributing.md) to run an unreleased revision from a checkout.
-Hatch installs the six workspace distributions together.
 
 Once `nab --version` succeeds, [make your first lock](../tutorial/getting-started.md).

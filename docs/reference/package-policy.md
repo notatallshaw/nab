@@ -1,14 +1,14 @@
 # Package and index policy
 
-Two surfaces scope policy to a subset of packages. One is keyed by *package*
-(`[tool.nab.packages.<name>]` and `[[tool.nab.package-rules]]`), the other by *index name*
-(`[tool.nab.index.<name>]`). The flat top-level keys remain the global defaults; an override narrows
-them.
+nab applies overrides by package name and version (`[tool.nab.packages.<name>]` or
+`[[tool.nab.package-rules]]`), or by serving index (`[tool.nab.index.<name>]`). Each overridden
+field replaces the global setting for matching packages. Fields with no override keep their global
+defaults.
 
 ## Per-package overrides
 
-A per-package override is a policy body applied to a requirement. It can be written two ways, and
-both may appear in one file.
+A per-package override sets policy for matching package names and versions. Both forms below may
+appear in one file.
 
 Use a name-keyed table for one package:
 
@@ -116,7 +116,7 @@ assume-fresh-seconds = 3600
 `assume-fresh-seconds` extends a cached listing's freshness window. A release published inside that
 window stays hidden until it lapses. The setting never affects metadata or artifacts cached by hash.
 
-## Conflicts across the two surfaces
+## Conflicts between package and index overrides
 
 Per-package and per-index overrides have equal precedence. If both set the same field for a
 candidate version, the resolve fails instead of choosing one. Remove one setting.

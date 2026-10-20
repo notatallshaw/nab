@@ -61,9 +61,9 @@ To resolve one patch release without splitting it:
 "3.13" = "3.13.4"
 ```
 
-A whole target is never split: the host interpreter nab reads names a real micro, and a
-`[tool.nab.matrix.python-patches]` pin names one concrete deployment micro. Both resolve at that
-single micro and emit the plain `python_version == "X.Y"` row.
+nab does not split a target pinned to an exact patch release, including the host interpreter and
+`[tool.nab.matrix.python-patches]` entries. It resolves that release once and records a
+`python_version == "X.Y"` environment row.
 
 ### Unsupported boundaries
 
@@ -88,10 +88,9 @@ A non-CPython target also drops `implementation_version`. nab models it as the P
 released PyPy reports its own version, so recording the modelled value would reject the intended
 interpreter. This axis does not split the target's minor.
 
-A marker that consults a dropped axis is reported as a warning at lock time, one for the kernel pair
-and one for `implementation_version` on a non-CPython target. The lock stays open on that axis: an
-installer whose value differs still accepts the lock, and misses the dependencies selected by that
-marker.
+nab warns when a marker uses an unrecorded variable: one warning covers the kernel variables and
+another covers `implementation_version` on non-CPython targets. An installer can accept the lock
+with a different value for that variable and miss a dependency needed in its environment.
 
 ## Project Python support
 
