@@ -19,9 +19,7 @@ and records dependencies; it does not install them or manage virtual environment
 multi-target lockfile support are experimental.
 
 Start with [What nab locks](explanation/locking.md), then
-[make your first universal lock](tutorial/getting-started.md). The tutorial declares a target
-matrix, generates the lock and installs from it. nab infers universal mode from the multiple
-targets; an unconfigured `nab lock` resolves only for the Python and platform running nab.
+[make your first universal lock](tutorial/getting-started.md).
 
 For an existing project, [browse the guides](how-to/index.md) to choose dependencies and targets,
 use other package sources, or install from a lock. Use the

@@ -43,40 +43,26 @@ python = ">=3.12,<3.16"
 platforms = ["linux_x86_64", "macos_arm64"]
 ```
 
-Run:
+Generate the lock:
 
 ```bash
 nab lock pyproject.toml
 ```
 
-Or run on demand with uvx:
+Or use `uvx nab lock pyproject.toml` without installing nab first. This writes one lock for Python
+3.12 through 3.15 on Linux x86-64 and Apple Silicon macOS.
 
-```bash
-uvx nab lock pyproject.toml
-```
-
-This writes one lock for Python 3.12 through 3.15 on Linux x86-64 and Apple Silicon macOS. You can
-generate it on one machine without installing every target Python. Targets can use different
-dependency versions when needed; the lock records the conditions for each selection.
-
-In a virtual environment covered by the lock, use pip 26.1 or newer:
+Install from it in a covered virtual environment with pip 26.1 or newer:
 
 ```bash
 python -m pip install -r pylock.toml
 ```
 
-The [tutorial](https://nab.readthedocs.io/en/stable/tutorial/getting-started.html) covers
-environment setup. Commit the project file and lock together; other covered environments can install
-from the same lock.
-
 In nab, you choose which Python versions, platforms and interpreter implementations to resolve
-universally, because explicit is better than implicit. This example resolves CPython only. PyPy,
-musl Linux and free-threaded CPython require explicit
-[target configuration](https://nab.readthedocs.io/en/stable/reference/target-matrix.html) and
-[platform settings](https://nab.readthedocs.io/en/stable/reference/platform-tags.html).
-
-When `mode` is omitted, nab uses `specific` for one target and `universal` when the matrix selects
-multiple targets. With no target configuration, it resolves for the Python and platform running nab.
+universally, because explicit is better than implicit. See the
+[tutorial](https://nab.readthedocs.io/en/stable/tutorial/getting-started.html) for a walkthrough and
+[target configuration](https://nab.readthedocs.io/en/stable/reference/target-matrix.html) for other
+targets.
 
 ## Safer defaults
 
