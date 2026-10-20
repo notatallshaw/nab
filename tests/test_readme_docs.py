@@ -9,6 +9,7 @@ import pytest
 import tomli
 
 from nab.config.ladder import OPTIONS
+from nab.config.model import plan_targets, read_pyproject_config
 from nab_project import _sources as sources
 from nab_project import build_backend
 from nab_project._testing.coordinator_fake import make_coordinator
@@ -253,17 +254,16 @@ def test_only_build_remote_builds_index_sdists(
     assert index_sdist_builders == {BuildPolicy.BUILD_REMOTE}
 
 
-def test_readme_project_is_valid_toml() -> None:
-    """The example project is a minimal PEP 621 project."""
-    blocks = _fenced_blocks(_section(README, "Example project"), "toml")
+@pytest.mark.parametrize("page", [README, TUTORIAL], ids=lambda page: page.name)
+def test_intro_project_plans_universal_targets(tmp_path: Path, page: Path) -> None:
+    """The complete example must load and plan its declared matrix."""
+    blocks = _fenced_blocks(_text(page), "toml")
     assert len(blocks) == 1
 
-    project = tomli.loads(blocks[0])["project"]
-    assert project == {
-        "name": "example",
-        "version": "0.1.0",
-        "dependencies": ["starlette<=0.36.0", "fastapi<=0.115.2"],
-    }
+    path = tmp_path / "pyproject.toml"
+    path.write_text(blocks[0], encoding="utf-8")
+    config = read_pyproject_config(path, discover_workspace=False)
+    assert len(plan_targets(config)) == 8
 
 
 def test_readme_stable_documentation_links_exist_locally() -> None:

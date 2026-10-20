@@ -1,8 +1,9 @@
 # Build policy
 
-Some Python packages publish dependency metadata that nab can read without running any code; others
-require invoking a PEP 517 build backend. `[tool.nab].build-policy` is the single knob that controls
-how far nab is willing to go.
+Some Python packages publish
+[dependency metadata](https://packaging.python.org/en/latest/specifications/core-metadata/) that nab
+can read without running any code; others require invoking a PEP 517 build backend.
+`[tool.nab].build-policy` is the single knob that controls how far nab is willing to go.
 
 Three levels, strictest first. Each level reads static metadata from every source it admits; the
 difference is what is permitted to fall through to a backend invocation when the static read returns
@@ -26,7 +27,8 @@ Static metadata only, from any source:
   `Provides-Extra`; the resolver reads the static `Requires-Dist` lines from `PKG-INFO`.
 - Other sdists: nab reads the bundled `pyproject.toml` when `[project].dynamic` leaves dependencies
   and optional dependencies static. Otherwise look-ahead skips the candidate.
-  `trust-unverified-deps` instead trusts pre-2.2 `PKG-INFO`; see [Configuration](configuration.md).
+  `trust-unverified-deps` instead trusts pre-2.2 `PKG-INFO`; see
+  [Distribution policy](distribution-policy.md).
 - Local checkouts declared via `[[tool.nab.local-sources]]`: the directory's `pyproject.toml` is
   read statically. A missing or malformed `[project]`, or a `dynamic` list covering `version`,
   `requires-python`, `dependencies`, or `optional-dependencies`, ends the resolve.
@@ -87,7 +89,8 @@ build-policy = "build-remote"
 ```
 
 The override permits a backend only for that package. If its dependencies are known, a
-`dependencies` metadata override can avoid the build instead; see [Configuration](configuration.md).
+`dependencies` metadata override can avoid the build instead; see
+[Metadata overrides](metadata-overrides.md).
 
 ## Building a build requirement
 

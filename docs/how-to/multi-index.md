@@ -32,7 +32,7 @@ index = "torch-cpu"
 ```
 
 Routing lives on the per-package override, via the `index` body field, alongside the other
-per-package policies (see the [configuration reference](../reference/configuration.md)). To route
+per-package policies (see [Package and index policy](../reference/package-policy.md)). To route
 several packages to one index, list them in a `[[tool.nab.package-rules]]` entry instead:
 
 ```toml
@@ -69,7 +69,7 @@ through that one attributing index, not through every index that could also serv
 
 A mirror that stamps its listings short-lived makes nab revalidate them once per package on every
 warm run. Set `assume-fresh-seconds` on that index to skip those round trips; see the
-[configuration reference](../reference/configuration.md).
+{ref}`Index serialization <index-serialization>`.
 
 ## Policy across both surfaces is an error, not a precedence
 

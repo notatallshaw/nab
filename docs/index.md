@@ -1,21 +1,25 @@
 # nab
 
-nab resolves Python project dependencies and writes a PEP 751 lock or pinned requirements. It can
-download resolved artifacts, but it does not install them.
+nab generates universal lockfiles for Python projects. Declare the Python versions and platforms you
+support, then use one PEP 751 `pylock.toml` to share dependency selections across those
+environments.
 
-Keep dependency ranges in `pyproject.toml`, use nab to select compatible versions, then review the
-lock before handing it to an installer. The lock includes transitive dependencies and records its
-target environments. Installing from it reuses the recorded selection; running nab again makes a
-fresh one.
+An installer such as pip uses the lock to install packages for its current environment. nab resolves
+and records dependencies; it does not install them or manage virtual environments. Both nab and its
+multi-target lockfile support are experimental.
 
-Start with the Python and platform running nab,
-{ref}`declare a deployment target <the-resolve-environment>`, or
-[lock a matrix of environments](explanation/universal.md). Remote sources are read without building
-them by default; [build policy](reference/build-policy.md) controls when a backend may run.
+New to locking? Read [What nab locks](explanation/locking.md), then
+[make your first universal lock](tutorial/getting-started.md). The tutorial declares a target
+matrix, generates the lock and installs from it. Universal mode is opt-in; an unconfigured
+`nab lock` resolves only for the Python and platform running nab.
 
 ## Start with a task
 
-- [Make your first lock](tutorial/getting-started.md), then install its dependencies.
+- [Find a feature](explanation/features.md), or
+  [choose requirements, markers, extras and groups](how-to/choose-dependencies.md).
+- [Make your first universal lock](tutorial/getting-started.md), then install its dependencies.
+- [Change the target matrix](how-to/lock-multiple-environments.md), or
+  {ref}`resolve for one environment <the-resolve-environment>`.
 - [Use a lock](how-to/use-the-lock.md) with pip, hashed requirements, or an offline wheelhouse.
 - [Configure a resolve](reference/configuration.md) and inspect effective values.
 - Use [local projects](how-to/local-sources.md), [git sources](how-to/vcs.md),
@@ -56,6 +60,8 @@ caption: How-to guides
 ---
 how-to/install
 how-to/use-the-lock
+how-to/choose-dependencies
+how-to/lock-multiple-environments
 how-to/local-sources
 how-to/archive-sources
 how-to/vcs
@@ -86,6 +92,8 @@ reference/cache
 maxdepth: 1
 caption: Explanation
 ---
+explanation/locking
+explanation/features
 explanation/universal
 explanation/conflicts
 explanation/packages

@@ -48,4 +48,4 @@ nab reads static `[project]` metadata at every build-policy level. Missing or dy
 
 Under `never` or `build-local`, that dynamic source ends the resolve because no index candidate can
 replace it. See [Build policy](../reference/build-policy.md) for the metadata boundary and
-[Configuration](../reference/configuration.md) for cache and `file://` behavior.
+[Dependency sources](../reference/dependency-sources.md) for cache and `file://` behavior.

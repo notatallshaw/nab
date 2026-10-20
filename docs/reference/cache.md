@@ -33,7 +33,8 @@ A listing body is stored as PEP 691 JSON; when the index answers in PEP 503 HTML
 nab's own JSON rendering of the page. An index pinned to one `serialization` gets its own listing
 directories, since the stored body records nothing about which form it came from.
 
-A declared VCS or archive source (see [Configuration](configuration.md)) fills a bucket of its own:
+A declared VCS or archive source (see [Dependency sources](dependency-sources.md)) fills a bucket of
+its own:
 
 | Bucket        | Holds                                                     |
 | ------------- | --------------------------------------------------------- |
@@ -55,7 +56,7 @@ fetched and its `max-age`.
 A fresh entry is served directly; a stale one is revalidated with `If-None-Match`, and a
 `304 Not Modified` slides the window forward without refetching the body. A listing the index marks
 `no-cache` or `no-store` gets no window at all, so every online read revalidates it unless an
-`assume-fresh-seconds` floor (see [Configuration](configuration.md)) still covers it.
+`assume-fresh-seconds` floor (see [Package and index policy](package-policy.md)) still covers it.
 
 Metadata and sdist records are immutable: cached once, never revalidated. A 404 is remembered
 briefly so a repeated lookup of an absent name is answered from cache, offline included. One the

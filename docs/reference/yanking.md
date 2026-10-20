@@ -1,7 +1,9 @@
 # Yanked releases
 
 Yanked files have been withdrawn by their publisher. nab normally skips them, but an exact pin can
-allow them.
+allow them. The
+[file-yanking specification](https://packaging.python.org/en/latest/specifications/file-yanking/)
+defines the index signal; the rules below describe Nab's selection.
 
 Suppose `lib==1.2` is yanked and `lib==1.1` is not:
 

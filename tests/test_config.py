@@ -139,9 +139,7 @@ def write(tmp_path: Path, body: str) -> Path:
     return p
 
 
-DOCS_CONFIGURATION = (
-    Path(__file__).resolve().parents[1] / "docs" / "reference" / "configuration.md"
-)
+DOCS_REFERENCE = Path(__file__).resolve().parents[1] / "docs" / "reference"
 
 DOCS_CONFLICTS = (
     Path(__file__).resolve().parents[1] / "docs" / "explanation" / "conflicts.md"
@@ -164,29 +162,19 @@ def conflicts_doc_examples() -> list[str]:
 
 def first_tool_nab_example() -> str:
     """Return the first ``[tool.nab]`` fenced TOML block in the config reference."""
-    text = DOCS_CONFIGURATION.read_text()
+    text = (DOCS_REFERENCE / "resolution-settings.md").read_text(encoding="utf-8")
     for block in re.findall(r"```toml\n(.*?)```", text, re.DOTALL):
         if block.lstrip().startswith("[tool.nab]"):
             return block
-    raise AssertionError("no [tool.nab] example block in configuration.md")
+    raise AssertionError("no [tool.nab] example block in resolution-settings.md")
 
 
-def section_doc_example(heading: str) -> str:
-    """Return the first TOML example under ``## <heading>`` in the config reference.
-
-    ``first_tool_nab_example`` only returns blocks that open with ``[tool.nab]``.
-    """
-    text = DOCS_CONFIGURATION.read_text()
-    section = re.search(
-        rf"^## {re.escape(heading)}\n.*?(?=^## )", text, flags=re.DOTALL | re.MULTILINE
-    )
-    if section is None:
-        msg = f"no {heading} section in configuration.md"
-        raise AssertionError(msg)
-
-    blocks = re.findall(r"```toml\n(.*?)```", section.group(0), re.DOTALL)
+def section_doc_example(page: str) -> str:
+    """Return the first runnable TOML example on a reference page."""
+    text = (DOCS_REFERENCE / page).read_text(encoding="utf-8")
+    blocks = re.findall(r"```toml\n(.*?)```", text, re.DOTALL)
     if not blocks:
-        msg = f"no TOML example in configuration.md's {heading} section"
+        msg = f"no TOML example in {page}"
         raise AssertionError(msg)
     return blocks[0]
 
@@ -3276,7 +3264,7 @@ class TestIndexSerialization:
         assert positional.serialization is SimpleSerialization.NEGOTIATE
 
     def test_reference_example_parses(self, tmp_path: Path) -> None:
-        path = write(tmp_path, section_doc_example("Indexes"))
+        path = write(tmp_path, section_doc_example("indexes.md"))
         pins = {i.name: i.serialization for i in read_pyproject_config(path).indexes}
         assert pins["pypi"] is SimpleSerialization.NEGOTIATE
         assert pins["internal"] is SimpleSerialization.HTML
@@ -3361,14 +3349,14 @@ class TestVcsDocExample:
 
     def test_example_shows_every_key(self) -> None:
         """The example names each key ``[tool.nab.vcs]`` accepts."""
-        example = tomli.loads(section_doc_example("VCS policy"))
+        example = tomli.loads(section_doc_example("dependency-sources.md"))
         shown = set(example["tool"]["nab"]["vcs"])
 
         assert shown == {name.replace("_", "-") for name in field_names(VcsConfig)}
 
     def test_allowlists_admit_the_repo_they_name(self, tmp_path: Path) -> None:
         """Opened to ``allow``, the example admits a pinned URL to its own repo."""
-        path = write(tmp_path, section_doc_example("VCS policy"))
+        path = write(tmp_path, section_doc_example("dependency-sources.md"))
         opened = replace(read_pyproject_config(path).vcs, policy=VcsPolicy.ALLOW)
         pinned = f"git+https://github.com/me/x@{'a' * 40}"
         assert admit_vcs_url(pinned, opened) == "git+https"
