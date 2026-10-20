@@ -40,6 +40,22 @@ wording check, inspect existing behavioral coverage and add a focused test only 
 contract. Prove new behavioral tests fail under a relevant code mutation. Keep executable examples,
 doctests, documentation builds and tests of documentation generators.
 
+Keep unit tests with the package that owns the behavior. Consumer tests should exercise real wiring
+and consumer outcomes, such as a parsed index record reaching a lockfile. Scope fixtures to the
+smallest suite that uses them; return fresh mutable data for each case. Test lint settings are
+shared through `tests/ruff.toml`.
+
+Use `pytest.mark.parametrize` when cases share an operation and assertion. Give boundary and
+malformed inputs descriptive `pytest.param` IDs so failures identify the case. Keep different
+outcomes in separate tests, and avoid Cartesian products when the dimensions do not exercise
+independent behavior.
+
+Before removing a repeated test, compare its inputs, fixtures, markers and oracle with the surviving
+test. Shared coverage or an identical function body alone does not establish duplication. For parser
+rejection cases, include a valid neighboring entry to prove the parser keeps usable data. When
+consolidating tests, use targeted mutations to confirm the retained assertions detect the faults
+they claim to cover.
+
 The default suite covers every module under `nab_resolver`, `nab_markersets`, `nab_provider`,
 `nab_project`, `nab_index`, and `nab`:
 

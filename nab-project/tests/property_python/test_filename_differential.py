@@ -10,7 +10,7 @@ whose ``parse_tag`` ranks the wheel afterwards.
 so the ambient copy is its oracle.
 
 A draw reaches any one filename shape only sometimes, so the rules are pinned
-by the corpus in ``nab-project/tests/test_simple_client_filenames.py``.
+by the corpus in ``nab-index/tests/client/test_filenames.py``.
 """
 
 from __future__ import annotations

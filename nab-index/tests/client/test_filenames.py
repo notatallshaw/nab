@@ -54,15 +54,10 @@ CORPUS = [
     # rejected: invalid project name
     "foo__bar-1.0-py3-none-any.whl",
     "foo bar-1.0-py3-none-any.whl",
-    "-1.0-py3-none-any.whl",
-    "foo\n-1.0-py3-none-any.whl",
     # rejected: interpreter that is not an identifier
     "foo-1.0-py3 -none-any.whl",
     "foo-1.0-0-none-any.whl",
     "foo-1.0-py2.0-none-any.whl",
-    "foo-1.0-py3.7-none-any.whl",
-    "foo-1.0-3.7-none-any.whl",
-    "foo-1.0-0-0-0.whl",
     # rejected: invalid version
     "foo-notaversion-py3-none-any.whl",
     # rejected: 5-dash build part not starting with a digit
@@ -118,6 +113,7 @@ def test_rejects_non_identifier_interpreter(filename: str) -> None:
     sits here beside the bare ``3.7``.
     """
     assert _parse_wheel_filename(filename) is None
+    assert _vendored_result(filename) is None
 
 
 NON_IDENTIFIER_ABI_OR_PLATFORM = [
@@ -134,7 +130,9 @@ def test_accepts_non_identifier_abi_and_platform(filename: str) -> None:
 
 
 def test_rejects_empty_project_name() -> None:
-    assert _parse_wheel_filename("-1.0-py3-none-any.whl") is None
+    filename = "-1.0-py3-none-any.whl"
+    assert _parse_wheel_filename(filename) is None
+    assert _vendored_result(filename) is None
 
 
 def test_rejects_newline_terminated_project_name() -> None:

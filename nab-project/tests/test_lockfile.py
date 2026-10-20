@@ -4060,6 +4060,30 @@ class TestBuildTargetLock:
         assert isinstance(pin, IndexPin)
         assert pin.wheels[0].upload_time is None
 
+    def test_non_string_index_upload_time_reaches_lock_as_none(self) -> None:
+        files = _parse_files(
+            {
+                "files": [
+                    {
+                        "filename": "foo-1.0-py3-none-any.whl",
+                        "url": "https://example.com/foo-1.0-py3-none-any.whl",
+                        "upload-time": 1719000000,
+                    },
+                ],
+            },
+            "https://example.com/",
+            "foo",
+        )
+        assert len(files) == 1
+        provider = _FakeProvider(listings={"foo": [(Version("1.0"), files[0])]})
+
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+
+        pin = lock.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert len(pin.wheels) == 1
+        assert pin.wheels[0].upload_time is None
+
     def test_upload_time_invalid_string_is_dropped(self) -> None:
         wheel = WheelFile(
             filename="foo-1.0-py3-none-any.whl",
