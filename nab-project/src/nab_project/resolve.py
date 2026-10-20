@@ -116,7 +116,7 @@ __all__ = [
 _logger = logging.getLogger(__name__)
 
 
-class _ConfiguredContext(Record, frozen=True):
+class _ConfiguredContext(Record):
     """An install context ``[tool.nab]`` configures rather than a run selects.
 
     ``name`` is ``None`` for the project's own dependencies when no
@@ -130,8 +130,8 @@ class _ConfiguredContext(Record, frozen=True):
     requirements: tuple[Requirement, ...]
 
     def __init__(self, name: str | None, requirements: tuple[Requirement, ...]) -> None:
-        object.__setattr__(self, "name", name)
-        object.__setattr__(self, "requirements", requirements)
+        self.name = name
+        self.requirements = requirements
 
 
 def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
@@ -468,7 +468,7 @@ def _declared_environments(
     ]
 
 
-class _ProjectTables(Record, frozen=True):
+class _ProjectTables(Record):
     """The pyproject tables a resolve reads, read once."""
 
     __slots__ = __match_args__ = (
@@ -493,11 +493,11 @@ class _ProjectTables(Record, frozen=True):
         project_name: str | None,
         build_requires: list[Requirement] | FactoryDefault = FACTORY,
     ) -> None:
-        object.__setattr__(self, "dependencies", dependencies)
-        object.__setattr__(self, "groups", groups)
-        object.__setattr__(self, "optional", optional)
-        object.__setattr__(self, "project_name", project_name)
-        object.__setattr__(self, "build_requires", factory_value(build_requires, list))
+        self.dependencies = dependencies
+        self.groups = groups
+        self.optional = optional
+        self.project_name = project_name
+        self.build_requires = factory_value(build_requires, list)
 
     """``[build-system].requires``, read only when ``[tool.nab].build-group``
     names a group for them.  A ``--build-requirements`` resolve carries them

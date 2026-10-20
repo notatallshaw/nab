@@ -105,7 +105,8 @@ class WorkspaceConfig(Record, frozen=True):
 
     members: tuple[str, ...]
 
-    def __init__(self, members: tuple[str, ...]) -> None:  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(self, members: tuple[str, ...]) -> None:
+        """Retain literal member paths without expanding or resolving them."""
         object.__setattr__(self, "members", members)
 
 

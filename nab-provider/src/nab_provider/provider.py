@@ -176,8 +176,9 @@ class ProviderStats(Record):
     prioritize_calls: int
     look_ahead_rejections: int
 
-    def __init__(  # noqa: D107, PLR0913, PLR0917 - Preserve the positional record constructor.
+    def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
+        *,
         listings_fetched: int = 0,
         metadata_fetched: int = 0,
         sdist_pkg_info_fetched: int = 0,
@@ -200,6 +201,7 @@ class ProviderStats(Record):
         prioritize_calls: int = 0,
         look_ahead_rejections: int = 0,
     ) -> None:
+        """Initialize the counters for one resolution."""
         self.listings_fetched = listings_fetched
         self.metadata_fetched = metadata_fetched
         self.sdist_pkg_info_fetched = sdist_pkg_info_fetched

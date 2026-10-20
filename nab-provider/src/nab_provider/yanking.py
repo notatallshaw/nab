@@ -46,31 +46,34 @@ class YankedWheelFile(WheelFile, frozen=True):
 
     yanked: bool | str
 
-    def __init__(  # noqa: D107, PLR0913, PLR0917 - Preserve the positional record constructor.
+    def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
         filename: str,
+        *,
         url: str,
         version: str,
         requires_python: str | None,
-        has_metadata: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        has_metadata: bool,
         upload_time: str | None,
         hashes: tuple[tuple[str, str], ...] = (),
         size: int | None = None,
         local_path: Path | None = None,
         metadata_hash: tuple[str, str] | None = None,
-        *,
         yanked: bool | str,
     ) -> None:
-        object.__setattr__(self, "filename", filename)
-        object.__setattr__(self, "url", url)
-        object.__setattr__(self, "version", version)
-        object.__setattr__(self, "requires_python", requires_python)
-        object.__setattr__(self, "has_metadata", has_metadata)
-        object.__setattr__(self, "upload_time", upload_time)
-        object.__setattr__(self, "hashes", hashes)
-        object.__setattr__(self, "size", size)
-        object.__setattr__(self, "local_path", local_path)
-        object.__setattr__(self, "metadata_hash", metadata_hash)
+        """Initialize the wheel and retain its withdrawal reason."""
+        super().__init__(
+            filename,
+            url=url,
+            version=version,
+            requires_python=requires_python,
+            has_metadata=has_metadata,
+            upload_time=upload_time,
+            hashes=hashes,
+            size=size,
+            local_path=local_path,
+            metadata_hash=metadata_hash,
+        )
         object.__setattr__(self, "yanked", yanked)
 
 
@@ -104,9 +107,10 @@ class YankedSdistFile(SdistFile, frozen=True):
 
     yanked: bool | str
 
-    def __init__(  # noqa: D107, PLR0913 - Preserve the positional record constructor.
+    def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
         filename: str,
+        *,
         url: str,
         version: str,
         requires_python: str | None,
@@ -114,17 +118,19 @@ class YankedSdistFile(SdistFile, frozen=True):
         hashes: tuple[tuple[str, str], ...] = (),
         size: int | None = None,
         local_path: Path | None = None,
-        *,
         yanked: bool | str,
     ) -> None:
-        object.__setattr__(self, "filename", filename)
-        object.__setattr__(self, "url", url)
-        object.__setattr__(self, "version", version)
-        object.__setattr__(self, "requires_python", requires_python)
-        object.__setattr__(self, "upload_time", upload_time)
-        object.__setattr__(self, "hashes", hashes)
-        object.__setattr__(self, "size", size)
-        object.__setattr__(self, "local_path", local_path)
+        """Initialize the source distribution and its withdrawal reason."""
+        super().__init__(
+            filename,
+            url,
+            version,
+            requires_python,
+            upload_time,
+            hashes,
+            size,
+            local_path,
+        )
         object.__setattr__(self, "yanked", yanked)
 
 

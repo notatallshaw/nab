@@ -190,7 +190,7 @@ class WheelMetadata(Record):
     metadata_version: str | None
     dynamic: frozenset[str]
 
-    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(
         self,
         name: str,
         version: Version,
@@ -200,6 +200,7 @@ class WheelMetadata(Record):
         metadata_version: str | None = None,
         dynamic: frozenset[str] | FactoryDefault = FACTORY,
     ) -> None:
+        """Retain parsed metadata with independent dependency collections."""
         self.name = name
         self.version = version
         self.requires_python = requires_python

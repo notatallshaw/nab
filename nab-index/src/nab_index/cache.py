@@ -146,7 +146,7 @@ class CachePolicy(Record, frozen=True):
     page_url: str | None
     body_digest: str | None
 
-    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(
         self,
         fetched_at: int,
         max_age: int,
@@ -154,6 +154,7 @@ class CachePolicy(Record, frozen=True):
         page_url: str | None = None,
         body_digest: str | None = None,
     ) -> None:
+        """Retain the freshness inputs and representation identity for one entry."""
         object.__setattr__(self, "fetched_at", fetched_at)
         object.__setattr__(self, "max_age", max_age)
         object.__setattr__(self, "etag", etag)

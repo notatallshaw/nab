@@ -467,7 +467,7 @@ class OutputOptionError(ValueError):
     """A malformed ``--color`` value or ``NAB_VERBOSITY``."""
 
 
-class OutputOptions(Record, frozen=True):
+class OutputOptions(Record):
     """The output knobs parsed from the global flags, before the subcommand."""
 
     __slots__ = __match_args__ = ("verbosity", "color", "progress")
@@ -476,15 +476,17 @@ class OutputOptions(Record, frozen=True):
     color: ColorChoice
     progress: bool
 
-    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(
         self,
+        *,
         verbosity: Verbosity,
         color: ColorChoice,
-        progress: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        progress: bool,
     ) -> None:
-        object.__setattr__(self, "verbosity", verbosity)
-        object.__setattr__(self, "color", color)
-        object.__setattr__(self, "progress", progress)
+        """Select stream presentation and progress behavior."""
+        self.verbosity = verbosity
+        self.color = color
+        self.progress = progress
 
 
 _VERBOSITY_NAMES: dict[str, Verbosity] = {v.name.lower(): v for v in Verbosity}

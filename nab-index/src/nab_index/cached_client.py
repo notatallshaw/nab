@@ -110,7 +110,8 @@ class ParsedCacheStats(Record):
     miss: int
     rebuild: int
 
-    def __init__(self, hit: int = 0, miss: int = 0, rebuild: int = 0) -> None:  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(self, hit: int = 0, miss: int = 0, rebuild: int = 0) -> None:
+        """Initialize the listing-cache outcome counters."""
         self.hit = hit
         self.miss = miss
         self.rebuild = rebuild

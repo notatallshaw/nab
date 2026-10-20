@@ -176,17 +176,19 @@ class PlatformSpec(Record, frozen=True):
     free_threaded: bool
     pypy_abi: str | None
 
-    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(
         self,
         platform_id: str,
+        *,
         libc: Libc = DEFAULT_LIBC,
         runs_on_libc: tuple[int, int] | None = None,
         runs_on_macos: tuple[int, int] | None = None,
         platform_release: str = "",
         platform_version: str = "",
-        free_threaded: bool = False,  # noqa: FBT001, FBT002 - Preserve the positional record constructor.
+        free_threaded: bool = False,
         pypy_abi: str | None = None,
     ) -> None:
+        """Declare one platform's wheel compatibility settings."""
         object.__setattr__(self, "platform_id", platform_id)
         object.__setattr__(self, "libc", libc)
         object.__setattr__(self, "runs_on_libc", runs_on_libc)

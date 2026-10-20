@@ -165,7 +165,7 @@ def lock_anchor(ladder: ConfigLadder) -> datetime | None:
     return value if isinstance(value, datetime) else None
 
 
-class RunSettings(Record, frozen=True):
+class RunSettings(Record):
     """The run knobs a subcommand reads from the layered config for one run."""
 
     __slots__ = __match_args__ = (
@@ -187,19 +187,20 @@ class RunSettings(Record, frozen=True):
 
     def __init__(
         self,
+        *,
         resolution: ResolutionStrategy | None,
-        offline: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        offline: bool,
         cache_dir: Path | None,
         http_backend: str,
         max_concurrency: int,
         cli_project_overrides: tuple[tuple[str, str], ...],
     ) -> None:
-        object.__setattr__(self, "resolution", resolution)
-        object.__setattr__(self, "offline", offline)
-        object.__setattr__(self, "cache_dir", cache_dir)
-        object.__setattr__(self, "http_backend", http_backend)
-        object.__setattr__(self, "max_concurrency", max_concurrency)
-        object.__setattr__(self, "cli_project_overrides", cli_project_overrides)
+        self.resolution = resolution
+        self.offline = offline
+        self.cache_dir = cache_dir
+        self.http_backend = http_backend
+        self.max_concurrency = max_concurrency
+        self.cli_project_overrides = cli_project_overrides
 
 
 _BOTH_PYTHON_AXES = (

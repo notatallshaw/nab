@@ -43,7 +43,8 @@ class Candidate(Record, frozen=True):
     withdrawn: bool
     label: str
 
-    def __init__(self, package: str, version: Version, withdrawn: bool) -> None:  # noqa: D107, FBT001 - Preserve the positional record constructor.
+    def __init__(self, package: str, version: Version, *, withdrawn: bool) -> None:
+        """Select a version's withdrawn or non-withdrawn files."""
         object.__setattr__(self, "package", package)
         object.__setattr__(self, "version", version)
         object.__setattr__(self, "withdrawn", withdrawn)
@@ -68,12 +69,13 @@ class CandidateData(Record):
     dependencies: dict[str, VersionRange]
     pins: tuple[Requirement, ...]
 
-    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(
         self,
         provider: Provider,
         dependencies: dict[str, VersionRange],
         pins: tuple[Requirement, ...],
     ) -> None:
+        """Retain candidate dependencies and independent selected pins."""
         self.provider = provider
         self.dependencies = dependencies
         self.pins = pins
@@ -138,7 +140,9 @@ class YankCandidates:
             self.candidates[package] = ()
             return ()
         result = dict.fromkeys(
-            Candidate(package, intern_version(file.version), bool(file.yanked))
+            Candidate(
+                package, intern_version(file.version), withdrawn=bool(file.yanked)
+            )
             for _version, file in versions
         )
         cached = tuple(

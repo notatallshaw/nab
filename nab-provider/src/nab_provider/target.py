@@ -889,19 +889,21 @@ class ResolveTarget(Record, frozen=True):
     # do not leak onto another slice of the same python/platform.
     micro_clauses: tuple[str, ...]
 
-    def __init__(  # noqa: D107, PLR0913, PLR0917 - Preserve the positional record constructor.
+    def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
         label: str,
+        *,
         marker_env: Mapping[str, str],
         tags: TagSet,
-        host_faithful: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        host_faithful: bool,
         selection: tuple[tuple[str, str], ...] = (),
         platform_spec: PlatformSpec | None = None,
-        multi_implementation: bool = False,  # noqa: FBT001, FBT002 - Preserve the positional record constructor.
-        tags_faithful: bool = True,  # noqa: FBT001, FBT002 - Preserve the positional record constructor.
-        concrete_micro: bool = False,  # noqa: FBT001, FBT002 - Preserve the positional record constructor.
+        multi_implementation: bool = False,
+        tags_faithful: bool = True,
+        concrete_micro: bool = False,
         micro_clauses: tuple[str, ...] = (),
     ) -> None:
+        """Declare an environment and validate its Python version."""
         object.__setattr__(self, "label", label)
         object.__setattr__(self, "marker_env", marker_env)
         object.__setattr__(self, "tags", tags)
@@ -1262,11 +1264,12 @@ class ImplementationOverride(Record):
     python: str | None
     platforms: tuple[PlatformSpec, ...] | None
 
-    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(
         self,
         python: str | None = None,
         platforms: tuple[PlatformSpec, ...] | None = None,
     ) -> None:
+        """Replace only the supplied interpreter-axis defaults."""
         self.python = python
         self.platforms = platforms
 
@@ -1332,7 +1335,7 @@ class Matrix(Record):
     implementations: tuple[str, ...]
     implementation_overrides: Mapping[str, ImplementationOverride] | None
 
-    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(
         self,
         python: str,
         platforms: tuple[PlatformSpec, ...],
@@ -1341,6 +1344,7 @@ class Matrix(Record):
         implementations: tuple[str, ...] = ("cpython",),
         implementation_overrides: Mapping[str, ImplementationOverride] | None = None,
     ) -> None:
+        """Declare the axes and ordering of the target expansion."""
         self.python = python
         self.platforms = platforms
         self.python_order = python_order

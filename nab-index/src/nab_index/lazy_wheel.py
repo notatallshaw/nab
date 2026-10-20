@@ -220,7 +220,7 @@ class _SparseFile:
         return bytes(result)
 
 
-class _SuffixOutcome(Record, frozen=True):
+class _SuffixOutcome(Record):
     """The result of one suffix-range attempt."""
 
     __slots__ = __match_args__ = ("kind", "total", "low", "body")
@@ -233,10 +233,10 @@ class _SuffixOutcome(Record, frozen=True):
     def __init__(
         self, kind: str, total: int = 0, low: int = 0, body: bytes = b""
     ) -> None:
-        object.__setattr__(self, "kind", kind)
-        object.__setattr__(self, "total", total)
-        object.__setattr__(self, "low", low)
-        object.__setattr__(self, "body", body)
+        self.kind = kind
+        self.total = total
+        self.low = low
+        self.body = body
 
 
 class _AcqKind(enum.Enum):

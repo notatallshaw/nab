@@ -627,7 +627,7 @@ class TargetLock(Record, frozen=True):
         Mapping[str, Mapping[str, tuple[DependencyDeclaration, ...]]] | None
     )
 
-    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(
         self,
         target: ResolveTarget,
         pins: Mapping[str, PinShape],
@@ -641,6 +641,7 @@ class TargetLock(Record, frozen=True):
         ]
         | None = None,
     ) -> None:
+        """Retain a target's pins and normalize its package conditions."""
         object.__setattr__(self, "target", target)
         object.__setattr__(self, "pins", pins)
         object.__setattr__(self, "dependencies", factory_value(dependencies, dict))
@@ -720,8 +721,9 @@ class LockInput(Record):
     the project's own dependencies, or ``None`` to leave them unconditional."""
     build_group: str | None
 
-    def __init__(  # noqa: D107, PLR0913, PLR0917 - Preserve the positional record constructor.
+    def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
+        *,
         targets: Mapping[str, TargetLock] | FactoryDefault = FACTORY,
         env_base_names: Mapping[tuple[tuple[str, str], ...], frozenset[str]]
         | FactoryDefault = FACTORY,
@@ -736,6 +738,7 @@ class LockInput(Record):
         base_group: str | None = None,
         build_group: str | None = None,
     ) -> None:
+        """Collect the resolved targets and lockfile metadata."""
         self.targets = factory_value(targets, dict)
         self.env_base_names = factory_value(env_base_names, dict)
         self.environments = factory_value(environments, list)

@@ -295,13 +295,14 @@ class WheelFile(_WheelIntegrity, Record, frozen=True):
     else:
         yanked = False
 
-    def __init__(  # noqa: PLR0913, PLR0917 - the positional record fields
+    def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
         filename: str,
+        *,
         url: str,
         version: str,
         requires_python: str | None,
-        has_metadata: bool,  # noqa: FBT001 - a field, not a flag
+        has_metadata: bool,
         upload_time: str | None,
         hashes: tuple[tuple[str, str], ...] = (),
         size: int | None = None,
@@ -382,7 +383,7 @@ def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its ow
     url: str,
     version: str,
     requires_python: str | None,
-    has_metadata: bool,  # noqa: FBT001 - a field, not a flag
+    has_metadata: bool,  # noqa: FBT001 - Serialized record field, not a behavior flag.
     upload_time: str | None,
     hashes: tuple[tuple[str, str], ...] | dict[Any, Any],
     size: int | None,
@@ -536,12 +537,13 @@ class IndexConfig(Record, frozen=True):
     url: str
     serialization: SimpleSerialization
 
-    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(
         self,
         name: str,
         url: str,
         serialization: SimpleSerialization = SimpleSerialization.NEGOTIATE,
     ) -> None:
+        """Name an index and select its Simple API representation."""
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "url", url)
         object.__setattr__(self, "serialization", serialization)
@@ -561,7 +563,7 @@ class RangeOutcome(enum.Enum):
     MISSING = "missing"
 
 
-class RangeMetadataResult(Record, frozen=True):
+class RangeMetadataResult(Record):
     """The recovered METADATA text and the outcome that produced it."""
 
     __slots__ = __match_args__ = ("text", "outcome")
@@ -569,6 +571,7 @@ class RangeMetadataResult(Record, frozen=True):
     text: str | None
     outcome: RangeOutcome
 
-    def __init__(self, text: str | None, outcome: RangeOutcome) -> None:  # noqa: D107 - Field-only constructor documented by its class.
-        object.__setattr__(self, "text", text)
-        object.__setattr__(self, "outcome", outcome)
+    def __init__(self, text: str | None, outcome: RangeOutcome) -> None:
+        """Pair recovered metadata with its acquisition outcome."""
+        self.text = text
+        self.outcome = outcome

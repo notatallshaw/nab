@@ -58,7 +58,7 @@ def preference(
 
 
 def item(name: str, version: str = "1", *, withdrawn: bool = False) -> Candidate:
-    return Candidate(name, Version(version), withdrawn)
+    return Candidate(name, Version(version), withdrawn=withdrawn)
 
 
 def fail_live_then_check(

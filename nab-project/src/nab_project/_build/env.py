@@ -120,7 +120,8 @@ class _FastSchemeDictionaryDestination(SchemeDictionaryDestination):
         hash_algorithm: str = "sha256",
         bytecode_optimization_levels: Collection[int] = (),
         destdir: str | None = None,
-        overwrite_existing: bool = False,  # noqa: FBT001, FBT002 - Preserve the positional record constructor.
+        *,
+        overwrite_existing: bool = False,
     ) -> None:
         super().__init__(
             scheme_dict,
@@ -265,7 +266,7 @@ def chain_label(name: str, version: str) -> str:
     return f"{canonicalize_name(name)} {version}"
 
 
-class _PendingBuild(Record, frozen=True):
+class _PendingBuild(Record):
     """A build requirement this env has to build before it can install it."""
 
     __slots__ = __match_args__ = ("name", "version", "sdist")
@@ -274,10 +275,10 @@ class _PendingBuild(Record, frozen=True):
     version: str
     sdist: SdistArtifact
 
-    def __init__(self, name: str, version: str, sdist: SdistArtifact) -> None:
-        object.__setattr__(self, "name", name)
-        object.__setattr__(self, "version", version)
-        object.__setattr__(self, "sdist", sdist)
+    def __init__(self, *, name: str, version: str, sdist: SdistArtifact) -> None:
+        self.name = name
+        self.version = version
+        self.sdist = sdist
 
     @property
     def label(self) -> str:

@@ -316,7 +316,9 @@ class YankProxyProvider(BaseProvider[Package, int]):
                 result[PermissionProxy(version)] = Range.full()
             base, extra = split_extra(package)
             if extra is not None:
-                underlying = Candidate(base, candidate.version, candidate.withdrawn)
+                underlying = Candidate(
+                    base, candidate.version, withdrawn=candidate.withdrawn
+                )
                 result[base] = Range.singleton(self.identify(underlying))
             return result
         if isinstance(package, PermissionProxy):

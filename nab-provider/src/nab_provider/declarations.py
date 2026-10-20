@@ -39,7 +39,7 @@ class DependencyDeclaration(Record, frozen=True):
     requirement_condition: str | None
     required_for_parent_extras: tuple[str, ...]
 
-    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(
         self,
         requirement_text: str,
         dependency_specifier: str,
@@ -50,6 +50,7 @@ class DependencyDeclaration(Record, frozen=True):
         requirement_condition: str | None = None,
         required_for_parent_extras: tuple[str, ...] = (),
     ) -> None:
+        """Parse a requirement once for repeated dependency selection."""
         object.__setattr__(self, "requirement_text", requirement_text)
         object.__setattr__(self, "dependency_specifier", dependency_specifier)
         object.__setattr__(self, "parent_name", parent_name)

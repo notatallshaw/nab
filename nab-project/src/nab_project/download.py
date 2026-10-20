@@ -85,7 +85,7 @@ class DownloadEntry(Record, frozen=True):
     digest: str
     local_path: Path | None
 
-    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(
         self,
         package: str,
         version: str,
@@ -95,6 +95,7 @@ class DownloadEntry(Record, frozen=True):
         digest: str,
         local_path: Path | None = None,
     ) -> None:
+        """Describe a selected artifact and its expected integrity."""
         object.__setattr__(self, "package", package)
         object.__setattr__(self, "version", version)
         object.__setattr__(self, "filename", filename)
@@ -104,7 +105,7 @@ class DownloadEntry(Record, frozen=True):
         object.__setattr__(self, "local_path", local_path)
 
 
-class DownloadResult(Record, frozen=True):
+class DownloadResult(Record):
     """Summary of a download run."""
 
     __slots__ = __match_args__ = ("written", "skipped")
@@ -112,9 +113,10 @@ class DownloadResult(Record, frozen=True):
     written: tuple[Path, ...]
     skipped: tuple[Path, ...]
 
-    def __init__(self, written: tuple[Path, ...], skipped: tuple[Path, ...]) -> None:  # noqa: D107 - Field-only constructor documented by its class.
-        object.__setattr__(self, "written", written)
-        object.__setattr__(self, "skipped", skipped)
+    def __init__(self, written: tuple[Path, ...], skipped: tuple[Path, ...]) -> None:
+        """Separate newly written files from existing verified files."""
+        self.written = written
+        self.skipped = skipped
 
 
 def iter_artifacts(lock_input: LockInput) -> Iterable[DownloadEntry]:

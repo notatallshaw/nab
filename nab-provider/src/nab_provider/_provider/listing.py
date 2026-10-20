@@ -389,13 +389,14 @@ class ListingPolicy(Record, frozen=True):
 
     def __init__(
         self,
+        *,
         index_name: str | None,
-        overridden: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        overridden: bool,
         default_dist_policy: DistPolicy,
         default_cutoff: datetime | None,
-        time_filter_active: bool,  # noqa: FBT001 - Preserve the positional record constructor.
-        default_drops_wheels: bool,  # noqa: FBT001 - Preserve the positional record constructor.
-        default_drops_sdists: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        time_filter_active: bool,
+        default_drops_wheels: bool,
+        default_drops_sdists: bool,
     ) -> None:
         object.__setattr__(self, "index_name", index_name)
         object.__setattr__(self, "overridden", overridden)

@@ -92,7 +92,7 @@ _PEER_CACHE_FIXED_UNITS = 12
 _CONDITION_CACHE_FIXED_UNITS = 6
 
 
-class _ForkAxes(Record, frozen=True):
+class _ForkAxes(Record):
     """The declared conflict sets a lock's forks vary along.
 
     ``exclusion_groups`` are the ``(kind, name)`` member sets an install
@@ -158,16 +158,14 @@ class _ForkAxes(Record, frozen=True):
         env_rows: tuple[Mapping[str, str], ...] | None,
         environment_markers: dict[tuple[str, ...], Marker] | FactoryDefault = FACTORY,
     ) -> None:
-        object.__setattr__(self, "exclusion_groups", exclusion_groups)
-        object.__setattr__(self, "forks", forks)
-        object.__setattr__(self, "targets", targets)
-        object.__setattr__(self, "env_signatures", env_signatures)
-        object.__setattr__(self, "markers", markers)
-        object.__setattr__(self, "gates", gates)
-        object.__setattr__(self, "env_rows", env_rows)
-        object.__setattr__(
-            self, "environment_markers", factory_value(environment_markers, dict)
-        )
+        self.exclusion_groups = exclusion_groups
+        self.forks = forks
+        self.targets = targets
+        self.env_signatures = env_signatures
+        self.markers = markers
+        self.gates = gates
+        self.env_rows = env_rows
+        self.environment_markers = factory_value(environment_markers, dict)
 
     def environment_marker(self, labels: Sequence[str]) -> Marker:
         """Reuse a validated environment marker within this emission."""
@@ -183,7 +181,7 @@ class _ForkAxes(Record, frozen=True):
             return marker
 
 
-class _GatedMarker(Record, frozen=True):
+class _GatedMarker(Record):
     """The environments paired with one package selection condition.
 
     ``marker`` is ``None`` when the condition holds in all of them.
@@ -197,11 +195,11 @@ class _GatedMarker(Record, frozen=True):
     def __init__(
         self, marker: Marker | None, gate: tuple[tuple[str, str], ...]
     ) -> None:
-        object.__setattr__(self, "marker", marker)
-        object.__setattr__(self, "gate", gate)
+        self.marker = marker
+        self.gate = gate
 
 
-class _Projection(Record, frozen=True):
+class _Projection(Record):
     """One package's marker shape at one fork.
 
     ``dropped`` are the selection members whose clauses fall away. The
@@ -215,8 +213,8 @@ class _Projection(Record, frozen=True):
     gate: _Members
 
     def __init__(self, dropped: _Members, gate: _Members) -> None:
-        object.__setattr__(self, "dropped", dropped)
-        object.__setattr__(self, "gate", gate)
+        self.dropped = dropped
+        self.gate = gate
 
 
 class _ProjectionPeers:

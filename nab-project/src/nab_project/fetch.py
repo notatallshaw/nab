@@ -119,7 +119,7 @@ class FetchKind(enum.Enum):
     DIRECT_ARCHIVE = "direct-archive"
 
 
-class IndexRoute(Record, frozen=True):
+class IndexRoute(Record):
     """Per-package index routing rule (a strict pin to one index).
 
     ``name`` is the package name (canonicalised internally).  ``index``
@@ -135,9 +135,10 @@ class IndexRoute(Record, frozen=True):
     name: str
     index: str
 
-    def __init__(self, name: str, index: str) -> None:  # noqa: D107 - Field-only constructor documented by its class.
-        object.__setattr__(self, "name", name)
-        object.__setattr__(self, "index", index)
+    def __init__(self, name: str, index: str) -> None:
+        """Bind a package name to its declared index."""
+        self.name = name
+        self.index = index
 
 
 def _resolve_routes(routes: list[IndexRoute]) -> dict[str, str]:
@@ -213,7 +214,7 @@ class FetchRequest(Record, frozen=True):
     sdist_hashes: tuple[tuple[str, str], ...]
     wheel_hashes: tuple[tuple[str, str], ...]
 
-    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(
         self,
         kind: FetchKind,
         package: str,
@@ -223,6 +224,7 @@ class FetchRequest(Record, frozen=True):
         sdist_hashes: tuple[tuple[str, str], ...] = (),
         wheel_hashes: tuple[tuple[str, str], ...] = (),
     ) -> None:
+        """Describe an artifact request and its expected integrity."""
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "package", package)
         object.__setattr__(self, "version", version)
@@ -260,7 +262,7 @@ class WarmSyncStats(Record):
     declined_no_blob: int
     declined_small_blob: int
 
-    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(
         self,
         listing_hits: int = 0,
         listing_declines: int = 0,
@@ -270,6 +272,7 @@ class WarmSyncStats(Record):
         declined_no_blob: int = 0,
         declined_small_blob: int = 0,
     ) -> None:
+        """Initialize the outcomes of synchronous listing lookups."""
         self.listing_hits = listing_hits
         self.listing_declines = listing_declines
         self.declined_ineligible = declined_ineligible

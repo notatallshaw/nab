@@ -486,7 +486,7 @@ _join_command: Callable[[Iterable[str]], str] = (
 )
 
 
-class _LockRun(Record, frozen=True):
+class _LockRun(Record):
     """The flags that decide which file ``nab lock`` writes and what goes in it.
 
     ``--locked`` writes nothing, so its failure has to name the run that would
@@ -521,33 +521,34 @@ class _LockRun(Record, frozen=True):
     cli_overrides: Mapping[str, object]
     upgrade: bool
 
-    def __init__(  # noqa: PLR0913, PLR0917 - Preserve the positional record constructor.
+    def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
+        *,
         path: Path,
         output: Path | None,
         groups: tuple[str, ...],
-        all_groups: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        all_groups: bool,
         extras: tuple[str, ...],
-        all_extras: bool,  # noqa: FBT001 - Preserve the positional record constructor.
-        offline: bool | None,  # noqa: FBT001 - Preserve the positional record constructor.
-        build_requirements: bool,  # noqa: FBT001 - Preserve the positional record constructor.
-        workspace_discovery: bool,  # noqa: FBT001 - Preserve the positional record constructor.
-        no_emit_workspace: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        all_extras: bool,
+        offline: bool | None,
+        build_requirements: bool,
+        workspace_discovery: bool,
+        no_emit_workspace: bool,
         cli_overrides: Mapping[str, object],
-        upgrade: bool,  # noqa: FBT001 - Preserve the positional record constructor.
+        upgrade: bool,
     ) -> None:
-        object.__setattr__(self, "path", path)
-        object.__setattr__(self, "output", output)
-        object.__setattr__(self, "groups", groups)
-        object.__setattr__(self, "all_groups", all_groups)
-        object.__setattr__(self, "extras", extras)
-        object.__setattr__(self, "all_extras", all_extras)
-        object.__setattr__(self, "offline", offline)
-        object.__setattr__(self, "build_requirements", build_requirements)
-        object.__setattr__(self, "workspace_discovery", workspace_discovery)
-        object.__setattr__(self, "no_emit_workspace", no_emit_workspace)
-        object.__setattr__(self, "cli_overrides", cli_overrides)
-        object.__setattr__(self, "upgrade", upgrade)
+        self.path = path
+        self.output = output
+        self.groups = groups
+        self.all_groups = all_groups
+        self.extras = extras
+        self.all_extras = all_extras
+        self.offline = offline
+        self.build_requirements = build_requirements
+        self.workspace_discovery = workspace_discovery
+        self.no_emit_workspace = no_emit_workspace
+        self.cli_overrides = cli_overrides
+        self.upgrade = upgrade
 
     def refresh_command(self) -> str:
         """Render this run without ``--locked``, ready to paste into a shell."""

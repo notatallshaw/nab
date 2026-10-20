@@ -41,12 +41,13 @@ class PreferenceScope(Record, frozen=True):
     live: frozenset[str]
     target: str
 
-    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(
         self,
         fixed: frozenset[Candidate] = frozenset(),
         live: frozenset[str] = frozenset(),
         target: str = "",
     ) -> None:
+        """Fix selected ancestors and preserve live non-yanked choices."""
         object.__setattr__(self, "fixed", fixed)
         object.__setattr__(self, "live", live)
         object.__setattr__(self, "target", target)
@@ -459,6 +460,8 @@ class _KnownFacts(BaseProvider[str, int]):
         )
         base, extra = split_extra(package)
         if extra is not None:
-            underlying = Candidate(base, candidate.version, candidate.withdrawn)
+            underlying = Candidate(
+                base, candidate.version, withdrawn=candidate.withdrawn
+            )
             result[base] = Range.singleton(self.identify(underlying))
         return result

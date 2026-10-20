@@ -74,13 +74,15 @@ class VcsConfig(Record, frozen=True):
     allowed_repos: tuple[str, ...]
     require_pin: bool
 
-    def __init__(  # noqa: D107 - Field-only constructor documented by its class.
+    def __init__(
         self,
+        *,
         policy: VcsPolicy = VcsPolicy.BLOCK,
         allowed_schemes: frozenset[str] = frozenset(),
         allowed_repos: tuple[str, ...] = (),
-        require_pin: bool = True,  # noqa: FBT001, FBT002 - Preserve the positional record constructor.
+        require_pin: bool = True,
     ) -> None:
+        """Retain the repository admission and revision-pin policies."""
         object.__setattr__(self, "policy", policy)
         object.__setattr__(self, "allowed_schemes", allowed_schemes)
         object.__setattr__(self, "allowed_repos", allowed_repos)
