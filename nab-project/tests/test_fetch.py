@@ -4415,11 +4415,14 @@ class TestSyncMetadata:
     """An owned disk cache may fulfill the pending before the async queue."""
 
     @pytest.mark.parametrize("batch", [False, True])
-    def test_warm_hit_sets_its_url_pending(self, tmp_path: Path, batch: bool) -> None:
+    @pytest.mark.parametrize("offline", [False, True])
+    def test_warm_hit_sets_its_url_pending(
+        self, tmp_path: Path, batch: bool, offline: bool
+    ) -> None:
         cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
         url = "https://f.com/pkg-1.0.whl.metadata"
         cache.put_metadata("pkg", url, "cached text")
-        coord = _coord(cache_backend=cache)
+        coord = _coord(cache_backend=cache, offline=offline)
         if batch:
             event = coord.request_metadata_batch([("pkg", "1.0", url, None)])[0][2]
         else:
@@ -4428,7 +4431,10 @@ class TestSyncMetadata:
         assert coord.index.get_metadata("pkg", "1.0", url) == "cached text"
         assert coord.index.get_metadata("pkg", "1.0", url + "other") is None
 
-    def test_existing_pending_joins_without_reading(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("batch", [False, True])
+    def test_existing_pending_joins_without_reading(
+        self, tmp_path: Path, batch: bool
+    ) -> None:
         cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
         url = "https://f.com/pkg-1.0.whl.metadata"
         cache.put_metadata("pkg", url, "cached text")
@@ -4437,7 +4443,11 @@ class TestSyncMetadata:
             metadata_pending_key("pkg", "1.0", url)
         )
         assert not existed
-        assert coord.request_metadata("pkg", "1.0", url) is pending
+        if batch:
+            event = coord.request_metadata_batch([("pkg", "1.0", url, None)])[0][2]
+        else:
+            event = coord.request_metadata("pkg", "1.0", url)
+        assert event is pending
         assert not pending.is_set()
         assert coord.index.get_metadata("pkg", "1.0", url) is None
 
@@ -4447,5 +4457,109 @@ class TestSyncMetadata:
         cache.put_metadata("pkg", url, "wrong cache")
         coord = _coord(cache_backend=cache, cache_dir=tmp_path / "actual")
         event = coord.request_metadata("pkg", "1.0", url)
+        assert event.is_set()
+        assert coord.index.get_metadata("pkg", "1.0", url) is None
+
+    @pytest.mark.parametrize("batch", [False, True])
+    @respx.mock
+    def test_custom_cache_reads_stay_on_fetcher(
+        self, tmp_path: Path, batch: bool
+    ) -> None:
+        reads: list[str] = []
+
+        class ThreadCache(OnDiskCache):
+            def get_metadata(self, package: str, metadata_url: str) -> str | None:
+                reads.append(threading.current_thread().name)
+                return super().get_metadata(package, metadata_url)
+
+        cache = ThreadCache(tmp_path, "https://pypi.org/simple/")
+        url = "https://f.com/pkg.whl.metadata"
+        cache.put_metadata("pkg", url, "cached text")
+        with _coord(cache_backend=cache) as coord:
+            if batch:
+                event = coord.request_metadata_batch([("pkg", "1.0", url, None)])[0][2]
+            else:
+                event = coord.request_metadata("pkg", "1.0", url)
+            assert event.wait(5)
+            assert coord.index.get_metadata("pkg", "1.0", url) == "cached text"
+        assert reads == ["nab-fetcher"]
+
+    @respx.mock
+    def test_mixed_batch_submits_only_misses(self, tmp_path: Path) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        warm_url = "https://f.com/warm.whl.metadata"
+        cold_url = "https://f.com/cold.whl.metadata"
+        cache.put_metadata("pkg", warm_url, "warm text")
+        route = respx.get(cold_url).respond(200, text="cold text")
+        with _coord(cache_backend=cache) as coord:
+            calls = _spy_submit(coord)
+            results = coord.request_metadata_batch(
+                [
+                    ("pkg", "1.0", warm_url, None),
+                    ("pkg", "1.0", cold_url, None),
+                    ("pkg", "1.0", cold_url, None),
+                ]
+            )
+            assert results[0][2].is_set()
+            assert results[1][2] is results[2][2]
+            assert results[1][2].wait(5)
+            assert coord.index.get_metadata("pkg", "1.0", warm_url) == "warm text"
+            assert coord.index.get_metadata("pkg", "1.0", cold_url) == "cold text"
+            assert calls == [[FetchRequest(FetchKind.METADATA, "pkg", "1.0", cold_url)]]
+            assert route.call_count == 1
+
+    @pytest.mark.parametrize("batch", [False, True])
+    @respx.mock
+    def test_corrupt_entry_falls_through_to_fetch(
+        self, tmp_path: Path, batch: bool
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        url = "https://f.com/pkg.whl.metadata"
+        cache.put_metadata("pkg", url, "old text")
+        Path(cache._metadata_file("pkg", url)).write_bytes(b"\xff")
+        route = respx.get(url).respond(200, text="fresh text")
+        with _coord(cache_backend=cache) as coord:
+            if batch:
+                event = coord.request_metadata_batch([("pkg", "1.0", url, None)])[0][2]
+            else:
+                event = coord.request_metadata("pkg", "1.0", url)
+            assert event.wait(5)
+            assert coord.index.get_metadata("pkg", "1.0", url) == "fresh text"
+        assert route.call_count == 1
+        assert cache.get_metadata("pkg", url) == "fresh text"
+
+    @pytest.mark.parametrize("batch", [False, True])
+    @respx.mock
+    def test_offline_miss_records_absence(self, tmp_path: Path, batch: bool) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        url = "https://f.com/pkg.whl.metadata"
+        with _coord(cache_backend=cache, offline=True) as coord:
+            if batch:
+                event = coord.request_metadata_batch([("pkg", "1.0", url, None)])[0][2]
+            else:
+                event = coord.request_metadata("pkg", "1.0", url)
+            assert event.wait(5)
+            assert coord.index.get_metadata("pkg", "1.0", url) is None
+            assert coord.index.is_offline_metadata_miss("pkg", "1.0", url)
+            assert coord.index.get_metadata_error("pkg", "1.0", url) is None
+
+    @pytest.mark.parametrize("batch", [False, True])
+    def test_routed_request_does_not_probe_default_index(
+        self, tmp_path: Path, batch: bool
+    ) -> None:
+        first = IndexConfig("first", "https://first.example/simple/")
+        second = IndexConfig("second", "https://second.example/simple/")
+        cache = OnDiskCache(tmp_path, first.url)
+        url = "https://f.com/pkg.whl.metadata"
+        cache.put_metadata("pkg", url, "wrong index")
+        coord = _coord(
+            cache_dir=tmp_path,
+            indexes=[first, second],
+            index_routes=[IndexRoute("pkg", "second")],
+        )
+        if batch:
+            event = coord.request_metadata_batch([("pkg", "1.0", url, None)])[0][2]
+        else:
+            event = coord.request_metadata("pkg", "1.0", url)
         assert event.is_set()
         assert coord.index.get_metadata("pkg", "1.0", url) is None
