@@ -36,6 +36,7 @@ __all__ = [
     "ContentDecodingError",
     "HttpError",
     "HttpResponse",
+    "IdleClosableTransport",
     "TunedHttpTransport",
     "UnserveableUrlError",
     "accepts_gzip",
@@ -192,6 +193,15 @@ class AsyncHttpTransport(Protocol):
 
     async def aclose(self) -> None:
         """Release resources."""
+        ...
+
+
+@runtime_checkable
+class IdleClosableTransport(AsyncHttpTransport, Protocol):
+    """A transport that can close before creating asynchronous resources."""
+
+    def close_without_loop(self) -> bool:
+        """Close synchronously, or return False without changing active resources."""
         ...
 
 

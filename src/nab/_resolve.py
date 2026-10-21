@@ -231,6 +231,10 @@ class _DeferredUrllib3Transport:
         if self._transport is not None:
             await self._transport.aclose()
 
+    def close_without_loop(self) -> bool:
+        """Close synchronously when the default transport was never needed."""
+        return self._transport is None
+
 
 def _make_resolve_transport(backend: str) -> AsyncHttpTransport:
     """Defer the default client; initialize optional backends before resolution.

@@ -172,3 +172,10 @@ class Httpx2AsyncTransport:
         client = self._client
         if client is not None:
             await client.aclose()
+
+    def close_without_loop(self) -> bool:
+        """Close synchronously only when no client has been constructed."""
+        if self._client is not None:
+            return False
+        self._closed = True
+        return True

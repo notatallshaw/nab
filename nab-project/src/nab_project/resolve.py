@@ -238,6 +238,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
             indexes=list(inputs.indexes),
             cache_dir=cache_dir,
             offline=offline,
+            start_on_demand=True,
             index_routes=index_routes(inputs),
             index_cache_floors=index_cache_floors(inputs),
             on_fetch=progress.on_fetch if progress is not None else None,

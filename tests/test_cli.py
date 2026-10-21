@@ -61,7 +61,7 @@ from nab_index.client import AsyncSimpleClient
 from nab_index.httpx2_async_transport import Httpx2AsyncTransport
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
-from nab_index.transport import HttpError
+from nab_index.transport import HttpError, IdleClosableTransport
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_markersets._compat import get_int_max_str_digits
 from nab_project._testing.coordinator_fake import make_coordinator
@@ -7724,6 +7724,24 @@ class TestResolveTransport:
             asyncio.run(transport.aclose())
 
         make.assert_not_called()
+
+    def test_unused_default_transport_closes_without_a_loop(self) -> None:
+        with patch("nab._resolve._make_urllib3_transport") as make:
+            transport = _make_resolve_transport("urllib3")
+            assert isinstance(transport, IdleClosableTransport)
+            assert transport.close_without_loop()
+        make.assert_not_called()
+
+    def test_active_default_transport_needs_async_close(self) -> None:
+        inner = _RecordingTransport()
+        with patch("nab._resolve._make_urllib3_transport", return_value=inner):
+            transport = _make_resolve_transport("urllib3")
+            assert isinstance(transport, IdleClosableTransport)
+            asyncio.run(transport.get("https://example.invalid/"))
+            assert not transport.close_without_loop()
+            assert inner.closes == 0
+            asyncio.run(transport.aclose())
+        assert inner.closes == 1
 
     def test_offline_httpx_resolve_gets_it_up_front_too(self) -> None:
         """Only urllib3 defers; httpx is built while the CLI can still exit."""

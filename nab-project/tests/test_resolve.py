@@ -7907,6 +7907,7 @@ class TestFetchWidth:
             except RuntimeError:
                 pass
 
+        assert mock_coord_cls.call_args.kwargs["start_on_demand"] is True
         return mock_coord_cls.call_args.kwargs["max_concurrency"]
 
     def test_an_unset_width_is_the_named_default(self, tmp_path: Path) -> None:

@@ -88,6 +88,21 @@ controls the extra version window fetched before a provider's pipelined scan. Ze
 extra prefetch; the pipelined candidate checks still run. Omitted fields inherit the selected
 backend's recommendation. Custom transports without recommendations retain the existing defaults.
 
+## Cache-only fetches
+
+`nab-project` enables on-demand startup for its fetch coordinator. With a single unrouted disk
+cache, it checks fresh parsed listings and metadata inline before creating a fetcher thread.
+
+```text
+cache hit -> validate digest and freshness -> provider
+cache miss -> start worker -> normal index client
+```
+
+`nab-index` owns the cache checks and the optional `IdleClosableTransport` protocol. The coordinator
+uses that protocol to close an unused transport without an event loop. Transports without it keep
+the normal worker lifecycle. Direct coordinator callers opt in with `start_on_demand=True`; an
+explicit `start()` still waits for a ready worker.
+
 ## Shared candidate preparation
 
 `nab-provider` groups listing records by wheel tags after policy and Requires-Python filtering.

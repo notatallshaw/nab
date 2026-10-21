@@ -12,7 +12,7 @@ import pytest
 from nab_index import httpx2_async_transport as module
 from nab_index.httpx2_async_transport import Httpx2AsyncTransport
 from nab_index.retry_limits import MAX_REDIRECTS
-from nab_index.transport import HttpError
+from nab_index.transport import HttpError, IdleClosableTransport
 
 
 @pytest.fixture
@@ -163,3 +163,40 @@ def test_ssl_context_is_also_deferred(
     asyncio.run(run())
 
     assert len(created) == len(clients) == 1
+
+
+def test_synchronous_unused_close_is_permanent(
+    clients: list[httpx2.AsyncClient],
+) -> None:
+    transport = Httpx2AsyncTransport()
+    assert isinstance(transport, IdleClosableTransport)
+    assert transport.close_without_loop()
+    assert transport.close_without_loop()
+
+    async def run() -> None:
+        with pytest.raises(HttpError):
+            await transport.get("https://example.com/closed")
+        await transport.aclose()
+
+    asyncio.run(run())
+    assert not clients
+
+
+def test_synchronous_close_refuses_an_existing_client(
+    clients: list[httpx2.AsyncClient],
+) -> None:
+    transport = Httpx2AsyncTransport()
+
+    async def run() -> None:
+        try:
+            await transport.get("https://example.com/first")
+            assert not transport.close_without_loop()
+            assert not clients[0].is_closed
+            assert (
+                await transport.get("https://example.com/second")
+            ).content == b"/second"
+        finally:
+            await transport.aclose()
+        assert clients[0].is_closed
+
+    asyncio.run(run())

@@ -53,7 +53,12 @@ from nab_index.cached_client import (
 from nab_index.lazy_wheel import RangeCapabilityMemo
 from nab_index.local_index import LocalIndexClient, is_file_url, parse_file_url
 from nab_index.multi_index import MultiIndexClient
-from nab_index.transport import IDENTITY_HEADERS, TunedHttpTransport, raise_unless_ok
+from nab_index.transport import (
+    IDENTITY_HEADERS,
+    IdleClosableTransport,
+    TunedHttpTransport,
+    raise_unless_ok,
+)
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.fetch_port import PrefetchSettings
 from nab_provider.metadata import static_project_from_table
@@ -329,6 +334,37 @@ class WarmSyncStats(Record):
 _QueueItem = FetchRequest | list[FetchRequest] | None
 
 
+def _coordinator_cache(
+    indexes: Sequence[IndexConfig],
+    *,
+    cache_backend: CacheBackend | None,
+    cache_dir: Path | None,
+) -> CacheBackend:
+    """Validate an explicit backend or build the first index's cache."""
+    if cache_backend is not None and len(indexes) > 1:
+        msg = (
+            "explicit cache_backend is incompatible with more than one"
+            " index: pass cache_dir so each index gets its own cache."
+        )
+        raise ValueError(msg)
+    if cache_backend is not None and any(
+        idx.serialization is not SimpleSerialization.NEGOTIATE for idx in indexes
+    ):
+        msg = (
+            "explicit cache_backend is incompatible with a pinned"
+            " serialization: pass cache_dir so the pinned index gets a"
+            " cache of its own."
+        )
+        raise ValueError(msg)
+    if cache_backend is not None:
+        return cache_backend
+    if cache_dir is not None:
+        return OnDiskCache(
+            cache_dir, indexes[0].url, serialization=indexes[0].serialization
+        )
+    return NullCache()
+
+
 class FetchCoordinator:
     """Bridges the sync provider and the async fetcher.
 
@@ -355,6 +391,7 @@ class FetchCoordinator:
         cache_dir: Path | None = None,
         cache_backend: CacheBackend | None = None,
         offline: bool = False,
+        start_on_demand: bool = False,
         index_routes: list[IndexRoute] | None = None,
         index_cache_floors: Mapping[str, int] | None = None,
         on_fetch: Callable[[], None] | None = None,
@@ -379,6 +416,9 @@ class FetchCoordinator:
         An explicit backend cannot partition several indexes or a pinned
         serialization.
 
+        ``start_on_demand`` defers the worker for coherent disk-cache reads when
+        the transport supports closing without an event loop. A miss starts it.
+
         ``build_config`` is the settings a :pep:`517` build runs under;
         a caller that resolves without building leaves it ``None``.
         """
@@ -402,32 +442,11 @@ class FetchCoordinator:
             transport, prefetch_settings
         )
         self._offline = offline
-        if cache_backend is not None and len(indexes) > 1:
-            msg = (
-                "explicit cache_backend is incompatible with more than one"
-                " index: pass cache_dir so each index gets its own cache."
-            )
-            raise ValueError(msg)
-        if cache_backend is not None and any(
-            idx.serialization is not SimpleSerialization.NEGOTIATE for idx in indexes
-        ):
-            msg = (
-                "explicit cache_backend is incompatible with a pinned"
-                " serialization: pass cache_dir so the pinned index gets a"
-                " cache of its own."
-            )
-            raise ValueError(msg)
-        if cache_backend is not None:
-            self._cache: CacheBackend = cache_backend
-        elif cache_dir is not None:
-            # Serialization-partitioned like the per-index backend
-            # _build_index_client builds, so the warm-sync probe reads the same
-            # directory the fetcher's client writes.
-            self._cache = OnDiskCache(
-                cache_dir, indexes[0].url, serialization=indexes[0].serialization
-            )
-        else:
-            self._cache = NullCache()
+        self._start_on_demand = start_on_demand
+
+        self._cache = _coordinator_cache(
+            indexes, cache_backend=cache_backend, cache_dir=cache_dir
+        )
 
         self._cache_dir = cache_dir
         self._build_config = build_config
@@ -461,7 +480,10 @@ class FetchCoordinator:
 
         self._warm_sync_stats = WarmSyncStats()
         self._warm_sync_min_blob_bytes = _WARM_SYNC_MIN_BLOB_BYTES
+
+        self._start_lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._idle_transport: IdleClosableTransport | None = None
         self._started = False
         self._crashed = False
         self._crash_error: BaseException | None = None
@@ -475,8 +497,20 @@ class FetchCoordinator:
         return self._offline
 
     def __enter__(self) -> Self:
-        """Start the fetcher thread and return self."""
-        self.start()
+        """Start the worker, or defer it for supported coherent cache reads."""
+        transport = self._transport
+        if (
+            self._start_on_demand
+            and self._sync_metadata_enabled
+            and not self._started
+            and self._idle_transport is None
+            and isinstance(transport, IdleClosableTransport)
+        ):
+            self._idle_transport = transport
+            self._warm_sync_stats = WarmSyncStats()
+            self._parsed_cache_stats = ParsedCacheStats()
+        else:
+            self.start()
         return self
 
     def __exit__(self, *args: object) -> None:
@@ -495,36 +529,57 @@ class FetchCoordinator:
 
     @property
     def warm_sync_stats(self) -> WarmSyncStats:
-        """Synchronous warm-hit listing counters, reset at each ``start()``."""
+        """Synchronous warm-hit listing counters for this run."""
         return self._warm_sync_stats
 
     def start(self) -> None:
         """Start the fetcher thread (idempotent)."""
-        if self._started:
-            return
+        with self._start_lock:
+            if self._started:
+                return
+            if self._idle_transport is None:
+                self._warm_sync_stats = WarmSyncStats()
+            self._start_worker()
+
+    def _start_worker(self) -> None:
+        """Start and await one worker while the caller holds the startup lock."""
         self._started = True
-        self._warm_sync_stats = WarmSyncStats()
+        self._queue_ready = threading.Event()
         self._thread = threading.Thread(
             target=self._run_loop,
             daemon=True,
             name="nab-fetcher",
         )
-        self._thread.start()
+        try:
+            self._thread.start()
+        except BaseException:
+            self._thread = None
+            self._started = False
+            raise
         self._queue_ready.wait()
 
     def shutdown(self) -> None:
         """Signal the fetcher thread to exit and join it."""
-        if self._thread is None:
-            return
-        self._submit(None)
-        self._thread.join(timeout=_COORDINATOR_JOIN_TIMEOUT_SECONDS)
-        self._thread = None
-        self._started = False
-        # Drop the dead loop so a later start() waits for the fresh one
-        # instead of submitting to a closed loop.
-        self._loop = None
-        self._async_q = None
-        self._queue_ready.clear()
+        with self._start_lock:
+            idle = self._idle_transport
+            self._idle_transport = None
+            if idle is not None and not self._started:
+                if idle.close_without_loop():
+                    return
+                self._start_worker()
+            thread = self._thread
+            if thread is None:
+                return
+            self._submit(None)
+        thread.join(timeout=_COORDINATOR_JOIN_TIMEOUT_SECONDS)
+        with self._start_lock:
+            if self._thread is thread:
+                self._thread = None
+                self._started = False
+                # A later start must wait for its own worker.
+                self._loop = None
+                self._async_q = None
+                self._queue_ready.clear()
 
     def _submit(self, item: _QueueItem) -> None:
         """Schedule ``item`` on the fetcher loop's queue from any thread.
@@ -532,6 +587,13 @@ class FetchCoordinator:
         Requests the loop cannot take are recorded as failures so their
         waiters unblock instead of hanging.
         """
+        if item is not None and self._idle_transport is not None:
+            try:
+                self.start()
+                self._check_alive()
+            except BaseException:
+                self._refuse(item)
+                raise
         loop = self._loop
         queue = self._async_q
         if loop is None or queue is None:
@@ -635,6 +697,8 @@ class FetchCoordinator:
         path. A blob whose size cannot be stat'd, or a run where the sync path is
         disabled, is admitted and left to ``_try_listing_sync`` to classify.
         """
+        if self._idle_transport is not None and not self._started:
+            return True
         if not self._sync_listing_enabled:
             return True
         size = self._cache.get_simple_parsed_size(package)
@@ -653,11 +717,13 @@ class FetchCoordinator:
         served inline, and every other outcome declines to the async fetch, which
         owns every cache write and self-heal.
 
-        ``speculative`` callers skip the sync probe and dispatch async, so their
-        read work overlaps resolver CPU on the fetcher thread; only blocking
-        critical-path callers serve inline.
+        Once the worker is running, ``speculative`` callers dispatch async to
+        overlap their reads with resolver CPU. Before on-demand startup, all
+        callers try the coherent cache inline.
         """
         self._check_alive()
+        if self._idle_transport is not None and not self._started:
+            speculative = False
         if self.index.get_listing(package) is not None:
             done = threading.Event()
             done.set()
@@ -939,6 +1005,7 @@ class FetchCoordinator:
         return results
 
     def _run_loop(self) -> None:
+        ready = self._queue_ready
         try:
             asyncio.run(self._async_fetcher())
         except BaseException as exc:
@@ -947,6 +1014,8 @@ class FetchCoordinator:
             # A KeyboardInterrupt or a SystemExit still ends the thread.
             if not isinstance(exc, Exception):
                 raise
+        finally:
+            ready.set()
 
     def _build_client(
         self,
