@@ -43,13 +43,17 @@ def _sdist(
     *,
     legacy: bool = False,
     dependency: str = "",
+    version: str = "1",
 ) -> Path:
     """Write an sdist with a dependency declaration and an extractable source file."""
     metadata = (
-        f"Metadata-Version: {'1.0' if legacy else '2.2'}\nName: {name}\nVersion: 1\n"
+        f"Metadata-Version: {'1.0' if legacy else '2.2'}\nName: {name}\nVersion: {version}\n"
         + (f"Requires-Dist: {dependency}\n" if dependency else "")
     ).encode()
-    members = [(f"{name}-1/PKG-INFO", metadata), (f"{name}-1/setup.py", b"# source")]
+    members = [
+        (f"{name}-{version}/PKG-INFO", metadata),
+        (f"{name}-{version}/setup.py", b"# source"),
+    ]
     output = io.BytesIO()
     if suffix == ".zip":
         with zipfile.ZipFile(output, "w") as archive:
@@ -61,7 +65,7 @@ def _sdist(
                 member = tarfile.TarInfo(filename)
                 member.size = len(data)
                 archive.addfile(member, io.BytesIO(data))
-    path = directory / f"{name}-1{suffix}"
+    path = directory / f"{name}-{version}{suffix}"
     path.write_bytes(output.getvalue())
     listing = directory / name / "index.html"
     listing.parent.mkdir(exist_ok=True)
@@ -138,6 +142,93 @@ def test_zip_rejection_suggests_the_scoped_option(
     error = result.target_results[0].error
     assert error is not None
     assert 'packages."pkg".allow-zip-sdists = true' in str(error)
+
+
+@pytest.fixture
+def wider_zip_project(
+    local_project: tuple[Path, Path, IndexConfig],
+) -> tuple[Path, Path, IndexConfig]:
+    """Offer several ZIP-only releases through a transitive dependency."""
+    project, directory, index = local_project
+    _sdist(directory, "application", ".tar.gz", dependency="pkg>=1")
+    for version in ("2", "3", "4"):
+        _sdist(directory, "pkg", ".zip", version=version)
+    project.write_text(
+        '[project]\nname = "root"\nversion = "1"\n'
+        'dependencies = ["application", "child"]\n'
+    )
+    return project, directory, index
+
+
+def test_rejected_zip_releases_are_quiet_when_a_tarball_resolves(
+    wider_zip_project: tuple[Path, Path, IndexConfig], caplog: pytest.LogCaptureFixture
+) -> None:
+    project, directory, index = wider_zip_project
+    _sdist(directory, "pkg", ".tar.gz")
+
+    result = resolve_for_targets(
+        project,
+        _NoNetwork(),
+        targets=(ResolveTarget.for_host(),),
+        inputs=ResolveInputs(indexes=(index,), build_policy=BuildPolicy.NEVER),
+    )
+
+    result.raise_for_failure()
+    assert result.target_results[0].pins == {
+        "application": Version("1"),
+        "pkg": Version("1"),
+        "child": Version("1"),
+    }
+    assert "allow-zip-sdists" not in caplog.text
+
+
+def test_rejected_zip_releases_do_not_add_hints_to_an_unrelated_failure(
+    wider_zip_project: tuple[Path, Path, IndexConfig], caplog: pytest.LogCaptureFixture
+) -> None:
+    project, directory, index = wider_zip_project
+    _sdist(directory, "pkg", ".tar.gz")
+    project.write_text(
+        project.read_text().replace(
+            '"application", "child"', '"application", "child", "absent==1"'
+        )
+    )
+
+    result = resolve_for_targets(
+        project,
+        _NoNetwork(),
+        targets=(ResolveTarget.for_host(),),
+        inputs=ResolveInputs(indexes=(index,), build_policy=BuildPolicy.NEVER),
+    )
+
+    assert not result.success
+    error = str(result.target_results[0].error)
+    assert "absent" in error
+    assert "allow-zip-sdists" not in error + caplog.text
+
+
+def test_many_zip_rejections_produce_one_hint_per_failed_target(
+    wider_zip_project: tuple[Path, Path, IndexConfig], caplog: pytest.LogCaptureFixture
+) -> None:
+    project, _, index = wider_zip_project
+    result = resolve_for_targets(
+        project,
+        _NoNetwork(),
+        targets=(
+            ResolveTarget.for_host_python("3.10"),
+            ResolveTarget.for_host_python("3.13"),
+        ),
+        inputs=ResolveInputs(indexes=(index,), build_policy=BuildPolicy.NEVER),
+    )
+
+    assert not result.success
+    assert len(result.target_results) == 2
+    for target in result.target_results:
+        assert target.error is not None
+        assert (
+            str(target.error).count('try: set packages."pkg".allow-zip-sdists = true')
+            == 1
+        )
+    assert "allow-zip-sdists" not in caplog.text
 
 
 @pytest.mark.parametrize("trust", [False, True])
