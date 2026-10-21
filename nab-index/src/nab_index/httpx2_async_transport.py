@@ -84,15 +84,31 @@ class Httpx2AsyncTransport:
     """
 
     def __init__(self, *, http2: bool = True) -> None:
-        """Create a transport."""
+        """Validate optional dependencies and defer the client until a request."""
+        __import__("httpx2")
+        if http2:
+            __import__("h2")
         self.prefetch_settings = prefetch_settings_for_backend("httpx2")
-        self._client = httpx2.AsyncClient(
-            http2=http2,
-            # Simple API URLs may redirect to mirrors or a canonical project name.
-            follow_redirects=True,
-            max_redirects=MAX_REDIRECTS,
-            verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
-        )
+        self._http2 = http2
+        self._client: httpx2.AsyncClient | None = None
+        self._closed = False
+
+    def _client_for_request(self) -> httpx2.AsyncClient:
+        """Return the reusable client, refusing requests after close."""
+        if self._closed:
+            msg = "HTTP transport is closed"
+            raise RuntimeError(msg)
+        client = self._client
+        if client is None:
+            client = httpx2.AsyncClient(
+                http2=self._http2,
+                # Simple API URLs may redirect to mirrors or a canonical project name.
+                follow_redirects=True,
+                max_redirects=MAX_REDIRECTS,
+                verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
+            )
+            self._client = client
+        return client
 
     async def get(
         self, url: str, *, headers: dict[str, str] | None = None
@@ -110,7 +126,8 @@ class Httpx2AsyncTransport:
 
         while True:
             try:
-                async with self._client.stream(
+                client = self._client_for_request()
+                async with client.stream(
                     "GET", url, headers=request_headers
                 ) as response:
                     raw = b"".join([part async for part in response.aiter_raw()])
@@ -145,5 +162,8 @@ class Httpx2AsyncTransport:
             await asyncio.sleep(delay)
 
     async def aclose(self) -> None:
-        """Close the underlying client."""
-        await self._client.aclose()
+        """Close an existing client without constructing an unused one."""
+        self._closed = True
+        client = self._client
+        if client is not None:
+            await client.aclose()
