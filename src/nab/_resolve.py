@@ -11,6 +11,7 @@ resolver and the lockfile readers off ``nab cache`` and ``nab config``.
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "nab_resolver.diagnostics",
     "functools",
     "gc",
     "importlib.util",
@@ -70,6 +71,7 @@ from nab_provider.target import (
     NonIntervalMarkerError,
     UnevaluableMarkerError,
 )
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 from nab_resolver.errors import ResolutionError
 
 from ._run import require_pyproject_file
@@ -115,7 +117,7 @@ def _read_selection_table_or_exit(
         printer().error(f"{path} is not valid TOML: {e}")
         sys.exit(1)
     except TypeError as e:
-        printer().error(f"in {path}: {e}")
+        printer().error(e, prefix=f"in {path}: ")
         sys.exit(1)
 
 
@@ -192,7 +194,10 @@ def _make_transport(backend: str) -> AsyncHttpTransport:
                 make_transport = Httpx2AsyncTransport
         except ImportError:
             printer().error(
-                f"{backend} is not installed; run `pip install nab[{backend}]`"
+                DiagnosticMessage(
+                    (f"{backend} is not installed"),
+                    suggestions=(Suggestion(f"run `pip install nab[{backend}]`"),),
+                )
             )
             sys.exit(1)
 
@@ -200,8 +205,10 @@ def _make_transport(backend: str) -> AsyncHttpTransport:
             return make_transport()
         except ImportError:
             printer().error(
-                f"{backend} is installed without HTTP/2 support; "
-                f"run `pip install nab[{backend}]`"
+                DiagnosticMessage(
+                    (f"{backend} is installed without HTTP/2 support"),
+                    suggestions=(Suggestion(f"run `pip install nab[{backend}]`"),),
+                )
             )
             sys.exit(1)
         except Exception as exc:  # noqa: BLE001 - constructor errors have backend-specific types
@@ -266,10 +273,10 @@ def _load_config(
             cli_overrides=cli_overrides,
         )
     except ConfigError as exc:
-        printer().error(str(exc))
+        printer().error(exc)
         sys.exit(1)
     except WorkspaceDiscoveryError as exc:
-        printer().error(f"workspace discovery error: {exc}")
+        printer().error(exc, prefix="workspace discovery error: ")
         sys.exit(1)
 
 
@@ -282,7 +289,7 @@ def _check_targets_or_exit(config: NabProjectConfig) -> None:
     try:
         plan_targets(config)
     except ConfigError as exc:
-        printer().error(str(exc))
+        printer().error(exc)
         sys.exit(1)
 
 
@@ -374,22 +381,22 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
         UnevaluableMarkerError,
         IntractableMarkerError,
     ) as e:
-        printer().error(f"{failure_prefix}: {e}")
+        printer().error(e, prefix=f"{failure_prefix}: ")
         sys.exit(1)
     except InvalidUploadTimeError as e:
-        printer().error(str(e))
+        printer().error(e)
         sys.exit(1)
     except KeyError:
         printer().error(f"{path} has no [project].dependencies")
         sys.exit(1)
     except InvalidProjectTableError as e:
-        printer().error(f"in {path}: {e}")
+        printer().error(e, prefix=f"in {path}: ")
         sys.exit(1)
     except InvalidProjectRequirementError as e:
-        printer().error(str(e))
+        printer().error(e)
         sys.exit(1)
     except LookupError as e:
-        printer().error(str(e))
+        printer().error(e)
         sys.exit(1)
     except (
         MissingHashError,
@@ -399,16 +406,16 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
         SdistHashMismatchError,
         WheelHashMismatchError,
     ) as e:
-        printer().error(f"{failure_prefix}: {e}")
+        printer().error(e, prefix=f"{failure_prefix}: ")
         sys.exit(1)
     except NotImplementedError as e:
-        printer().error(f"{failure_prefix}: {e}")
+        printer().error(e, prefix=f"{failure_prefix}: ")
         sys.exit(1)
     except ConfigError as e:
-        printer().error(str(e))
+        printer().error(e)
         sys.exit(1)
     except IndexAccessError as e:
-        printer().error(f"{failure_prefix}: {e}")
+        printer().error(e, prefix=f"{failure_prefix}: ")
         sys.exit(1)
 
     if not result.success:
@@ -493,13 +500,11 @@ def _error_lines(error: ResolutionError | None) -> list[str]:
 
 
 def _error_text(error: ResolutionError) -> str:
-    """Return the error at the depth the run's verbosity asks for.
-
-    A resolution failure carries two renderings of its ``Diagnostics:``
-    section: one line per package by default, and each package's clauses
-    and ``note:`` at ``-v``.  An error nothing augmented carries only the
-    one.
-    """
-    if printer().verbosity >= Verbosity.VERBOSE and error.verbose_message is not None:
+    """Render a structured error, retaining legacy hosts' verbose report fallback."""
+    if (
+        printer().verbosity >= Verbosity.VERBOSE
+        and error.verbose_message is not None
+        and isinstance(error.args[0], str)
+    ):
         return error.verbose_message
-    return str(error)
+    return printer().format_message(error)

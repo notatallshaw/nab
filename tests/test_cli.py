@@ -2656,7 +2656,7 @@ class TestPythonFlag:
         assert exc.value.code == 1
         assert (
             "error: --python and --project-environment-python both set the"
-            " python axis; pass one of them." in capsys.readouterr().err
+            " python axis\n    try: pass one of them" in capsys.readouterr().err
         )
         assert not out.exists()
         mock_resolve.assert_not_called()
@@ -3971,10 +3971,10 @@ class TestLockCommandUniversal:
             '    try: set packages."foo".uploaded-prior-to = false\n'
         )
 
-    def test_the_verbose_level_replaces_the_try_line_with_the_detail(
+    def test_the_verbose_level_keeps_the_action_and_adds_evidence(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """``-v`` keeps the line and prints the clauses and the note under it."""
+        """``-v`` keeps the line and prints the clauses and context under it."""
         with patch("nab.output._printer", Printer(verbosity=Verbosity.VERBOSE)):
             self._lock_against_a_refused_listing(
                 self._cutoff_refused(tmp_path, '"linux_x86_64"')
@@ -3986,9 +3986,8 @@ class TestLockCommandUniversal:
             "    the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded"
             " 1 file uploaded at 2030-01-01T00:00:00Z (1.0)\n"
             "    the files nab read hold no sdist to build from\n"
-            "    note: the project-level uploaded-prior-to set that cutoff;"
-            ' setting packages."foo".uploaded-prior-to = false lifts it for this'
-            " package\n"
+            '    try: set packages."foo".uploaded-prior-to = false\n'
+            "         The project-wide uploaded-prior-to setting rejected these files.\n"
         )
 
     def test_a_diagnostics_line_survives_the_per_tuple_block(
@@ -4024,10 +4023,9 @@ class TestLockCommandUniversal:
             "#       the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00"
             " excluded 1 file uploaded at 2030-01-01T00:00:00Z (1.0)"
         ) in err
+        assert ('#       try: set packages."foo".uploaded-prior-to = false') in err
         assert (
-            "#       note: the project-level uploaded-prior-to set that cutoff;"
-            ' setting packages."foo".uploaded-prior-to = false lifts it for this'
-            " package"
+            "#            The project-wide uploaded-prior-to setting rejected these files."
         ) in err
 
     def test_template_writes_one_file_per_tuple(
@@ -4331,7 +4329,7 @@ class TestLockCommandUniversal:
         err = capsys.readouterr().err
         assert "4 tuples" in err
         assert "tells them apart" in err
-        assert "Emit pylock output instead" in err
+        assert "try: emit pylock output instead" in err
         assert "{python_version}" not in err
         assert not out.exists()
 
@@ -4352,7 +4350,7 @@ class TestLockCommandUniversal:
         err = capsys.readouterr().err
         assert "both map to" in err
         assert "tells them apart" in err
-        assert "Emit pylock output instead" in err
+        assert "try: emit pylock output instead" in err
         assert "{python_version}" not in err
         assert list(tmp_path.glob("req-*.txt")) == []
 
@@ -6451,7 +6449,7 @@ class TestPaintedEagerOutput:
         _page, refusal = self._eager("lock", "--outupt", status=2)
 
         assert refusal.startswith("\033[31mnab lock:\033[0m ")
-        assert "did you mean '\033[36m--output\033[0m'?" in refusal
+        assert "try: use '\033[36m--output\033[0m'" in refusal
 
     def test_each_stream_is_asked_on_its_own(
         self, monkeypatch: pytest.MonkeyPatch

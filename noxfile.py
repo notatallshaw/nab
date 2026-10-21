@@ -272,7 +272,9 @@ def standalone(session: nox.Session) -> None:
     # The extra, and without --no-deps, so the range nab-markersets declares is
     # what pip resolves. The lock already pins a packaging inside that range,
     # so nothing moves; a range that stopped covering it would fail here.
-    session.install("--no-build-isolation", "-e", "nab-markersets[packaging]")
+    session.install(
+        "--no-build-isolation", "-e", "nab-resolver", "-e", "nab-markersets[packaging]"
+    )
 
     session.run("python", "-m", "pytest", "-n", "auto", "nab-markersets/tests")
 

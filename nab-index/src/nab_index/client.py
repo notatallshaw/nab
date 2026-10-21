@@ -9,6 +9,7 @@ implementing the :class:`AsyncHttpTransport` protocol can be used.
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "nab_resolver.diagnostics",
     "hashlib",
     "io",
     "nab_index._json_decode",
@@ -51,6 +52,7 @@ from nab_provider.records import (
     defer_sidecar_hash,
 )
 from nab_provider.serialization import SimpleSerialization, simple_accept_header
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from ._json_decode import decode_json
 from ._pep503 import json_listing
@@ -440,13 +442,19 @@ def _listing_body(
             if is_html
             else ""
         )
-        msg = (
-            f"{index_url} served {package!r} with {served}, but this index is"
-            f" pinned to serialization = {serialization.value!r}."
-            f"  Drop the pin,{instead} or set url to an endpoint that serves"
-            f" {serialization.value}."
+        report = DiagnosticMessage(
+            (
+                f"{index_url} served {package!r} with {served}, but this index is "
+                f"pinned to serialization = {serialization.value!r}."
+            ),
+            suggestions=(
+                Suggestion(
+                    f"drop the pin,{instead} or set url to an endpoint that serves "
+                    f"{serialization.value}."
+                ),
+            ),
         )
-        raise MalformedSimpleResponseError(msg)
+        raise MalformedSimpleResponseError(report)
 
     if not is_html:
         return body

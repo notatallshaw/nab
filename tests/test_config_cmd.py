@@ -1305,7 +1305,7 @@ class TestProjectCliOverrides:
         )
 
         err = capsys.readouterr().err
-        assert "--project-mode universal needs a matrix:" in err
+        assert "--project-mode universal needs a matrix\n    try:" in err
         assert "pass --project-matrix-python and --project-matrix-platforms" in err
         assert "a top-level [matrix] table to the project's nab.toml" in err
 

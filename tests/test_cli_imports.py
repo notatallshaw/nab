@@ -115,6 +115,10 @@ with redirect_stdout(out), redirect_stderr(err):
     status = nab.cli.run(tuple(sys.argv[2:]))
 
 assert status == 0, (status, out.getvalue(), err.getvalue())
+if 'nab_resolver.resolver' in banned:
+    assert {name for name in sys.modules if name.startswith('nab_resolver.')} <= {
+        'nab_resolver.diagnostics', 'nab_resolver._compat',
+    }
 held = set(sys.modules) | {name.partition(".")[0] for name in sys.modules}
 sys.stderr.write(" ".join(sorted(held & banned)))
 """
@@ -123,7 +127,7 @@ sys.stderr.write(" ".join(sorted(held & banned)))
 # solver, the provider and project halves a resolve goes through, and
 # the writer that emits a lockfile.
 _RESOLVE_STACK = (
-    "nab_resolver",
+    "nab_resolver.resolver",
     "nab_project.lockfile",
     "nab_project.resolve",
     "nab_provider.provider",
@@ -278,3 +282,19 @@ def test_a_lock_command_holds_no_archive_reader(tmp_path: Path) -> None:
     held = _run(_HELD_PROBE, "tarfile,zipfile", "lock", "--offline", cwd=tmp_path)
 
     assert held == ""
+
+
+def test_plain_output_defers_diagnostic_imports() -> None:
+    assert (
+        _run("""
+import sys
+from nab._cli.parse import UsageError
+assert 'nab_resolver.diagnostics' not in sys.modules
+from nab.output import Printer
+assert Printer().format_message('plain output') == 'plain output'
+assert 'nab_resolver.diagnostics' not in sys.modules
+UsageError('nab', 'refused')
+assert 'nab_resolver.diagnostics' in sys.modules
+""")
+        == ""
+    )

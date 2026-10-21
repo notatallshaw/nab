@@ -11,6 +11,7 @@ Reports show configured winners. With ``--include-rejected``, ``list`` and
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "nab_resolver.diagnostics",
     "nab",
     "nab._cli.definition.model",
     "nab.config.hooks",
@@ -34,6 +35,7 @@ from nab_project import toml_io
 from nab_project.paths import PathState, path_state, realpath
 from nab_project.value import ValueType
 from nab_provider.policy import ResolveMode
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .. import env
 from .._cli.definition.model import Opt, Scope
@@ -451,14 +453,18 @@ def _warn_unknown_env(
             or name in env.OUTPUT_OWNED
         ):
             continue
-        msg = (
-            f"{name} is not a recognized nab setting and was ignored; the"
-            f" known NAB_* variables are {honoured}."
+        report = DiagnosticMessage(
+            f"{name} is not a recognized nab setting and was ignored",
+            suggestions=(
+                Suggestion(f"use one of the known NAB_* variables: {honoured}"),
+            ),
         )
         if rejections is not None:
-            rejections.append(RejectedLayer(Origin(SourceKind.ENV, name), name, msg))
+            rejections.append(
+                RejectedLayer(Origin(SourceKind.ENV, name), name, str(report))
+            )
             continue
-        _logger.warning("%s", msg)
+        _logger.warning("%s", report)
 
 
 def _renamed_env_names() -> dict[str, Opt]:
@@ -492,18 +498,26 @@ def _warn_renamed_env(
                 if spec.cli_flag is None
                 else f", or override per-run with {spec.cli_flag}"
             )
-            msg = (
-                f"{env_name} was ignored: {spec.name!r} is a"
-                f" {spec.scope_name}-scope option and is not env-settable."
-                f"  Set it in pyproject [tool.nab].{spec.name} or a project-dir"
-                f" nab.toml{override}."
+            report = DiagnosticMessage(
+                (
+                    f"{env_name} was ignored: {spec.name!r} is a {spec.scope_name}"
+                    "-scope option and is not env-settable"
+                ),
+                suggestions=(
+                    Suggestion(
+                        f"set it in pyproject [tool.nab].{spec.name} or a "
+                        f"project-dir nab.toml{override}."
+                    ),
+                ),
             )
             if rejections is not None:
                 rejections.append(
-                    RejectedLayer(Origin(SourceKind.ENV, env_name), spec.name, msg)
+                    RejectedLayer(
+                        Origin(SourceKind.ENV, env_name), spec.name, str(report)
+                    )
                 )
                 continue
-            _logger.warning("%s", msg)
+            _logger.warning("%s", report)
 
 
 def config_search_roots(pyproject: Path) -> SourceRoots:
@@ -664,7 +678,7 @@ def _folded(
     try:
         value = spec.parse(merged, cli_table_label(spec))
     except SourceConfigError as exc:
-        raise CliTableError(str(exc)) from exc
+        raise CliTableError(*exc.args) from exc
     return Origin(SourceKind.CLI, "cli"), value
 
 
@@ -714,14 +728,18 @@ def _check_project_file_conflict(
     project_value = by_kind[SourceKind.PROJECT_TOML]
     if pyproject_value == project_value:
         return
-    msg = (
-        f"config {spec.name!r} is set to conflicting values in pyproject"
-        f" [tool.nab] ({spec.render(pyproject_value)!r}) and project-dir"
-        f" nab.toml ({spec.render(project_value)!r}).  Both files sit at the"
-        " same precedence level; set the key in only one, or set them to the"
-        " same value."
+    report = DiagnosticMessage(
+        (
+            f"config {spec.name!r} is set to conflicting values in pyproject "
+            f"[tool.nab] ({spec.render(pyproject_value)!r}) and project-dir nab.toml ("
+            f"{spec.render(project_value)!r}).  Both files sit at the same precedence "
+            "level"
+        ),
+        suggestions=(
+            Suggestion("set the key in only one, or set them to the same value."),
+        ),
     )
-    raise SourceConfigError(msg)
+    raise SourceConfigError(report)
 
 
 def build_cli_layer(values: Mapping[str, Any]) -> Layer:

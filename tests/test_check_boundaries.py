@@ -105,7 +105,32 @@ def test_the_packages_that_publish_a_table_are_pinned() -> None:
     assert check_boundaries.PUBLISHES_SUPPORTED_PATHS == (
         "nab_markersets",
         "nab_resolver",
+        "nab_provider",
+        "nab_project",
     )
+
+
+def test_diagnostic_imports_use_their_published_owner(
+    workspace: FakeWorkspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workspace.add(
+        "nab-resolver",
+        docstring="Shared diagnostics.\n\nSupported diagnostic imports:\n\n    nab_resolver.diagnostics  DiagnosticMessage\n",
+        diagnostics="class DiagnosticMessage:\n    pass\n",
+        errors="from .diagnostics import DiagnosticMessage\n",
+    )
+    workspace.add(
+        "nab-project",
+        requires=("nab-resolver",),
+        wrong="from nab_resolver.errors import DiagnosticMessage\n",
+    )
+    workspace.publishes_supported_paths("nab_resolver")
+
+    assert check_boundaries.main() == 1
+    assert (
+        "supports DiagnosticMessage at nab_resolver.diagnostics, "
+        "not through nab_resolver.errors"
+    ) in capsys.readouterr().err
 
 
 def test_the_published_table_resolves_against_its_own_package() -> None:

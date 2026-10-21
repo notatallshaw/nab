@@ -3330,7 +3330,7 @@ class TestBuildResolverInputs:
         assert record.message.startswith(
             "Root requirement 'foo<2.0; extra == \"fast\"'"
         )
-        assert "pkg[extra] (extras-of-package)" in record.message
+        assert "try: use pkg[extra] to select an extra" in record.message
 
     def test_warning_cause_holds_when_the_extra_was_selected(
         self, caplog: pytest.LogCaptureFixture
@@ -3519,7 +3519,9 @@ class TestBuildConstraints:
         message = self._drop_warning(caplog)
 
         assert "pkg[extra]" not in message
-        assert "A constraint cannot carry extras" in message
+        assert (
+            "try: drop the membership test from the marker and keep the rest" in message
+        )
 
     def test_dropped_group_constraint_warning_omits_the_extras_rule(
         self, caplog: pytest.LogCaptureFixture
@@ -3528,7 +3530,9 @@ class TestBuildConstraints:
         message = self._drop_warning(caplog, 'foo<2.0 ; "docs" in dependency_groups')
 
         assert "cannot carry extras" not in message
-        assert "Drop the membership test from the marker and keep the rest." in message
+        assert (
+            "try: drop the membership test from the marker and keep the rest" in message
+        )
 
     def test_dropped_constraint_repair_still_bounds_the_package(
         self, caplog: pytest.LogCaptureFixture
@@ -3536,7 +3540,7 @@ class TestBuildConstraints:
         """The repair the warning asks for parses and still bounds foo."""
         message = self._drop_warning(caplog)
         assert message.endswith(
-            "so drop the membership test from the marker and keep the rest."
+            "try: drop the membership test from the marker and keep the rest"
         )
 
         inputs = ResolveInputs(constraints=("foo<2.0",))
@@ -3560,7 +3564,7 @@ class TestBuildConstraints:
         )
 
         assert message.endswith(
-            "so drop the membership test from the marker and keep the rest."
+            "try: drop the membership test from the marker and keep the rest"
         )
 
         inputs = ResolveInputs(constraints=("foo<2.0 ; python_version < '3.10'",))

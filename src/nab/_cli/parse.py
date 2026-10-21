@@ -54,8 +54,16 @@ class UsageError(Exception):
         *,
         token: str = "",
         candidates: tuple[str, ...] = (),
+        suggestions: tuple[str, ...] = (),
     ) -> None:
-        super().__init__(message)
+        # Successful parsing never imports the optional error renderer.
+        from nab_resolver.diagnostics import DiagnosticMessage, Suggestion  # noqa: PLC0415
+
+        super().__init__(
+            DiagnosticMessage(
+                message, suggestions=tuple(Suggestion(action) for action in suggestions)
+            )
+        )
         self.prog = prog
         self.message = message
         self.token = token
@@ -615,7 +623,7 @@ def _boolean(row: Row, value: str, prog: str) -> bool:
     return value == "True"
 
 
-def _spelling(row: Row) -> str:
+def _option_name(row: Row) -> str:
     """How an error names ``row``: its flag, or its slot when it has none."""
     return row.long or row.dest
 
@@ -696,26 +704,25 @@ def _looks_like_option(prog: str, name: str, following: str) -> UsageError:
     separator = "=" if name.startswith(_LONG) else ""
     message = (
         f"option {_quote(name)} requires a value, but {_quote(following)} "
-        f"looks like an option; write {name}{separator}{following} to pass it"
+        "looks like an option"
     )
-    return UsageError(prog, message)
+    return UsageError(
+        prog, message, suggestions=(f"write {name}{separator}{following} to pass it",)
+    )
 
 
 def _bad_choice(
     prog: str, row: Row, value: str, choices: tuple[str, ...]
 ) -> UsageError:
     """Refuse a value outside ``choices``, which the message lists."""
-    message = (
-        f"invalid value {_quote(value)} for {_quote(_spelling(row))}; "
-        f"choose from {', '.join(choices)}"
-    )
-    return UsageError(prog, message)
+    message = f"invalid value {_quote(value)} for {_quote(_option_name(row))}"
+    return UsageError(prog, message, suggestions=(f"choose from {', '.join(choices)}",))
 
 
 def _bad_number(prog: str, row: Row, value: str) -> UsageError:
     """Refuse a value the row's numeric type cannot read."""
     message = (
-        f"invalid value {_quote(value)} for {_quote(_spelling(row))}: "
+        f"invalid value {_quote(value)} for {_quote(_option_name(row))}: "
         f"expected an integer"
     )
     return UsageError(prog, message)
@@ -731,8 +738,11 @@ def _unknown_command(
 
 def _missing_command(prog: str, commands: dict[str, tuple[Spec, ...]]) -> UsageError:
     """Refuse a line that ended with no command named."""
-    message = f"a command is required; choose from {', '.join(commands)}"
-    return UsageError(prog, message)
+    return UsageError(
+        prog,
+        "a command is required",
+        suggestions=(f"choose from {', '.join(commands)}",),
+    )
 
 
 def _missing_option(prog: str, name: str) -> UsageError:
@@ -744,9 +754,8 @@ def _missing_option(prog: str, name: str) -> UsageError:
 def _missing_operand(prog: str, row: Row) -> UsageError:
     """Refuse a required slot the line left empty, with its verbs when it has them."""
     message = f"missing required argument {_quote(row.dest)}"
-    if row.choices:
-        message += f"; choose from {', '.join(row.choices)}"
-    return UsageError(prog, message)
+    suggestions = (f"choose from {', '.join(row.choices)}",) if row.choices else ()
+    return UsageError(prog, message, suggestions=suggestions)
 
 
 def _unexpected_operand(prog: str, word: str) -> UsageError:

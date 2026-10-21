@@ -88,7 +88,12 @@ VENDOR_ALLOWANCES: frozenset[tuple[str, str]] = frozenset(
 
 # Packages whose docstring publishes a supported-path table. Listed so a table
 # that stops parsing fails the run instead of dropping the ``supported`` rule.
-PUBLISHES_SUPPORTED_PATHS = ("nab_markersets", "nab_resolver")
+PUBLISHES_SUPPORTED_PATHS = (
+    "nab_markersets",
+    "nab_resolver",
+    "nab_provider",
+    "nab_project",
+)
 
 
 class Package:

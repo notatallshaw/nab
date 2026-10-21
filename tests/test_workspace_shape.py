@@ -603,13 +603,15 @@ def test_the_marker_algebra_holds_the_floor_it_declares() -> None:
 
 
 def test_the_standalone_session_installs_the_algebra_alone() -> None:
-    """Adding a package here would put nab-provider's fork back in reach.
+    """The algebra and shared diagnostic core leave nab-provider absent.
 
     That session is the only run where `nab_markersets` binds released
     packaging, and nothing about it would go red if it stopped doing so.
     """
     assert _session_installs("standalone") == [
         "--no-build-isolation",
+        "-e",
+        "nab-resolver",
         "-e",
         "nab-markersets[packaging]",
     ]

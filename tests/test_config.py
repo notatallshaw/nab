@@ -391,7 +391,7 @@ class TestMode:
 
         assert str(excinfo.value) == (
             "--project-matrix-python and --project-matrix-platforms declare"
-            " a matrix with multiple targets but mode is 'specific'; pass --project-mode universal"
+            " a matrix with multiple targets but mode is 'specific'\n    try: pass --project-mode universal"
             " as well, or drop the matrix flags."
         )
 
@@ -407,7 +407,7 @@ class TestMode:
         )
         tail = (
             " declares one environment; the matrix declares one environment"
-            " per tuple, so the two contradict.  Drop one."
+            " per tuple, so the two contradict\n    try: drop one."
         )
 
         for written, flags in (
@@ -465,7 +465,7 @@ class TestMode:
             "[tool.nab.matrix] declares a matrix and"
             " --project-environment-platform declares one environment; the"
             " matrix declares one environment per tuple, so the two"
-            " contradict.  Drop one."
+            " contradict\n    try: drop one."
         )
 
     def test_both_tables_from_the_cli_still_contradict(self, tmp_path: Path) -> None:
@@ -501,7 +501,7 @@ class TestMode:
             assert str(excinfo.value) == (
                 "--project-matrix-python and --project-matrix-platforms declare"
                 f" a matrix and {named} environment; the matrix declares one"
-                " environment per tuple, so the two contradict.  Drop one."
+                " environment per tuple, so the two contradict\n    try: drop one."
             )
 
     def test_the_specific_mode_message_names_the_flags_written(
@@ -527,7 +527,7 @@ class TestMode:
 
         assert str(excinfo.value) == (
             "--project-matrix-platforms declares a matrix with multiple targets but mode is"
-            " 'specific'; pass --project-mode universal as well, or drop the"
+            " 'specific'\n    try: pass --project-mode universal as well, or drop the"
             " matrix flags."
         )
 
@@ -557,7 +557,7 @@ class TestMode:
         assert str(excinfo.value) == (
             "[tool.nab.matrix] and [tool.nab.environment] cannot both be set:"
             " the matrix declares one environment per tuple, so a single"
-            " declared environment would contradict it.  Drop one."
+            " declared environment would contradict it\n    try: drop one."
         )
 
     def test_matrix_without_mode_infers_universal(self, tmp_path: Path) -> None:
@@ -1498,7 +1498,7 @@ class TestRequiresPython:
         with pytest.raises(
             ConfigError,
             match=r"\[tool\.nab\] requires-python = '==3\.9\.\*' excludes the"
-            r" resolve target Python 3\.12.*--python",
+            r" resolve target Python 3\.12[\s\S]*--python",
         ):
             plan_targets(config)
 

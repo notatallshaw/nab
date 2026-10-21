@@ -55,6 +55,7 @@ from nab_resolver.resolver import Resolver, ResolverObserver
 from nab_resolver.types import IncompatibilityCause, RootRequirement
 
 from .._compat import override
+from ..diagnostics import ResolutionMessage
 from ..lockfile import (
     ArtifactMemo,
     IndexPin,
@@ -1209,28 +1210,9 @@ def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
         return
 
     base = str(exc)
-    exc.args = (base + _diagnostics_block(entries, detailed=False),)
-    exc.verbose_message = base + _diagnostics_block(entries, detailed=True)
-
-
-def _diagnostics_block(
-    entries: Sequence[tuple[str, Diagnostic]], *, detailed: bool
-) -> str:
-    """Render the ``Diagnostics:`` section at one of its two depths.
-
-    The header carries the pointer to ``-v``, once, rather than every line
-    that has something behind it repeating the same sixteen characters.  It
-    is offered only where some entry does have more to show.
-    """
-    deeper = not detailed and any(diagnostic.detail for _, diagnostic in entries)
-    lines = ["", "", "Diagnostics: (-v for detail)" if deeper else "Diagnostics:"]
-    for package, diagnostic in entries:
-        lines.append(f"  - {package}: {diagnostic.short}")
-        if detailed:
-            lines.extend(f"    {line}" for line in diagnostic.detail)
-        elif diagnostic.remedy is not None:
-            lines.append(f"    try: {diagnostic.remedy}")
-    return "\n".join(lines)
+    message = ResolutionMessage(base, tuple(entries))
+    exc.args = (message,)
+    exc.verbose_message = message.render(verbose=True)
 
 
 def _rules_out_candidate(node: Incompatibility[Any, Any]) -> bool:

@@ -9,6 +9,7 @@ names it by, so one wording serves every rung of the ladder: a bad
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "nab_resolver.diagnostics",
     "collections",
     "datetime",
     "itertools",
@@ -84,6 +85,7 @@ from nab_provider.tags import (
 )
 from nab_provider.target import PLATFORM_MARKERS, ImplementationOverride, Matrix
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 if TYPE_CHECKING:
     import enum
@@ -835,12 +837,16 @@ def parse_packages_sugar(
     sugar form has no inner selector key.
     """
     if isinstance(value, list):
-        msg = (
-            f"{where} is the name-keyed table form ([tool.nab.packages.<name>]);"
-            " for one body across several requirements use"
-            " [[tool.nab.package-rules]] with match = [...]"
+        report = DiagnosticMessage(
+            (f"{where} is the name-keyed table form ([tool.nab.packages.<name>])"),
+            suggestions=(
+                Suggestion(
+                    "for one body across several requirements use "
+                    "[[tool.nab.package-rules]] with match = [...]"
+                ),
+            ),
         )
-        raise SourceConfigError(msg)
+        raise SourceConfigError(report)
     if not isinstance(value, dict):
         msg = (
             f"{where} must be a table keyed by package name, got {type(value).__name__}"
@@ -887,12 +893,16 @@ def parse_package_rules(
     index).
     """
     if not isinstance(value, list):
-        msg = (
-            f"{where} must be an array of tables ([[tool.nab.package-rules]]);"
-            " for per-package policy keyed by name use"
-            f" [tool.nab.packages.<name>].  Got {type(value).__name__}"
+        report = DiagnosticMessage(
+            (f"{where} must be an array of tables ([[tool.nab.package-rules]])"),
+            suggestions=(
+                Suggestion(
+                    "for per-package policy keyed by name use "
+                    f"[tool.nab.packages.<name>].  Got {type(value).__name__}"
+                ),
+            ),
         )
-        raise SourceConfigError(msg)
+        raise SourceConfigError(report)
     out: list[PackageOverride] = []
     for i, entry in enumerate(value):
         out.extend(_parse_package_rule_entry(entry, where, i, anchor=anchor))
@@ -1089,9 +1099,16 @@ def _reject_deferred(
     if deferred:
         msg = f"{where}: key(s) {deferred!r} are not supported"
         if flat_metadata_advice and "metadata" in deferred:
-            msg += (
-                "; set metadata as the flat body keys 'dependencies',"
-                " 'requires-python', and 'provides-extra' instead"
+            raise SourceConfigError(
+                DiagnosticMessage(
+                    msg,
+                    suggestions=(
+                        Suggestion(
+                            "set metadata as the flat body keys 'dependencies', "
+                            "'requires-python', and 'provides-extra' instead"
+                        ),
+                    ),
+                )
             )
         raise SourceConfigError(msg)
 
@@ -1245,12 +1262,16 @@ def _parse_override_uploaded_prior_to(
     if value is False:
         return (None, True)
     if value is True:
-        msg = (
-            f"{where}.uploaded-prior-to: ``true`` is not a valid value; use"
-            " ``false`` to disable the cutoff or a datetime / 'PnD' duration"
-            " to set a window"
+        report = DiagnosticMessage(
+            (f"{where}.uploaded-prior-to: ``true`` is not a valid value"),
+            suggestions=(
+                Suggestion(
+                    "use ``false`` to disable the cutoff or a datetime / 'PnD' "
+                    "duration to set a window"
+                ),
+            ),
         )
-        raise SourceConfigError(msg)
+        raise SourceConfigError(report)
     cutoff = parse_uploaded_prior_to(value, f"{where}.uploaded-prior-to", anchor=anchor)
     return (cutoff, False)
 
@@ -1563,11 +1584,15 @@ def _validate_archive_url(where: str, index: int, url: str) -> None:
         raise SourceConfigError(msg) from exc
 
     if not request.has_usable_hash:
-        msg = (
-            f"{where}[{index}] url {url!r} has no hash; add a"
-            " '#sha256=<hex>' fragment (PEP 751 requires an archive hash)"
+        report = DiagnosticMessage(
+            (f"{where}[{index}] url {url!r} has no hash"),
+            suggestions=(
+                Suggestion(
+                    "add a '#sha256=<hex>' fragment (PEP 751 requires an archive hash)"
+                ),
+            ),
         )
-        raise SourceConfigError(msg)
+        raise SourceConfigError(report)
 
     try:
         path = urlsplit(request.url).path

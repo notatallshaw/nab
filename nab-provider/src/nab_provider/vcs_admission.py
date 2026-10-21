@@ -15,6 +15,7 @@ after admission lets the URL through.
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "nab_resolver.diagnostics",
     "nab_provider.vcs_request",
     "posixpath",
     "urllib.parse",
@@ -27,6 +28,7 @@ from typing import Final
 from urllib.parse import unquote, urlsplit
 
 from nab_provider.vcs_request import FULL_GIT_SHA_RE
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .value import HashableRecord
 
@@ -284,24 +286,38 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
     """
     scheme, inner_url = split_vcs_scheme(url)
     if scheme is None:
-        msg = (
-            "refusing direct-URL requirement (not a recognized VCS scheme)\n"
-            f"    {url}\n"
-            "    note: nab supports git+https / git+ssh / git+http /"
-            " git+file / git+git only; hg/bzr/svn and plain"
-            " http(s)/file archive URLs are not supported."
+        report = DiagnosticMessage(
+            (
+                "refusing direct-URL requirement (not a recognized VCS scheme)\n    "
+                f"{url}"
+            ),
+            suggestions=(
+                Suggestion(
+                    "use git+https, git+ssh, git+http, git+file, or git+git",
+                    detail=(
+                        "nab supports git+https / git+ssh / git+http / git+file / "
+                        "git+git only; hg/bzr/svn and plain http(s)/file archive "
+                        "URLs are not supported."
+                    ),
+                ),
+            ),
         )
-        raise UnsupportedVcsError(msg)
+        raise UnsupportedVcsError(report)
 
     if config.policy is VcsPolicy.BLOCK:
-        msg = (
-            "refusing VCS requirement\n"
-            f"    {url}\n"
-            '    reason: vcs.policy is "block" (default).\n'
-            '    to allow: set vcs.policy = "allow" with appropriate\n'
-            "              vcs.allowed-schemes (and vcs.allowed-repos)."
+        report = DiagnosticMessage(
+            (
+                f"refusing VCS requirement\n    {url}\n    reason: vcs.policy is "
+                '"block" (default).'
+            ),
+            suggestions=(
+                Suggestion(
+                    'set vcs.policy = "allow" and configure vcs.allowed-schemes and '
+                    "vcs.allowed-repos"
+                ),
+            ),
         )
-        raise UnsupportedVcsError(msg)
+        raise UnsupportedVcsError(report)
 
     if scheme not in config.allowed_schemes:
         allowed_str = ", ".join(sorted(config.allowed_schemes)) or "<empty>"
@@ -311,12 +327,12 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
             f'    reason: scheme "{scheme}" not in vcs.allowed-schemes='
             f"{{{allowed_str}}}."
         )
-        if scheme in _VCS_INSECURE_SCHEMES:
-            msg += (
-                f'\n    note: "{scheme}" is unauthenticated;'
-                " consider an https/ssh variant."
-            )
-        raise UnsupportedVcsError(msg)
+        suggestions = (
+            (Suggestion(f'use an https/ssh variant ("{scheme}" is unauthenticated)'),)
+            if scheme in _VCS_INSECURE_SCHEMES
+            else ()
+        )
+        raise UnsupportedVcsError(DiagnosticMessage(msg, suggestions=suggestions))
 
     try:
         repo_path = _repo_path(inner_url)
@@ -328,14 +344,19 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
     # "host@<sha>" as userinfo "host" and host "<sha>".  Requiring a path
     # leaves the checks below a real host and a real repo to look at.
     if not repo_path.strip("/"):
-        msg = (
-            "refusing VCS URL that names no repository\n"
-            f"    {url}\n"
-            "    reason: the URL has no repository path.\n"
-            "    note: everything after the final @ is the ref, so a repo URL\n"
-            "          looks like git+https://host/org/repo.git@<ref>."
+        report = DiagnosticMessage(
+            (
+                f"refusing VCS URL that names no repository\n    {url}\n    reason: "
+                "the URL has no repository path."
+            ),
+            suggestions=(
+                Suggestion(
+                    "use a repository URL like git+https://host/org/repo.git@<ref>",
+                    detail="Everything after the final @ is the ref.",
+                ),
+            ),
         )
-        raise UnsupportedVcsError(msg)
+        raise UnsupportedVcsError(report)
 
     # Stripping userinfo can unbalance an IPv6 bracket, so the match may raise
     # on a netloc that parsed whole above.
@@ -363,15 +384,21 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
         raise UnsupportedVcsError(msg)
 
     if config.require_pin and not has_full_commit_sha(url):
-        msg = (
-            "refusing unpinned VCS ref\n"
-            f"    {url}\n"
-            "    reason: vcs.require-pin is true and no 40-char commit hash"
-            " present.\n"
-            "    to allow: pin the requirement to a 40-char commit hash, or set\n"
-            "              vcs.require-pin = false (not recommended for"
-            " reproducible installs)."
+        report = DiagnosticMessage(
+            (
+                f"refusing unpinned VCS ref\n    {url}\n    reason: vcs.require-pin is "
+                "true and no 40-char commit hash present."
+            ),
+            suggestions=(
+                Suggestion(
+                    (
+                        "pin the requirement to a 40-char commit hash, or set "
+                        "vcs.require-pin = false"
+                    ),
+                    detail="An unpinned requirement is not reproducible.",
+                ),
+            ),
         )
-        raise UnsupportedVcsError(msg)
+        raise UnsupportedVcsError(report)
 
     return scheme

@@ -159,6 +159,30 @@ commands and CI; ty receives explicit filenames so its directory exclusions cann
 | Cross-checker casts                                   | Pyrefly can narrow checked `Literal` conversions that Mypy and ty still require. Zuban's recursive marker-alias narrowing has one documented line exception.                                                                                      |
 | Test annotation completeness                          | Pyright keeps checking resolver tests while allowing unannotated fixtures and generic strategy annotations. Production definitions retain completeness checks.                                                                                    |
 
+## Diagnostic suggestions
+
+Keep corrective actions separate from the cause of an error:
+
+```python
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
+
+raise ValueError(
+    DiagnosticMessage(
+        "the required artifact is unavailable",
+        suggestions=(Suggestion("select a release that publishes the artifact"),),
+    )
+)
+```
+
+Raise or log the structured value. The command renderer supplies `try:` lines, verbosity and
+deduplication. Use `error_message(error).prefixed(...)` when adding context to an existing error;
+formatting it into another string would discard its structure. Include any condition or package,
+version or index scope in the action, so a different correction is kept distinct.
+
+Retain candidate-rejection suggestions until final failure. Tests should cover a successful
+fallback, an unrelated failure, repeated failures across targets and a fresh command. Do not add
+per-file bookkeeping solely to improve a failure message.
+
 ## Code readability
 
 Before opening or updating a pull request, read each changed function in full after formatting.

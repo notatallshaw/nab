@@ -8,6 +8,7 @@ into nab-resolver Range types.
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "nab_resolver.diagnostics",
     "bisect",
     "collections",
     "itertools",
@@ -37,6 +38,7 @@ from nab_provider._vendor.packaging.markers import prepare_environment
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from ._provider import extras as _extras
 from ._provider import listing as _listing
@@ -844,16 +846,13 @@ class Provider:
             tuple[str, Version], dict[str, list[tuple[Requirement, str]]]
         ] = {}
 
-        # Memoised sdist-rejections so re-tries do not re-parse PKG-INFO or
-        # rebuild.  Value is the cached error message so a re-ask raises the
-        # same rejection.
-        self._unsupported_sdists: dict[tuple[str, Version], str] = {}
+        # Retain failure data without caching tracebacks.
+        self._unsupported_sdists: dict[
+            tuple[str, Version], _diagnosis.MetadataBlock
+        ] = {}
 
-        # Memoised metadata-parse failures (malformed Requires-Dist, etc.)
-        # keyed by (canonical_name, Version).  Value is the cached error
-        # string so the look-ahead diagnostic stays consistent across
-        # repeated lookups without re-parsing the broken text.
-        self._invalid_metadata: dict[tuple[str, Version], str] = {}
+        # Memoised metadata-parse failures, keyed by package and version.
+        self._invalid_metadata: dict[tuple[str, Version], _diagnosis.MetadataBlock] = {}
 
         # Nested matching cache: prioritize is called many times per resolve
         # so the per-call (normalized, range) tuple alloc is worth avoiding.
@@ -1341,14 +1340,21 @@ class Provider:
         idx_value = value(idx) if idx is not None else _UNSET
 
         if pkg is not None and idx_value is not _UNSET:
-            msg = (
-                f"override conflict for {canonical_name}=={version} served from"
-                f" index {index_name!r}: both a per-package override"
-                f" ({str(pkg.requirement)!r}) and the per-index override set"
-                f" {field!r}.  The per-package and per-index surfaces are not"
-                " ranked; remove one of the two settings for this field."
+            report = DiagnosticMessage(
+                (
+                    f"override conflict for {canonical_name}=={version} served from "
+                    f"index {index_name!r}: both a per-package override ("
+                    f"{str(pkg.requirement)!r}) and the per-index override set "
+                    f"{field!r}.  The per-package and per-index surfaces are not ranked"
+                ),
+                suggestions=(
+                    Suggestion(
+                        f"remove {field!r} from the override for "
+                        f"{str(pkg.requirement)!r} or index {index_name!r}"
+                    ),
+                ),
             )
-            raise OverrideConflictError(msg)
+            raise OverrideConflictError(report)
 
         if pkg is not None:
             return value(pkg)
@@ -1366,7 +1372,17 @@ class Provider:
         self, canonical_name: str, version: Version
     ) -> str | None:
         """Return the recorded parse failure for this pin, or ``None``."""
-        return self._invalid_metadata.get((canonical_name, version))
+        message = self.invalid_metadata_message(canonical_name, version)
+        return str(message) if message is not None else None
+
+    def invalid_metadata_message(
+        self, canonical_name: str, version: Version
+    ) -> DiagnosticMessage | None:
+        """Return a cached cause with its suggestions still separate."""
+        failure = self._invalid_metadata.get((canonical_name, version))
+        if failure is None:
+            return None
+        return DiagnosticMessage(failure.message, suggestions=failure.suggestions)
 
     def materialize_source(
         self,
@@ -2848,10 +2864,10 @@ class Provider:
             return self.deps_cache[cache_key]
         cached_unsupported = self._unsupported_sdists.get(cache_key)
         if cached_unsupported is not None:
-            raise UnsupportedSdistError(cached_unsupported)
+            raise cached_unsupported.as_error(UnsupportedSdistError)
         cached_invalid = self._invalid_metadata.get(cache_key)
         if cached_invalid is not None:
-            raise MetadataError(cached_invalid)
+            raise cached_invalid.as_error(MetadataError)
 
         versions = self.fetch_versions(package)
         if self.yanked_versions and cache_key in self.yanked_versions:
@@ -2918,10 +2934,12 @@ class Provider:
                 cache_key, metadata_text, from_sdist=from_sdist
             )
         except UnsupportedSdistError as exc:
-            self._unsupported_sdists[cache_key] = str(exc)
+            self._unsupported_sdists[cache_key] = _diagnosis.MetadataBlock.from_error(
+                exc
+            )
             raise
         except (ForeignMetadataError, IncompatiblePythonError) as exc:
-            self._invalid_metadata[cache_key] = str(exc)
+            self._invalid_metadata[cache_key] = _diagnosis.MetadataBlock.from_error(exc)
             raise
         except (
             SdistHashMismatchError,
@@ -2947,7 +2965,7 @@ class Provider:
                 exc,
             )
             msg = f"Invalid metadata for {package}=={version}: {exc}"
-            self._invalid_metadata[cache_key] = msg
+            self._invalid_metadata[cache_key] = _diagnosis.MetadataBlock(msg)
             raise MetadataError(msg) from exc
 
     def prefetch_new_deps(self, deps: dict[str, VersionRange]) -> None:

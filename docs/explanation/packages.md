@@ -74,7 +74,7 @@ project settings in `nab_project.inputs.ResolveInputs`.
 
 ```text
 nab-resolver   ->  (nothing outside the standard library)
-nab-markersets ->  packaging, or nab-provider, by extra
+nab-markersets ->  nab-resolver; packaging, or nab-provider, by extra
 nab-provider   ->  nab-markersets, nab-resolver
 nab-index      ->  nab-provider, packaging
 nab-project    ->  nab-markersets, nab-provider, nab-index, nab-resolver,
@@ -92,6 +92,21 @@ The provider also owns `nab_provider.value`, shared record behavior used by the 
 CLI layers. Concrete records keep their typed constructors in the package owning their data; the
 shared code handles comparison and copying. Fixed fields use `Final` annotations rather than runtime
 write guards.
+
+## Diagnostic suggestions
+
+`nab_resolver.diagnostics` supplies shared messages and corrective actions without logging or
+retaining command state. `nab_provider.diagnostics.Diagnostic` adds package summaries and evidence.
+Package, index and build-policy decisions remain with the code that produces the diagnostic.
+
+`nab-project` adds provider diagnostics to a terminal resolution error through
+`nab_project.diagnostics.ResolutionMessage`. Candidate rejections retain data for that report; they
+do not emit suggestions while the resolver tries alternatives.
+
+The CLI owns verbosity, streams and the emission lifetime. Its printer shares one suggestion set
+across logs and target failures, retaining every cause while printing an identical action once. Each
+command starts with a fresh set. Library hosts can supply their own emission state or render each
+error independently.
 
 ## Prefetch windows
 

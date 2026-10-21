@@ -98,7 +98,7 @@ def build(files: Sequence[WheelFile | SdistFile], **kwargs: object) -> Provider:
 
 def render(diagnostic: Diagnostic) -> str:
     """Return an entry as one string: the line, then everything ``-v`` adds."""
-    return "\n".join((diagnostic.short, *diagnostic.detail))
+    return "\n".join(diagnostic.lines(verbose=True))
 
 
 def diagnostic_for(
@@ -506,18 +506,16 @@ class TestClauseText:
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
         ) == (
-            "uploaded-prior-to excluded every file"
-            f"\nthe uploaded-prior-to cutoff {EARLY_CUTOFF_TEXT} excluded 1 file"
-            f" uploaded at {BETWEEN} (1.0)"
-            f"\nthe uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file"
-            f" uploaded at {AFTER} (2.0)"
-            "\nthe files nab read hold no sdist to build from"
-            "\nnote: the uploaded-prior-to on pkg<2 set that cutoff; setting it"
-            " to false there lifts it"
-            "\nnote: the project-level uploaded-prior-to set that cutoff; pkg<2"
-            " already sets uploaded-prior-to over another version range; add a"
-            ' package-rules entry with match = ["pkg==2.0"] and uploaded-prior-to = false,'
-            " or drop the project-level cutoff"
+            "uploaded-prior-to excluded every file\nthe uploaded-prior-to "
+            f"cutoff {EARLY_CUTOFF_TEXT} excluded 1 file uploaded at {BETWEEN} "
+            f"(1.0)\nthe uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 "
+            f"file uploaded at {AFTER} (2.0)\nthe files nab read hold no sdist "
+            "to build from\ntry: set uploaded-prior-to = false on pkg<2\n     "
+            "pkg<2 sets uploaded-prior-to for these versions.\ntry: add a "
+            'package-rules entry with match = ["pkg==2.0"] and '
+            "uploaded-prior-to = false, or drop the project cutoff\n     The "
+            "project-wide uploaded-prior-to setting applies; pkg<2 sets it "
+            "over another version range."
         )
 
     def test_two_cutoffs_over_files_with_no_upload_time_read_as_two_clauses(
@@ -554,26 +552,24 @@ class TestClauseText:
                 pkg_override("pkg==1.0", dist_policy=DistPolicy.SDIST_ONLY)
             ],
         ) == (
-            'dist-policy = "sdist-only" and "wheel-only" excluded every file'
-            '\ndist-policy = "sdist-only" excluded 1 wheel (1.0)'
-            '\ndist-policy = "wheel-only" excluded 1 sdist (2.0)'
-            "\nnote: the dist-policy on pkg==1.0 set that policy; setting it to"
-            ' "wheel-or-sdist" there admits both formats'
-            "\nnote: the project-level dist-policy set that policy; pkg==1.0"
-            " already sets dist-policy over another version range; add a package-rules entry"
-            ' with match = ["pkg==2.0"] and dist-policy = "wheel-or-sdist",'
-            " or drop the project-level policy"
+            'dist-policy = "sdist-only" and "wheel-only" excluded every file\n'
+            'dist-policy = "sdist-only" excluded 1 wheel (1.0)\ndist-policy = '
+            '"wheel-only" excluded 1 sdist (2.0)\ntry: set dist-policy = '
+            '"wheel-or-sdist" on pkg==1.0\n     pkg==1.0 sets dist-policy for '
+            "these versions.\ntry: add a package-rules entry with match = "
+            '["pkg==2.0"] and dist-policy = "wheel-or-sdist", or drop the '
+            "project dist-policy\n     The project-wide dist-policy setting "
+            "applies; pkg==1.0 sets it over another version range."
         )
 
     def test_sdist_install_without_an_sdist(self) -> None:
         """The whole sentence: this clause already says no sdist is available."""
         assert reason_for([wheel("1.0")], dist_policy=DistPolicy.SDIST_INSTALL) == (
-            'dist-policy = "sdist-install" excluded every version'
-            '\ndist-policy = "sdist-install" excluded 1 version that publishes'
-            " no sdist (1.0)"
-            "\nnote: the project-level dist-policy set that policy; setting"
-            ' packages."pkg".dist-policy = "wheel-or-sdist" admits both formats'
-            " for this package"
+            'dist-policy = "sdist-install" excluded every version\ndist-policy '
+            '= "sdist-install" excluded 1 version that publishes no sdist '
+            '(1.0)\ntry: set packages."pkg".dist-policy = '
+            '"wheel-or-sdist"\n     The project-wide dist-policy setting '
+            "rejected these files."
         )
 
     def test_sdist_install_is_asked_before_the_wheel_tags(self) -> None:
@@ -588,12 +584,11 @@ class TestClauseText:
             target=_LINUX312,
             dist_policy=DistPolicy.SDIST_INSTALL,
         ) == (
-            'dist-policy = "sdist-install" excluded every version'
-            '\ndist-policy = "sdist-install" excluded 1 version that publishes'
-            " no sdist (1.0)"
-            "\nnote: the project-level dist-policy set that policy; setting"
-            ' packages."pkg".dist-policy = "wheel-or-sdist" admits both formats'
-            " for this package"
+            'dist-policy = "sdist-install" excluded every version\ndist-policy '
+            '= "sdist-install" excluded 1 version that publishes no sdist '
+            '(1.0)\ntry: set packages."pkg".dist-policy = '
+            '"wheel-or-sdist"\n     The project-wide dist-policy setting '
+            "rejected these files."
         )
 
     def test_two_wheels_of_one_release_are_one_version(self) -> None:
@@ -602,12 +597,11 @@ class TestClauseText:
             [wheel("1.0"), wheel("1.0", tag="py2-none-any")],
             dist_policy=DistPolicy.SDIST_INSTALL,
         ) == (
-            'dist-policy = "sdist-install" excluded every version'
-            '\ndist-policy = "sdist-install" excluded 1 version that publishes'
-            " no sdist (1.0)"
-            "\nnote: the project-level dist-policy set that policy; setting"
-            ' packages."pkg".dist-policy = "wheel-or-sdist" admits both formats'
-            " for this package"
+            'dist-policy = "sdist-install" excluded every version\ndist-policy '
+            '= "sdist-install" excluded 1 version that publishes no sdist '
+            '(1.0)\ntry: set packages."pkg".dist-policy = '
+            '"wheel-or-sdist"\n     The project-wide dist-policy setting '
+            "rejected these files."
         )
 
     def test_sdist_install_without_an_sdist_plural(self) -> None:
@@ -689,14 +683,13 @@ class TestClauseText:
             target=_LINUX312,
             uploaded_prior_to=CUTOFF,
         ) == (
-            "uploaded-prior-to and requires-python excluded every file"
-            "\nthe uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1"
-            " file uploaded at 2030-01-01T00:00:00Z (2.0)"
-            "\nrequires-python excluded 1 file (1.0 requires >=3.99, the resolve"
-            " targets Python 3.12)"
-            "\nthe files nab read hold no sdist to build from"
-            "\nnote: the project-level uploaded-prior-to set that cutoff; setting"
-            ' packages."pkg".uploaded-prior-to = false lifts it for this package'
+            "uploaded-prior-to and requires-python excluded every file\nthe "
+            "uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 "
+            "file uploaded at 2030-01-01T00:00:00Z (2.0)\nrequires-python "
+            "excluded 1 file (1.0 requires >=3.99, the resolve targets Python "
+            "3.12)\nthe files nab read hold no sdist to build from\ntry: set "
+            'packages."pkg".uploaded-prior-to = false\n     The project-wide '
+            "uploaded-prior-to setting rejected these files."
         )
 
     def test_a_line_naming_two_keys_leaves_the_values_to_v(self) -> None:
@@ -751,12 +744,11 @@ class TestClauseText:
             target=_LINUX312,
             dist_policy=DistPolicy.SDIST_ONLY,
         ) == (
-            'dist-policy = "sdist-only" excluded every file'
-            '\ndist-policy = "sdist-only" excluded 1 wheel (1.0)'
-            "\nthe files nab read hold no sdist to build from"
-            "\nnote: the project-level dist-policy set that policy; setting"
-            ' packages."pkg".dist-policy = "wheel-or-sdist" admits both formats'
-            " for this package"
+            'dist-policy = "sdist-only" excluded every file\ndist-policy = '
+            '"sdist-only" excluded 1 wheel (1.0)\nthe files nab read hold no '
+            'sdist to build from\ntry: set packages."pkg".dist-policy = '
+            '"wheel-or-sdist"\n     The project-wide dist-policy setting '
+            "rejected these files."
         )
 
     def test_an_sdist_on_the_index_takes_no_no_sdist_tail(self) -> None:
@@ -772,9 +764,8 @@ class TestTheRemedyNamesTheLayer:
         assert reason_for(
             [wheel("1.0", upload_time=AFTER)], uploaded_prior_to=CUTOFF
         ).endswith(
-            "\nnote: the project-level uploaded-prior-to set that cutoff;"
-            ' setting packages."pkg".uploaded-prior-to = false lifts it for this'
-            " package"
+            '\ntry: set packages."pkg".uploaded-prior-to = false\n     The '
+            "project-wide uploaded-prior-to setting rejected these files."
         )
 
     def test_a_per_package_cutoff(self) -> None:
@@ -786,12 +777,11 @@ class TestTheRemedyNamesTheLayer:
                 )
             ],
         ) == (
-            "uploaded-prior-to excluded every file"
-            f"\nthe uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file"
-            f" uploaded at {AFTER} (1.0)"
-            "\nthe files nab read hold no sdist to build from"
-            "\nnote: the uploaded-prior-to on packages.'pkg' set that cutoff;"
-            " setting it to false there lifts it"
+            "uploaded-prior-to excluded every file\nthe uploaded-prior-to "
+            f"cutoff {CUTOFF_TEXT} excluded 1 file uploaded at {AFTER} (1.0)\n"
+            "the files nab read hold no sdist to build from\ntry: set "
+            "uploaded-prior-to = false on packages.'pkg'\n     packages.'pkg' "
+            "sets uploaded-prior-to for these versions."
         )
 
     def test_the_note_reads_the_layer_at_the_newest_version_refused(self) -> None:
@@ -806,8 +796,8 @@ class TestTheRemedyNamesTheLayer:
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg>=3", uploaded_prior_to=EARLY_CUTOFF)],
         ).endswith(
-            "\nnote: the uploaded-prior-to on pkg>=3 set that cutoff; setting"
-            " it to false there lifts it"
+            "\ntry: set uploaded-prior-to = false on pkg>=3\n     pkg>=3 sets "
+            "uploaded-prior-to for these versions."
         )
 
     @pytest.mark.parametrize(
@@ -831,11 +821,11 @@ class TestTheRemedyNamesTheLayer:
         diagnostic = provider.get_no_versions_reason("pkg")
         assert diagnostic is not None
         assert render(diagnostic).endswith(
-            f"the uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file uploaded"
-            f" at {AFTER} (1.0)"
-            "\nthe files nab read hold no sdist to build from"
-            f'\nnote: the per-index uploaded-prior-to for index "{index_name}"'
-            " set that cutoff; setting it to false there lifts it"
+            f"the uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file "
+            f"uploaded at {AFTER} (1.0)\nthe files nab read hold no sdist to "
+            f'build from\ntry: set index."{index_name}".uploaded-prior-to = '
+            f'false\n     Index "{index_name}" sets uploaded-prior-to for '
+            "these versions."
         )
 
     def test_scoped_cutoff_gets_a_disjoint_rule(self) -> None:
@@ -844,10 +834,10 @@ class TestTheRemedyNamesTheLayer:
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
         ).endswith(
-            "\nnote: the project-level uploaded-prior-to set that cutoff; pkg<2"
-            " already sets uploaded-prior-to over another version range; add a"
-            ' package-rules entry with match = ["pkg==2.0"] and uploaded-prior-to = false,'
-            " or drop the project-level cutoff"
+            '\ntry: add a package-rules entry with match = ["pkg==2.0"] and '
+            "uploaded-prior-to = false, or drop the project cutoff\n     The "
+            "project-wide uploaded-prior-to setting applies; pkg<2 sets it "
+            "over another version range."
         )
 
     def test_a_package_scoping_another_field_still_gets_the_entry(self) -> None:
@@ -869,9 +859,8 @@ class TestTheRemedyNamesTheLayer:
                 )
             ],
         ).endswith(
-            "\nnote: the project-level uploaded-prior-to set that cutoff;"
-            ' setting packages."pkg".uploaded-prior-to = false lifts it for this'
-            " package"
+            '\ntry: set packages."pkg".uploaded-prior-to = false\n     The '
+            "project-wide uploaded-prior-to setting rejected these files."
         )
 
     def test_a_bare_name_table_setting_another_field_is_named(self) -> None:
@@ -894,9 +883,9 @@ class TestTheRemedyNamesTheLayer:
                 )
             ],
         ).endswith(
-            "\nnote: the project-level uploaded-prior-to set that cutoff;"
-            " packages.'pkg' already exists, so adding uploaded-prior-to = false"
-            " there lifts it for this package"
+            "\ntry: add uploaded-prior-to = false to packages.'pkg'\n     The "
+            "project-wide uploaded-prior-to setting applies; packages.'pkg' "
+            "already exists for this package."
         )
 
     def test_a_bare_name_table_setting_another_field_is_named_for_the_policy(
@@ -917,10 +906,9 @@ class TestTheRemedyNamesTheLayer:
                 )
             ],
         ).endswith(
-            "\nnote: the project-level dist-policy set that policy;"
-            " packages.'pkg' already exists, so adding"
-            ' dist-policy = "wheel-or-sdist" there admits both formats for this'
-            " package"
+            '\ntry: add dist-policy = "wheel-or-sdist" to '
+            "packages.'pkg'\n     The project-wide dist-policy setting "
+            "applies; packages.'pkg' already exists for this package."
         )
 
     def test_a_rule_matching_two_packages_says_how_wide_it_is(self) -> None:
@@ -944,8 +932,9 @@ class TestTheRemedyNamesTheLayer:
                 ),
             ],
         ).endswith(
-            "\nnote: the uploaded-prior-to on package-rules[0], which matches 2"
-            " packages, set that cutoff; setting it to false there lifts it"
+            "\ntry: set uploaded-prior-to = false on package-rules[0]\n     "
+            "package-rules[0], which matches 2 packages, sets "
+            "uploaded-prior-to for these versions."
         )
 
     def test_shared_scoped_rule_gets_a_separate_exception(self) -> None:
@@ -965,11 +954,10 @@ class TestTheRemedyNamesTheLayer:
                 ),
             ],
         ).endswith(
-            "\nnote: the project-level uploaded-prior-to set that cutoff;"
-            " package-rules[0], which matches 2 packages, already sets"
-            " uploaded-prior-to over another version range; add a package-rules entry"
-            ' with match = ["pkg==2.0"] and uploaded-prior-to = false, or drop'
-            " the project-level cutoff"
+            '\ntry: add a package-rules entry with match = ["pkg==2.0"] and '
+            "uploaded-prior-to = false, or drop the project cutoff\n     The "
+            "project-wide uploaded-prior-to setting applies; package-rules[0], "
+            "which matches 2 packages, sets it over another version range."
         )
 
     def test_a_rule_matching_one_package_says_nothing_about_its_width(self) -> None:
@@ -984,8 +972,8 @@ class TestTheRemedyNamesTheLayer:
                 )
             ],
         ).endswith(
-            "\nnote: the uploaded-prior-to on package-rules[0] set that cutoff;"
-            " setting it to false there lifts it"
+            "\ntry: set uploaded-prior-to = false on package-rules[0]\n     "
+            "package-rules[0] sets uploaded-prior-to for these versions."
         )
 
     def test_two_selectors_for_one_package_are_one_package(self) -> None:
@@ -1005,8 +993,8 @@ class TestTheRemedyNamesTheLayer:
                 ),
             ],
         ).endswith(
-            "\nnote: the uploaded-prior-to on package-rules[0] set that cutoff;"
-            " setting it to false there lifts it"
+            "\ntry: set uploaded-prior-to = false on package-rules[0]\n     "
+            "package-rules[0] sets uploaded-prior-to for these versions."
         )
 
     def test_an_index_scoping_another_field_is_not_the_layer(self) -> None:
@@ -1023,9 +1011,8 @@ class TestTheRemedyNamesTheLayer:
                 "pypi": IndexOverride(dist_policy=DistPolicy.PREFER_WHEEL)
             },
         ).endswith(
-            "\nnote: the project-level uploaded-prior-to set that cutoff;"
-            ' setting packages."pkg".uploaded-prior-to = false lifts it for this'
-            " package"
+            '\ntry: set packages."pkg".uploaded-prior-to = false\n     The '
+            "project-wide uploaded-prior-to setting rejected these files."
         )
 
     def test_an_override_with_no_source_label_names_its_requirement(self) -> None:
@@ -1038,8 +1025,8 @@ class TestTheRemedyNamesTheLayer:
             [wheel("1.0", upload_time=AFTER)],
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=CUTOFF)],
         ).endswith(
-            "\nnote: the uploaded-prior-to on pkg<2 set that cutoff; setting it"
-            " to false there lifts it"
+            "\ntry: set uploaded-prior-to = false on pkg<2\n     pkg<2 sets "
+            "uploaded-prior-to for these versions."
         )
 
     def test_an_index_override_on_another_index_is_not_the_layer(self) -> None:
@@ -1474,16 +1461,14 @@ class TestTheInRangeLead:
             uploaded_prior_to=CUTOFF,
         )
         assert reason == (
-            "uploaded-prior-to, requires-python and wheel tags excluded every"
-            " version in range"
-            "\nthe uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1"
-            " file uploaded at 2030-01-01T00:00:00Z (2.0)"
-            "\nrequires-python excluded 1 file (3.0 requires >=3.99, the resolve"
-            " targets Python 3.12)"
-            "\nno wheel's tags are compatible with the resolve target"
-            " (1 wheel rejected)"
-            "\nnote: the project-level uploaded-prior-to set that cutoff; setting"
-            ' packages."pkg".uploaded-prior-to = false lifts it for this package'
+            "uploaded-prior-to, requires-python and wheel tags excluded every "
+            "version in range\nthe uploaded-prior-to cutoff "
+            "2026-05-01T00:00:00+00:00 excluded 1 file uploaded at "
+            "2030-01-01T00:00:00Z (2.0)\nrequires-python excluded 1 file (3.0 "
+            "requires >=3.99, the resolve targets Python 3.12)\nno wheel's "
+            "tags are compatible with the resolve target (1 wheel rejected)\n"
+            'try: set packages."pkg".uploaded-prior-to = false\n     The '
+            "project-wide uploaded-prior-to setting rejected these files."
         )
 
     def test_an_out_of_range_drop_does_not_name_its_filter(self) -> None:
@@ -1613,13 +1598,13 @@ class TestTheInRangeLead:
         )
 
         assert render(diagnostic) == (
-            "uploaded-prior-to and requires-python excluded every version in range"
-            "\nthe uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1"
-            " file uploaded at 2030-01-01T00:00:00Z (3.0b1)"
-            "\nrequires-python excluded 1 file (2.0 requires >=3.99, the resolve"
-            " targets Python 3.12)"
-            "\nnote: the project-level uploaded-prior-to set that cutoff; setting"
-            ' packages."pkg".uploaded-prior-to = false lifts it for this package'
+            "uploaded-prior-to and requires-python excluded every version in "
+            "range\nthe uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 "
+            "excluded 1 file uploaded at 2030-01-01T00:00:00Z (3.0b1)\n"
+            "requires-python excluded 1 file (2.0 requires >=3.99, the resolve "
+            'targets Python 3.12)\ntry: set packages."pkg".uploaded-prior-to = '
+            "false\n     The project-wide uploaded-prior-to setting rejected "
+            "these files."
         )
 
         assert diagnostic.remedy == 'set packages."pkg".uploaded-prior-to = false'
@@ -2092,12 +2077,12 @@ class TestTheTwoDepths:
     """``-v`` adds detail without repeating or removing default report text."""
 
     @pytest.mark.parametrize("name", list(every_shape()))
-    def test_a_try_line_always_has_its_note_behind_it(self, name: str) -> None:
+    def test_the_primary_action_survives_verbose_rendering(self, name: str) -> None:
         """Asking for more must never give less than the default line gave."""
         entry = every_shape()[name]
         if entry.remedy is None:
             return
-        assert [line for line in entry.detail if line.startswith("note: ")]
+        assert f"try: {entry.remedy}" in entry.lines(verbose=True)
 
     @pytest.mark.parametrize("name", list(every_shape()))
     def test_no_detail_line_repeats_the_line_it_deepens(self, name: str) -> None:

@@ -10,6 +10,7 @@ be read directly without a second fetch.  This module also owns the
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "nab_resolver.diagnostics",
     "collections",
     "datetime",
     "nab_project",
@@ -49,6 +50,7 @@ from nab_provider.iso8601 import parse_iso_datetime
 from nab_provider.metadata import validate_specifier_versions
 from nab_provider.policy import DistPolicy
 from nab_provider.records import SdistFile, WheelFile
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .. import toml_io
 from .._toml import tool_nab_section
@@ -657,12 +659,19 @@ def _index_pin_from_listing(
     ):
         files = [f for f in files if not isinstance(f, WheelFile)]
         if not any(isinstance(f, SdistFile) for f in files):
-            msg = (
-                f"{canonical}=={version} has no sdist, but its dist-policy is "
-                f"'sdist-install'; pick a version that publishes an sdist or "
-                f"change dist-policy for {canonical}"
+            report = DiagnosticMessage(
+                (
+                    f"{canonical}=={version} has no sdist, but its dist-policy is "
+                    "'sdist-install'"
+                ),
+                suggestions=(
+                    Suggestion(
+                        "pick a version that publishes an sdist or change "
+                        f"dist-policy for {canonical}"
+                    ),
+                ),
             )
-            raise MissingSdistError(msg)
+            raise MissingSdistError(report)
 
     wheels = tuple(
         _build_artifact(f, WheelArtifact, artifacts.wheels)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "nab_resolver.diagnostics",
     "nab_provider.errors",
     "nab_provider.policy",
 )
@@ -12,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from nab_provider.errors import ConfigError
 from nab_provider.policy import BuildPolicy
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -63,22 +65,33 @@ def enforce_build_policy_for_targets(
             index_overrides=index_overrides,
         )
         if offending:
-            msg = (
-                "a declared target cannot build on the host, so build-policy"
-                f" must be 'never'; got {', '.join(offending)}.  A PEP 517"
-                " backend runs on the host and reports the host's metadata,"
-                " not the target's.  Remove the setting (it defaults to"
-                " 'never' for a declared target) or set it to 'never'.  Remove"
-                " the whole entry where build-policy is its only key."
+            report = DiagnosticMessage(
+                (
+                    "a declared target cannot build on the host, so build-policy must "
+                    f"be 'never'; got {', '.join(offending)}.  A PEP 517 backend runs "
+                    "on the host and reports the host's metadata, not the target's."
+                ),
+                suggestions=(
+                    Suggestion(
+                        "remove the setting (it defaults to 'never' for a declared "
+                        "target) or set it to 'never'.  Remove the whole entry "
+                        "where build-policy is its only key."
+                    ),
+                ),
             )
-            raise ConfigError(msg)
+            raise ConfigError(report)
         return BuildPolicy.NEVER
     if not all(target.host_faithful for target in targets):
         _logger.warning(
-            "the resolve targets Python %s but a build would run on the host"
-            " interpreter and report its metadata; set build-policy = 'never'"
-            " to forbid builds",
-            targets[0].python_full_version,
+            DiagnosticMessage(
+                (
+                    f"the resolve targets Python {targets[0].python_full_version} but "
+                    "a build would run on the host interpreter and report its metadata"
+                ),
+                suggestions=(
+                    Suggestion("set build-policy = 'never' to forbid builds"),
+                ),
+            )
         )
     return build_policy
 

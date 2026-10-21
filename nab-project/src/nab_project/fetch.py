@@ -12,6 +12,7 @@ schedules puts on the loop with ``call_soon_threadsafe``.
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "nab_resolver.diagnostics",
     "asyncio",
     "nab_index.cache",
     "nab_index.cached_client",
@@ -78,6 +79,7 @@ from nab_provider.store import (
     sdist_artifact_key,
 )
 from nab_provider.value import HashableRecord, Record
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from ._build_remote import build_remote_sdist
 from ._sources import materialize_source
@@ -342,21 +344,26 @@ def _coordinator_cache(
 ) -> CacheBackend:
     """Validate an explicit backend or build the first index's cache."""
     if cache_backend is not None and len(indexes) > 1:
-        msg = (
-            "explicit cache_backend is incompatible with more than one"
-            " index: pass cache_dir so each index gets its own cache."
+        report = DiagnosticMessage(
+            "explicit cache_backend is incompatible with more than one index",
+            suggestions=(
+                Suggestion("pass cache_dir so each index gets its own cache."),
+            ),
         )
-        raise ValueError(msg)
+        raise ValueError(report)
 
     if cache_backend is not None and any(
         idx.serialization is not SimpleSerialization.NEGOTIATE for idx in indexes
     ):
-        msg = (
-            "explicit cache_backend is incompatible with a pinned"
-            " serialization: pass cache_dir so the pinned index gets a"
-            " cache of its own."
+        report = DiagnosticMessage(
+            ("explicit cache_backend is incompatible with a pinned serialization"),
+            suggestions=(
+                Suggestion(
+                    "pass cache_dir so the pinned index gets a cache of its own."
+                ),
+            ),
         )
-        raise ValueError(msg)
+        raise ValueError(report)
 
     if cache_backend is not None:
         return cache_backend

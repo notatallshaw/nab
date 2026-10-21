@@ -23,7 +23,10 @@ covered by skipping the prepare step for that combination; see
 
 from __future__ import annotations
 
+from nab_resolver.diagnostics import error_message
+
 __lazy_modules__ = (
+    "nab_resolver.diagnostics",
     "build",
     "email",
     "lzma",
@@ -248,8 +251,10 @@ def _prepared_project(
         msg = f"build backend {backend!r} failed: {exc}"
         raise BuildBackendError(msg) from exc
     except (BuildEnvError, ResolutionError) as exc:
-        msg = f"build env setup for {backend!r} failed: {exc}"
-        raise BuildBackendError(msg) from exc
+        report = error_message(exc).prefixed(
+            f"build env setup for {backend!r} failed: "
+        )
+        raise BuildBackendError(report) from exc
 
 
 def _install_extra_requires(

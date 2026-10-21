@@ -194,7 +194,7 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
             offline=settings.offline,
         )
     except DownloadError as e:
-        printer().error(f"download failed: {e}")
+        printer().error(e, prefix="download failed: ")
         sys.exit(1)
     except OSError as e:
         printer().error(f"cannot write to output directory {output}: {e}")

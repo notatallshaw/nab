@@ -52,6 +52,7 @@ from nab_project.resolve import build_resolver_inputs, resolve_with_coordinator
 from nab_provider._provider import build_remote, metadata_resolver
 from nab_provider._provider import listing as listing_mod
 from nab_provider._provider import listing_diagnosis as diagnosis_mod
+from nab_provider._provider.listing_diagnosis import MetadataBlock
 from nab_provider._provider.lookahead import DepRangeUnion
 from nab_provider._provider.metadata_resolver import (
     TargetDepSignature,
@@ -144,7 +145,7 @@ def rendered_reason(provider: Provider, package: str) -> str:
     """Return ``package``'s entry as one string: its line, then what ``-v`` adds."""
     diagnostic = provider.get_no_versions_reason(package)
     assert diagnostic is not None
-    return "\n".join((diagnostic.short, *diagnostic.detail))
+    return "\n".join(diagnostic.lines(verbose=True))
 
 
 def metadata_blocks(**blocks: str) -> dict[Version, diagnosis_mod.MetadataBlock]:
@@ -1605,12 +1606,9 @@ class TestNoVersionsReasons:
         # offline is layered, so the instruction is the one that wins over
         # every layer rather than the flag this run may not have passed.
         assert diagnostic.remedy == "re-run with --no-offline"
-        assert diagnostic.detail == (
-            (
-                "note: --no-offline turns offline mode off for this run"
-                " wherever it was set: a nab.toml, NAB_OFFLINE, or this"
-                " command line"
-            ),
+        assert diagnostic.suggestions[0].detail == (
+            "--no-offline turns offline mode off for this run wherever it was set: "
+            "a nab.toml, NAB_OFFLINE, or this command line"
         )
 
     def test_offline_with_cached_absence_still_reports_not_found(
@@ -2315,9 +2313,8 @@ class TestNoVersionsReasons:
         assert rendered_reason(provider, "foo") == (
             'dist-policy = "wheel-only" excluded every file'
             '\ndist-policy = "wheel-only" excluded 1 sdist (1.0)'
-            "\nnote: the project-level dist-policy set that policy; setting"
-            ' packages."foo".dist-policy = "wheel-or-sdist" admits both formats'
-            " for this package"
+            '\ntry: set packages."foo".dist-policy = "wheel-or-sdist"'
+            "\n     The project-wide dist-policy setting rejected these files."
         )
 
     def test_tag_excluded_wheel_with_filtered_sdist_keeps_the_sdist(self) -> None:
@@ -2759,12 +2756,12 @@ class TestNoVersionsReasons:
                 "the uploaded-prior-to cutoff 2026-01-10T00:00:00+00:00 excluded"
                 " pkg-1.0.tar.gz, uploaded at 2026-01-20T00:00:00Z"
             ),
-            (
-                "note: the project-level uploaded-prior-to set that cutoff; setting"
-                ' packages."pkg".uploaded-prior-to = false lifts it for this package'
-            ),
         )
         assert diagnostic.remedy == 'set packages."pkg".uploaded-prior-to = false'
+
+        assert diagnostic.suggestions[0].action == (
+            'set packages."pkg".uploaded-prior-to = false'
+        )
 
     def test_root_requirement_rejection_names_the_blocker(self) -> None:
         """When the rejection comes from the root-requirement check at
@@ -12074,7 +12071,7 @@ class TestExtrasInvalidMetadata:
             package="foo",
         )
         provider = Provider(coordinator, target=_PY312, extras_mode=ExtrasMode.WARN)
-        provider._invalid_metadata[("foo", V("2.0"))] = "stub"
+        provider._invalid_metadata[("foo", V("2.0"))] = MetadataBlock("stub")
         version = provider.choose_version("foo[security]", VersionRange.full())
         assert version == V("1.0")
 
@@ -12109,7 +12106,7 @@ class TestExtrasInvalidMetadata:
             extras_mode=ExtrasMode.WARN,
             root_extras={("foo", "security")},
         )
-        provider._invalid_metadata[("foo", V("2.0"))] = "stub"
+        provider._invalid_metadata[("foo", V("2.0"))] = MetadataBlock("stub")
         version = provider.choose_version("foo[security]", VersionRange.full())
         assert version == V("1.0")
 

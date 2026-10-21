@@ -1116,7 +1116,7 @@ class TestBuildCliTables:
 
         assert str(caught.value) == (
             "--project-environment-platform reads 'runs-on-macos=14.0' as a"
-            " key on the item before it, and no item is open; write the id"
+            " key on the item before it, and no item is open\n    try: write the id"
             " first"
         )
 
@@ -1229,7 +1229,7 @@ class TestBuildCliTables:
 
         assert str(caught.value) == (
             "--project-matrix-platforms reads 'libc=musl' as a key on the item"
-            " before it, and no item is open; write the id first"
+            " before it, and no item is open\n    try: write the id first"
         )
 
     def test_a_pair_token_needs_an_equals(self) -> None:
