@@ -630,6 +630,7 @@ class Provider:
         decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
         release_refused_wheels: bool = False,
         defer_yanked: bool = False,
+        lookahead_versions: int | None = None,
     ) -> None:
         """Construct the provider; see the class docstring for parameters."""
         if isinstance(resolution_strategy, str):
@@ -642,6 +643,11 @@ class Provider:
                     f" got {resolution_strategy!r}"
                 )
                 raise ValueError(msg) from exc
+
+        if lookahead_versions is not None and lookahead_versions < 0:
+            msg = "lookahead_versions must be non-negative"
+            raise ValueError(msg)
+        self._lookahead_versions = lookahead_versions
 
         self.coordinator = coordinator
         self.target = target
@@ -1362,7 +1368,12 @@ class Provider:
     ) -> None:
         """See :func:`nab_provider._provider.listing.prefetch_walk_ahead`."""
         _listing.prefetch_walk_ahead(
-            self, normalized, version_range, self.DEEP_PREFETCH_COUNT
+            self,
+            normalized,
+            version_range,
+            self.DEEP_PREFETCH_COUNT
+            if self._lookahead_versions is None
+            else self._lookahead_versions,
         )
 
     def filter_distributions(

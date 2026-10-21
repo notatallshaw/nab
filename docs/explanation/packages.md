@@ -67,6 +67,27 @@ CLI layers. Concrete records keep their typed constructors in the package owning
 shared code handles comparison and copying. Fixed fields use `Final` annotations rather than runtime
 write guards.
 
+## Prefetch windows
+
+HTTP backends recommend metadata prefetch windows. `nab-project` snapshots those recommendations
+below explicit operation settings. `nab-provider` owns the candidate lookahead algorithm and its
+fallback defaults; the index client does not make resolution decisions.
+
+```python
+from nab_project.resolve import resolve_for_targets
+from nab_provider.fetch_port import PrefetchSettings
+
+settings = PrefetchSettings(metadata_versions=0, lookahead_versions=64)
+result = resolve_for_targets(
+    project_path, transport, targets=targets, prefetch_settings=settings
+)
+```
+
+`metadata_versions` controls the newest versions fetched after a listing. `lookahead_versions`
+controls the extra version window fetched before a provider's pipelined scan. Zero disables that
+extra prefetch; the pipelined candidate checks still run. Omitted fields inherit the selected
+backend's recommendation. Custom transports without recommendations retain the existing defaults.
+
 ## Why the provider is separate
 
 Resolution logic with no HTTP client in its import graph can be tested alone. CI runs

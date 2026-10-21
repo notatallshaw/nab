@@ -126,6 +126,7 @@ if TYPE_CHECKING:
     from nab_index.transport import AsyncHttpTransport
     from nab_provider._vendor.packaging.requirements import Requirement
     from nab_provider._vendor.packaging.version import Version
+    from nab_provider.fetch_port import PrefetchSettings
     from nab_provider.provider import ResolutionStrategy
     from nab_provider.resolver_inputs import MarkerHolds
 
@@ -180,6 +181,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     resolution_strategy: ResolutionStrategy | None = None,
     progress: ProgressSink | None = None,
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+    prefetch_settings: PrefetchSettings | None = None,
     build_transport_factory: Callable[[], AsyncHttpTransport] | None = None,
 ) -> ResolveResult:
     """Resolve the project at ``path`` for each of ``targets``.
@@ -188,6 +190,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     ``inputs`` the settings it read out of the project.
     This call owns ``transport`` and closes it even when preparation fails.
     ``cache_dir`` and ``offline`` are runtime overrides from the CLI.
+    ``prefetch_settings`` overrides the transport's recommended metadata windows.
     ``build_transport_factory`` creates fresh clients for build dependencies;
     omitting it selects urllib3 for those fetches.
 
@@ -241,6 +244,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
             build_config=inputs,
             build_transport_factory=build_transport_factory,
             max_concurrency=max_concurrency,
+            prefetch_settings=prefetch_settings,
         )
     except BaseException:
         # The caller may already be running an event loop on this thread.
@@ -286,8 +290,11 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     marker_holds: MarkerHolds | None = None,
     release_refused_wheels: bool = False,
     include_dependency_requirements: bool = False,
+    lookahead_versions: int | None = None,
 ) -> ResolveResult:
     """Resolve ``targets`` against an already-open coordinator.
+
+    ``lookahead_versions`` overrides its initial candidate-prefetch window.
 
     ``include_dependency_requirements`` retains active declarations on each
     successful target's lock. Roots and constraints remain separate.
@@ -317,6 +324,8 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     nothing else reads them.  A matrix keeps the payload either way: one
     target's refusal is another target's candidate.
     """
+    if lookahead_versions is None:
+        lookahead_versions = coordinator.prefetch_settings.lookahead_versions
     inputs = ResolveInputs() if inputs is None else inputs
     with _source_root(cache_dir, inputs) as source_root:
         settings = _EngineSettings(
@@ -334,6 +343,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
             ),
             progress=progress,
             include_dependency_requirements=include_dependency_requirements,
+            lookahead_versions=lookahead_versions,
             listing_filter_cache=ListingFilterCache(
                 len({target.python_full_version for target in targets})
             ),

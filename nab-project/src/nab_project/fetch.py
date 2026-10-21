@@ -24,6 +24,7 @@ __lazy_modules__ = (
     "nab_project._toml",
     "nab_provider._vendor.packaging.utils",
     "nab_provider.metadata",
+    "nab_provider.fetch_port",
     "nab_provider.policy",
     "nab_provider.records",
     "nab_provider.serialization",
@@ -52,8 +53,9 @@ from nab_index.cached_client import (
 from nab_index.lazy_wheel import RangeCapabilityMemo
 from nab_index.local_index import LocalIndexClient, is_file_url, parse_file_url
 from nab_index.multi_index import MultiIndexClient
-from nab_index.transport import IDENTITY_HEADERS, raise_unless_ok
+from nab_index.transport import IDENTITY_HEADERS, TunedHttpTransport, raise_unless_ok
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider.fetch_port import PrefetchSettings
 from nab_provider.metadata import static_project_from_table
 from nab_provider.policy import BuildPolicy
 from nab_provider.records import (
@@ -121,6 +123,25 @@ if TYPE_CHECKING:
     from .inputs import ResolveInputs
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_prefetch_settings(
+    transport: AsyncHttpTransport, override: PrefetchSettings | None
+) -> PrefetchSettings:
+    """Snapshot backend recommendations below explicit operation settings."""
+    backend = (
+        transport.prefetch_settings
+        if isinstance(transport, TunedHttpTransport)
+        else PrefetchSettings()
+    )
+    metadata = backend.metadata_versions
+    lookahead = backend.lookahead_versions
+    if override is not None:
+        if override.metadata_versions is not None:
+            metadata = override.metadata_versions
+        if override.lookahead_versions is not None:
+            lookahead = override.lookahead_versions
+    return PrefetchSettings(metadata_versions=metadata, lookahead_versions=lookahead)
 
 
 def _done_event() -> threading.Event:
@@ -330,6 +351,7 @@ class FetchCoordinator:
         *,
         indexes: list[IndexConfig] | None = None,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+        prefetch_settings: PrefetchSettings | None = None,
         cache_dir: Path | None = None,
         cache_backend: CacheBackend | None = None,
         offline: bool = False,
@@ -376,6 +398,9 @@ class FetchCoordinator:
         self.indexes = list(indexes)
         self._transport = transport
         self._max_concurrency = max_concurrency
+        self.prefetch_settings = _resolve_prefetch_settings(
+            transport, prefetch_settings
+        )
         self._offline = offline
         if cache_backend is not None and len(indexes) > 1:
             msg = (
@@ -1244,7 +1269,9 @@ class FetchCoordinator:
         runs, so a wheel it releases mid-walk answers no metadata URL and
         is skipped (:func:`~nab_provider.records.release_wheel_payload`).
         """
-        wanted = self.PREFETCH_METADATA_COUNT
+        wanted = self.prefetch_settings.metadata_versions
+        if wanted is None:
+            wanted = self.PREFETCH_METADATA_COUNT
         newest: dict[str, WheelFile] = {}
         for f in reversed(files):
             if not (isinstance(f, WheelFile) and f.has_metadata) or f.yanked:

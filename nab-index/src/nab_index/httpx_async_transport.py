@@ -29,6 +29,7 @@ from .transport import (
     HttpError,
     accepts_gzip,
     decode_body,
+    prefetch_settings_for_backend,
     raise_for_error_status,
 )
 
@@ -92,6 +93,7 @@ class HttpxAsyncTransport:
 
     def __init__(self, *, http2: bool = True) -> None:
         """Create a transport."""
+        self.prefetch_settings = prefetch_settings_for_backend("httpx")
         self._client = httpx.AsyncClient(
             http2=http2,
             # httpx defaults this off, unlike urllib3 and pip; the Simple

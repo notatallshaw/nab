@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, TypedDict, TypeVar
 from ._compat import override
 from ._vendor.packaging.utils import canonicalize_name
 from .errors import IndexAccessError
+from .fetch_port import PrefetchSettings
 from .overrides import PackageOverride
 from .pep508 import parse_requirement
 from .records import (
@@ -359,6 +360,7 @@ class FakeFetchPort:
         self.indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
         self.offline = offline
         self.build_config = build_config
+        self.prefetch_settings = PrefetchSettings()
 
         self._serve_metadata = serve_metadata
         self._serve_sdist = serve_sdist

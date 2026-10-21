@@ -617,6 +617,7 @@ class _EngineSettings(Record):
         "listing_filter_cache",
         "release_refused_wheels",
         "include_dependency_requirements",
+        "lookahead_versions",
         "warned_dropped_markers",
         "artifacts",
     )
@@ -641,6 +642,7 @@ class _EngineSettings(Record):
     # ``resolve_with_coordinator``.
     release_refused_wheels: bool
     include_dependency_requirements: bool
+    lookahead_versions: int | None
 
     # The (kind, text) pairs already reported, so an entry read once per
     # target per fork and again in the base pass warns once.
@@ -662,6 +664,7 @@ class _EngineSettings(Record):
         listing_filter_cache: ListingFilterCache | FactoryDefault = FACTORY,
         release_refused_wheels: bool = False,
         include_dependency_requirements: bool = False,
+        lookahead_versions: int | None = None,
         warned_dropped_markers: set[tuple[str, str]] | FactoryDefault = FACTORY,
         artifacts: ArtifactMemo | FactoryDefault = FACTORY,
     ) -> None:
@@ -677,6 +680,7 @@ class _EngineSettings(Record):
         )
         self.release_refused_wheels = release_refused_wheels
         self.include_dependency_requirements = include_dependency_requirements
+        self.lookahead_versions = lookahead_versions
         self.warned_dropped_markers = factory_value(warned_dropped_markers, set)
         self.artifacts = factory_value(artifacts, ArtifactMemo)
 
@@ -759,6 +763,7 @@ def _make_target_provider(
         listing_filter_cache=settings.listing_filter_cache,
         release_refused_wheels=settings.release_refused_wheels,
         defer_yanked=True,
+        lookahead_versions=settings.lookahead_versions,
     )
 
 

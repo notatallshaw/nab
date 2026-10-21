@@ -42,6 +42,7 @@ from .transport import (
     HttpError,
     accepts_gzip,
     decode_body,
+    prefetch_settings_for_backend,
     raise_for_error_status,
 )
 
@@ -231,6 +232,7 @@ class Urllib3AsyncTransport:
         timeout: float = _DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
         """Create a transport."""
+        self.prefetch_settings = prefetch_settings_for_backend("urllib3")
         self._num_pools = num_pools
         self._maxsize = maxsize
         self._timeout = timeout

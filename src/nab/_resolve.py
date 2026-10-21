@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING
 
 import tomli
 
+from nab_index.transport import prefetch_settings_for_backend
 from nab_project.lockfile import MissingHashError, MissingSdistError
 from nab_project.pyproject_files import (
     read_pyproject_groups,
@@ -217,6 +218,7 @@ class _DeferredUrllib3Transport:
 
     def __init__(self) -> None:
         self._transport: AsyncHttpTransport | None = None
+        self.prefetch_settings = prefetch_settings_for_backend("urllib3")
 
     async def get(
         self, url: str, *, headers: dict[str, str] | None = None

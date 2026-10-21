@@ -29,6 +29,7 @@ from .transport import (
     HttpError,
     accepts_gzip,
     decode_body,
+    prefetch_settings_for_backend,
     raise_for_error_status,
 )
 
@@ -84,6 +85,7 @@ class Httpx2AsyncTransport:
 
     def __init__(self, *, http2: bool = True) -> None:
         """Create a transport."""
+        self.prefetch_settings = prefetch_settings_for_backend("httpx2")
         self._client = httpx2.AsyncClient(
             http2=http2,
             # Simple API URLs may redirect to mirrors or a canonical project name.
