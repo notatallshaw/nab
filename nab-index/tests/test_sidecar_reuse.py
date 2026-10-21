@@ -248,3 +248,36 @@ def test_a_new_version_replaces_previous_version_bodies() -> None:
 
     asyncio.run(read())
     assert transport.requests == [_FIRST, _SECOND, third]
+
+
+def test_concurrent_variants_merge_into_the_current_version() -> None:
+    class YieldingTransport(SidecarTransport):
+        async def get(
+            self, url: str, *, headers: dict[str, str] | None = None
+        ) -> _Urllib3Response:
+            await asyncio.sleep(0)
+            return await super().get(url, headers=headers)
+
+    third = "https://example.invalid/demo-1.0-cp314-cp314-linux_x86_64.whl.metadata"
+    other = _BODY.replace(b"\n\n", b"\nRequires-Dist: dependency\n\n")
+    transport = YieldingTransport({_FIRST: _BODY, _SECOND: other})
+    client = CachedAsyncSimpleClient(transport, NullCache(), _INDEX)
+
+    async def read() -> None:
+        async with client:
+            await asyncio.gather(
+                client.get_metadata_text("demo", "1.0", _FIRST, _SHA256),
+                client.get_metadata_text(
+                    "demo",
+                    "1.0",
+                    _SECOND,
+                    ("sha256", hashlib.sha256(other).hexdigest()),
+                ),
+            )
+            assert (
+                await client.get_metadata_text("demo", "1.0", third, _SHA256)
+                == _BODY.decode()
+            )
+
+    asyncio.run(read())
+    assert transport.requests == [_FIRST, _SECOND]
