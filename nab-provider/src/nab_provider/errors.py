@@ -66,6 +66,7 @@ class MetadataError(Exception):
     """
 
     filtered_sdist_version: Version | None = None
+    remedy: str | None = None
 
 
 class UnsupportedSdistError(MetadataError):

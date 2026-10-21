@@ -113,7 +113,7 @@ class Root(Table, on=GLOBAL, docs="reference/cli.md"):
 class ProjectKeys(
     Table, on=_LAYERED, scope=Scope.PROJECT, docs="reference/resolution-settings.md"
 ):
-    """The project's own settings: twelve carry a flag, thirteen are file-only."""
+    """The project's settings and their command-line overrides."""
 
     resolution = Value[ResolutionFlag | None](
         mirrors=ResolutionStrategy,
@@ -219,6 +219,14 @@ class ProjectKeys(
         ),
         help="which distribution kinds the resolve may pin",
         docs="reference/distribution-policy.md",
+    )
+
+    assume_universal_deps = Tri(
+        key=Layer[bool](
+            rdefault=False, parse=values.parse_bool, render=hooks.render_bool
+        ),
+        help="assume dependency metadata applies across targets",
+        docs="reference/build-policy.md",
     )
 
     build_policy = Value[BuildPolicyFlag | None](

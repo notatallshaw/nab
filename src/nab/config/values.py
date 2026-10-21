@@ -788,6 +788,7 @@ def _check_index_name_uniqueness(indexes: Sequence[IndexConfig]) -> None:
 _PACKAGE_OVERRIDE_BODY_KEYS = frozenset(
     {
         "dist-policy",
+        "assume-universal-deps",
         "build-policy",
         "uploaded-prior-to",
         "index",
@@ -800,7 +801,13 @@ _PACKAGE_OVERRIDE_BODY_KEYS = frozenset(
 # A [[tool.nab.package-rules]] entry carries a ``match`` selector plus body keys.
 _PACKAGE_RULE_KEYS = frozenset({"match"}) | _PACKAGE_OVERRIDE_BODY_KEYS
 _INDEX_OVERRIDE_KEYS = frozenset(
-    {"dist-policy", "build-policy", "uploaded-prior-to", "assume-fresh-seconds"}
+    {
+        "dist-policy",
+        "assume-universal-deps",
+        "build-policy",
+        "uploaded-prior-to",
+        "assume-fresh-seconds",
+    }
 )
 # Override-body keys not supported yet; rejected so nothing inert ships.
 # ``metadata`` is the nested-table form the flat body keys replace.
@@ -814,6 +821,7 @@ _OVERRIDE_DEFERRED_KEYS = frozenset(
 _PACKAGE_POLICY_FIELDS = (
     ("dist-policy", "dist_policy"),
     ("dist-policy.trust-unverified-deps", "dist_trust_unverified_deps"),
+    ("assume-universal-deps", "assume_universal_deps"),
     ("build-policy", "build_policy"),
     ("uploaded-prior-to", "uploaded_prior_to"),
     ("index", "index"),
@@ -949,6 +957,15 @@ def _build_package_overrides(
 ) -> list[PackageOverride]:
     """Turn a validated selector and body into one override per requirement."""
     dist_policy, dist_trust = _parse_override_dist(body.get("dist-policy"), where)
+    assume_universal_deps = (
+        _parse_bool(
+            f"{where}.assume-universal-deps",
+            body["assume-universal-deps"],
+            default=False,
+        )
+        if "assume-universal-deps" in body
+        else None
+    )
     build_policy = (
         parse_enum(
             body["build-policy"],
@@ -974,6 +991,7 @@ def _build_package_overrides(
     has_body = (
         dist_policy is not None
         or dist_trust is not None
+        or assume_universal_deps is not None
         or build_policy is not None
         or uploaded_prior_to is not None
         or uploaded_disabled
@@ -1006,6 +1024,7 @@ def _build_package_overrides(
             version_range=requirement.specifier.to_range(),
             dist_policy=dist_policy,
             dist_trust_unverified_deps=dist_trust,
+            assume_universal_deps=assume_universal_deps,
             build_policy=build_policy,
             uploaded_prior_to=uploaded_prior_to,
             uploaded_prior_to_disabled=uploaded_disabled,
@@ -1151,6 +1170,15 @@ def _parse_index_override_body(
         )
         raise SourceConfigError(msg)
     dist_policy, dist_trust = _parse_override_dist(body.get("dist-policy"), where)
+    assume_universal_deps = (
+        _parse_bool(
+            f"{where}.assume-universal-deps",
+            body["assume-universal-deps"],
+            default=False,
+        )
+        if "assume-universal-deps" in body
+        else None
+    )
     build_policy = (
         parse_enum(
             body["build-policy"],
@@ -1173,6 +1201,7 @@ def _parse_index_override_body(
     has_body = (
         dist_policy is not None
         or dist_trust is not None
+        or assume_universal_deps is not None
         or build_policy is not None
         or uploaded_prior_to is not None
         or uploaded_disabled
@@ -1187,6 +1216,7 @@ def _parse_index_override_body(
     return IndexOverride(
         dist_policy=dist_policy,
         dist_trust_unverified_deps=dist_trust,
+        assume_universal_deps=assume_universal_deps,
         build_policy=build_policy,
         uploaded_prior_to=uploaded_prior_to,
         uploaded_prior_to_disabled=uploaded_disabled,

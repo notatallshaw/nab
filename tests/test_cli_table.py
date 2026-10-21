@@ -55,6 +55,7 @@ _PAGES = (
     ("requires-python", "reference/resolution-settings.md"),
     ("uploaded-prior-to", "reference/resolution-settings.md"),
     ("dist-policy", "reference/distribution-policy.md"),
+    ("assume-universal-deps", "reference/build-policy.md"),
     ("build-policy", "reference/build-policy.md"),
     ("build-requires-depth", "reference/build-policy.md"),
     ("environment", "reference/target-environment.md"),
@@ -179,12 +180,12 @@ class TestTheDeclaredTable:
         command = [row for row in ALL if row.commands and not row.is_global]
         file_only = [row for row in ALL if not row.commands]
 
-        assert (len(root), len(command), len(file_only)) == (7, 44, 13)
-        assert len(root) + len(command) + len(file_only) == len(ALL) == 64
+        assert (len(root), len(command), len(file_only)) == (7, 45, 13)
+        assert len(root) + len(command) + len(file_only) == len(ALL) == 65
 
         keyed = [row for row in ALL if row.key]
-        assert len(keyed) == 29
-        assert sum(1 for row in keyed if row.cli_flag) == 16
+        assert len(keyed) == 30
+        assert sum(1 for row in keyed if row.cli_flag) == 17
         assert sum(1 for row in keyed if not row.commands) == 13
 
     def test_the_sub_rows_spell_the_two_tables(self) -> None:
@@ -211,7 +212,7 @@ class TestTheDeclaredTable:
     def test_the_layered_rows_split_by_scope_as_the_registry_does(self) -> None:
         keyed = [row for row in ALL if row.key]
 
-        assert sum(row.scope is Scope.PROJECT for row in keyed) == 25
+        assert sum(row.scope is Scope.PROJECT for row in keyed) == 26
         assert sum(row.scope is Scope.USER for row in keyed) == 4
 
     def test_the_environment_names_are_the_four_user_keys(self) -> None:
@@ -284,7 +285,7 @@ class TestTheDeclaredTable:
         """
         negatable = [row for row in ALL if row.kind in _BOOL_KINDS]
 
-        assert len(negatable) == 12
+        assert len(negatable) == 13
         for row in negatable:
             assert row.negatable is not row.name.startswith("no-"), row.name
 

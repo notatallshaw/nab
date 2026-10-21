@@ -6521,6 +6521,7 @@ def _config_off_every_slot_default(tmp_path: Path) -> NabProjectConfig:
         requires_python=">=3.11",
         resolution=ResolutionStrategy.LOWEST,
         trust_unverified_sdist_deps=True,
+        assume_universal_deps=True,
         uploaded_prior_to=_SEAM_CUTOFF,
         vcs=VcsConfig(policy=VcsPolicy.ALLOW),
         vcs_sources=(VcsSource("tool", "git+https://example.invalid/tool.git@v1"),),
@@ -6557,6 +6558,101 @@ class TestSeamPartition:
         assert {name: getattr(bare, name) for name in ResolveInputs.__slots__} == {
             name: getattr(default, name) for name in ResolveInputs.__slots__
         }
+
+
+class TestAssumeUniversalDeps:
+    """The assertion follows the global and scoped configuration rules."""
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_global_value_reaches_resolve_inputs(
+        self, tmp_path: Path, enabled: bool
+    ) -> None:
+        path = write(
+            tmp_path,
+            f"[tool.nab]\nassume-universal-deps = {str(enabled).lower()}\n",
+        )
+
+        config = read_pyproject_config(path)
+
+        assert config.assume_universal_deps is enabled
+        assert config.resolve_inputs().assume_universal_deps is enabled
+
+    @pytest.mark.parametrize(
+        "surface",
+        [
+            '[tool.nab.packages."widget < 2"]\n',
+            '[[tool.nab.package-rules]]\nmatch = ["widget < 2"]\n',
+            "[tool.nab.index.pypi]\n",
+        ],
+    )
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_scoped_value_preserves_explicit_false(
+        self, tmp_path: Path, surface: str, enabled: bool
+    ) -> None:
+        path = write(
+            tmp_path,
+            surface + f"assume-universal-deps = {str(enabled).lower()}\n",
+        )
+
+        config = read_pyproject_config(path)
+        overrides = (
+            tuple(config.index_overrides.values())
+            if config.index_overrides
+            else config.package_overrides
+        )
+
+        assert len(overrides) == 1
+        assert overrides[0].assume_universal_deps is enabled
+        assert config.assume_universal_deps is False
+
+    @pytest.mark.parametrize(
+        "surface",
+        [
+            "[tool.nab]\n",
+            "[tool.nab.packages.widget]\n",
+            '[[tool.nab.package-rules]]\nmatch = ["widget"]\n',
+            "[tool.nab.index.pypi]\n",
+        ],
+    )
+    def test_non_boolean_is_rejected(self, tmp_path: Path, surface: str) -> None:
+        path = write(tmp_path, surface + "assume-universal-deps = 1\n")
+
+        with pytest.raises(ConfigError, match="assume-universal-deps.*boolean"):
+            read_pyproject_config(path)
+
+    @pytest.mark.parametrize("right", ["true", "false"])
+    def test_overlapping_assertions_are_rejected(
+        self, tmp_path: Path, right: str
+    ) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."widget < 3"]\n'
+            "assume-universal-deps = true\n"
+            '[[tool.nab.package-rules]]\nmatch = ["widget >= 2"]\n'
+            f"assume-universal-deps = {right}\n",
+        )
+
+        with pytest.raises(
+            ConfigError, match="assume-universal-deps.*overlapping versions"
+        ):
+            read_pyproject_config(path)
+
+    def test_disjoint_assertions_are_preserved(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."widget < 2"]\n'
+            "assume-universal-deps = true\n"
+            '[[tool.nab.package-rules]]\nmatch = ["widget >= 2"]\n'
+            "assume-universal-deps = false\n",
+        )
+
+        overrides = read_pyproject_config(path).package_overrides
+
+        assert [str(entry.requirement) for entry in overrides] == [
+            "widget<2",
+            "widget>=2",
+        ]
+        assert [entry.assume_universal_deps for entry in overrides] == [True, False]
 
 
 class TestPyprojectParseCount:

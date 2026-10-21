@@ -25,9 +25,9 @@ implementation = "cpython"  # "cpython" (default) or "pypy"
 - `platform` (with or without `implementation`) declares the machine, so the PEP 508 markers are
   synthesized from the platform id. `implementation` needs a `platform`: an interpreter is modelled
   on a declared machine, never on the host's.
-- For a declared platform, nab forces `build-policy = "never"` and rejects an explicit different
-  policy. Changing only Python produces a warning and keeps the configured build permissions. See
-  [Build policy](build-policy.md).
+- For a declared platform, `build-policy` defaults to `never`. Host metadata builds require an
+  `assume-universal-deps` assertion and an explicit build policy. Changing only Python produces a
+  warning and keeps the configured build permissions. See [Build policy](build-policy.md).
 
 `platform` accepts a platform ID with default settings, or a table containing the ID and explicit
 settings, just like an entry in `[tool.nab.matrix].platforms`.

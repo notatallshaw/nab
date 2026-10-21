@@ -68,6 +68,7 @@ _CLI_FLAG_CASES: tuple[tuple[str, str, str], ...] = (
     ("requires-python", ">=3.11", ">=3.11"),
     ("uploaded-prior-to", "2024-06-01T00:00:00Z", "2024-06-01 00:00:00+00:00"),
     ("dist-policy", "sdist-only", "sdist-only"),
+    ("assume-universal-deps", "True", "true"),
     ("build-policy", "never", "never"),
     ("build-requires-depth", "3", "3"),
     ("offline", "True", "true"),
@@ -93,6 +94,7 @@ _DOWNLOAD_PROJECT_ARGV: tuple[tuple[str, str], ...] = (
     ("--project-requires-python", ">=3.10"),
     ("--project-uploaded-prior-to", "2024-06-01T00:00:00Z"),
     ("--project-dist-policy", "sdist-only"),
+    ("--project-assume-universal-deps", "True"),
     ("--project-build-policy", "never"),
     ("--project-build-requires-depth", "3"),
 )
@@ -971,6 +973,22 @@ class TestCliFlagValues:
         covered = {key for key, _, _ in _CLI_FLAG_CASES}
         assert covered == set(_CLI_FLAGS)
 
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            ["--project-assume-universal-deps", "False"],
+            ["--no-project-assume-universal-deps"],
+        ],
+    )
+    def test_cli_can_cancel_the_file_assertion(
+        self, hermetic_roots: Path, arguments: list[str]
+    ) -> None:
+        project = _project(hermetic_roots, "assume-universal-deps = true\n")
+        command = ["get", "assume-universal-deps", "--path", str(project)]
+
+        assert _run_config(command) == "true\n"
+        assert _run_config([*command, *arguments]) == "false\n"
+
 
 def _fold_run_settings(
     path: Path,
@@ -1227,6 +1245,23 @@ class TestProjectCliOverrides:
             ["--project-dist-policy", "sdist-only"],
         )
         assert inputs.dist_policy is DistPolicy.SDIST_ONLY
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_project_assume_universal_deps_reaches_resolve(
+        self, hermetic_roots: Path, enabled: bool
+    ) -> None:
+        proj = _project(
+            hermetic_roots,
+            f"assume-universal-deps = {str(not enabled).lower()}\n",
+        )
+
+        inputs = self._lock_inputs(
+            proj,
+            hermetic_roots / "pylock.toml",
+            ["--project-assume-universal-deps", str(enabled)],
+        )
+
+        assert inputs.assume_universal_deps is enabled
 
     def test_project_dist_policy_override_replaces_trust(
         self, hermetic_roots: Path
@@ -1550,6 +1585,7 @@ class TestDownloadCliOverrides:
         assert inputs.dist_policy is DistPolicy.SDIST_ONLY
         assert inputs.build_policy is BuildPolicy.NEVER
         assert inputs.build_requires_depth == 3
+        assert inputs.assume_universal_deps is True
 
     def test_every_project_flag_has_a_case(self) -> None:
         exercised = {flag for flag, _ in _DOWNLOAD_PROJECT_ARGV} | {"--project-mode"}

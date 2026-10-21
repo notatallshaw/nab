@@ -144,6 +144,7 @@ CASES = [
             SELECTOR.specifier.to_range(),
             DistPolicy.WHEEL_ONLY,
             False,
+            False,
             BuildPolicy.NEVER,
             CUTOFF,
             False,
@@ -160,6 +161,7 @@ CASES = [
             OTHER_SELECTOR.specifier.to_range(),
             DistPolicy.SDIST_ONLY,
             True,
+            True,
             BuildPolicy.BUILD_REMOTE,
             LATER_CUTOFF,
             True,
@@ -173,6 +175,7 @@ CASES = [
         {
             "dist_policy": None,
             "dist_trust_unverified_deps": None,
+            "assume_universal_deps": None,
             "build_policy": None,
             "uploaded_prior_to": None,
             "uploaded_prior_to_disabled": False,
@@ -192,6 +195,7 @@ CASES = [
         (
             DistPolicy.WHEEL_ONLY,
             False,
+            False,
             BuildPolicy.NEVER,
             CUTOFF,
             False,
@@ -199,6 +203,7 @@ CASES = [
         ),
         (
             DistPolicy.SDIST_ONLY,
+            True,
             True,
             BuildPolicy.BUILD_REMOTE,
             LATER_CUTOFF,
@@ -208,6 +213,7 @@ CASES = [
         {
             "dist_policy": None,
             "dist_trust_unverified_deps": None,
+            "assume_universal_deps": None,
             "build_policy": None,
             "uploaded_prior_to": None,
             "uploaded_prior_to_disabled": False,

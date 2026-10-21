@@ -1444,7 +1444,7 @@ def extra_diagnostic(
     """
     short = _EXTRA_SHORT[recorded.kind].format(base=base)
     if recorded.kind == ReasonKind.EXTRA_METADATA:
-        return Diagnostic(short, tuple(block.message for block in recorded.metadata))
+        return _rejected_metadata(recorded.metadata)
     if recorded.kind == ReasonKind.EXTRA_NARROWED:
         return Diagnostic(
             short,

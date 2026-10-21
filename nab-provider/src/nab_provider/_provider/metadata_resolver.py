@@ -724,18 +724,7 @@ def resolve_dynamic_sdist(
     cache_key: tuple[str, Version],
     metadata: WheelMetadata,
 ) -> WheelMetadata:
-    """Reconcile a dynamic-deps sdist.
-
-    First the bundled ``pyproject.toml`` is consulted; when its
-    ``[project]`` table statically declares ``dependencies`` and
-    ``optional-dependencies``, those replace the dynamic PKG-INFO
-    values.  When that fallback yields nothing and the effective
-    :class:`~nab_provider.provider.BuildPolicy` is
-    :attr:`~nab_provider.provider.BuildPolicy.BUILD_REMOTE`, the sdist is built
-    by :func:`nab_provider._provider.build_remote.build_remote_sdist`.  Any
-    other effective policy raises
-    :class:`~nab_provider.provider.UnsupportedSdistError`.
-    """
+    """Reconcile sdist dependencies under the release's metadata and build policies."""
     # In-function: ``build_remote`` imports ``find_sdist`` from here at load,
     # and tests patch ``build_remote_sdist`` on that module.
     from .build_remote import build_remote_sdist
@@ -755,13 +744,18 @@ def resolve_dynamic_sdist(
     if augmented is not None:
         index.store_resolved_sdist_metadata(canonical, source_key, augmented)
         return augmented
+    assume_universal = provider.effective_assume_universal_deps(
+        canonical, version, provider.serving_index(canonical)
+    )
+    if assume_universal:
+        assumed = _assumed_wheel_dependencies(provider, canonical, version, metadata)
+        if assumed is not None:
+            return assumed
     effective = provider.effective_build_policy(
         canonical, version, provider.serving_index(canonical)
     )
     if effective is BuildPolicy.BUILD_REMOTE:
-        built = build_remote_sdist(provider, package, version)
-        index.store_resolved_sdist_metadata(canonical, source_key, built)
-        return built
+        return build_remote_sdist(provider, package, version)
     provider.stats.excluded_by_build_policy += 1
     msg = (
         f"{package}=={version} sdist has dynamic dependencies and no static"
@@ -769,7 +763,73 @@ def resolve_dynamic_sdist(
         f" '{BuildPolicy.BUILD_REMOTE.value}' but the effective policy is"
         f" '{effective.value}'"
     )
-    raise UnsupportedSdistError(msg)
+    remedy = None
+    if not assume_universal:
+        remedy = (
+            "if this release's dependencies apply across targets, set"
+            f' [tool.nab.packages."{canonical}=={version}"]'
+            " assume-universal-deps = true"
+        )
+        msg += f"; {remedy}"
+    error = UnsupportedSdistError(msg)
+    error.remedy = remedy
+    raise error
+
+
+def _assumed_wheel_dependencies(
+    provider: Provider,
+    package: str,
+    version: Version,
+    sdist_metadata: WheelMetadata,
+) -> WheelMetadata | None:
+    """Borrow wheel dependency fields for an explicitly opted-in release."""
+    # listing imports this module for ordinary metadata selection.
+    from .listing import base_distributions
+
+    files = provider.coordinator.index.get_listing(package) or ()
+    candidates = [
+        dist
+        for candidate, dist in base_distributions(provider, package, files)
+        if candidate == version
+        and isinstance(dist, WheelFile)
+        and (not dist.yanked or (package, version) in provider.yank_admissions)
+    ]
+    candidates.sort(key=lambda dist: (not dist.has_metadata, dist.filename, dist.url))
+    for wheel in candidates:
+        text = _read_assumed_wheel(provider, package, str(version), wheel)
+        if text is None:
+            continue
+        metadata = _parsed_metadata(provider, (package, version), text)
+        _reject_foreign_metadata((package, version), metadata)
+        return WheelMetadata(
+            name=sdist_metadata.name,
+            version=sdist_metadata.version,
+            requires_python=sdist_metadata.requires_python,
+            requires_dist=list(metadata.requires_dist),
+            provides_extra=list(metadata.provides_extra),
+            metadata_version=sdist_metadata.metadata_version,
+            dynamic=sdist_metadata.dynamic,
+        )
+    return None
+
+
+def _read_assumed_wheel(
+    provider: Provider, package: str, version: str, wheel: WheelFile
+) -> str | None:
+    """Read a wheel's own metadata without making it an install candidate."""
+    url = wheel.metadata_url or wheel.url
+    index = provider.coordinator.index
+    text, _ = index.get_metadata_with_origin(package, version, url)
+    if text is not None:
+        return text
+    text, _, error = _read_direct_wheel_metadata(provider, wheel, package, version)
+    if error is not None:
+        raise error
+    if text is None and _is_bare_remote_wheel(wheel):
+        text, _ = _read_range_metadata(
+            provider, package, version, wheel.url, wheel.hashes
+        )
+    return text
 
 
 def augment_from_pyproject(
@@ -1000,22 +1060,12 @@ def parse_and_cache_metadata(
 
     Per-tuple classification (marker evaluation, extras admission)
     still runs locally in :func:`cache_deps_from_metadata`.  The
-    sdist-dynamic-deps reconciliation in
-    :func:`resolve_dynamic_sdist` returns a new dataclass cached in a
-    separate coordinator slot, so it too is reused across tuples while
-    the shared raw parse stays unreconciled.
+    static pyproject fallback is shared across targets. Borrowed wheel
+    dependencies and host-built metadata require each target's own policy
+    check before they can be reused.
     """
     package, version = cache_key
-    version_str = str(version)
-
-    metadata = provider.coordinator.index.get_parsed_metadata(
-        package, version_str, metadata_text
-    )
-    if metadata is None:
-        metadata = parse_metadata(metadata_text)
-        provider.coordinator.index.store_parsed_metadata(
-            package, version_str, metadata, metadata_text
-        )
+    metadata = _parsed_metadata(provider, cache_key, metadata_text)
 
     _reject_foreign_metadata(cache_key, metadata)
 
@@ -1028,6 +1078,19 @@ def parse_and_cache_metadata(
         metadata = resolve_dynamic_sdist(provider, cache_key, metadata)
 
     cache_deps_from_metadata(provider, cache_key, metadata)
+
+
+def _parsed_metadata(
+    provider: Provider, cache_key: tuple[str, Version], text: str
+) -> WheelMetadata:
+    """Return the shared parse of one artifact's metadata text."""
+    package, version = cache_key
+    index = provider.coordinator.index
+    metadata = index.get_parsed_metadata(package, str(version), text)
+    if metadata is None:
+        metadata = parse_metadata(text)
+        index.store_parsed_metadata(package, str(version), metadata, text)
+    return metadata
 
 
 def _declares_served_release(

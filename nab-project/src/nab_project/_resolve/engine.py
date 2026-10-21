@@ -756,6 +756,7 @@ def _make_target_provider(
         package_overrides=inputs.package_overrides,
         index_overrides=inputs.index_overrides,
         trust_unverified_sdist_deps=inputs.trust_unverified_sdist_deps,
+        assume_universal_deps=inputs.assume_universal_deps,
         vcs_config=inputs.vcs,
         local_sources=list(inputs.local_sources) or None,
         vcs_sources=list(inputs.vcs_sources) or None,

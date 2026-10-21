@@ -52,6 +52,7 @@ _INNER_PINS = frozenset(_INNER_PINNED)
 _INNER_DROPS = frozenset(
     {
         "archive_sources",
+        "assume_universal_deps",
         "base_group",
         "build_group",
         "build_requires_depth",
@@ -81,6 +82,7 @@ def _inputs_off_every_default(tmp_path: Path) -> ResolveInputs:
         archive_sources=(
             ArchiveSource("blob", "https://example.invalid/b-1.0.tar.gz"),
         ),
+        assume_universal_deps=True,
         base_group="project",
         build_group="build",
         build_policy=BuildPolicy.BUILD_REMOTE,

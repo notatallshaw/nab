@@ -693,6 +693,7 @@ class Provider:
         *,
         constraints: Mapping[str, VersionRange] | None = None,
         trust_unverified_sdist_deps: bool = False,
+        assume_universal_deps: bool = False,
         decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
         release_refused_wheels: bool = False,
         defer_yanked: bool = False,
@@ -737,6 +738,7 @@ class Provider:
         # Opt-out: trust a pre-2.2 sdist's PKG-INFO deps as final instead of
         # routing through the dynamic path. Off by default (strict PEP 643).
         self.trust_unverified_sdist_deps = trust_unverified_sdist_deps
+        self.assume_universal_deps = assume_universal_deps
         self._resolution_strategy = resolution_strategy
         # The scan asks this once per package, so keep the answer.
         self.settle_listings = decision_order is DecisionOrder.STABLE
@@ -1089,6 +1091,14 @@ class Provider:
             field="build-policy",
             value=lambda o: _unset_if_none(o.build_policy),
         )
+        if (
+            self.target is not None
+            and self.target.platform_spec is not None
+            and not self.effective_assume_universal_deps(
+                canonical_name, version, index_name
+            )
+        ):
+            return BuildPolicy.NEVER
         if result is _UNSET:
             return self.build_policy
         assert isinstance(result, BuildPolicy)
@@ -1103,6 +1113,20 @@ class Provider:
         bare-name requirement (full range); a version-scoped override does
         not govern such a source's build decision.
         """
+        assume_universal = self.assume_universal_deps
+        for override in self._package_overrides:
+            if (
+                override.name == canonical_name
+                and override.assume_universal_deps is not None
+                and not str(override.requirement.specifier)
+            ):
+                assume_universal = override.assume_universal_deps
+        if (
+            self.target is not None
+            and self.target.platform_spec is not None
+            and not assume_universal
+        ):
+            return BuildPolicy.NEVER
         for override in self._package_overrides:
             if (
                 override.name == canonical_name
@@ -1177,6 +1201,25 @@ class Provider:
         )
         if result is _UNSET:
             return self.trust_unverified_sdist_deps
+        assert isinstance(result, bool)
+        return result
+
+    def effective_assume_universal_deps(
+        self,
+        canonical_name: str,
+        version: Version,
+        index_name: str | None = None,
+    ) -> bool:
+        """Whether this release's dependency metadata may be reused across targets."""
+        result = self._effective_field(
+            canonical_name,
+            version,
+            index_name,
+            field="assume-universal-deps",
+            value=lambda o: _unset_if_none(o.assume_universal_deps),
+        )
+        if result is _UNSET:
+            return self.assume_universal_deps
         assert isinstance(result, bool)
         return result
 

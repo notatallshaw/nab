@@ -751,9 +751,8 @@ def _apply_wheel_tags(
     Equal tag-admission answers may share a prepared view; wheel ranking and
     metadata validation remain target-specific.
 
-    Where the provider's caller allows it, a refused wheel is released as
-    it is dropped, since nothing fetches it again
-    (:func:`~nab_provider.records.release_wheel_payload`).
+    Where the provider's caller allows it, a refused wheel is released unless
+    ``assume-universal-deps`` retains it as a dependency-metadata source.
     """
     tags = provider.wheel_tags
     if tags is None:
@@ -779,7 +778,9 @@ def _apply_wheel_tags(
             result.append(pair)
             continue
 
-        if release_refused:
+        if release_refused and not provider.effective_assume_universal_deps(
+            normalized, version, provider.serving_index(normalized)
+        ):
             release_wheel_payload(dist)
 
         # ``base`` is sorted by version, so a version's rejected wheels arrive

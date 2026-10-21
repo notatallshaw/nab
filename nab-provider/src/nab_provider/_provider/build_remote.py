@@ -44,7 +44,7 @@ def build_remote_sdist(
     package: str,
     version: Version,
 ) -> WheelMetadata:
-    """Have the host build ``(package, version)``, and check what it declared.
+    """Reuse or build host metadata, and validate it for the current target.
 
     ``package`` is the canonical package name; ``version`` matches an entry in
     ``provider.versions_cache``.
@@ -67,16 +67,18 @@ def build_remote_sdist(
         raise UnsupportedSdistError(msg)
 
     ver_str = str(version)
-    event = provider.coordinator.request_built_metadata(
-        canonical, ver_str, sdist.url, sdist.hashes
-    )
-    event.wait()
+    source_key = sdist_artifact_key(ver_str, sdist.url)
+    index = provider.coordinator.index
+    built: WheelMetadata | None = index.get_built_metadata(canonical, source_key)
+    if built is None:
+        event = provider.coordinator.request_built_metadata(
+            canonical, ver_str, sdist.url, sdist.hashes
+        )
+        event.wait()
 
-    # The port raises on failure, so a request that returned left the metadata.
-    built: WheelMetadata | None = provider.coordinator.index.get_built_metadata(
-        canonical, sdist_artifact_key(ver_str, sdist.url)
-    )
-    assert built is not None
+        # The port raises on failure, so a returned request left its metadata.
+        built = index.get_built_metadata(canonical, source_key)
+        assert built is not None
 
     target = provider.target
     override_rp = provider.effective_requires_python(canonical, version)

@@ -120,6 +120,6 @@ Each implementation's platform list may name an id once. PEP 508 cannot distingu
 free-threaded builds for the same interpreter, so duplicate ids would render the same lock marker.
 Lock another libc family or ABI for that interpreter in a separate run and file.
 
-nab forbids build backends for declared platform targets, including singleton matrices.
-`build-policy` defaults to `never`; an explicit non-`never` value, global or in an override, is a
-config error. See [Build policy](build-policy.md).
+For declared platform targets, including singleton matrices, `build-policy` defaults to `never`.
+Host metadata builds require an `assume-universal-deps` assertion and an explicit build policy. See
+[Build policy](build-policy.md).

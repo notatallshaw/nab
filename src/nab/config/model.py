@@ -173,6 +173,7 @@ class NabProjectConfig(ValueType):
         "build_policy",
         "build_requires_depth",
         "trust_unverified_sdist_deps",
+        "assume_universal_deps",
         "environment",
         "indexes",
         "vcs",
@@ -208,6 +209,7 @@ class NabProjectConfig(ValueType):
     # build a build requirement that publishes no wheel this host installs.
     build_requires_depth: int
     trust_unverified_sdist_deps: bool
+    assume_universal_deps: bool
     # The declared resolve environment from ``[tool.nab.environment]``, or
     # ``None`` for the host.  Mutually exclusive with ``matrix``.
     environment: EnvironmentConfig | None
@@ -253,6 +255,7 @@ class NabProjectConfig(ValueType):
         build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL,
         build_requires_depth: int = 0,
         trust_unverified_sdist_deps: bool = False,
+        assume_universal_deps: bool = False,
         environment: EnvironmentConfig | None = None,
         indexes: tuple[IndexConfig, ...] = _DEFAULT_INDEXES,
         vcs: VcsConfig = _DEFAULT_VCS,
@@ -281,6 +284,7 @@ class NabProjectConfig(ValueType):
         self.build_policy = build_policy
         self.build_requires_depth = build_requires_depth
         self.trust_unverified_sdist_deps = trust_unverified_sdist_deps
+        self.assume_universal_deps = assume_universal_deps
         self.environment = environment
         self.indexes = indexes
         self.vcs = vcs
@@ -447,6 +451,7 @@ def _config_from_effective(
     targets = _plan_targets(matrix, environment)
     build_policy = enforce_build_policy_for_targets(
         targets=targets,
+        assume_universal_deps=effective["assume-universal-deps"].value,
         build_policy=effective["build-policy"].value,
         build_policy_set=effective["build-policy"].origin.kind
         is not SourceKind.DEFAULT,
@@ -491,6 +496,7 @@ def _config_from_effective(
         build_policy=build_policy,
         build_requires_depth=effective["build-requires-depth"].value,
         trust_unverified_sdist_deps=trust_unverified,
+        assume_universal_deps=effective["assume-universal-deps"].value,
         environment=environment,
         indexes=indexes,
         vcs=vcs_config,

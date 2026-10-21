@@ -41,6 +41,7 @@ class ResolveInputs(ValueType):
 
     __slots__ = __match_args__ = (
         "archive_sources",
+        "assume_universal_deps",
         "base_group",
         "build_group",
         "build_policy",
@@ -63,6 +64,7 @@ class ResolveInputs(ValueType):
     )
 
     archive_sources: tuple[ArchiveSource, ...]
+    assume_universal_deps: bool
     base_group: str | None
     build_group: str | None
     build_policy: BuildPolicy
@@ -87,6 +89,7 @@ class ResolveInputs(ValueType):
         self,
         *,
         archive_sources: tuple[ArchiveSource, ...] = (),
+        assume_universal_deps: bool = False,
         base_group: str | None = None,
         build_group: str | None = None,
         build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL,
@@ -109,6 +112,7 @@ class ResolveInputs(ValueType):
     ) -> None:
         """Record the settings, each defaulting to what a bare project gets."""
         self.archive_sources = archive_sources
+        self.assume_universal_deps = assume_universal_deps
         self.base_group = base_group
         self.build_group = build_group
         self.build_policy = build_policy

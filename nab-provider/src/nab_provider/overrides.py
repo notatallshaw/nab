@@ -57,6 +57,7 @@ class PackageOverride(SlottedValue):
         "version_range",
         "dist_policy",
         "dist_trust_unverified_deps",
+        "assume_universal_deps",
         "build_policy",
         "uploaded_prior_to",
         "uploaded_prior_to_disabled",
@@ -80,6 +81,7 @@ class PackageOverride(SlottedValue):
         version_range: VersionRange,
         dist_policy: DistPolicy | None = None,
         dist_trust_unverified_deps: bool | None = None,
+        assume_universal_deps: bool | None = None,
         build_policy: BuildPolicy | None = None,
         uploaded_prior_to: datetime | None = None,
         uploaded_prior_to_disabled: bool = False,
@@ -97,6 +99,7 @@ class PackageOverride(SlottedValue):
 
         self.dist_policy = dist_policy
         self.dist_trust_unverified_deps = dist_trust_unverified_deps
+        self.assume_universal_deps = assume_universal_deps
         self.build_policy = build_policy
         self.uploaded_prior_to = uploaded_prior_to
         self.uploaded_prior_to_disabled = uploaded_prior_to_disabled
@@ -146,6 +149,7 @@ class IndexOverride(SlottedValue):
     __slots__ = __match_args__ = (
         "dist_policy",
         "dist_trust_unverified_deps",
+        "assume_universal_deps",
         "build_policy",
         "uploaded_prior_to",
         "uploaded_prior_to_disabled",
@@ -157,6 +161,7 @@ class IndexOverride(SlottedValue):
         *,
         dist_policy: DistPolicy | None = None,
         dist_trust_unverified_deps: bool | None = None,
+        assume_universal_deps: bool | None = None,
         build_policy: BuildPolicy | None = None,
         uploaded_prior_to: datetime | None = None,
         uploaded_prior_to_disabled: bool = False,
@@ -165,6 +170,7 @@ class IndexOverride(SlottedValue):
         """Record the policy declared for one index."""
         self.dist_policy = dist_policy
         self.dist_trust_unverified_deps = dist_trust_unverified_deps
+        self.assume_universal_deps = assume_universal_deps
         self.build_policy = build_policy
         self.uploaded_prior_to = uploaded_prior_to
         self.uploaded_prior_to_disabled = uploaded_prior_to_disabled

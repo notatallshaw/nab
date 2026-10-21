@@ -73,8 +73,8 @@ url = "https://pypi.example.com/simple/"
 Project-directory discovery is the directory of the `pyproject.toml` only; there is no walk-up.
 
 `nab config` infers an omitted `mode` from the merged matrix and labels its source
-`inferred from matrix`. During `lock` or `download`, nab also derives `build-policy = "never"` for
-declared platforms and adds discovered workspace members to `local-sources`.
+`inferred from matrix`. During `lock` or `download`, nab defaults declared platforms to
+`build-policy = "never"` and adds discovered workspace members to `local-sources`.
 
 ## Environment variables
 

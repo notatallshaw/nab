@@ -63,6 +63,9 @@ A body sets any combination of:
 
 - `dist-policy`: an enum string, or `{ policy = "...", trust-unverified-deps = true|false }`.
 - `build-policy`: an enum string.
+- `assume-universal-deps`: a boolean permitting dependency metadata to be reused across targets (see
+  [Build policy](build-policy.md#assuming-dependencies-are-universal)). An explicit `false` cancels
+  a global `true`.
 - `uploaded-prior-to`: a datetime with an explicit timezone offset, a `P<n>D` duration, or `false`
   (no cutoff for the selected versions).
 - `index`: route the selected packages to this declared index (a strict pin: only that index is
@@ -98,8 +101,9 @@ A package can have at most one index route, because routing requires a bare-name
 ## Per-index overrides
 
 `[tool.nab.index.<name>]` is keyed by a declared index name. Each entry sets policy only
-(`dist-policy`, `build-policy`, `uploaded-prior-to`, `assume-fresh-seconds`) and applies to every
-package served from that index. Routing and version selectors are per-package settings.
+(`dist-policy`, `assume-universal-deps`, `build-policy`, `uploaded-prior-to`,
+`assume-fresh-seconds`) and applies to every package served from that index. Routing and version
+selectors are per-package settings.
 
 ```toml
 # Everything served from PyPI is wheel-only.
