@@ -350,8 +350,8 @@ def test_bare_wheel_uses_range_metadata_and_passes_integrity_hashes() -> None:
     assert provider.stats.wheel_metadata_range_fetched == 1
 
 
-def test_local_wheel_uses_host_metadata_reader() -> None:
-    wheel_path = Path("/tmp/pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
+def test_local_wheel_uses_host_metadata_reader(tmp_path: Path) -> None:
+    wheel_path = tmp_path / "pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"
     wheel = _foreign_wheel(
         has_metadata=False, local_path=wheel_path, url=wheel_path.as_uri()
     )
@@ -373,8 +373,8 @@ def test_local_wheel_uses_host_metadata_reader() -> None:
     assert port.calls_to("request_range_metadata") == []
 
 
-def test_unreadable_local_metadata_is_not_replaced_by_a_build() -> None:
-    wheel_path = Path("/tmp/pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl")
+def test_unreadable_local_metadata_is_not_replaced_by_a_build(tmp_path: Path) -> None:
+    wheel_path = tmp_path / "pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"
     wheel = _foreign_wheel(
         has_metadata=False, local_path=wheel_path, url=wheel_path.as_uri()
     )
