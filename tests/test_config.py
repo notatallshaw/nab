@@ -2042,7 +2042,9 @@ class TestUniversalBuildPolicy:
             '[tool.nab]\nmode = "universal"\nbuild-policy = "build-local"\n'
             + _UNIVERSAL_MATRIX,
         )
-        with pytest.raises(ConfigError, match="declared target.*build-policy.*never"):
+        with pytest.raises(
+            ConfigError, match=r"declared target[\s\S]*build-policy[\s\S]*never"
+        ):
             read_pyproject_config(path)
 
     def test_explicit_build_remote_rejected(self, tmp_path: Path) -> None:
@@ -2051,7 +2053,9 @@ class TestUniversalBuildPolicy:
             '[tool.nab]\nmode = "universal"\nbuild-policy = "build-remote"\n'
             + _UNIVERSAL_MATRIX,
         )
-        with pytest.raises(ConfigError, match="declared target.*build-policy.*never"):
+        with pytest.raises(
+            ConfigError, match=r"declared target[\s\S]*build-policy[\s\S]*never"
+        ):
             read_pyproject_config(path)
 
     def test_package_override_build_policy_rejected(self, tmp_path: Path) -> None:
