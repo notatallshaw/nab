@@ -95,7 +95,7 @@ workflows.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/_static/universal-lock-benchmark-dark.svg">
-    <img src="docs/_static/universal-lock-benchmark-light.svg" alt="Cold and warm universal lock timings for nab, uv, Poetry and PDM, with Python startup estimates; shorter bars are faster." width="960">
+    <img src="docs/_static/universal-lock-benchmark-light.svg" alt="Cold and warm universal lock timings for nab, uv, Poetry and PDM, split into interpreter, imports and other work; shorter bars are faster." width="960">
   </picture>
 </p>
 
@@ -107,8 +107,9 @@ on the 48 checked targets.
 Cold runs use empty dependency caches; warm runs use primed caches. Both generate fresh native
 lockfiles. Nab uses `--http-backend httpx2`.
 
-Startup estimates include Python, imports and CLI/project setup before locking begins. Imports
-loaded during locking count in the remaining time. uv is shown whole.
+The Python bars separate interpreter launch, imports and other work, including resolution and file
+writing. The split is estimated from separate probes; imports include deferred loads during locking.
+Nab uses Python 3.15 lazy imports. PDM and Poetry also defer some imports. uv is shown whole.
 
 ## Libraries
 
