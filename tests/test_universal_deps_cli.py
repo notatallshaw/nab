@@ -37,11 +37,11 @@ def _wheel(name: str, version: str, metadata: str, tag: str) -> bytes:
     return content.getvalue()
 
 
-def _dynamic_sdist() -> bytes:
+def _dynamic_sdist(version: str = "6.0.0") -> bytes:
     """Publish dependency fields that require reconciliation with a wheel."""
     metadata = make_metadata(
         "watchdog",
-        "6.0.0",
+        version,
         "stale-dependency",
         metadata_version="2.2",
         requires_python=">=3.10",
@@ -49,7 +49,7 @@ def _dynamic_sdist() -> bytes:
     members = {
         "PKG-INFO": metadata.rstrip() + "\nDynamic: Requires-Dist\n\n",
         "pyproject.toml": (
-            '[project]\nname = "watchdog"\nversion = "6.0.0"\n'
+            f'[project]\nname = "watchdog"\nversion = "{version}"\n'
             'requires-python = ">=3.10"\ndynamic = ["dependencies"]\n'
         ),
     }
@@ -57,7 +57,7 @@ def _dynamic_sdist() -> bytes:
     with tarfile.open(fileobj=content, mode="w:gz") as archive:
         for name, text in members.items():
             payload = text.encode("utf-8")
-            member = tarfile.TarInfo(f"watchdog-6.0.0/{name}")
+            member = tarfile.TarInfo(f"watchdog-{version}/{name}")
             member.size = len(payload)
             archive.addfile(member, io.BytesIO(payload))
     return content.getvalue()
@@ -66,7 +66,7 @@ def _dynamic_sdist() -> bytes:
 def _publish(index: Path, name: str, artifacts: Mapping[str, bytes]) -> None:
     """Write a hashed Simple API page and the artifacts it names."""
     directory = index / name
-    directory.mkdir(parents=True)
+    directory.mkdir(parents=True, exist_ok=True)
     links = []
     for filename, payload in artifacts.items():
         (directory / filename).write_bytes(payload)
@@ -130,6 +130,111 @@ def _lock(project: Path, *flags: str) -> int:
     return run(
         ["lock", str(project), "--offline", "--no-cache", "--output", "-", *flags]
     )
+
+
+def _fallback_release(project: Path) -> None:
+    """Offer three dynamic releases before an older readable wheel."""
+    artifacts = {
+        f"watchdog-{version}.tar.gz": _dynamic_sdist(version)
+        for version in ("6.0.0", "6.1.0", "6.2.0")
+    }
+    artifacts["watchdog-5.0.3-py3-none-any.whl"] = _wheel(
+        "watchdog",
+        "5.0.3",
+        make_metadata("watchdog", "5.0.3"),
+        "py3-none-any",
+    )
+    _publish(project.parent / "index", "watchdog", artifacts)
+
+
+@pytest.fixture
+def wider_project(release_project: Path) -> Path:
+    """Resolve a transitive watchdog dependency alongside two other packages."""
+    _fallback_release(release_project)
+    _publish(
+        release_project.parent / "index",
+        "application",
+        {
+            "application-1-py3-none-any.whl": _wheel(
+                "application",
+                "1",
+                make_metadata("application", "1", "watchdog>=5"),
+                "py3-none-any",
+            )
+        },
+    )
+    release_project.write_text(
+        release_project.read_text(encoding="utf-8").replace(
+            'dependencies = ["watchdog==6.0.0"]',
+            'dependencies = ["application", "macos-dep", "linux-dep"]',
+        ),
+        encoding="utf-8",
+    )
+    return release_project
+
+
+def test_rejected_dynamic_releases_are_quiet_when_an_older_version_resolves(
+    wider_project: Path,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    assert _lock(wider_project) == 0
+
+    captured = capsys.readouterr()
+    pylock = Pylock.from_dict(loads(captured.out))
+    assert {str(package.name) for package in pylock.packages} == {
+        "application",
+        "watchdog",
+        "macos-dep",
+        "linux-dep",
+    }
+    watchdog = next(
+        package for package in pylock.packages if package.name == "watchdog"
+    )
+    assert str(watchdog.version) == "5.0.3"
+    assert "assume-universal-deps" not in captured.err + caplog.text
+
+
+def test_rejected_dynamic_releases_do_not_add_hints_to_an_unrelated_failure(
+    wider_project: Path,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    wider_project.write_text(
+        wider_project.read_text(encoding="utf-8").replace(
+            '"application", "macos-dep", "linux-dep"',
+            '"application", "macos-dep", "linux-dep", "absent==1"',
+        ),
+        encoding="utf-8",
+    )
+
+    assert _lock(wider_project) == 1
+
+    captured = capsys.readouterr()
+    assert "absent" in captured.err
+    assert "assume-universal-deps" not in captured.err + caplog.text
+
+
+def test_many_dynamic_rejections_produce_one_hint_per_failed_target(
+    wider_project: Path,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    wider_project.write_text(
+        wider_project.read_text(encoding="utf-8").replace(
+            '"application", "macos-dep", "linux-dep"',
+            '"application", "macos-dep", "linux-dep", "watchdog>=6"',
+        ),
+        encoding="utf-8",
+    )
+
+    assert _lock(wider_project) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.count("try:") == 2
+    assert captured.err.count("assume-universal-deps = true") == 2
+    assert "assume-universal-deps" not in caplog.text
 
 
 @pytest.mark.parametrize("requirement", ["watchdog==6.0.0", "watchdog[events]==6.0.0"])
