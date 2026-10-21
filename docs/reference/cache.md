@@ -14,7 +14,7 @@ The one exception is `sdist-v1/`, which nab still reads.
 | Bucket              | Holds                                                      |
 | ------------------- | ---------------------------------------------------------- |
 | `simple-v3/`        | the Simple-API listing body and a `.policy` sidecar        |
-| `simple-parsed-v0/` | the parsed listing, an accelerator for the body            |
+| `simple-parsed-v1/` | the parsed listing, an accelerator for the body            |
 | `simple-neg-v0/`    | a short-lived record that a name returned a 404            |
 | `metadata-v1/`      | PEP 658 metadata and recovered wheel `METADATA`, immutable |
 | `sdist-v2/`         | an sdist's `PKG-INFO` and `pyproject.toml`, immutable      |
@@ -82,7 +82,7 @@ listing body + policy digest
      warm resolve input
 ```
 
-The `simple-parsed-v0/` bucket stores those records so a warm hit rehydrates them and never reads
+The `simple-parsed-v1/` bucket stores those records so a warm hit rehydrates them and never reads
 the large raw body. A stale entry is served the same way once the index answers `304 Not Modified`,
 since that confirms the body the blob is bound to.
 

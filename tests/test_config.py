@@ -1903,6 +1903,26 @@ class TestUploadedPriorTo:
 
 
 class TestPolicies:
+    @pytest.mark.parametrize("enabled", [False, True])
+    def test_allow_zip_sdists_reaches_resolve_inputs(
+        self, tmp_path: Path, enabled: bool
+    ) -> None:
+        path = write(
+            tmp_path,
+            f"[tool.nab]\nallow-zip-sdists = {str(enabled).lower()}\n",
+        )
+        config = read_pyproject_config(path)
+        assert config.allow_zip_sdists is enabled
+        assert config.resolve_inputs().allow_zip_sdists is enabled
+        assert config.build_policy is BuildPolicy.BUILD_LOCAL
+        assert config.trust_unverified_sdist_deps is False
+
+    def test_allow_zip_sdists_defaults_false(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\n")
+        config = read_pyproject_config(path)
+        assert config.allow_zip_sdists is False
+        assert config.resolve_inputs().allow_zip_sdists is False
+
     def test_sdist_and_build_round_trip(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
@@ -3860,6 +3880,44 @@ class TestPackageSugar:
         assert config.package_overrides == ()
         assert config.index_overrides == {}
 
+    @pytest.mark.parametrize("enabled", [False, True])
+    @pytest.mark.parametrize(
+        "selector",
+        [
+            '[tool.nab.packages."foo < 2"]',
+            '[[tool.nab.package-rules]]\nmatch = ["foo < 2"]',
+        ],
+    )
+    def test_allow_zip_sdists_keeps_false_and_version_scope(
+        self, tmp_path: Path, enabled: bool, selector: str
+    ) -> None:
+        path = write(
+            tmp_path,
+            f"{selector}\nallow-zip-sdists = {str(enabled).lower()}\n",
+        )
+        (override,) = read_pyproject_config(path).package_overrides
+        assert override.allow_zip_sdists is enabled
+        assert Version("1") in override.version_range
+        assert Version("2") not in override.version_range
+
+    def test_overlapping_allow_zip_sdists_is_an_error(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."foo < 2"]\nallow-zip-sdists = true\n'
+            '[[tool.nab.package-rules]]\nmatch = ["foo >= 1"]\n'
+            "allow-zip-sdists = false\n",
+        )
+        with pytest.raises(ConfigError, match="allow-zip-sdists.*overlap"):
+            read_pyproject_config(path)
+
+    @pytest.mark.parametrize("value", ['"yes"', "1", "[]"])
+    def test_allow_zip_sdists_rejects_non_boolean(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        path = write(tmp_path, f"[tool.nab.packages.foo]\nallow-zip-sdists = {value}\n")
+        with pytest.raises(ConfigError, match="allow-zip-sdists must be a boolean"):
+            read_pyproject_config(path)
+
     def test_dist_policy_string(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab.packages.lxml]\ndist-policy = "sdist-only"\n')
         (override,) = read_pyproject_config(
@@ -4789,6 +4847,23 @@ class TestIndexOverrides:
             'name = "internal"\n'
             'url = "https://pkgs.example.com/simple/"\n'
         )
+
+    @pytest.mark.parametrize("enabled", [False, True])
+    def test_allow_zip_sdists_keeps_false(self, tmp_path: Path, enabled: bool) -> None:
+        path = write(
+            tmp_path,
+            f"[tool.nab.index.pypi]\nallow-zip-sdists = {str(enabled).lower()}\n",
+        )
+        override = read_pyproject_config(path).index_overrides["pypi"]
+        assert override.allow_zip_sdists is enabled
+
+    @pytest.mark.parametrize("value", ['"yes"', "1", "[]"])
+    def test_allow_zip_sdists_rejects_non_boolean(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        path = write(tmp_path, f"[tool.nab.index.pypi]\nallow-zip-sdists = {value}\n")
+        with pytest.raises(ConfigError, match="allow-zip-sdists must be a boolean"):
+            read_pyproject_config(path)
 
     def test_dist_policy(self, tmp_path: Path) -> None:
         path = write(

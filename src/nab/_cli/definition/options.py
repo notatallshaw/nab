@@ -229,6 +229,14 @@ class ProjectKeys(
         docs="reference/build-policy.md",
     )
 
+    allow_zip_sdists = Tri(
+        key=Layer[bool](
+            rdefault=False, parse=values.parse_bool, render=hooks.render_bool
+        ),
+        help="allow legacy .zip source distributions",
+        docs="reference/distribution-policy.md",
+    )
+
     build_policy = Value[BuildPolicyFlag | None](
         mirrors=BuildPolicy,
         key=Layer[BuildPolicy](

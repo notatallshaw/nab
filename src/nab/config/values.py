@@ -789,6 +789,7 @@ _PACKAGE_OVERRIDE_BODY_KEYS = frozenset(
     {
         "dist-policy",
         "assume-universal-deps",
+        "allow-zip-sdists",
         "build-policy",
         "uploaded-prior-to",
         "index",
@@ -804,6 +805,7 @@ _INDEX_OVERRIDE_KEYS = frozenset(
     {
         "dist-policy",
         "assume-universal-deps",
+        "allow-zip-sdists",
         "build-policy",
         "uploaded-prior-to",
         "assume-fresh-seconds",
@@ -822,6 +824,7 @@ _PACKAGE_POLICY_FIELDS = (
     ("dist-policy", "dist_policy"),
     ("dist-policy.trust-unverified-deps", "dist_trust_unverified_deps"),
     ("assume-universal-deps", "assume_universal_deps"),
+    ("allow-zip-sdists", "allow_zip_sdists"),
     ("build-policy", "build_policy"),
     ("uploaded-prior-to", "uploaded_prior_to"),
     ("index", "index"),
@@ -966,6 +969,13 @@ def _build_package_overrides(
         if "assume-universal-deps" in body
         else None
     )
+    allow_zip_sdists = (
+        _parse_bool(
+            f"{where}.allow-zip-sdists", body["allow-zip-sdists"], default=False
+        )
+        if "allow-zip-sdists" in body
+        else None
+    )
 
     build_policy = (
         parse_enum(
@@ -996,6 +1006,7 @@ def _build_package_overrides(
         dist_policy is not None
         or dist_trust is not None
         or assume_universal_deps is not None
+        or allow_zip_sdists is not None
         or build_policy is not None
         or uploaded_prior_to is not None
         or uploaded_disabled
@@ -1030,6 +1041,7 @@ def _build_package_overrides(
             dist_policy=dist_policy,
             dist_trust_unverified_deps=dist_trust,
             assume_universal_deps=assume_universal_deps,
+            allow_zip_sdists=allow_zip_sdists,
             build_policy=build_policy,
             uploaded_prior_to=uploaded_prior_to,
             uploaded_prior_to_disabled=uploaded_disabled,
@@ -1186,6 +1198,13 @@ def _parse_index_override_body(
         if "assume-universal-deps" in body
         else None
     )
+    allow_zip_sdists = (
+        _parse_bool(
+            f"{where}.allow-zip-sdists", body["allow-zip-sdists"], default=False
+        )
+        if "allow-zip-sdists" in body
+        else None
+    )
 
     build_policy = (
         parse_enum(
@@ -1212,6 +1231,7 @@ def _parse_index_override_body(
         dist_policy is not None
         or dist_trust is not None
         or assume_universal_deps is not None
+        or allow_zip_sdists is not None
         or build_policy is not None
         or uploaded_prior_to is not None
         or uploaded_disabled
@@ -1228,6 +1248,7 @@ def _parse_index_override_body(
         dist_policy=dist_policy,
         dist_trust_unverified_deps=dist_trust,
         assume_universal_deps=assume_universal_deps,
+        allow_zip_sdists=allow_zip_sdists,
         build_policy=build_policy,
         uploaded_prior_to=uploaded_prior_to,
         uploaded_prior_to_disabled=uploaded_disabled,

@@ -7,11 +7,10 @@ Two flavours, both keyed off a ``file://`` URL pointing at a directory:
   :class:`~nab_index.client.WheelFile` /
   :class:`~nab_index.client.SdistFile` records mirror what an HTTPS
   Simple API returns.
-* Flat wheelhouse: a directory containing ``.whl`` and ``.tar.gz``
+* Flat wheelhouse: a directory containing ``.whl``, ``.tar.gz`` and ``.zip``
   files at the top level (pip's ``--find-links ./wheels`` shape).
   On-disk filenames are parsed for ``(name, version)`` and every
-  distribution for a package is returned by ``get_files``.  ``.zip``
-  sdists are ignored, matching the remote-index behaviour.
+  distribution for a package is returned by ``get_files``.
 
 Reads run synchronously off the filesystem; the filesystem is the
 cache. The async surface is a thin shim over the sync helpers so the
@@ -177,7 +176,7 @@ def _is_dir(path: Path) -> bool:
     return mode is not None and stat.S_ISDIR(mode)
 
 
-_FLAT_EXTS = re.compile(r"\.(whl|tar\.gz)$", re.IGNORECASE)
+_FLAT_EXTS = re.compile(r"\.(whl|tar\.gz|zip)$", re.IGNORECASE)
 
 
 class _ScanResult(NamedTuple):
@@ -247,11 +246,14 @@ def _scan_pep503_directory(
             nameless += not link.unreachable
             continue
 
+        if (
+            not anchor.yanked
+            and (version := zip_sdist_version(filename, canonical)) is not None
+        ):
+            zip_sdists.add(version)
+
         if not is_readable_filename(filename):
-            if not anchor.yanked:
-                unreadable = True
-                if (version := zip_sdist_version(filename, canonical)) is not None:
-                    zip_sdists.add(version)
+            unreadable |= not anchor.yanked
             continue
 
         record = _make_record(
@@ -530,9 +532,8 @@ def _scan_flat_wheelhouse(
     one version, and ``iterdir`` order comes from the filesystem.
 
     One directory serves every package, so a file that does not name
-    ``package`` says nothing about it: only a ``.zip`` sdist of ``package``
-    makes the scan unreadable.  A flat directory has no yank marks and no
-    page that named ``package``'s files.
+    ``package`` says nothing about it. A flat directory has no yank marks
+    and no page that named ``package``'s files.
     """
     canonical = _canonical(package)
     files: list[WheelFile | SdistFile] = []
@@ -541,9 +542,9 @@ def _scan_flat_wheelhouse(
     for entry in sorted(root.iterdir()):
         if not _is_file(entry):
             continue
+        if (version := zip_sdist_version(entry.name, canonical)) is not None:
+            zip_sdists.add(version)
         if _FLAT_EXTS.search(entry.name) is None:
-            if (version := zip_sdist_version(entry.name, canonical)) is not None:
-                zip_sdists.add(version)
             continue
         record = _make_record(
             entry.name,
@@ -563,7 +564,7 @@ def _scan_flat_wheelhouse(
             files.append(replace(record, requires_python=requires_python))
     return _ScanResult(
         files,
-        unreadable=bool(zip_sdists),
+        unreadable=False,
         unreachable=False,
         all_yanked=False,
         named_files=False,

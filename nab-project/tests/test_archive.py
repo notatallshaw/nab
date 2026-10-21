@@ -16,6 +16,7 @@ import os
 import sys
 import tarfile
 import traceback
+import zipfile
 import zlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -847,9 +848,12 @@ class TestArchiveMaterialize:
         target = cache / digest
         seen_mid_extract: list[bool] = []
 
-        def watching_extract(payload: bytes, target_dir: Path) -> Path:
+        def watching_extract(
+            payload: bytes, target_dir: Path, *, allow_zip: bool
+        ) -> Path:
+            assert not allow_zip
             seen_mid_extract.append(target.exists())
-            return extract_sdist_archive(payload, target_dir)
+            return extract_sdist_archive(payload, target_dir, allow_zip=allow_zip)
 
         monkeypatch.setattr(sources, "extract_sdist_archive", watching_extract)
         provider = _provider([source], cache)
@@ -879,9 +883,12 @@ class TestArchiveMaterialize:
         target = cache / digest
         seen_mid_extract: list[bool] = []
 
-        def racing_extract(payload: bytes, target_dir: Path) -> Path:
+        def racing_extract(
+            payload: bytes, target_dir: Path, *, allow_zip: bool
+        ) -> Path:
+            assert not allow_zip
             seen_mid_extract.append(target.exists())
-            root = extract_sdist_archive(payload, target_dir)
+            root = extract_sdist_archive(payload, target_dir, allow_zip=allow_zip)
             _warm_extracted_tree(cache, digest)
             (target / "tree" / "WINNER").write_text("", encoding="utf-8")
             return root
@@ -909,8 +916,11 @@ class TestArchiveMaterialize:
         digest = hashlib.sha256(data).hexdigest()
         cache = tmp_path / "arch"
 
-        def interrupted_extract(payload: bytes, target_dir: Path) -> Path:
-            extract_sdist_archive(payload, target_dir)
+        def interrupted_extract(
+            payload: bytes, target_dir: Path, *, allow_zip: bool
+        ) -> Path:
+            assert not allow_zip
+            extract_sdist_archive(payload, target_dir, allow_zip=allow_zip)
             raise KeyboardInterrupt
 
         monkeypatch.setattr(sources, "extract_sdist_archive", interrupted_extract)
@@ -1751,3 +1761,15 @@ class TestSourceWithoutProjectFile:
         with pytest.raises(UnsupportedSdistError) as excinfo:
             self._extract(tmp_path, kind="local", policy=BuildPolicy.NEVER)
         assert "has dynamic metadata" in str(excinfo.value)
+
+
+def test_declared_tarball_source_refuses_zip_bytes(tmp_path: Path) -> None:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        archive.writestr("foo-1.0.0/pyproject.toml", _PYPROJECT)
+    data = output.getvalue()
+    digest = hashlib.sha256(data).hexdigest()
+    with pytest.raises(UnsupportedSdistError, match="archive could not be extracted"):
+        sources._extract_archive(
+            tmp_path / "cache", digest, data, (("sha256", digest),)
+        )

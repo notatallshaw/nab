@@ -198,6 +198,7 @@ class _OverrideBody(TypedDict, total=False):
     dist_trust_unverified_deps: bool | None
     assume_universal_deps: bool | None
     build_policy: BuildPolicy | None
+    allow_zip_sdists: bool | None
     uploaded_prior_to: datetime | None
     uploaded_prior_to_disabled: bool
     index: str | None

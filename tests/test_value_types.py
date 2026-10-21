@@ -262,6 +262,7 @@ CASES = [
         {
             "archive_sources": (ArchiveSource("acme", "https://acme.test/a-1.zip"),),
             "assume_universal_deps": True,
+            "allow_zip_sdists": True,
             "base_group": "project",
             "build_group": "build",
             "build_policy": BuildPolicy.BUILD_REMOTE,
@@ -289,6 +290,7 @@ CASES = [
         {
             "archive_sources": (ArchiveSource("acme", "https://acme.test/a-2.zip"),),
             "assume_universal_deps": False,
+            "allow_zip_sdists": False,
             "base_group": "runtime",
             "build_group": "buildreqs",
             "build_policy": BuildPolicy.NEVER,
@@ -337,6 +339,7 @@ CASES = [
             "requires_python_source": "[tool.nab] requires-python",
             "uploaded_prior_to": LOCKED_AT,
             "dist_policy": DistPolicy.WHEEL_ONLY,
+            "allow_zip_sdists": True,
             "build_policy": BuildPolicy.BUILD_REMOTE,
             "build_requires_depth": 1,
             "trust_unverified_sdist_deps": True,
@@ -368,6 +371,7 @@ CASES = [
             "requires_python_source": "[project] requires-python",
             "uploaded_prior_to": None,
             "dist_policy": DistPolicy.SDIST_ONLY,
+            "allow_zip_sdists": False,
             "build_policy": BuildPolicy.NEVER,
             "build_requires_depth": 2,
             "trust_unverified_sdist_deps": False,

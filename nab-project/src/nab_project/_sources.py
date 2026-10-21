@@ -496,7 +496,7 @@ def _extract_archive(
             unpacked.mkdir()
 
             try:
-                root = extract_sdist_archive(data, unpacked)
+                root = extract_sdist_archive(data, unpacked, allow_zip=False)
             except ValueError as exc:
                 msg = f"archive could not be extracted: {exc}"
                 raise UnsupportedSdistError(msg) from exc

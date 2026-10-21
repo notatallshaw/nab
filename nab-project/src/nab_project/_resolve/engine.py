@@ -752,6 +752,7 @@ def _make_target_provider(
         root_extras=root_extras,
         uploaded_prior_to=inputs.uploaded_prior_to,
         dist_policy=inputs.dist_policy,
+        allow_zip_sdists=inputs.allow_zip_sdists,
         build_policy=inputs.build_policy,
         package_overrides=inputs.package_overrides,
         index_overrides=inputs.index_overrides,

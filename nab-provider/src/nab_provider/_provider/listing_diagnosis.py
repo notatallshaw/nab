@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from .listing import Cause, ListingPolicy
 
     # The configuration keys a remedy can change.
-    Field: TypeAlias = Literal["uploaded-prior-to", "dist-policy"]
+    Field: TypeAlias = Literal["uploaded-prior-to", "dist-policy", "allow-zip-sdists"]
 
     # The values :class:`OverrideLayer`, :class:`ReasonKind` and
     # :class:`BlockerKind` name.
@@ -96,6 +96,7 @@ FILTER_KEYS: dict[Cause, str] = {
     DropCause.UPLOAD_TIME_NAIVE: "uploaded-prior-to",
     DropCause.UPLOAD_TIME_AFTER_CUTOFF: "uploaded-prior-to",
     DropCause.DIST_POLICY: "dist-policy",
+    DropCause.ZIP_SDIST: "allow-zip-sdists",
     DropCause.SDIST_INSTALL_NO_SDIST: "dist-policy",
     DropCause.REQUIRES_PYTHON: "requires-python",
     # No configuration turns the tag pass on, so this is a description
@@ -572,6 +573,10 @@ def _base_pass(
             )
             continue
 
+        if _listing.zip_sdist_cause(provider, normalized, version, dist, policy):
+            dropped.append(DroppedFile(dist, version, DropCause.ZIP_SDIST))
+            continue
+
         survivors.append((version, dist))
 
     return dropped, survivors, sdist_install
@@ -675,6 +680,7 @@ _SHORT_EMPTY: dict[Cause, str] = {
     ),
     DropCause.UPLOAD_TIME_AFTER_CUTOFF: "uploaded-prior-to excluded every file",
     DropCause.DIST_POLICY: "{subject} excluded every file",
+    DropCause.ZIP_SDIST: "legacy ZIP sdists require allow-zip-sdists = true",
     DropCause.SDIST_INSTALL_NO_SDIST: "{subject} excluded every version",
     DropCause.REQUIRES_PYTHON: "no file supports Python {py}",
     DropCause.WHEEL_TAGS: "no wheel matches this platform or Python",
@@ -685,6 +691,7 @@ _SHORT_EMPTY: dict[Cause, str] = {
 # where saying so is not the generic "<subject> excluded every version in
 # range": a line naming the target has to carry the range somewhere else.
 _SHORT_IN_RANGE: dict[Cause, str] = {
+    DropCause.ZIP_SDIST: "legacy ZIP sdists in range require allow-zip-sdists = true",
     DropCause.REQUIRES_PYTHON: "no version in range supports Python {py}",
     DropCause.WHEEL_TAGS: "no wheel in range matches this platform or Python",
 }
@@ -696,10 +703,22 @@ _SHORT_UNNAMED_IN_RANGE = (
 
 
 def empty_listing_diagnostic(
-    provider: Provider, normalized: str, diagnosis: ListingDiagnosis
+    provider: Provider,
+    normalized: str,
+    diagnosis: ListingDiagnosis,
+    version_range: VersionRange | None = None,
 ) -> Diagnostic:
     """Say why nothing on ``normalized``'s listing is usable on this target."""
-    groups = _groups(diagnosis.dropped)
+    dropped = [
+        record
+        for record in diagnosis.dropped
+        if record.cause != DropCause.ZIP_SDIST
+        or version_range is None
+        or _version_of(record) in version_range
+    ]
+    groups = _groups(dropped)
+    if not groups and not diagnosis.unexplained:
+        return NO_MATCH
     clauses = [_clause(cause, records, diagnosis) for cause, records in groups]
     if diagnosis.unexplained:
         clauses.append(_render(None, diagnosis.unexplained))
@@ -882,6 +901,10 @@ def _join_names(names: Sequence[str]) -> str:
 # ``[singular|plural]`` picks the form it takes; ``{v}`` is the version the
 # clause quotes and ``{detail}`` the one value that cause carries.
 _CLAUSE_TEMPLATES: dict[Cause | None, str] = {
+    DropCause.ZIP_SDIST: (
+        "allow-zip-sdists = false excluded {n} legacy ZIP [sdist|sdists]"
+        " ([|newest: ]{v})"
+    ),
     DropCause.UPLOAD_TIME_MISSING: (
         "the uploaded-prior-to cutoff {cutoff} excluded {n} [file that"
         " publishes|files that publish] no upload time ([|newest: ]{v})"
@@ -1034,6 +1057,26 @@ _REMEDY_CONTEXT: dict[Layer, str] = {
 # Name a setting to change, not a TOML fragment that may duplicate
 # its table. Lifting a filter admits files; it does not promise a resolution.
 _TRY_LINES: dict[tuple[Field, Layer], str] = {
+    ("allow-zip-sdists", OverrideLayer.GLOBAL): (
+        'set packages."{selector}".allow-zip-sdists = true'
+    ),
+    ("allow-zip-sdists", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
+        'add a package-rules entry with match = ["{selector}"] and'
+        " allow-zip-sdists = true"
+    ),
+    ("allow-zip-sdists", OverrideLayer.GLOBAL_BARE_ENTRY): (
+        "add allow-zip-sdists = true to {label}"
+    ),
+    ("allow-zip-sdists", OverrideLayer.GLOBAL_SCOPED_OVERLAP): (
+        "revise the scoped entries to admit this version without overlapping"
+        " allow-zip-sdists settings"
+    ),
+    ("allow-zip-sdists", OverrideLayer.PACKAGE): (
+        "set allow-zip-sdists = true on {label}"
+    ),
+    ("allow-zip-sdists", OverrideLayer.INDEX): (
+        "set index.{key}.allow-zip-sdists = true"
+    ),
     ("uploaded-prior-to", OverrideLayer.GLOBAL): (
         'set packages."{selector}".uploaded-prior-to = false'
     ),
@@ -1081,6 +1124,7 @@ _TRY_LINES: dict[tuple[Field, Layer], str] = {
 # one entry setting it from another: two version-scoped entries can give
 # one listing two cutoffs or two policies, and each is answered separately.
 _REMEDY_FIELDS: dict[Cause, tuple[Field, str]] = {
+    DropCause.ZIP_SDIST: ("allow-zip-sdists", "detail"),
     DropCause.UPLOAD_TIME_MISSING: ("uploaded-prior-to", "cutoff"),
     DropCause.UPLOAD_TIME_UNPARSEABLE: ("uploaded-prior-to", "cutoff"),
     DropCause.UPLOAD_TIME_NAIVE: ("uploaded-prior-to", "cutoff"),
@@ -1182,6 +1226,7 @@ def _toml_key(name: str) -> str:
 # The single-file clause for a rung that took one named artifact, which the
 # metadata ladder needs: there the file, not the count, is the evidence.
 _FILE_CLAUSES: dict[Cause, str] = {
+    DropCause.ZIP_SDIST: "allow-zip-sdists = false excluded {filename}",
     DropCause.UPLOAD_TIME_MISSING: (
         "the uploaded-prior-to cutoff {cutoff} excluded {filename},"
         " which publishes no upload time"

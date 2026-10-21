@@ -262,7 +262,8 @@ One axis usually sets several variables at once, so an impossible combination ca
 The matrix also decides which wheels a tuple can install, computed from the python version,
 platform, and implementation without a live interpreter. A version whose only wheels are
 tag-incompatible with a tuple is dropped for that tuple; a version that also ships a `.tar.gz` sdist
-stays, subject to the build policy. Each tuple accepts three wheel-tag dimensions:
+stays, subject to the build policy. Legacy `.zip` sdists require `allow-zip-sdists = true` and
+follow the same metadata rules. Each tuple accepts three wheel-tag dimensions:
 
 - interpreter: `cpXY` for CPython, `ppXY` for PyPy, plus the interpreter-agnostic `py3` tags.
 - abi: `cpXY` and `abi3` for CPython, `cpXYt` and `abi3t` on a free-threaded target, `pypyXY_ppNN`

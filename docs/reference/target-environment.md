@@ -51,9 +51,9 @@ PEP 508 markers condition dependencies; PEP 425 tags filter wheels. A version wi
 wheels and no sdist is not a candidate (`pywin32` on Linux). The lockfile records only wheels the
 target can install.
 
-Tags filter wheels only, so a `.tar.gz` sdist keeps a version alive for any target. nab drops every
-other sdist format when it parses the listing, so a version whose only sdist is a `.zip` and which
-ships no wheel is not a candidate either (`pyreadline==2.1`).
+Tags filter wheels only, so a `.tar.gz` sdist keeps a version alive for any target. Legacy `.zip`
+sdists do the same when `allow-zip-sdists` is enabled. Without it, a release that ships only a
+`.zip` sdist and no wheel is not a candidate either (`pyreadline==2.1`).
 
 The lock records this single target in PEP 751 `environments`; an installer rejects it on other
 platforms. See [Lockfiles](lockfile.md). `mode = "universal"` lets nab resolve several targets

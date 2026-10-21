@@ -56,6 +56,7 @@ _PAGES = (
     ("uploaded-prior-to", "reference/resolution-settings.md"),
     ("dist-policy", "reference/distribution-policy.md"),
     ("assume-universal-deps", "reference/build-policy.md"),
+    ("allow-zip-sdists", "reference/distribution-policy.md"),
     ("build-policy", "reference/build-policy.md"),
     ("build-requires-depth", "reference/build-policy.md"),
     ("environment", "reference/target-environment.md"),

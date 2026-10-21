@@ -11,7 +11,7 @@ Layout under ``root``:
     simple-v3/<index>[-<serialization>]/<package>.policy  <- {fetched_at, max_age,
                                                               etag, page_url,
                                                               body_digest}
-    simple-parsed-v0/<index>[-<serialization>]/<package>.parsed  <- parsed blob
+    simple-parsed-v1/<index>[-<serialization>]/<package>.parsed  <- parsed blob
     simple-neg-v0/<index>[-<serialization>]/<package>.neg <- {fetched_at, max_age, etag}
     metadata-v1/<index>/<package>/<url digest>.metadata
     sdist-v2/<index>/<package>/<version>.record  <- pkg_info and pyproject,
@@ -95,7 +95,7 @@ __all__ = [
 
 
 CACHE_VERSION_SIMPLE = "v3"
-CACHE_VERSION_SIMPLE_PARSED = "v0"
+CACHE_VERSION_SIMPLE_PARSED = "v1"
 CACHE_VERSION_SIMPLE_NEG = "v0"
 CACHE_VERSION_METADATA = "v1"
 CACHE_VERSION_SDIST = "v2"

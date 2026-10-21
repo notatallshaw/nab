@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 # forward the outer value, pin a fixed one, or leave the default.
 _INNER_FORWARDS = frozenset(
     {
+        "allow_zip_sdists",
         "decision_order",
         "index_overrides",
         "indexes",
@@ -79,6 +80,7 @@ def _inputs_off_every_default(tmp_path: Path) -> ResolveInputs:
     that failed to cross would read back as the one it was meant to carry.
     """
     return ResolveInputs(
+        allow_zip_sdists=True,
         archive_sources=(
             ArchiveSource("blob", "https://example.invalid/b-1.0.tar.gz"),
         ),

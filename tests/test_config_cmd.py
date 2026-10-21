@@ -69,6 +69,7 @@ _CLI_FLAG_CASES: tuple[tuple[str, str, str], ...] = (
     ("uploaded-prior-to", "2024-06-01T00:00:00Z", "2024-06-01 00:00:00+00:00"),
     ("dist-policy", "sdist-only", "sdist-only"),
     ("assume-universal-deps", "True", "true"),
+    ("allow-zip-sdists", "True", "true"),
     ("build-policy", "never", "never"),
     ("build-requires-depth", "3", "3"),
     ("offline", "True", "true"),
@@ -95,6 +96,7 @@ _DOWNLOAD_PROJECT_ARGV: tuple[tuple[str, str], ...] = (
     ("--project-uploaded-prior-to", "2024-06-01T00:00:00Z"),
     ("--project-dist-policy", "sdist-only"),
     ("--project-assume-universal-deps", "True"),
+    ("--project-allow-zip-sdists", "True"),
     ("--project-build-policy", "never"),
     ("--project-build-requires-depth", "3"),
 )
@@ -1263,6 +1265,24 @@ class TestProjectCliOverrides:
 
         assert inputs.assume_universal_deps is enabled
 
+    @pytest.mark.parametrize(
+        ("flag", "enabled"),
+        [
+            ("--project-allow-zip-sdists", True),
+            ("--no-project-allow-zip-sdists", False),
+        ],
+    )
+    def test_project_allow_zip_sdists_reaches_resolve(
+        self, hermetic_roots: Path, flag: str, enabled: bool
+    ) -> None:
+        proj = _project(
+            hermetic_roots, f"allow-zip-sdists = {str(not enabled).lower()}\n"
+        )
+        inputs = self._lock_inputs(proj, hermetic_roots / "pylock.toml", [flag])
+        assert inputs.allow_zip_sdists is enabled
+        assert inputs.build_policy is BuildPolicy.BUILD_LOCAL
+        assert inputs.trust_unverified_sdist_deps is False
+
     def test_project_dist_policy_override_replaces_trust(
         self, hermetic_roots: Path
     ) -> None:
@@ -1585,8 +1605,16 @@ class TestDownloadCliOverrides:
 
         assert inputs.dist_policy is DistPolicy.SDIST_ONLY
         assert inputs.build_policy is BuildPolicy.NEVER
+        assert inputs.allow_zip_sdists is True
         assert inputs.build_requires_depth == 3
         assert inputs.assume_universal_deps is True
+
+    def test_no_allow_zip_sdists_replaces_project_true(
+        self, hermetic_roots: Path
+    ) -> None:
+        proj = _project(hermetic_roots, "allow-zip-sdists = true\n")
+        inputs = self._inputs(proj, ["--no-project-allow-zip-sdists"])
+        assert inputs.allow_zip_sdists is False
 
     def test_every_project_flag_has_a_case(self) -> None:
         exercised = {flag for flag, _ in _DOWNLOAD_PROJECT_ARGV} | {"--project-mode"}

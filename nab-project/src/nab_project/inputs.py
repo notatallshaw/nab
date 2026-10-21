@@ -42,6 +42,7 @@ class ResolveInputs(ValueType):
     __slots__ = __match_args__ = (
         "archive_sources",
         "assume_universal_deps",
+        "allow_zip_sdists",
         "base_group",
         "build_group",
         "build_policy",
@@ -65,6 +66,7 @@ class ResolveInputs(ValueType):
 
     archive_sources: tuple[ArchiveSource, ...]
     assume_universal_deps: bool
+    allow_zip_sdists: bool
     base_group: str | None
     build_group: str | None
     build_policy: BuildPolicy
@@ -90,6 +92,7 @@ class ResolveInputs(ValueType):
         *,
         archive_sources: tuple[ArchiveSource, ...] = (),
         assume_universal_deps: bool = False,
+        allow_zip_sdists: bool = False,
         base_group: str | None = None,
         build_group: str | None = None,
         build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL,
@@ -113,6 +116,7 @@ class ResolveInputs(ValueType):
         """Record the settings, each defaulting to what a bare project gets."""
         self.archive_sources = archive_sources
         self.assume_universal_deps = assume_universal_deps
+        self.allow_zip_sdists = allow_zip_sdists
         self.base_group = base_group
         self.build_group = build_group
         self.build_policy = build_policy

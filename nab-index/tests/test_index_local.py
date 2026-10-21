@@ -120,19 +120,27 @@ def test_the_all_yanked_flag_counts_the_yanked_links(
     assert scan.all_yanked is expected
 
 
-def test_a_page_of_yanked_misnamed_links_reads_as_yanked(tmp_path: Path) -> None:
+def test_a_page_of_yanked_unreadable_links_reads_as_yanked(tmp_path: Path) -> None:
     """The unreadable flag skips yanked links, so only the yank flag answers.
 
     Nothing can set both flags: the unreadable one needs a link that stands,
     and the yank one needs every link withdrawn.
     """
-    package_dir = _make_index(tmp_path, _anchor("foo-1.0.zip", yanked=True))
+    package_dir = _make_index(tmp_path, _anchor("foo-1.0.exe", yanked=True))
 
     scan = _scan_pep503_directory(package_dir, "foo")
 
     assert scan.files == []
     assert not scan.unreadable
     assert scan.all_yanked
+
+
+def test_a_page_of_installers_reports_unreadable(tmp_path: Path) -> None:
+    _make_index(tmp_path, _anchor("foo-1.0.win32.exe"))
+    client = LocalIndexClient(tmp_path.as_uri())
+
+    assert run(client.get_files("foo")) == []
+    assert client.served_unreadable_only("foo")
 
 
 def test_a_page_of_unreachable_links_is_not_an_absent_package(

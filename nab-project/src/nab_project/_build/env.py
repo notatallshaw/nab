@@ -947,6 +947,7 @@ def _inner_resolve_inputs(inputs: ResolveInputs) -> ResolveInputs:
     resolve reads, and a lock reproduces only if this search does too.
     """
     return ResolveInputs(
+        allow_zip_sdists=inputs.allow_zip_sdists,
         indexes=inputs.indexes,
         package_overrides=tuple(
             _without_build_permission(override) for override in inputs.package_overrides

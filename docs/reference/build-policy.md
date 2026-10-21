@@ -10,8 +10,9 @@ determine whether nab may invoke a backend.
 
 ## Defaults and supported archives
 
-An sdist below means a `.tar.gz`. nab drops every other format when it parses an index listing, so
-no policy sees one.
+An sdist below means a `.tar.gz`, or a legacy `.zip` when `allow-zip-sdists` is enabled. Allowing
+ZIP sdists does not change build permission or metadata trust; see
+{ref}`Legacy ZIP sdists <legacy-zip-sdists>`.
 
 The host-specific default is `build-local`: local checkouts and workspace members may invoke a
 backend, but remote sources (PyPI sdists, VCS clones, archive sources) are read statically only. For

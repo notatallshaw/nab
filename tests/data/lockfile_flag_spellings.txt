@@ -9,6 +9,7 @@
 --project-uploaded-prior-to
 --project-dist-policy
 --project-assume-universal-deps
+--project-allow-zip-sdists
 --project-build-policy
 --project-build-requires-depth
 --project-matrix-python

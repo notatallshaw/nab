@@ -167,6 +167,7 @@ class ProviderStats(Record):
         "excluded_by_time",
         "excluded_by_dist_policy",
         "excluded_by_build_policy",
+        "excluded_zip_sdists",
         "excluded_by_wheel_tags",
         "excluded_versions_no_compatible_wheel",
         "sdist_pyproject_fallbacks",
@@ -190,6 +191,7 @@ class ProviderStats(Record):
     excluded_by_time: int
     excluded_by_dist_policy: int
     excluded_by_build_policy: int
+    excluded_zip_sdists: int
     excluded_by_wheel_tags: int
     excluded_versions_no_compatible_wheel: int
     sdist_pyproject_fallbacks: int
@@ -215,6 +217,7 @@ class ProviderStats(Record):
         excluded_by_time: int = 0,
         excluded_by_dist_policy: int = 0,
         excluded_by_build_policy: int = 0,
+        excluded_zip_sdists: int = 0,
         excluded_by_wheel_tags: int = 0,
         excluded_versions_no_compatible_wheel: int = 0,
         sdist_pyproject_fallbacks: int = 0,
@@ -238,6 +241,7 @@ class ProviderStats(Record):
         self.excluded_by_time = excluded_by_time
         self.excluded_by_dist_policy = excluded_by_dist_policy
         self.excluded_by_build_policy = excluded_by_build_policy
+        self.excluded_zip_sdists = excluded_zip_sdists
         self.excluded_by_wheel_tags = excluded_by_wheel_tags
         self.excluded_versions_no_compatible_wheel = (
             excluded_versions_no_compatible_wheel
@@ -491,11 +495,17 @@ def _dist_policy_value(override: PackageOverride | IndexOverride) -> object:
     return _unset_if_none(override.dist_policy)
 
 
+def _allow_zip_sdists_value(override: PackageOverride | IndexOverride) -> object:
+    """ZIP admission value, preserving an explicit refusal."""
+    return _unset_if_none(override.allow_zip_sdists)
+
+
 # What each field a remedy can name is read with, so the layer lookup and
 # the effective value read the same surfaces the same way.
 _SOURCE_VALUES: dict[str, Callable[[PackageOverride | IndexOverride], object]] = {
     "uploaded-prior-to": _uploaded_prior_to_value,
     "dist-policy": _dist_policy_value,
+    "allow-zip-sdists": _allow_zip_sdists_value,
 }
 
 
@@ -694,6 +704,7 @@ class Provider:
         constraints: Mapping[str, VersionRange] | None = None,
         trust_unverified_sdist_deps: bool = False,
         assume_universal_deps: bool = False,
+        allow_zip_sdists: bool = False,
         decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
         release_refused_wheels: bool = False,
         defer_yanked: bool = False,
@@ -739,6 +750,7 @@ class Provider:
         # routing through the dynamic path. Off by default (strict PEP 643).
         self.trust_unverified_sdist_deps = trust_unverified_sdist_deps
         self.assume_universal_deps = assume_universal_deps
+        self.allow_zip_sdists = allow_zip_sdists
         self._resolution_strategy = resolution_strategy
         # The scan asks this once per package, so keep the answer.
         self.settle_listings = decision_order is DecisionOrder.STABLE
@@ -1156,6 +1168,27 @@ class Provider:
         if result is _UNSET:
             return self.dist_policy
         assert isinstance(result, DistPolicy)
+        return result
+
+    def effective_allow_zip_sdists(
+        self,
+        canonical_name: str,
+        version: Version,
+        index_name: str | None = None,
+    ) -> bool:
+        """Return whether this indexed release may use legacy ZIP sdists."""
+        if not self.has_overrides:
+            return self.allow_zip_sdists
+        result = self._effective_field(
+            canonical_name,
+            version,
+            index_name,
+            field="allow-zip-sdists",
+            value=_allow_zip_sdists_value,
+        )
+        if result is _UNSET:
+            return self.allow_zip_sdists
+        assert isinstance(result, bool)
         return result
 
     def effective_uploaded_prior_to(
@@ -2085,6 +2118,10 @@ class Provider:
         if not all_versions:
             _, _, normalized = self.split_and_normalize(package)
             reason = self._empty_listing_marker(normalized)
+            if reason.kind == _diagnosis.ReasonKind.FILTERED_EMPTY:
+                reason = _diagnosis.NoVersionsReason(
+                    reason.kind, version_range=version_range
+                )
         elif blockers or metadata:
             # Look-ahead rejection: candidates DID match the range but
             # were rejected.  Naming the blocker is more useful than
@@ -2420,7 +2457,9 @@ class Provider:
         if diagnosis is None:
             return _diagnosis.NO_MATCH
         if recorded.kind == _diagnosis.ReasonKind.FILTERED_EMPTY:
-            return _diagnosis.empty_listing_diagnostic(self, normalized, diagnosis)
+            return _diagnosis.empty_listing_diagnostic(
+                self, normalized, diagnosis, recorded.version_range
+            )
 
         # The screen passed, so the marker carries the range it screened.
         assert recorded.version_range is not None

@@ -4771,13 +4771,8 @@ class TestAugmentResolutionError:
         assert unreadable.value.verbose_message is not None
         assert "no readable PKG-INFO" in unreadable.value.verbose_message
 
-    def test_zip_sdist_is_not_reported_as_never_published(self, tmp_path: Path) -> None:
-        """The diagnostics name the format, rather than reporting no sdist.
-
-        ``foo`` 1.0 publishes a sidecar-less wheel beside a ``.zip`` sdist,
-        which the listing parse drops.  Reading the report as no sdist would
-        send the user looking for a release that has one.
-        """
+    def test_filtered_zip_sdist_suggests_admission(self, tmp_path: Path) -> None:
+        """A wheel without metadata can use its ZIP sibling after admission."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             '[project]\nname = "proj"\ndependencies = ["foo"]\n',
@@ -4792,8 +4787,15 @@ class TestAugmentResolutionError:
             has_metadata=False,
             upload_time=None,
         )
+        sdist = SdistFile(
+            filename="foo-1.0.zip",
+            url="https://example.com/foo-1.0.zip",
+            version="1.0",
+            requires_python=None,
+            upload_time=None,
+        )
         coordinator = make_coordinator()
-        coordinator.index.store_listing("foo", [wheel], zip_sdists=frozenset({"1.0"}))
+        coordinator.index.store_listing("foo", [wheel, sdist])
 
         with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
@@ -4802,11 +4804,13 @@ class TestAugmentResolutionError:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         diagnostics = _diagnostics(info.value)
-        assert "foo: every version in range was rejected on its metadata" in diagnostics
         assert (
-            "No metadata for foo==1.0: no PEP 658 metadata and the sdist is a"
-            " .zip, a format nab drops" in diagnostics
+            "foo: allow-zip-sdists excluded the sdist nab needed for metadata"
+            in diagnostics
         )
+        assert "allow-zip-sdists = false excluded foo-1.0.zip" in diagnostics
+        assert 'packages."foo".allow-zip-sdists = true' in str(info.value)
+        assert coordinator.calls_to("request_sdist") == []
 
     def test_a_resolve_that_survives_the_ladder_never_walks_the_listing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

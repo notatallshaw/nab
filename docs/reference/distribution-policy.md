@@ -13,12 +13,45 @@ the lockfile. The default `wheel-or-sdist` treats wheels and sdists symmetricall
 
 ## Supported artifacts
 
-nab drops every sdist format but `.tar.gz` when it parses an index listing, before any policy sees
-it, so a version whose only sdist is a `.zip` counts as shipping none. A wheel-admitting policy sees
-only its wheels, and `sdist-only` and `sdist-install` skip it, since both need an sdist to lock.
+nab admits `.tar.gz` sdists by default. Legacy `.zip` sdists require `allow-zip-sdists = true`;
+other sdist formats are unsupported. A release with only a refused `.zip` sdist has no usable sdist,
+so `sdist-only` and `sdist-install` skip it. A wheel-admitting policy may still select its wheels.
 
 `wheel-only` is the equivalent of pip's `--only-binary :all:` and `sdist-only` of
 `--no-binary :all:`, scoped per package or per index via an override.
+
+(legacy-zip-sdists)=
+
+## Legacy ZIP sdists
+
+`allow-zip-sdists` defaults to `false`:
+
+```toml
+[tool.nab]
+allow-zip-sdists = false
+```
+
+Enable it for a package whose required release was published only in the older `.zip` format:
+
+```toml
+[tool.nab.packages."legacy-package == 1.0"]
+allow-zip-sdists = true
+```
+
+The setting works globally under `[tool.nab]`, in `[[tool.nab.package-rules]]`, and per index under
+`[tool.nab.index.<name>]`. An explicit `false` override refuses ZIP sdists even when the global
+setting is `true`. Package and index settings conflict when both set the field for a candidate,
+including when their values agree.
+
+For one command, use `--project-allow-zip-sdists` or `--no-project-allow-zip-sdists`.
+`nab config get allow-zip-sdists` shows the effective global setting.
+
+Enabling ZIP sdists does not permit builds or trust older `PKG-INFO` dependency metadata. A package
+that needs a backend invocation still requires `build-policy = "build-remote"`; use a package
+override for that permission. Direct `archive-sources` remain limited to `.tar.gz` archives.
+
+An index serving only ZIP sdists still owns the package under the usual first-index policy. Refusing
+those sdists does not fall through to another index.
 
 ## Reading dependency metadata
 

@@ -2702,11 +2702,7 @@ class TestMultiIndexCoordinator:
             assert coord.index.get_listing_index("foo") == "local"
 
     def test_local_zip_sdist_reaches_the_store(self, tmp_path: Path) -> None:
-        """A ``.zip`` sdist leaves no record, so its release rides beside them.
-
-        The wheel keeps the listing non-empty, which is the case the
-        package-level unreadable-format flag cannot report.
-        """
+        """A ZIP sdist reaches the policy layer alongside the wheel."""
         wheelhouse = tmp_path / "wheelhouse"
         wheelhouse.mkdir()
         (wheelhouse / "foo-1.0-py3-none-any.whl").write_bytes(b"")
@@ -2716,9 +2712,33 @@ class TestMultiIndexCoordinator:
             coord.request_listing("foo").wait(timeout=5)
             listing = coord.index.get_listing("foo")
             assert listing is not None
-            assert [f.filename for f in listing] == ["foo-1.0-py3-none-any.whl"]
+            assert {f.filename for f in listing} == {
+                "foo-1.0-py3-none-any.whl",
+                "foo-1.0.zip",
+            }
             assert not coord.index.is_unreadable_only_listing("foo")
             assert coord.index.zip_sdist_versions("foo") == frozenset({"1.0"})
+
+    @respx.mock
+    def test_zip_with_an_unsupported_url_is_stored_as_unreachable(self) -> None:
+        respx.get("https://pypi.org/simple/foo/").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "files": [
+                        {
+                            "filename": "foo-1.0.zip",
+                            "url": "https://[invalid/foo-1.0.zip",
+                        }
+                    ]
+                },
+            )
+        )
+        with _coord() as coord:
+            coord.request_listing("foo").wait(timeout=5)
+            assert coord.index.get_listing("foo") == []
+            assert coord.index.is_unreachable_only_listing("foo")
+            assert not coord.index.is_unreadable_only_listing("foo")
 
     def test_local_index(self, tmp_path: Path) -> None:
         """A file:// index uses LocalIndexClient."""

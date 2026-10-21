@@ -223,8 +223,6 @@ def _ladder_failure(
     elif _index_published_sdist(index, normalized, version):
         reason = _FILTERED_SDIST
         filtered_sdist = version
-    elif _index_served_zip_sdist(index, normalized, version):
-        reason = "no PEP 658 metadata and the sdist is a .zip, a format nab drops"
     else:
         reason = "no PEP 658 metadata and no sdist available"
 
@@ -257,22 +255,6 @@ def _index_published_sdist(
         _released_version(dist.version) == version
         for dist in index.get_listing(normalized) or ()
         if isinstance(dist, SdistFile)
-    )
-
-
-def _index_served_zip_sdist(
-    index: InMemoryIndex, normalized: str, version: Version
-) -> bool:
-    """Whether the index served ``version``'s sdist as a ``.zip``.
-
-    The listing parse drops a ``.zip``, so no record of it survives for
-    :func:`_index_published_sdist` to find.  The versions ride alongside the
-    listing instead, and are compared as parsed versions, since ``1.0`` and
-    ``1.0.0`` name one release.
-    """
-    return any(
-        _released_version(dropped) == version
-        for dropped in index.zip_sdist_versions(normalized)
     )
 
 
@@ -684,7 +666,7 @@ def pick_dist(
     if wheels is None:
         wheels = [d for d in dists if isinstance(d, WheelFile)]
     if not wheels:
-        return dists[0]
+        return min(dists, key=lambda dist: dist.filename.endswith(".zip"))
 
     if tags is None:
         wheels = _python_axis_narrowed(target, wheels)
@@ -932,11 +914,15 @@ def find_sdist(
     versions: list[tuple[Version, DistFile]],
     version: Version,
 ) -> SdistFile | None:
-    """Find an sdist for a specific version, or None."""
+    """Find an sdist for a version, preferring gzip-tar over legacy ZIP."""
+    fallback = None
     for v, d in versions:
         if v == version and isinstance(d, SdistFile):
-            return d
-    return None
+            if not d.filename.endswith(".zip"):
+                return d
+            if fallback is None:
+                fallback = d
+    return fallback
 
 
 def fetch_sdist_metadata(
