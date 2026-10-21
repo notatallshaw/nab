@@ -53,7 +53,7 @@ from nab_provider.metadata import WheelMetadata
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import BuildPolicy
 from nab_provider.serialization import SimpleSerialization
-from nab_provider.store import sdist_artifact_key
+from nab_provider.store import metadata_pending_key, sdist_artifact_key
 from nab_provider.testing import make_wheel, pkg_override
 
 
@@ -4409,3 +4409,43 @@ class TestSdistArchiveHolding:
 
             for minor in (1, 2, 3):
                 assert hold.take("pkg", f"1.{minor}") == b"archive bytes"
+
+
+class TestSyncMetadata:
+    """An owned disk cache may fulfill the pending before the async queue."""
+
+    @pytest.mark.parametrize("batch", [False, True])
+    def test_warm_hit_sets_its_url_pending(self, tmp_path: Path, batch: bool) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        url = "https://f.com/pkg-1.0.whl.metadata"
+        cache.put_metadata("pkg", url, "cached text")
+        coord = _coord(cache_backend=cache)
+        if batch:
+            event = coord.request_metadata_batch([("pkg", "1.0", url, None)])[0][2]
+        else:
+            event = coord.request_metadata("pkg", "1.0", url)
+        assert event.is_set()
+        assert coord.index.get_metadata("pkg", "1.0", url) == "cached text"
+        assert coord.index.get_metadata("pkg", "1.0", url + "other") is None
+
+    def test_existing_pending_joins_without_reading(self, tmp_path: Path) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        url = "https://f.com/pkg-1.0.whl.metadata"
+        cache.put_metadata("pkg", url, "cached text")
+        coord = _coord(cache_backend=cache)
+        pending, existed = coord.index.get_or_create_pending(
+            metadata_pending_key("pkg", "1.0", url)
+        )
+        assert not existed
+        assert coord.request_metadata("pkg", "1.0", url) is pending
+        assert not pending.is_set()
+        assert coord.index.get_metadata("pkg", "1.0", url) is None
+
+    def test_conflicting_backend_does_not_serve_inline(self, tmp_path: Path) -> None:
+        cache = OnDiskCache(tmp_path / "different", "https://pypi.org/simple/")
+        url = "https://f.com/pkg-1.0.whl.metadata"
+        cache.put_metadata("pkg", url, "wrong cache")
+        coord = _coord(cache_backend=cache, cache_dir=tmp_path / "actual")
+        event = coord.request_metadata("pkg", "1.0", url)
+        assert event.is_set()
+        assert coord.index.get_metadata("pkg", "1.0", url) is None

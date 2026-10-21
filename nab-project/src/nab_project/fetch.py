@@ -415,6 +415,11 @@ class FetchCoordinator:
             and not is_file_url(self.indexes[0].url)
             and isinstance(self._cache, OnDiskCache)
         )
+        self._sync_metadata_enabled = (
+            self._sync_listing_enabled
+            and type(self._cache) is OnDiskCache
+            and not (cache_backend is not None and cache_dir is not None)
+        )
         # Progress hook: fired once per successful listing fetch, from the
         # fetcher thread.  ``None`` when nothing is watching (the common case).
         self._on_fetch = on_fetch
@@ -665,6 +670,16 @@ class FetchCoordinator:
         self._submit(FetchRequest(kind=FetchKind.LISTING, package=package))
         return event
 
+    def _try_metadata_sync(self, package: str, version: str, url: str) -> bool:
+        """Fulfill a claimed metadata request from the owned immutable cache."""
+        if not self._sync_metadata_enabled:
+            return False
+        text = self._cache.get_metadata(package, url)
+        if text is None:
+            return False
+        self.index.store_metadata(package, version, text, metadata_url=url)
+        return True
+
     def request_metadata(
         self,
         package: str,
@@ -680,7 +695,7 @@ class FetchCoordinator:
             return done
         key = metadata_pending_key(package, version, url)
         event, existed = self.index.get_or_create_pending(key)
-        if not existed:
+        if not existed and not self._try_metadata_sync(package, version, url):
             self._submit(
                 FetchRequest(
                     kind=FetchKind.METADATA,
@@ -876,7 +891,7 @@ class FetchCoordinator:
                 continue
             key = metadata_pending_key(package, version, url)
             event, existed = self.index.get_or_create_pending(key)
-            if not existed:
+            if not existed and not self._try_metadata_sync(package, version, url):
                 batch.append(
                     FetchRequest(
                         kind=FetchKind.METADATA,
