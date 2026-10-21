@@ -356,16 +356,26 @@ class SdistArchiveHold:
         self._held.clear()
 
 
-def _metadata_identity(
-    version: str, metadata_hash: tuple[str, str] | None
-) -> tuple[str, str, str] | None:
-    """Scope sidecar reuse to one coordinate and a strong published digest."""
+def _reusable_metadata_hash(
+    metadata_hash: tuple[str, str] | None,
+) -> tuple[str, str] | None:
+    """Return an advertised digest only when its algorithm admits sidecar reuse."""
     if metadata_hash is None:
         return None
-    algorithm, digest = metadata_hash
+    algorithm, _ = metadata_hash
     if algorithm not in ACCEPTED_HASH_ALGORITHMS:
         return None
-    return version, algorithm, digest
+    return metadata_hash
+
+
+class _VersionSidecars:
+    """Verified sidecars for one package version, owned by the client lifetime."""
+
+    __slots__ = ("texts", "version")
+
+    def __init__(self, version: str) -> None:
+        self.version = version
+        self.texts: dict[tuple[str, str], str] = {}
 
 
 class CachedAsyncSimpleClient:
@@ -433,8 +443,8 @@ class CachedAsyncSimpleClient:
         self._sdist_archive_hold = sdist_archive_hold
         self._policy_writes: set[asyncio.Task[None]] = set()
 
-        # Replace old variants so backtracking cannot accumulate sidecar bodies.
-        self._verified_sidecars: dict[str, tuple[tuple[str, str, str], str]] = {}
+        # Replace old versions so backtracking cannot accumulate sidecar histories.
+        self._verified_sidecars: dict[str, _VersionSidecars] = {}
 
     async def aclose(self) -> None:
         """Wait for policy writes, then close the underlying transport."""
@@ -892,14 +902,15 @@ class CachedAsyncSimpleClient:
             msg = f"No cached metadata for {package}=={version} (offline mode)"
             raise OfflineError(msg)
 
-        identity = _metadata_identity(version, metadata_hash)
-        if identity is not None:
+        # Share only metadata verified for the same package version.
+        reusable_hash = _reusable_metadata_hash(metadata_hash)
+        if reusable_hash is not None:
             shared = self._verified_sidecars.get(package)
-            if shared is not None:
-                shared_identity, shared_text = shared
-                if shared_identity == identity:
-                    self._cache.put_metadata(package, metadata_url, shared_text)
-                    return shared_text
+            if shared is not None and shared.version == version:
+                text = shared.texts.get(reusable_hash)
+                if text is not None:
+                    self._cache.put_metadata(package, metadata_url, text)
+                    return text
 
         response = await self._transport.get(metadata_url)
         raise_unless_ok(response, metadata_url)
@@ -917,8 +928,12 @@ class CachedAsyncSimpleClient:
             raise MalformedSimpleResponseError(msg) from exc
 
         self._cache.put_metadata(package, metadata_url, text)
-        if identity is not None:
-            self._verified_sidecars[package] = identity, text
+        if reusable_hash is not None:
+            current = self._verified_sidecars.get(package)
+            if current is None or current.version != version:
+                current = _VersionSidecars(version)
+                self._verified_sidecars[package] = current
+            current.texts[reusable_hash] = text
 
         return text
 

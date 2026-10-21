@@ -193,10 +193,10 @@ def test_reuse_does_not_escape_the_client_lifetime() -> None:
     assert transport.requests == [_FIRST, _SECOND]
 
 
-def test_a_new_variant_replaces_the_packages_previous_body() -> None:
+def test_variants_of_the_same_version_remain_reusable() -> None:
     third = "https://example.invalid/demo-1.0-cp314-cp314-linux_x86_64.whl.metadata"
     other = _BODY.replace(b"\n\n", b"\nRequires-Dist: dependency\n\n")
-    transport = SidecarTransport({_FIRST: _BODY, _SECOND: other, third: _BODY})
+    transport = SidecarTransport({_FIRST: _BODY, _SECOND: other})
     client = CachedAsyncSimpleClient(transport, NullCache(), _INDEX)
 
     async def read() -> None:
@@ -209,8 +209,7 @@ def test_a_new_variant_replaces_the_packages_previous_body() -> None:
                 )
 
     asyncio.run(read())
-
-    assert transport.requests == [_FIRST, _SECOND, third]
+    assert transport.requests == [_FIRST, _SECOND]
 
 
 def test_close_releases_verified_bodies() -> None:
@@ -226,3 +225,26 @@ def test_close_releases_verified_bodies() -> None:
     asyncio.run(read())
 
     assert not client._verified_sidecars
+
+
+def test_a_new_version_replaces_previous_version_bodies() -> None:
+    third = "https://example.invalid/demo-1.0-cp314-cp314-linux_x86_64.whl.metadata"
+    other = _BODY.replace(b"Version: 1.0", b"Version: 2.0")
+    transport = SidecarTransport({_FIRST: _BODY, _SECOND: other, third: _BODY})
+    client = CachedAsyncSimpleClient(transport, NullCache(), _INDEX)
+
+    async def read() -> None:
+        async with client:
+            for url, version, body in (
+                (_FIRST, "1.0", _BODY),
+                (_SECOND, "2.0", other),
+                (third, "1.0", _BODY),
+            ):
+                digest = "sha256", hashlib.sha256(body).hexdigest()
+                assert (
+                    await client.get_metadata_text("demo", version, url, digest)
+                    == body.decode()
+                )
+
+    asyncio.run(read())
+    assert transport.requests == [_FIRST, _SECOND, third]
