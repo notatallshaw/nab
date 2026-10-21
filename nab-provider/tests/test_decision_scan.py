@@ -26,11 +26,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nab_provider._provider.priority import (
-    _NO_LISTING_PRIOR,
-    CONFLICT_THRESHOLD,
-    CULPRIT_DEMOTE_THRESHOLD,
-)
+from nab_provider._provider.priority import _NO_LISTING_PRIOR
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import DecisionOrder, Provider
@@ -38,6 +34,10 @@ from nab_provider.records import WheelFile
 from nab_provider.store import InMemoryIndex
 from nab_provider.testing import FakeFetchPort, make_coordinator, make_wheel
 from nab_resolver import decide
+from nab_resolver.priority import (
+    CONFLICT_THRESHOLD,
+    CULPRIT_DEMOTE_THRESHOLD,
+)
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 

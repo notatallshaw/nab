@@ -74,6 +74,24 @@ def test_an_unchanged_scan_reads_no_keys() -> None:
     assert book.take_read() == set()
 
 
+def test_excluded_package_is_restored_without_a_solution_change() -> None:
+    book = KeyBook({"a": (0, 1, "a"), "b": (0, 2, "b")})
+    queue: DecisionQueue[str] = DecisionQueue()
+    assert queue.pick({"a", "b"}, book.sort_key, {"a", "b"}, 0) == "a"
+    book.take_read()
+
+    assert queue.pick({"b"}, book.sort_key, set(), 0, excluded={"a"}) == "b"
+    assert book.take_read() == set()
+
+    book.keys["a"] = (0, 0, "a")
+    assert queue.pick({"a", "b"}, book.sort_key, set(), 0, excluded=set()) == "a"
+    assert book.take_read() == {"a"}
+
+    queue.clear()
+    assert queue.pick({"a", "b"}, book.sort_key, {"a", "b"}, 0) == "a"
+    assert book.take_read() == {"a", "b"}
+
+
 def test_a_changed_package_takes_the_lead_on_its_new_key() -> None:
     book = KeyBook({"a": (0, 2, "a"), "b": (0, 1, "b")})
     queue: DecisionQueue[str] = DecisionQueue()
@@ -272,6 +290,8 @@ class RecheckingDecisionQueue(DecisionQueue[str]):
         changed: set[str],
         epoch: int,
         key_inputs_arrived: Callable[[str], bool] | None = None,
+        *,
+        excluded: AbstractSet[str] | None = None,
     ) -> str:
         """Pick as usual, then check the cached keys against a fresh scan."""
         evaluated: set[str] = set()
@@ -281,7 +301,9 @@ class RecheckingDecisionQueue(DecisionQueue[str]):
             evaluated.add(package)
             return sort_key(package)
 
-        picked = super().pick(undecided, watched, changed, epoch, key_inputs_arrived)
+        picked = super().pick(
+            undecided, watched, changed, epoch, key_inputs_arrived, excluded=excluded
+        )
 
         if self._unready:
             self.unready_picks += 1
