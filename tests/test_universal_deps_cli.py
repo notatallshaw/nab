@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import io
 import tarfile
-import zipfile
 from typing import TYPE_CHECKING
 
 import pytest
@@ -18,23 +16,10 @@ from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import make_metadata
 
+from ._local_artifacts import make_wheel_archive, publish_artifacts
+
 if TYPE_CHECKING:
-    from collections.abc import Mapping
     from pathlib import Path
-
-
-def _wheel(name: str, version: str, metadata: str, tag: str) -> bytes:
-    """Build a wheel whose metadata can be read through the local index."""
-    content = io.BytesIO()
-    with zipfile.ZipFile(content, "w") as archive:
-        directory = f"{name}-{version}.dist-info"
-        archive.writestr(f"{directory}/METADATA", metadata + "\n")
-        archive.writestr(
-            f"{directory}/WHEEL",
-            "Wheel-Version: 1.0\nRoot-Is-Purelib: false\n" + f"Tag: {tag}\n",
-        )
-        archive.writestr(f"{directory}/RECORD", "")
-    return content.getvalue()
 
 
 def _dynamic_sdist(version: str = "6.0.0") -> bytes:
@@ -63,29 +48,17 @@ def _dynamic_sdist(version: str = "6.0.0") -> bytes:
     return content.getvalue()
 
 
-def _publish(index: Path, name: str, artifacts: Mapping[str, bytes]) -> None:
-    """Write a hashed Simple API page and the artifacts it names."""
-    directory = index / name
-    directory.mkdir(parents=True, exist_ok=True)
-    links = []
-    for filename, payload in artifacts.items():
-        (directory / filename).write_bytes(payload)
-        digest = hashlib.sha256(payload).hexdigest()
-        links.append(f'<a href="{filename}#sha256={digest}">{filename}</a>\n')
-    (directory / "index.html").write_text("".join(links), encoding="utf-8")
-
-
 @pytest.fixture
 def release_project(hermetic_roots: Path) -> Path:
     """Offer a dynamic sdist and one wheel that cannot install on Python 3.14."""
     index = hermetic_roots / "index"
     tag = "cp313-cp313-macosx_11_0_arm64"
-    _publish(
+    publish_artifacts(
         index,
         "watchdog",
         {
             "watchdog-6.0.0.tar.gz": _dynamic_sdist(),
-            f"watchdog-6.0.0-{tag}.whl": _wheel(
+            f"watchdog-6.0.0-{tag}.whl": make_wheel_archive(
                 "watchdog",
                 "6.0.0",
                 make_metadata(
@@ -103,11 +76,11 @@ def release_project(hermetic_roots: Path) -> Path:
     )
     for name in ("macos-dep", "linux-dep"):
         wheel_name = name.replace("-", "_")
-        _publish(
+        publish_artifacts(
             index,
             name,
             {
-                f"{wheel_name}-1-py3-none-any.whl": _wheel(
+                f"{wheel_name}-1-py3-none-any.whl": make_wheel_archive(
                     wheel_name, "1", make_metadata(name, "1"), "py3-none-any"
                 )
             },
@@ -138,24 +111,24 @@ def _fallback_release(project: Path) -> None:
         f"watchdog-{version}.tar.gz": _dynamic_sdist(version)
         for version in ("6.0.0", "6.1.0", "6.2.0")
     }
-    artifacts["watchdog-5.0.3-py3-none-any.whl"] = _wheel(
+    artifacts["watchdog-5.0.3-py3-none-any.whl"] = make_wheel_archive(
         "watchdog",
         "5.0.3",
         make_metadata("watchdog", "5.0.3"),
         "py3-none-any",
     )
-    _publish(project.parent / "index", "watchdog", artifacts)
+    publish_artifacts(project.parent / "index", "watchdog", artifacts)
 
 
 @pytest.fixture
 def wider_project(release_project: Path) -> Path:
     """Resolve a transitive watchdog dependency alongside two other packages."""
     _fallback_release(release_project)
-    _publish(
+    publish_artifacts(
         release_project.parent / "index",
         "application",
         {
-            "application-1-py3-none-any.whl": _wheel(
+            "application-1-py3-none-any.whl": make_wheel_archive(
                 "application",
                 "1",
                 make_metadata("application", "1", "watchdog>=5"),
