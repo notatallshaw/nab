@@ -68,8 +68,8 @@ dependencies, nab reports an error rather than pick one by guessing. It compares
 in hand, so it does not promise to catch every such case.
 
 For a dynamic sdist without a static metadata fallback, an explicit
-[`assume-universal-deps`](../reference/build-policy.md#assuming-dependencies-are-universal) override
-permits reusing a same-version wheel's dependency declarations across targets.
+{ref}`assume-universal-deps <assuming-dependencies-are-universal>` override permits reusing a
+same-version wheel's dependency declarations across targets.
 
 ## Patch-release markers
 

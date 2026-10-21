@@ -61,4 +61,4 @@ dist-policy = { policy = "wheel-or-sdist", trust-unverified-deps = false }
 ```
 
 To reuse same-version wheel dependencies for a dynamic sdist, use
-[`assume-universal-deps`](build-policy.md#assuming-dependencies-are-universal) instead.
+{ref}`assume-universal-deps <assuming-dependencies-are-universal>` instead.

@@ -16,7 +16,7 @@ no policy sees one.
 The host-specific default is `build-local`: local checkouts and workspace members may invoke a
 backend, but remote sources (PyPI sdists, VCS clones, archive sources) are read statically only. For
 declared platforms, including universal mode, nab defaults to `never`. Host metadata builds require
-an [explicit dependency assumption](#assuming-dependencies-are-universal) and build policy.
+an {ref}`explicit dependency assumption <assuming-dependencies-are-universal>` and build policy.
 
 ## `never`
 

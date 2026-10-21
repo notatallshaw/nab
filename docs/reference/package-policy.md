@@ -64,8 +64,8 @@ A body sets any combination of:
 - `dist-policy`: an enum string, or `{ policy = "...", trust-unverified-deps = true|false }`.
 - `build-policy`: an enum string.
 - `assume-universal-deps`: a boolean permitting dependency metadata to be reused across targets (see
-  [Build policy](build-policy.md#assuming-dependencies-are-universal)). An explicit `false` cancels
-  a global `true`.
+  {ref}`Build policy <assuming-dependencies-are-universal>`). An explicit `false` cancels a global
+  `true`.
 - `uploaded-prior-to`: a datetime with an explicit timezone offset, a `P<n>D` duration, or `false`
   (no cutoff for the selected versions).
 - `index`: route the selected packages to this declared index (a strict pin: only that index is
