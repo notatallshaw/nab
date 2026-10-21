@@ -92,19 +92,19 @@ workflows.
 
 ## Universal lock benchmark
 
-![Universal lock generation: cold and warm cache timings for Nab, uv, Poetry and PDM](docs/_static/universal-lock-benchmark.svg)
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/universal-lock-benchmark-dark.svg">
+    <img src="docs/_static/universal-lock-benchmark-light.svg" alt="Empty-cache universal lock generation timings for nab, uv, Poetry and PDM; shorter bars are faster." width="720">
+  </picture>
+</p>
 
-This selected small project locks Click and truststore for CPython 3.12–3.14 on Linux x86-64, macOS
-ARM64 and Windows AMD64. All four locks select the same packages on those nine targets. Nab and uv
-use explicit target environments; Poetry and PDM use their universal defaults.
+Locking Requests 2.32.3 for CPython 3.12–3.14 on Linux, macOS and Windows,
+measured on my local desktop with empty package caches.
 
-Nab writes `pylock.toml` directly; the other tools write their native lock formats. Each run starts
-without a lockfile. Cold runs use empty package caches; warm runs reuse primed caches. Exports used
-to check the pins are excluded from the timings. These results describe this workload, not a general
-ranking.
-
-Measured with Nab 0.0.23.dev0, uv 0.13.4, Poetry 2.5.1 and PDM 2.29.3. Nab uses urllib3 with
-`build-policy = "never"` and `decision-order = "stable"`; uv uses `fork-strategy = "fewest"`.
+Nab uses `--no-cache --http-backend httpx2`. Each tool writes its native lock format; all four locks select the same
+packages on the nine tested targets. Nab and uv target this matrix; Poetry and PDM use their
+universal defaults.
 
 ## Libraries
 
