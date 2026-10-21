@@ -102,9 +102,9 @@ A package can have at most one index route, because routing requires a bare-name
 ## Per-index overrides
 
 `[tool.nab.index.<name>]` is keyed by a declared index name. Each entry sets policy only
-(`dist-policy`, `allow-zip-sdists`, `assume-universal-deps`, `build-policy`,
-`uploaded-prior-to`, `assume-fresh-seconds`) and applies to every package served from that index.
-Routing and version selectors are per-package settings.
+(`dist-policy`, `allow-zip-sdists`, `assume-universal-deps`, `build-policy`, `uploaded-prior-to`,
+`assume-fresh-seconds`) and applies to every package served from that index. Routing and version
+selectors are per-package settings.
 
 ```toml
 # Everything served from PyPI is wheel-only.

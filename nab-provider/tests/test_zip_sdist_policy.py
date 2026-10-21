@@ -10,14 +10,20 @@ import pytest
 from nab_provider._provider import metadata_resolver
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
-from nab_provider.errors import OverrideConflictError
+from nab_provider.errors import OverrideConflictError, UnsupportedSdistError
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import DistPolicy
 from nab_provider.provider import ListingFilterCache, Provider
 from nab_provider.records import SdistFile
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
-from nab_provider.testing import make_coordinator, make_sdist, make_wheel, pkg_override
+from nab_provider.testing import (
+    make_coordinator,
+    make_metadata,
+    make_sdist,
+    make_wheel,
+    pkg_override,
+)
 
 if TYPE_CHECKING:
     from nab_provider.diagnostics import Diagnostic
@@ -270,6 +276,47 @@ def test_zip_only_and_wheel_metadata_selection() -> None:
     assert metadata_resolver.find_sdist(versions, Version("2.0")) is None
     wheel = make_wheel()
     assert metadata_resolver.pick_dist([zipped, wheel], None) is wheel
+
+
+@pytest.mark.parametrize("allowed", [False, True])
+@pytest.mark.parametrize("assumed", [False, True])
+def test_zip_admission_and_foreign_dependency_metadata_require_separate_opt_ins(
+    *, allowed: bool, assumed: bool
+) -> None:
+    wheel = make_wheel(tag="cp311-cp311-manylinux_2_17_x86_64")
+    zipped = zip_sdist()
+    coordinator = make_coordinator(
+        [wheel, zipped],
+        metadata_text=make_metadata("pkg", "1.0", "wheel-dep"),
+        sdist_pkg_info=(
+            make_metadata("pkg", "1.0", metadata_version="2.4")
+            + "Dynamic: Requires-Dist\n"
+        ),
+    )
+    provider = Provider(
+        coordinator,
+        ResolveTarget.for_declared(
+            python_version="3.11", spec=PlatformSpec("macos_arm64")
+        ),
+        allow_zip_sdists=allowed,
+        assume_universal_deps=assumed,
+    )
+
+    assert provider.fetch_versions("pkg") == (
+        [(Version("1.0"), zipped)] if allowed else []
+    )
+    if allowed and assumed:
+        assert set(provider.get_dependencies("pkg", Version("1.0"))) == {"wheel-dep"}
+        assert len(coordinator.calls_to("request_metadata")) == 1
+    elif allowed:
+        with pytest.raises(UnsupportedSdistError):
+            provider.get_dependencies("pkg", Version("1.0"))
+        assert coordinator.calls_to("request_metadata") == []
+    else:
+        assert provider.choose_version("pkg", SpecifierSet().to_range()) is None
+        assert coordinator.calls_to("request_metadata") == []
+
+    assert coordinator.calls_to("request_built_metadata") == []
 
 
 def test_zip_siblings_keep_the_first_metadata_source() -> None:

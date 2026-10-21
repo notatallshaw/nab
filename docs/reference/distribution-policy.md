@@ -24,34 +24,26 @@ so `sdist-only` and `sdist-install` skip it. A wheel-admitting policy may still 
 
 ## Legacy ZIP sdists
 
-`allow-zip-sdists` defaults to `false`:
-
-```toml
-[tool.nab]
-allow-zip-sdists = false
-```
-
-Enable it for a package whose required release was published only in the older `.zip` format:
+`allow-zip-sdists` defaults to `false`. Enable it for a package whose required release was published
+only as a ZIP sdist:
 
 ```toml
 [tool.nab.packages."legacy-package == 1.0"]
 allow-zip-sdists = true
 ```
 
-The setting works globally under `[tool.nab]`, in `[[tool.nab.package-rules]]`, and per index under
-`[tool.nab.index.<name>]`. An explicit `false` override refuses ZIP sdists even when the global
-setting is `true`. Package and index settings conflict when both set the field for a candidate,
-including when their values agree.
+Set it globally under `[tool.nab]`, or use [package and index overrides](package-policy.md). A
+scoped `false` cancels a global `true`. For one command, use `--project-allow-zip-sdists` or
+`--no-project-allow-zip-sdists`.
 
-For one command, use `--project-allow-zip-sdists` or `--no-project-allow-zip-sdists`.
-`nab config get allow-zip-sdists` shows the effective global setting.
+ZIP admission leaves build permission and metadata trust unchanged. A package that needs a backend
+still requires `build-policy = "build-remote"`; declared targets also require
+{ref}`assume-universal-deps <assuming-dependencies-are-universal>`. Direct `archive-sources` accept
+only `.tar.gz` archives.
 
-Enabling ZIP sdists does not permit builds or trust older `PKG-INFO` dependency metadata. A package
-that needs a backend invocation still requires `build-policy = "build-remote"`; use a package
-override for that permission. Direct `archive-sources` remain limited to `.tar.gz` archives.
-
-An index serving only ZIP sdists still owns the package under the usual first-index policy. Refusing
-those sdists does not fall through to another index.
+An index serving only ZIP sdists still owns the package under the first-index policy. Refusing those
+sdists does not fall through to another index. When a release has both archive formats, nab prefers
+`.tar.gz`.
 
 ## Reading dependency metadata
 
