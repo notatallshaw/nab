@@ -24,7 +24,12 @@ def _zip(members: list[tuple[str | zipfile.ZipInfo, bytes]]) -> bytes:
     with warnings.catch_warnings(), zipfile.ZipFile(output, "w") as archive:
         warnings.simplefilter("ignore", UserWarning)
         for name, content in members:
-            archive.writestr(name, content)
+            entry = name
+            if isinstance(name, str) and "\\" in name:
+                # ZipInfo normally rewrites Windows separators before writing.
+                entry = zipfile.ZipInfo()
+                entry.filename = entry.orig_filename = name
+            archive.writestr(entry, content)
     return output.getvalue()
 
 
