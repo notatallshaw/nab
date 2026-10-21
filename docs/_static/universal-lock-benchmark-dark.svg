@@ -1,21 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="720" height="250" viewBox="0 0 720 250" role="img" aria-labelledby="title desc">
 <title id="title">Universal lock generation with an empty cache</title>
-<desc id="desc">uv: 0.46 seconds; nab: 0.76 seconds; PDM: 1.8 seconds; Poetry: 1.9 seconds. Shorter bars are faster.</desc>
+<desc id="desc">uv: 0.28 seconds; nab: 0.45 seconds; Poetry: 1.1 seconds; PDM: 1.3 seconds. Shorter bars are faster.</desc>
 <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
 <text x="24" y="28" fill="#f0f6fc" font-size="15" font-weight="600">Empty cache</text>
 <text x="684" y="28" text-anchor="end" fill="#a1aab6" font-size="13">lower is faster</text>
 <path d="M124 50V234" stroke="#30363d"/>
 <text x="104" y="80" text-anchor="end" fill="#f0f6fc" font-size="16" font-weight="400">uv</text>
-<rect x="124" y="60" width="105.868" height="26" rx="4" fill="#8290a3"/>
-<text x="241.868" y="80" fill="#f0f6fc" font-size="15" font-weight="400">0.46 s</text>
+<rect x="124" y="60" width="96.536" height="26" rx="4" fill="#8290a3"/>
+<text x="232.536" y="80" fill="#f0f6fc" font-size="15" font-weight="400">0.28 s</text>
 <text x="104" y="126" text-anchor="end" fill="#f0f6fc" font-size="16" font-weight="600">nab</text>
-<rect x="124" y="106" width="177.550" height="26" rx="4" fill="#a78bfa"/>
-<text x="313.550" y="126" fill="#f0f6fc" font-size="15" font-weight="600">0.76 s</text>
-<text x="104" y="172" text-anchor="end" fill="#f0f6fc" font-size="16" font-weight="400">PDM</text>
-<rect x="124" y="152" width="408.359" height="26" rx="4" fill="#8290a3"/>
-<text x="544.359" y="172" fill="#f0f6fc" font-size="15" font-weight="400">1.8 s</text>
-<text x="104" y="218" text-anchor="end" fill="#f0f6fc" font-size="16" font-weight="400">Poetry</text>
+<rect x="124" y="106" width="157.549" height="26" rx="4" fill="#a78bfa"/>
+<text x="293.549" y="126" fill="#f0f6fc" font-size="15" font-weight="600">0.45 s</text>
+<text x="104" y="172" text-anchor="end" fill="#f0f6fc" font-size="16" font-weight="400">Poetry</text>
+<rect x="124" y="152" width="376.003" height="26" rx="4" fill="#8290a3"/>
+<text x="512.003" y="172" fill="#f0f6fc" font-size="15" font-weight="400">1.1 s</text>
+<text x="104" y="218" text-anchor="end" fill="#f0f6fc" font-size="16" font-weight="400">PDM</text>
 <rect x="124" y="198" width="450.000" height="26" rx="4" fill="#8290a3"/>
-<text x="586.000" y="218" fill="#f0f6fc" font-size="15" font-weight="400">1.9 s</text>
+<text x="586.000" y="218" fill="#f0f6fc" font-size="15" font-weight="400">1.3 s</text>
 </g>
 </svg>
