@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 
 from packaging.utils import canonicalize_name
 
-from nab_provider.records import select_artifact_hash
+from nab_provider.records import ACCEPTED_HASH_ALGORITHMS, select_artifact_hash
 from nab_provider.serialization import SimpleSerialization, simple_accept_header
 from nab_provider.store import sdist_artifact_key
 from nab_provider.value import Record, replace
@@ -356,6 +356,18 @@ class SdistArchiveHold:
         self._held.clear()
 
 
+def _metadata_identity(
+    version: str, metadata_hash: tuple[str, str] | None
+) -> tuple[str, str, str] | None:
+    """Scope sidecar reuse to one coordinate and a strong published digest."""
+    if metadata_hash is None:
+        return None
+    algorithm, digest = metadata_hash
+    if algorithm not in ACCEPTED_HASH_ALGORITHMS:
+        return None
+    return version, algorithm, digest
+
+
 class CachedAsyncSimpleClient:
     """Async PyPI Simple API client with on-disk caching.
 
@@ -420,11 +432,14 @@ class CachedAsyncSimpleClient:
         self._parsed_store_failed = False
         self._sdist_archive_hold = sdist_archive_hold
         self._policy_writes: set[asyncio.Task[None]] = set()
+        # Replace old variants so backtracking cannot accumulate sidecar bodies.
+        self._verified_sidecars: dict[str, tuple[tuple[str, str, str], str]] = {}
 
     async def aclose(self) -> None:
         """Wait for policy writes, then close the underlying transport."""
         if self._policy_writes:
             await asyncio.gather(*self._policy_writes, return_exceptions=True)
+        self._verified_sidecars.clear()
         await self._transport.aclose()
 
     async def __aenter__(self) -> Self:
@@ -875,6 +890,15 @@ class CachedAsyncSimpleClient:
             msg = f"No cached metadata for {package}=={version} (offline mode)"
             raise OfflineError(msg)
 
+        identity = _metadata_identity(version, metadata_hash)
+        if identity is not None:
+            shared = self._verified_sidecars.get(package)
+            if shared is not None:
+                shared_identity, shared_text = shared
+                if shared_identity == identity:
+                    self._cache.put_metadata(package, metadata_url, shared_text)
+                    return shared_text
+
         response = await self._transport.get(metadata_url)
         raise_unless_ok(response, metadata_url)
         content = response.content
@@ -889,6 +913,8 @@ class CachedAsyncSimpleClient:
             )
             raise MalformedSimpleResponseError(msg) from exc
         self._cache.put_metadata(package, metadata_url, text)
+        if identity is not None:
+            self._verified_sidecars[package] = identity, text
         return text
 
     async def get_range_metadata(
