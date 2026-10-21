@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from .diagnostics import DiagnosticMessage
     from .types import Incompatibility
 
 __all__ = [
@@ -45,7 +46,7 @@ class ResolutionError(Exception):
 
     def __init__(
         self,
-        message: str,
+        message: str | DiagnosticMessage,
         incompatibility: Incompatibility[Any, Any] | None = None,
     ) -> None:
         """Create a resolution error with an optional incompatibility proof."""
