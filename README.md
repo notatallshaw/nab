@@ -95,16 +95,20 @@ workflows.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/_static/universal-lock-benchmark-dark.svg">
-    <img src="docs/_static/universal-lock-benchmark-light.svg" alt="Empty-cache universal lock generation timings for nab, uv, Poetry and PDM; shorter bars are faster." width="720">
+    <img src="docs/_static/universal-lock-benchmark-light.svg" alt="Cold and warm universal lock timings for nab, uv, Poetry and PDM, with Python startup estimates; shorter bars are faster." width="960">
   </picture>
 </p>
 
-Locking Requests 2.32.3 for CPython 3.12–3.14 on Linux, macOS and Windows, measured on my local
-desktop with empty package caches.
+Locking Requests 2.32.3 for Python 3.12–3.14, measured on my local desktop. The Python tools run on
+3.15. Nab covers CPython and PyPy on its eight supported platforms. uv, Poetry and PDM resolve
+without platform or implementation limits. All four locks select the same packages and usable wheels
+on the 48 checked targets.
 
-Nab uses `--no-cache --http-backend httpx2`. Each tool writes its native lock format; all four locks
-select the same packages on the nine tested targets. Nab and uv target this matrix; Poetry and PDM
-use their universal defaults.
+Cold runs use empty dependency caches; warm runs use primed caches. Both generate fresh native
+lockfiles. Nab uses `--http-backend httpx2`.
+
+Startup estimates include Python, imports and CLI/project setup before locking begins. Imports
+loaded during locking count in the remaining time. uv is shown whole.
 
 ## Libraries
 
