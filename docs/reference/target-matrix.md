@@ -3,9 +3,9 @@
 For a complete workflow, see
 [Lock for multiple environments](../how-to/lock-multiple-environments.md).
 
-The matrix declares `(python, platform, implementation)` targets. nab resolves each target with the
-same engine. Targets share one fetcher: one listing per package, metadata once per selected wheel,
-and PKG-INFO once per sdist version. The multi-target lockfile format is experimental.
+The matrix declares `(python, platform, implementation)` targets. nab resolves your declared targets
+and reuses index listings and metadata across them. The multi-target lockfile format is
+experimental.
 
 ```toml
 [tool.nab.matrix]

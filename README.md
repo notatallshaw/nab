@@ -99,12 +99,12 @@ workflows.
   </picture>
 </p>
 
-Locking Requests 2.32.3 for CPython 3.12–3.14 on Linux, macOS and Windows,
-measured on my local desktop with empty package caches.
+Locking Requests 2.32.3 for CPython 3.12–3.14 on Linux, macOS and Windows, measured on my local
+desktop with empty package caches.
 
-Nab uses `--no-cache --http-backend httpx2`. Each tool writes its native lock format; all four locks select the same
-packages on the nine tested targets. Nab and uv target this matrix; Poetry and PDM use their
-universal defaults.
+Nab uses `--no-cache --http-backend httpx2`. Each tool writes its native lock format; all four locks
+select the same packages on the nine tested targets. Nab and uv target this matrix; Poetry and PDM
+use their universal defaults.
 
 ## Libraries
 
