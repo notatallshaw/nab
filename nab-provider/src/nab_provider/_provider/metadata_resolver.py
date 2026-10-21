@@ -18,6 +18,7 @@ __lazy_modules__ = (
     "nab_provider.policy",
     "nab_provider.project_requirements",
     "nab_provider.records",
+    "nab_resolver.diagnostics",
     "nab_provider.store",
     "nab_provider.tags",
     "nab_provider.vcs_admission",
@@ -34,6 +35,7 @@ from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_provider.records import RangeOutcome, SdistFile, WheelFile
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .._compat import override
 from ..environment import UnevaluableMarkerError, evaluate_prepared
@@ -763,17 +765,19 @@ def resolve_dynamic_sdist(
         f" '{BuildPolicy.BUILD_REMOTE.value}' but the effective policy is"
         f" '{effective.value}'"
     )
-    remedy = None
-    if not assume_universal:
-        remedy = (
-            "if this release's dependencies apply across targets, set"
-            f' [tool.nab.packages."{canonical}=={version}"]'
-            " assume-universal-deps = true"
+    suggestions = (
+        ()
+        if assume_universal
+        else (
+            Suggestion(
+                "if this release's dependencies apply across targets, set"
+                f' [tool.nab.packages."{canonical}=={version}"]'
+                " assume-universal-deps = true"
+            ),
         )
-        msg += f"; {remedy}"
-    error = UnsupportedSdistError(msg)
-    error.remedy = remedy
-    raise error
+    )
+    report = DiagnosticMessage(msg, suggestions=suggestions)
+    raise UnsupportedSdistError(report)
 
 
 def _assumed_wheel_dependencies(

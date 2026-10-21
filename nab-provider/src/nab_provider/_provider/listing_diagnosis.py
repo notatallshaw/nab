@@ -1367,6 +1367,11 @@ def metadata_diagnostic(
             named = provider.filtered_sdist_diagnostic(normalized, version)
             if named is not None:
                 return named
+    return _rejected_metadata(blocks)
+
+
+def _rejected_metadata(blocks: Sequence[MetadataBlock]) -> Diagnostic:
+    """Retain metadata causes and their corrections for a final failure."""
     return Diagnostic(
         _METADATA_REJECTED,
         tuple(block.message for block in blocks),

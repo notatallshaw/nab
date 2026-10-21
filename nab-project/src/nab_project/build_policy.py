@@ -74,7 +74,8 @@ def enforce_build_policy_for_targets(
             report = DiagnosticMessage(
                 (
                     "a declared target requires assume-universal-deps = true "
-                    f"to use host-built metadata; got {', '.join(offending)}. A PEP 517 backend runs "
+                    f"to use host-built metadata; got {', '.join(offending)}. "
+                    "A PEP 517 backend runs "
                     "on the host and reports the host's metadata, not the target's."
                 ),
                 suggestions=(

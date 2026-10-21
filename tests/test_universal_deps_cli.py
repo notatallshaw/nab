@@ -215,7 +215,7 @@ def test_rejected_dynamic_releases_do_not_add_hints_to_an_unrelated_failure(
     assert "assume-universal-deps" not in captured.err + caplog.text
 
 
-def test_many_dynamic_rejections_produce_one_hint_per_failed_target(
+def test_many_dynamic_rejections_produce_one_hint_per_command(
     wider_project: Path,
     capsys: pytest.CaptureFixture[str],
     caplog: pytest.LogCaptureFixture,
@@ -232,8 +232,8 @@ def test_many_dynamic_rejections_produce_one_hint_per_failed_target(
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err.count("try:") == 2
-    assert captured.err.count("assume-universal-deps = true") == 2
+    assert captured.err.count("try:") == 1
+    assert captured.err.count("assume-universal-deps = true") == 1
     assert "assume-universal-deps" not in caplog.text
 
 

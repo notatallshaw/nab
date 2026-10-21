@@ -32,6 +32,7 @@ from nab_provider.testing import (
     pkg_override,
 )
 from nab_provider.yanking import mark_yanked
+from nab_resolver.diagnostics import error_message
 
 _VERSION = Version("1.0")
 _MAC_TARGET = ResolveTarget.for_declared(
@@ -110,8 +111,11 @@ def test_cached_sdist_failure_preserves_the_suggested_remedy() -> None:
     with pytest.raises(UnsupportedSdistError) as cached:
         provider.get_dependencies("pkg", _VERSION)
 
-    assert first.value.remedy is not None
-    assert cached.value.remedy == first.value.remedy
+    assert error_message(first.value).suggestions
+    assert (
+        error_message(cached.value).suggestions
+        == error_message(first.value).suggestions
+    )
     assert len(port.calls_to("request_sdist")) == 1
 
 
