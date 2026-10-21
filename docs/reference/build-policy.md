@@ -203,28 +203,27 @@ Set `build-policy = "never"` to forbid it.
 
 ## Assuming dependencies are universal
 
-Some releases publish dynamic sdist metadata and wheels for only part of a target matrix. If you
-know that their dependency declarations apply across targets, opt in for the affected release:
+`assume-universal-deps` lets a dynamic sdist reuse dependency declarations from a same-version
+wheel, even when that wheel cannot be installed on the target. Enable it only when you know those
+declarations apply across targets:
 
 ```toml
 [tool.nab.packages."watchdog==6.0.0"]
 assume-universal-deps = true
 ```
 
-When the sdist has no static `pyproject.toml` fallback, nab reads `Requires-Dist` and
-`Provides-Extra` from a same-version wheel even if its tags exclude the target. Markers are
-evaluated for each target. The sdist remains the install artifact; the metadata source still obeys
-upload cutoffs, distribution policy, withdrawal admission, metadata hashes and release identity.
-`sdist-only` forbids reading wheel metadata; `sdist-install` permits it.
+When the sdist has no static `pyproject.toml` fallback, nab reads the wheel's `Requires-Dist` and
+`Provides-Extra` and evaluates their markers for each target. The sdist remains the install
+artifact. The metadata source must satisfy upload cutoffs, distribution policy, withdrawal
+admission, metadata hashes and release identity. `sdist-only` forbids wheel metadata;
+`sdist-install` permits it.
 
-The default is `false`. Set it globally as `[tool.nab].assume-universal-deps` or
+The default is `false`. Set it globally with `[tool.nab].assume-universal-deps` or
 `--project-assume-universal-deps`, or use [package and index overrides](package-policy.md). A scoped
-`false` cancels a global `true`. The assumption can produce an incorrect lock if the reused metadata
-omits target-dependent requirements. It does not make incomplete dynamic `PKG-INFO` authoritative.
+`false` cancels a global `true`. Reusing metadata that omits target-dependent requirements can
+produce an incorrect lock. The setting does not make incomplete dynamic `PKG-INFO` authoritative.
 
-If no wheel supplies metadata, also set `build-policy = "build-remote"` for the release to allow the
-host backend to prepare it. On a declared target, only packages whose effective
-`assume-universal-deps` is `true` may use host builds, and the assumption alone permits no backend
-execution. Declared local, VCS and archive sources need a bare-name override because their version
-is unknown before metadata preparation. The host must be able to build the package; the setting does
-not emulate the target.
+If no wheel supplies metadata, also set `build-policy = "build-remote"` to permit a host metadata
+build. Declared targets require both settings explicitly; the host must be able to build the
+package. Declared local, VCS and archive sources need a bare-name override because their version is
+unknown before metadata preparation.
