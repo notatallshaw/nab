@@ -230,15 +230,13 @@ class _DeferredUrllib3Transport:
             await self._transport.aclose()
 
 
-def _make_resolve_transport(backend: str, *, offline: bool) -> AsyncHttpTransport:
-    """Return the transport for a resolve on ``backend``.
+def _make_resolve_transport(backend: str) -> AsyncHttpTransport:
+    """Defer the default client; initialize optional backends before resolution.
 
-    An offline resolve is served from the cache and asks for no URL, so the
-    urllib3 transport is built only if something does. Optional backends are built
-    up front: missing dependencies exit the CLI, which must happen on the main
-    thread before the resolve starts.
+    Missing optional dependencies exit the CLI, so those clients must be built on
+    the main thread. Cached resolutions need no default HTTP client.
     """
-    if offline and backend == "urllib3":
+    if backend == "urllib3":
         return _DeferredUrllib3Transport()
     return _make_transport(backend)
 

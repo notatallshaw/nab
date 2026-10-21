@@ -346,7 +346,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
             run, config=config, inputs=inputs, workspace_to_drop=workspace_to_drop
         )
 
-    transport = _make_resolve_transport(settings.http_backend, offline=settings.offline)
+    transport = _make_resolve_transport(settings.http_backend)
     result = _resolve(
         path,
         config=config,

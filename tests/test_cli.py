@@ -1642,7 +1642,7 @@ class TestLockCommandSpecific:
         )
 
         with (
-            patch("nab._resolve._make_transport", return_value=transport),
+            patch("nab._resolve._make_urllib3_transport", return_value=transport),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
@@ -1705,7 +1705,7 @@ class TestLockCommandSpecific:
         transport = _SidecarTransport(bodies)
 
         with (
-            patch("nab._resolve._make_transport", return_value=transport),
+            patch("nab._resolve._make_urllib3_transport", return_value=transport),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
@@ -1752,7 +1752,7 @@ class TestLockCommandSpecific:
         )
 
         with (
-            patch("nab._resolve._make_transport", return_value=transport),
+            patch("nab._resolve._make_urllib3_transport", return_value=transport),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
@@ -1798,7 +1798,7 @@ class TestLockCommandSpecific:
         )
 
         with (
-            patch("nab._resolve._make_transport", return_value=transport),
+            patch("nab._resolve._make_urllib3_transport", return_value=transport),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
@@ -7713,18 +7713,17 @@ class TestResolveTransportCleanup:
 class TestResolveTransport:
     """Which transport a resolve is handed, and when it is built."""
 
-    def test_online_resolve_gets_the_transport_up_front(self) -> None:
-        """A resolve that may fetch is handed the real transport."""
-        with patch("nab._resolve._make_transport") as make:
-            transport = _make_resolve_transport("urllib3", offline=False)
+    def test_default_resolve_defers_transport_creation(self) -> None:
+        with patch("nab._resolve._make_urllib3_transport") as make:
+            transport = _make_resolve_transport("urllib3")
+            asyncio.run(transport.aclose())
 
-        assert transport is make.return_value
-        make.assert_called_once_with("urllib3")
+        make.assert_not_called()
 
     def test_offline_httpx_resolve_gets_it_up_front_too(self) -> None:
         """Only urllib3 defers; httpx is built while the CLI can still exit."""
         with patch("nab._resolve._make_transport") as make:
-            transport = _make_resolve_transport("httpx", offline=True)
+            transport = _make_resolve_transport("httpx")
 
         assert transport is make.return_value
         make.assert_called_once_with("httpx")
@@ -7773,7 +7772,7 @@ class TestResolveTransport:
         """A deferred transport builds its inner one once, on the first get."""
         inner = _RecordingTransport()
         with patch("nab._resolve._make_urllib3_transport", return_value=inner) as make:
-            transport = _make_resolve_transport("urllib3", offline=True)
+            transport = _make_resolve_transport("urllib3")
             make.assert_not_called()
 
             async def fetch_twice() -> None:
@@ -7794,7 +7793,7 @@ class TestResolveTransport:
         """Closing a deferred transport that fetched closes the inner one."""
         inner = _RecordingTransport()
         with patch("nab._resolve._make_urllib3_transport", return_value=inner):
-            transport = _make_resolve_transport("urllib3", offline=True)
+            transport = _make_resolve_transport("urllib3")
 
             async def fetch_then_close() -> None:
                 await transport.get("https://example.invalid/a")
@@ -7807,7 +7806,7 @@ class TestResolveTransport:
     def test_close_without_a_request_builds_nothing(self) -> None:
         """Closing a deferred transport that never fetched builds nothing."""
         with patch("nab._resolve._make_urllib3_transport") as make:
-            transport = _make_resolve_transport("urllib3", offline=True)
+            transport = _make_resolve_transport("urllib3")
             asyncio.run(transport.aclose())
 
         make.assert_not_called()
