@@ -11,6 +11,7 @@ __lazy_modules__ = (
     "bisect",
     "collections",
     "itertools",
+    "nab_provider._provider.candidate_views",
     "nab_provider._vendor.packaging.markers",
     "nab_provider._vendor.packaging.ranges",
     "nab_provider._vendor.packaging.specifiers",
@@ -44,6 +45,7 @@ from ._provider import lookahead as _lookahead
 from ._provider import metadata_resolver as _metadata_resolver
 from ._provider import priority as _priority
 from ._provider import sources as _sources
+from ._provider.candidate_views import CandidatePreparation, CandidateView
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS
 from .declarations import DependencyDeclaration
 from .environment import host_environment
@@ -294,8 +296,9 @@ class ListingFilterCache:
     :func:`nab_provider._provider.listing.base_distributions`) reads the
     listing's files, the policy config, and the target Python, and has no
     platform axis, so targets that differ only by platform recompute an
-    identical list.  Memoising it per (package, Python) leaves only the
-    wheel-tag pass to run per target.
+    identical list. Memoising it per (package, Python) shares that preparation.
+    Multiple targets also share candidate views when their actual wheel-tag
+    admission answers agree.
 
     Most of that half reads no Python either: the version parse, the
     dist-policy exclusion and the upload cutoff reach the same answer for
@@ -313,15 +316,17 @@ class ListingFilterCache:
     and a policy config, as the targets of one resolve do.
     """
 
-    def __init__(self, pythons: int = 1) -> None:
-        """Create an empty cache for a resolve over ``pythons`` Python releases."""
+    def __init__(self, pythons: int = 1, *, target_count: int = 1) -> None:
+        """Share Python preparation and, for multiple targets, candidate views."""
         self.shares_pythons = pythons > 1
+        self.shares_targets = target_count > 1
         self._entries: dict[
             tuple[str, str | None],
             tuple[list[tuple[Version, DistFile]], tuple[int, ...]],
         ] = {}
         self._prepared: dict[str, tuple[object, tuple[int, ...]]] = {}
         self._diagnosed: dict[tuple[str, str | None], object] = {}
+        self._tagged: dict[tuple[str, str | None], CandidatePreparation] = {}
 
     def filtered(
         self,
@@ -346,6 +351,17 @@ class ListingFilterCache:
 
         self._entries[(package, python_version)] = (list(result), _since(before, stats))
         return result
+
+    def tagged(
+        self, package: str, python_version: str | None, tags: TagSet
+    ) -> CandidateView:
+        """Project the cache-owned base snapshot through this target's tags."""
+        key = (package, python_version)
+        prepared = self._tagged.get(key)
+        if prepared is None:
+            prepared = CandidatePreparation(self._entries[key][0])
+            self._tagged[key] = prepared
+        return prepared.for_tags(tags)
 
     def prepared(
         self,
@@ -533,7 +549,7 @@ class Provider:
     version where every target can take it.  A package the strategy wants
     lowest for ignores the preference and takes its own floor.
 
-    ``listing_filter_cache`` shares the platform-independent half of the
+    ``listing_filter_cache`` shares prepared candidate data for the
     listing filter with the other targets of the same resolve; see
     :class:`ListingFilterCache`.
 
@@ -742,6 +758,13 @@ class Provider:
         self.root_requirements = root_requirements or {}
         self.constraints: Mapping[str, VersionRange] = constraints or {}
         self.versions_cache: dict[str, list[tuple[Version, DistFile]]] = {}
+        # Subclass filtering and priority hooks retain their own semantics.
+        self.prepare_candidate_views = (
+            type(self) is Provider
+            and type(listing_filter_cache) is ListingFilterCache
+            and listing_filter_cache.shares_targets
+        )
+        self.prepared_listings: dict[str, CandidateView] = {}
         self.deps_cache: dict[tuple[str, Version], dict[str, VersionRange]] = {}
         # Metadata the pipelined scan prefetched, as ``(version string, sidecar
         # URL)``, decoded on the first read of that candidate.  A candidate the
@@ -1344,6 +1367,23 @@ class Provider:
         """See :func:`nab_provider._provider.listing.versions_only`."""
         return _listing.versions_only(self, normalized, version_list)
 
+    def count_matching_records(
+        self,
+        normalized: str,
+        version_range: VersionRange,
+        versions: list[tuple[Version, DistFile]],
+    ) -> int:
+        """Count in-bounds artifact records, including pre-releases."""
+        prepared = self.prepared_listings.get(normalized)
+        if prepared is not None:
+            return prepared.count_matching(version_range)
+        distinct = self.versions_only(normalized, versions)
+        counts = self.version_record_counts[normalized]
+        return sum(
+            counts[version]
+            for version in version_range.filter(distinct, prereleases=True)
+        )
+
     def _wheel_by_version(
         self,
         normalized: str,
@@ -1380,6 +1420,7 @@ class Provider:
         self, normalized: str, files: Sequence[WheelFile | SdistFile]
     ) -> list[tuple[Version, DistFile]]:
         """See :func:`nab_provider._provider.listing.filter_distributions`."""
+        self.prepared_listings.pop(normalized, None)
         if raw_versions := getattr(files, "withdrawn_versions", ()):
             self.yanked_versions = self.yanked_versions | {
                 (normalized, version)

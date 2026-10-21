@@ -756,6 +756,13 @@ class TagSet(SlottedValue):
             rank_index = self._place(wheel_tags)
         return rank_index is not None
 
+    def accepts_tags(self, wheel_tags: frozenset[Tag]) -> bool:
+        """Whether an already-parsed wheel tag group matches this target."""
+        rank_index = self._placed.get(wheel_tags, _UNPLACED)
+        if rank_index is _UNPLACED:
+            rank_index = self._place(wheel_tags)
+        return rank_index is not None
+
     def _rank_index(self, wheel_filename: str) -> int | None:
         """Return the rank of the most specific tag the wheel and target share.
 

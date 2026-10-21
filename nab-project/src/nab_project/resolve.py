@@ -345,7 +345,8 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
             include_dependency_requirements=include_dependency_requirements,
             lookahead_versions=lookahead_versions,
             listing_filter_cache=ListingFilterCache(
-                len({target.python_full_version for target in targets})
+                len({target.python_full_version for target in targets}),
+                target_count=len(targets),
             ),
             release_refused_wheels=release_refused_wheels and len(targets) == 1,
         )

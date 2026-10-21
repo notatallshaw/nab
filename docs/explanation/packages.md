@@ -88,6 +88,21 @@ controls the extra version window fetched before a provider's pipelined scan. Ze
 extra prefetch; the pipelined candidate checks still run. Omitted fields inherit the selected
 backend's recommendation. Custom transports without recommendations retain the existing defaults.
 
+## Shared candidate preparation
+
+`nab-provider` groups listing records by wheel tags after policy and Requires-Python filtering.
+Targets reuse a candidate view only when every tag group has the same admission answer.
+
+```text
+listing -> policy/Python filters -> grouped records
+                                        |
+target tags -> admission answers -> candidate view -> target resolver
+```
+
+Each target keeps its own wheel ranking, metadata validation and dependency-marker evaluation.
+Prepared views contain no learned clauses or pending rejections. Their cache lives for one project
+resolve.
+
 ## Why the provider is separate
 
 Resolution logic with no HTTP client in its import graph can be tested alone. CI runs
