@@ -1,9 +1,4 @@
-"""Tests for the dynamic-metadata path through ``nab_project._build``.
-
-The unit tests use a hand-rolled in-tree backend (an
-``nab_test_backend.py`` file plus
-``[build-system].backend-path = ["."]``). ``[build-system].requires`` is empty.
-The venv install step is a no-op, and the unit tests stay offline.
+"""Tests for metadata hooks and isolated build environments.
 
 The end-to-end test against a real source distribution is marked
 ``network`` and is deselected by default; run with
@@ -28,7 +23,7 @@ import tempfile
 import threading
 import zipfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import replace
 from datetime import datetime, timezone
 from functools import partial
@@ -70,6 +65,7 @@ from nab_project._build.runner import (
     build_wheel_for_install,
     run_build_backend,
 )
+from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.build_backend import extract_metadata
 from nab_project.download import DownloadError, DownloadResult, iter_artifacts
 from nab_project.inputs import ResolveInputs
@@ -98,7 +94,7 @@ from nab_provider.provider import (
 from nab_provider.tags import PlatformSpec, TagSet
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import pkg_override
-from nab_resolver.errors import ResolutionError
+from nab_resolver.errors import ResolutionError, ResolutionLimitError
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
@@ -275,6 +271,8 @@ def _make_installable_wheel(
     version: str,
     data_files: dict[str, bytes] | None = None,
     package_files: dict[str, bytes] | None = None,
+    *,
+    requires_dist: tuple[str, ...] = (),
 ) -> None:
     """Write a minimal but installer-valid pure-Python wheel.
 
@@ -286,8 +284,9 @@ def _make_installable_wheel(
     files = {
         f"{name}/__init__.py": b"",
         f"{dist}.dist-info/METADATA": (
-            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n".encode()
-        ),
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+            + "".join(f"Requires-Dist: {req}\n" for req in requires_dist)
+        ).encode(),
         f"{dist}.dist-info/WHEEL": (
             b"Wheel-Version: 1.0\nGenerator: nab-test\n"
             b"Root-Is-Purelib: true\nTag: py3-none-any\n"
@@ -3380,6 +3379,303 @@ class TestBuildRequirementNeedingItsOwnBuild:
             pass
 
         assert chains == [(), (f"{self.NAME} {self.VERSION}",)]
+
+
+class TestBuildRequirementPythonFallback:
+    """Re-resolve build requirements when wheel metadata excludes the host."""
+
+    @staticmethod
+    def _buildstub_sdists(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[list[SdistFile], dict[str, str]]:
+        """Create sdists whose backends read Requires-Python from the environment."""
+        backend = _SDIST_BACKEND_SRC.replace(
+            "+ {requires_python}",
+            "+ 'Requires-Python: ' + os.environ['NAB_TEST_PYTHON_' + VERSION] + '\\n'",
+        ).replace(
+            "    escaped = NAME.replace",
+            '    with open(os.environ["NAB_TEST_BUILD_TRACE"], "a") as trace:\n'
+            '        trace.write(VERSION + "\\n")\n'
+            "    escaped = NAME.replace",
+        )
+        monkeypatch.setattr(sys.modules[__name__], "_SDIST_BACKEND_SRC", backend)
+        monkeypatch.setattr(env_mod, "extract_sdist_archive", _unpack_fixture_sdist)
+        monkeypatch.setenv("NAB_TEST_BUILD_TRACE", str(tmp_path / "builds.txt"))
+        sdists = []
+        metadata = {}
+        for version in ("1.0", "2.0", "3.0"):
+            archive = tmp_path / f"buildstub-{version}.tar.gz"
+            _make_buildable_sdist(archive, "buildstub", version, requires_python=">=3")
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            sdists.append(
+                SdistFile(
+                    filename=archive.name,
+                    url=archive.as_uri(),
+                    version=version,
+                    requires_python=None,
+                    upload_time=None,
+                    hashes=(("sha256", digest),),
+                    local_path=archive,
+                )
+            )
+            metadata[version] = (
+                f"Metadata-Version: 2.2\nName: buildstub\nVersion: {version}\n"
+                "Dynamic: Requires-Python\n"
+            )
+            monkeypatch.setenv(f"NAB_TEST_PYTHON_{version}", ">=3")
+
+        return sdists, metadata
+
+    @staticmethod
+    def _parent_wheels(
+        tmp_path: Path, dependencies: Mapping[str, str]
+    ) -> tuple[list[WheelFile], dict[str, str]]:
+        """Write parent wheels and return their listings and sidecar metadata."""
+        parent_wheels = []
+        metadata = {}
+        for version, dependency in dependencies.items():
+            wheel = tmp_path / f"parent-{version}-py3-none-any.whl"
+            _make_installable_wheel(
+                wheel, "parent", version, requires_dist=(dependency,)
+            )
+            digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+            parent_wheels.append(
+                WheelFile(
+                    filename=wheel.name,
+                    url=wheel.as_uri(),
+                    version=version,
+                    requires_python=None,
+                    has_metadata=True,
+                    upload_time=None,
+                    hashes=(("sha256", digest),),
+                    local_path=wheel,
+                )
+            )
+            with zipfile.ZipFile(wheel) as archive:
+                metadata[wheel.as_uri() + ".metadata"] = archive.read(
+                    f"parent-{version}.dist-info/METADATA"
+                ).decode()
+        return parent_wheels, metadata
+
+    @classmethod
+    def _environment(
+        cls,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        requires: list[str] | None = None,
+        overrides: tuple[PackageOverride, ...] = (),
+        parent_dependencies: Mapping[str, str] | None = None,
+    ) -> tuple[NabBuildEnv, _BuildTransportFactory]:
+        """Connect an isolated build environment to the local fixture catalogue."""
+        buildstub_sdists, sdist_metadata = cls._buildstub_sdists(tmp_path, monkeypatch)
+        parent_wheels, wheel_metadata = cls._parent_wheels(
+            tmp_path, parent_dependencies or {}
+        )
+        listings: dict[str, list[SdistFile | WheelFile]] = {
+            "buildstub": list(buildstub_sdists),
+            "parent": list(parent_wheels),
+        }
+
+        def coordinator(
+            _transport: AsyncHttpTransport,
+            *,
+            build_config: ResolveInputs,
+            **_kwargs: object,
+        ) -> AbstractContextManager[FakeFetchPort]:
+            return nullcontext(
+                make_coordinator(
+                    listings=listings,
+                    metadata_by_url=wheel_metadata,
+                    sdist_pkg_info_by_version=sdist_metadata,
+                    build_config=build_config,
+                )
+            )
+
+        monkeypatch.setattr("nab_project.resolve.FetchCoordinator", coordinator)
+        factory = _BuildTransportFactory(Urllib3AsyncTransport)
+        config = ResolveInputs(build_requires_depth=1, package_overrides=overrides)
+        return (
+            NabBuildEnv(
+                requires=["buildstub"] if requires is None else requires,
+                config=config,
+                transport_factory=factory,
+            ),
+            factory,
+        )
+
+    @staticmethod
+    def _installed_distributions(env: NabBuildEnv) -> list[tuple[str, str]]:
+        """Read the distributions actually installed in the isolated interpreter."""
+        output = subprocess.check_output(  # noqa: S603 - interpreter created by this test
+            [
+                env.python_executable,
+                "-c",
+                (
+                    "import importlib.metadata as m, json; "
+                    "print(json.dumps(sorted((d.metadata['Name'], d.version) for d in m.distributions())))"
+                ),
+            ],
+            text=True,
+        )
+        return [tuple(item) for item in json.loads(output)]
+
+    @pytest.mark.parametrize(
+        (
+            "newest_requires_python",
+            "overrides",
+            "expected_version",
+            "expected_builds",
+        ),
+        [
+            (">=999", (), "1.0", ["3.0", "2.0", "1.0"]),
+            (">=3", (), "3.0", ["3.0"]),
+            (
+                ">=999",
+                (pkg_override("buildstub", requires_python=">=3"),),
+                "3.0",
+                ["3.0"],
+            ),
+        ],
+        ids=["repeated-fallback", "compatible-newest", "metadata-override"],
+    )
+    def test_reconsiders_incompatible_built_releases(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        newest_requires_python: str,
+        overrides: tuple[PackageOverride, ...],
+        expected_version: str,
+        expected_builds: list[str],
+    ) -> None:
+        env, factory = self._environment(tmp_path, monkeypatch, overrides=overrides)
+        monkeypatch.setenv("NAB_TEST_PYTHON_3.0", newest_requires_python)
+        monkeypatch.setenv("NAB_TEST_PYTHON_2.0", ">=999")
+
+        with env:
+            assert self._installed_distributions(env) == [
+                ("buildstub", expected_version)
+            ]
+
+        assert (tmp_path / "builds.txt").read_text().splitlines() == expected_builds
+        assert all(client.closed for client in factory.clients)
+
+    def test_reconsiders_parent_before_installing_wheels(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env, factory = self._environment(
+            tmp_path,
+            monkeypatch,
+            requires=["parent"],
+            parent_dependencies={"1.0": "buildstub==1", "2.0": "buildstub>=2"},
+        )
+        for version in ("2.0", "3.0"):
+            monkeypatch.setenv(f"NAB_TEST_PYTHON_{version}", ">=999")
+
+        with env:
+            assert self._installed_distributions(env) == [
+                ("buildstub", "1.0"),
+                ("parent", "1.0"),
+            ]
+
+        assert (tmp_path / "builds.txt").read_text().splitlines() == [
+            "3.0",
+            "2.0",
+            "1.0",
+        ]
+        assert all(client.closed for client in factory.clients)
+
+    @pytest.mark.parametrize(
+        ("root_requirement", "expected_builds"),
+        [
+            ("buildstub", ["3.0", "2.0", "1.0"]),
+            ("buildstub>=2", ["3.0", "2.0"]),
+        ],
+        ids=["all-incompatible", "root-bound"],
+    )
+    def test_exhaustion_preserves_the_python_rejection(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        root_requirement: str,
+        expected_builds: list[str],
+    ) -> None:
+        env, factory = self._environment(
+            tmp_path, monkeypatch, requires=[root_requirement]
+        )
+        for version in ("1.0", "2.0", "3.0"):
+            monkeypatch.setenv(f"NAB_TEST_PYTHON_{version}", ">=999")
+
+        with (
+            pytest.raises(BuildEnvError, match="requires Python >=999.*host") as exc,
+            env,
+        ):
+            pytest.fail("an incompatible build requirement was installed")
+
+        assert isinstance(exc.value.__cause__, ResolutionError)
+        assert (tmp_path / "builds.txt").read_text().splitlines() == expected_builds
+        assert all(client.closed for client in factory.clients)
+
+    @pytest.mark.parametrize("completed_solves", [0, 1], ids=["initial", "retry"])
+    def test_resolution_limits_are_preserved(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        completed_solves: int,
+    ) -> None:
+        env, factory = self._environment(tmp_path, monkeypatch)
+        monkeypatch.setenv("NAB_TEST_PYTHON_3.0", ">=999")
+        real_resolve = env._resolve_requirements
+        failure = ResolutionLimitError("resolution work budget exhausted")
+        calls = 0
+
+        def limited_resolve(synthetic: Path, inputs: ResolveInputs) -> LockInput:
+            nonlocal calls
+            if calls == completed_solves:
+                raise failure
+            calls += 1
+            return real_resolve(synthetic, inputs)
+
+        monkeypatch.setattr(env, "_resolve_requirements", limited_resolve)
+        with pytest.raises(ResolutionLimitError) as caught, env:
+            pytest.fail("a terminated resolve was treated as a solution")
+
+        assert caught.value is failure
+        assert calls == completed_solves
+        assert all(client.closed for client in factory.clients)
+
+    def test_malformed_metadata_is_not_retried(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env, factory = self._environment(tmp_path, monkeypatch)
+        monkeypatch.setenv("NAB_TEST_PYTHON_3.0", "not-a-specifier")
+
+        with pytest.raises(BuildEnvError, match="invalid Requires-Python"), env:
+            pytest.fail("malformed metadata was accepted")
+
+        assert (tmp_path / "builds.txt").read_text().splitlines() == ["3.0"]
+        assert all(client.closed for client in factory.clients)
+
+    def test_follow_up_install_reconsiders_with_its_own_requirements(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env, factory = self._environment(tmp_path, monkeypatch)
+        for version in ("2.0", "3.0"):
+            monkeypatch.setenv(f"NAB_TEST_PYTHON_{version}", ">=999")
+
+        with env:
+            assert self._installed_distributions(env) == [("buildstub", "1.0")]
+            monkeypatch.setenv("NAB_TEST_PYTHON_3.0", ">=3")
+            env.install(["buildstub>=2"])
+            assert self._installed_distributions(env) == [("buildstub", "3.0")]
+
+        assert (tmp_path / "builds.txt").read_text().splitlines() == [
+            "3.0",
+            "2.0",
+            "1.0",
+            "3.0",
+        ]
+        assert all(client.closed for client in factory.clients)
 
 
 class TestBuildRequirementTwoLevelsDown:
