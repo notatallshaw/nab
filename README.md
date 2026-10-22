@@ -94,8 +94,9 @@ workflows.
 
 <p align="center">
   <picture>
+    <source media="(prefers-color-scheme: light)" srcset="docs/_static/universal-lock-benchmark-light.svg">
     <source media="(prefers-color-scheme: dark)" srcset="docs/_static/universal-lock-benchmark-dark.svg">
-    <img src="docs/_static/universal-lock-benchmark-light.svg" alt="Cold and warm universal lock timings for nab, uv, Poetry and PDM, split into interpreter, imports and other work; shorter bars are faster." width="960">
+    <img src="https://raw.githubusercontent.com/notatallshaw/nab/main/docs/_static/universal-lock-benchmark-light.svg" alt="Cold and warm universal lock timings for nab, uv, Poetry and PDM, split into interpreter, imports and other work; shorter bars are faster." width="960">
   </picture>
 </p>
 
