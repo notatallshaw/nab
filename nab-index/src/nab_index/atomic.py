@@ -9,7 +9,6 @@ from __future__ import annotations
 __lazy_modules__ = (
     "base64",
     "errno",
-    "os",
     "stat",
     "sys",
 )
