@@ -7,17 +7,19 @@ partway leaves any existing file untouched.
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "base64",
     "os",
     "pathlib",
     "shutil",
-    "tempfile",
+    "sys",
 )
 
 import contextlib
 import os
 import shutil
-import tempfile
+import sys
 import threading
+from base64 import urlsafe_b64encode
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -32,6 +34,8 @@ __all__ = [
 ]
 
 _umask_lock = threading.Lock()
+# Six bytes encode to eight filename characters without padding.
+_TEMP_NAME_BYTES = 6
 
 
 def _default_mode() -> int:
@@ -47,6 +51,22 @@ def _default_mode() -> int:
     return 0o666 & ~umask
 
 
+def _temporary_file(path: Path) -> tuple[int, Path]:
+    """Open a private staging file exclusively beside the destination."""
+    directory = path.parent.absolute()
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
+    if sys.platform == "win32":  # pragma: no cover - Windows descriptor mode
+        flags |= os.O_BINARY
+    while True:
+        token = urlsafe_b64encode(os.urandom(_TEMP_NAME_BYTES)).decode("ascii")
+        temporary = directory / f"{path.name}.{token}.tmp"
+        try:
+            fd = os.open(temporary, flags, 0o600)
+        except FileExistsError:
+            continue
+        return fd, temporary
+
+
 @contextmanager
 def _staged(path: Path) -> Generator[int, None, None]:
     """Yield a file descriptor for a temp file beside ``path``.
@@ -55,13 +75,11 @@ def _staged(path: Path) -> Generator[int, None, None]:
     is removed and ``path`` is left as it was. Staging in the destination
     directory keeps the rename on one filesystem.
     """
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-    tmp_path = Path(tmp)
+    fd, tmp_path = _temporary_file(path)
     try:
         yield fd
 
-        # The rename carries the temp file's own mode across, and mkstemp
-        # creates at 0600.
+        # The rename carries the staging file's mode across.
         if path.exists():
             shutil.copymode(path, tmp_path)
         else:
