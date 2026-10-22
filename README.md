@@ -100,11 +100,11 @@ workflows.
   </picture>
 </p>
 
-Locking Requests 2.32.3 for Python 3.12–3.14. Each panel uses the run with the better Nab time from
-my local desktop or GitHub CI, with all four tools measured in that environment. The Python tools
-run on 3.15. Nab covers CPython and PyPy on its eight supported platforms. uv, Poetry and PDM
-resolve without platform or implementation limits. All four locks select the same packages and
-usable wheels on the 48 checked targets.
+Locking Requests 2.32.3 for Python 3.12–3.14. Each panel selects the lowest median Nab time from my
+local desktop and GitHub CI, on Python 3.15 and 3.15t. All four tools in a panel are measured in
+that environment; the Python tools use the runtime shown. Nab covers CPython and PyPy on its eight
+supported platforms. uv, Poetry and PDM resolve without platform or implementation limits. All four
+locks select the same packages and usable wheels on the 48 checked targets.
 
 Cold runs use empty dependency caches; warm runs use primed caches. Both generate fresh native
 lockfiles. Nab uses `--http-backend httpx2`.
