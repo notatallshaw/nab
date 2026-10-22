@@ -2986,6 +2986,7 @@ class TestSharedListingFilter:
                 self._targets("==3.11"),
                 _reqs("pkg"),
                 inputs=_no_build(),
+                align_across_targets=False,
             )
 
         assert result.success
@@ -3027,6 +3028,7 @@ class TestSharedListingFilter:
                 self._targets("==3.11"),
                 _reqs("pkg"),
                 inputs=_no_build(),
+                align_across_targets=False,
             )
 
         assert result.success
@@ -3122,6 +3124,7 @@ class TestSharedListingFilter:
             self._targets("==3.11"),
             _reqs("pkg"),
             inputs=_no_build(),
+            align_across_targets=False,
         )
 
         assert result.success

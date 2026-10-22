@@ -347,7 +347,9 @@ def test_upload_cutoff_still_validates_historical_rows() -> None:
     )
     with pytest.raises(InvalidUploadTimeError):
         resolve_with_coordinator(
-            make_coordinator(listings={"a": [selected, historical]}, auto_metadata=True),
+            make_coordinator(
+                listings={"a": [selected, historical]}, auto_metadata=True
+            ),
             [target("linux_x86_64"), target("linux_x86_64", "3.13")],
             [Requirement("a")],
             inputs=ResolveInputs(

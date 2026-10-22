@@ -289,6 +289,21 @@ def _restore(stats: ProviderStats, before: tuple[int, ...]) -> None:
     _replay(stats, tuple(map(operator.sub, before, _counters(stats))))
 
 
+class _ReleaseSnapshot:
+    """Keep release groups and their filters bound to one source listing."""
+
+    __slots__ = ("files", "filters", "releases")
+
+    def __init__(self, files: Sequence[DistFile]) -> None:
+        self.files = files
+        self.releases: dict[Version, list[DistFile]] = {}
+        self.filters: dict[Version, ListingFilterCache] = {}
+        for dist in files:
+            version = _listing.parsed_version(dist.version)
+            if version is not None:
+                self.releases.setdefault(version, []).append(dist)
+
+
 class ListingFilterCache:
     """Base listing-filter results shared across the targets of one resolve.
 
@@ -322,6 +337,8 @@ class ListingFilterCache:
         """Share Python preparation and, for multiple targets, candidate views."""
         self.shares_pythons = pythons > 1
         self.shares_targets = target_count > 1
+        self._pythons = pythons
+        self._target_count = target_count
         self._entries: dict[
             tuple[str, str | None],
             tuple[list[tuple[Version, DistFile]], tuple[int, ...]],
@@ -329,33 +346,21 @@ class ListingFilterCache:
         self._prepared: dict[str, tuple[object, tuple[int, ...]]] = {}
         self._diagnosed: dict[tuple[str, str | None], object] = {}
         self._tagged: dict[str, dict[str | None, CandidatePreparation]] = {}
-        self._release_files: dict[str, dict[Version, list[DistFile]]] = {}
-        self._release_filters: dict[Version, ListingFilterCache] = {}
+        self._release_snapshots: dict[str, _ReleaseSnapshot] = {}
 
     def selected_release(
         self, package: str, files: Sequence[DistFile], version: Version
-    ) -> Sequence[DistFile]:
-        """Read one complete release from this operation's immutable listing."""
-        grouped = self._release_files.get(package)
-        if grouped is None:
-            grouped = {}
-            for dist in files:
-                parsed = _listing.parsed_version(dist.version)
-                if parsed is not None:
-                    grouped.setdefault(parsed, []).append(dist)
-            self._release_files[package] = grouped
-        return grouped.get(version, ())
-
-    def release_filter(self, version: Version) -> ListingFilterCache:
-        """Keep restricted snapshots separate from the full-search cache."""
-        cache = self._release_filters.get(version)
+    ) -> tuple[Sequence[DistFile], ListingFilterCache]:
+        """Return a complete release and a filter bound to this exact snapshot."""
+        snapshot = self._release_snapshots.get(package)
+        if snapshot is None or snapshot.files is not files:
+            snapshot = _ReleaseSnapshot(files)
+            self._release_snapshots[package] = snapshot
+        cache = snapshot.filters.get(version)
         if cache is None:
-            cache = ListingFilterCache(
-                2 if self.shares_pythons else 1,
-                target_count=2 if self.shares_targets else 1,
-            )
-            self._release_filters[version] = cache
-        return cache
+            cache = ListingFilterCache(self._pythons, target_count=self._target_count)
+            snapshot.filters[version] = cache
+        return snapshot.releases.get(version, ()), cache
 
     def filtered(
         self,
@@ -706,8 +711,9 @@ class Provider:
         # The pre-tag half of the listing filter, shared with the other
         # targets of this resolve.  ``None`` computes it here instead.
         self.listing_filter_cache = listing_filter_cache
-        self.preferred_releases: Mapping[str, Version] | None = None
-        self.full_listing_filter_cache = listing_filter_cache
+        self._preferred_releases: dict[str, Version] | None = None
+        self._unrestricted_preferred_packages: set[str] = set()
+        self._full_listing_filter_cache = listing_filter_cache
 
         self.release_refused_wheels = release_refused_wheels
         self.defer_yanked = defer_yanked
@@ -1454,6 +1460,34 @@ class Provider:
             else self._lookahead_versions,
         )
 
+    def prepare_preferred_releases(self, preferred: Mapping[str, Version]) -> None:
+        """Restrict a fresh model-proof provider; refusal requires a fresh provider."""
+        if (
+            self.versions_cache
+            or self.metadata_cache
+            or self.pending_clauses
+            or self.solution_decisions
+            or self._preferred_releases is not None
+        ):
+            msg = "preferred release preparation requires a fresh provider"
+            raise ValueError(msg)
+        if (
+            self._full_listing_filter_cache is None
+            or self.uploaded_prior_to is not None
+            or any(version.is_prerelease for version in preferred.values())
+        ):
+            # Cutoff errors and prerelease admission can depend on other releases.
+            return
+        releases: dict[str, Version] = {}
+        for package, version in preferred.items():
+            _, _, normalized = self.split_and_normalize(package)
+            previous = releases.get(normalized)
+            if previous is not None and previous != version:
+                msg = "preferred base and extra versions must agree"
+                raise ValueError(msg)
+            releases[normalized] = version
+        self._preferred_releases = releases
+
     def filter_distributions(
         self, normalized: str, files: Sequence[WheelFile | SdistFile]
     ) -> list[tuple[Version, DistFile]]:
@@ -1465,6 +1499,19 @@ class Provider:
                 for raw in raw_versions
                 if (version := _listing.parsed_version(raw)) is not None
             }
+        if self._preferred_releases is not None:
+            cache = self._full_listing_filter_cache
+            preferred = self._preferred_releases.get(normalized)
+            if raw_versions or normalized in self._unrestricted_preferred_packages:
+                self.listing_filter_cache = cache
+            elif preferred is None:
+                files = ()
+                self.listing_filter_cache = None
+            else:
+                assert cache is not None
+                files, self.listing_filter_cache = cache.selected_release(
+                    normalized, files, preferred
+                )
         if not self.defer_yanked:
             files = [
                 file
@@ -1495,6 +1542,19 @@ class Provider:
         self.stats.choose_version_calls += 1
 
         base, extra, normalized = self.split_and_normalize(package)
+
+        if (
+            self._preferred_releases is not None
+            and normalized not in self.versions_cache
+        ):
+            expected = self._preferred_releases.get(normalized)
+            required = version_range
+            if extra is not None:
+                base_range = self.solution_ranges.get(normalized)
+                if base_range is not None:
+                    required = required & base_range
+            if expected is not None and expected not in required:
+                self._unrestricted_preferred_packages.add(normalized)
 
         priority_error = self.priority_override_errors.get(normalized)
         if priority_error is not None:

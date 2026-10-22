@@ -844,12 +844,7 @@ class _TargetAttempt:
         """Retain only a proved model; failed provider state stays behind."""
         if hint is None:
             return
-        if self.provider.uploaded_prior_to is None and not any(
-            version.is_prerelease for version in hint.values()
-        ):
-            self.provider.preferred_releases = {
-                split_extra(package)[0]: version for package, version in hint.items()
-            }
+        self.provider.prepare_preferred_releases(hint)
         try:
             self.pins = self.resolver.try_resolve_preferred(roots, hint, constraints)
         except ResolutionTerminatedError:
