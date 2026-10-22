@@ -324,13 +324,14 @@ class WheelFile(_WheelIntegrity, HashableRecord):
         An empty URL answers ``None``: no listing entry carries one, so it
         marks a record :func:`release_wheel_payload` has reached.
         """
-        if not self.has_metadata or not self.url:
+        url = self.url
+        if not self.has_metadata or not url:
             return None
 
         try:
             return self._metadata_url
         except AttributeError:
-            parts = urlsplit(self.url)
+            parts = urlsplit(url)
             url = urlunsplit(parts._replace(path=parts.path + ".metadata", fragment=""))
             self._metadata_url = url
             return url
