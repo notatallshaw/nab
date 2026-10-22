@@ -298,6 +298,8 @@ class _ReleaseSnapshot:
         self.files = files
         self.releases: dict[Version, list[DistFile]] = {}
         self.filters: dict[Version, ListingFilterCache] = {}
+
+        # Version equality groups alternate spellings without losing artifacts.
         for dist in files:
             version = _listing.parsed_version(dist.version)
             if version is not None:
@@ -337,8 +339,10 @@ class ListingFilterCache:
         """Share Python preparation and, for multiple targets, candidate views."""
         self.shares_pythons = pythons > 1
         self.shares_targets = target_count > 1
+
         self._pythons = pythons
         self._target_count = target_count
+
         self._entries: dict[
             tuple[str, str | None],
             tuple[list[tuple[Version, DistFile]], tuple[int, ...]],
@@ -352,14 +356,18 @@ class ListingFilterCache:
         self, package: str, files: Sequence[DistFile], version: Version
     ) -> tuple[Sequence[DistFile], ListingFilterCache]:
         """Return a complete release and a filter bound to this exact snapshot."""
+        # Replacing a listing invalidates its release groups and prepared views.
         snapshot = self._release_snapshots.get(package)
         if snapshot is None or snapshot.files is not files:
             snapshot = _ReleaseSnapshot(files)
             self._release_snapshots[package] = snapshot
+
+        # Restricted preparation must stay separate from ordinary search.
         cache = snapshot.filters.get(version)
         if cache is None:
             cache = ListingFilterCache(self._pythons, target_count=self._target_count)
             snapshot.filters[version] = cache
+
         return snapshot.releases.get(version, ()), cache
 
     def filtered(
@@ -711,6 +719,8 @@ class Provider:
         # The pre-tag half of the listing filter, shared with the other
         # targets of this resolve.  ``None`` computes it here instead.
         self.listing_filter_cache = listing_filter_cache
+
+        # Preferred trials retain their own release-selection context.
         self._preferred_releases: dict[str, Version] | None = None
         self._unrestricted_preferred_packages: set[str] = set()
         self._full_listing_filter_cache = listing_filter_cache
@@ -1462,6 +1472,7 @@ class Provider:
 
     def prepare_preferred_releases(self, preferred: Mapping[str, Version]) -> None:
         """Restrict a fresh model-proof provider; refusal requires a fresh provider."""
+        # Reject partially prepared providers before narrowing their candidates.
         if (
             self.versions_cache
             or self.metadata_cache
@@ -1471,13 +1482,16 @@ class Provider:
         ):
             msg = "preferred release preparation requires a fresh provider"
             raise ValueError(msg)
+
+        # Cutoff errors and prerelease admission can depend on other releases.
         if (
             self._full_listing_filter_cache is None
             or self.uploaded_prior_to is not None
             or any(version.is_prerelease for version in preferred.values())
         ):
-            # Cutoff errors and prerelease admission can depend on other releases.
             return
+
+        # A base package and its extras must agree after name normalization.
         releases: dict[str, Version] = {}
         for package, version in preferred.items():
             _, _, normalized = self.split_and_normalize(package)
@@ -1486,6 +1500,7 @@ class Provider:
                 msg = "preferred base and extra versions must agree"
                 raise ValueError(msg)
             releases[normalized] = version
+
         self._preferred_releases = releases
 
     def filter_distributions(
@@ -1494,18 +1509,24 @@ class Provider:
         """See :func:`nab_provider._provider.listing.filter_distributions`."""
         original_cache = self.listing_filter_cache
         self.prepared_listings.pop(normalized, None)
+
         if raw_versions := getattr(files, "withdrawn_versions", ()):
             self.yanked_versions = self.yanked_versions | {
                 (normalized, version)
                 for raw in raw_versions
                 if (version := _listing.parsed_version(raw)) is not None
             }
+
+        # Scope release-only preparation to this trial's filter.
         if self._preferred_releases is not None:
             cache = self._full_listing_filter_cache
             preferred = self._preferred_releases.get(normalized)
+
+            # Withdrawals and forced alternatives still need the full listing.
             if raw_versions or normalized in self._unrestricted_preferred_packages:
                 self.listing_filter_cache = cache
             elif preferred is None:
+                # A complete preferred model cannot introduce an unknown package.
                 files = ()
                 self.listing_filter_cache = None
             else:
@@ -1513,6 +1534,7 @@ class Provider:
                 files, self.listing_filter_cache = cache.selected_release(
                     normalized, files, preferred
                 )
+
         try:
             if not self.defer_yanked:
                 files = [
@@ -1522,8 +1544,10 @@ class Provider:
                     or (normalized, _listing.parsed_version(file.version))
                     in self.yank_admissions
                 ]
+
             return _listing.filter_distributions(self, normalized, files)
         finally:
+            # Restore the shared context even when target admission fails.
             self.listing_filter_cache = original_cache
 
     def pick_best_candidate(
@@ -1547,16 +1571,20 @@ class Provider:
 
         base, extra, normalized = self.split_and_normalize(package)
 
+        # A forced version change needs alternatives before a view is cached.
         if (
             self._preferred_releases is not None
             and normalized not in self.versions_cache
         ):
             expected = self._preferred_releases.get(normalized)
             required = version_range
+
+            # Extras also obey the base package's current solution range.
             if extra is not None:
                 base_range = self.solution_ranges.get(normalized)
                 if base_range is not None:
                     required = required & base_range
+
             if expected is not None and expected not in required:
                 self._unrestricted_preferred_packages.add(normalized)
 

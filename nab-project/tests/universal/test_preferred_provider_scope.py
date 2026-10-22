@@ -325,6 +325,7 @@ def test_preferred_trial_filters_only_complete_selected_release() -> None:
     alias = make_wheel(
         "20.0", package="a", tag="py2.py3-none-any", hashes=(("sha256", "b" * 64),)
     )
+
     result = resolve_with_coordinator(
         make_coordinator(listings={"a": [*history, alias]}, auto_metadata=True),
         [target("linux_x86_64"), target("windows_amd64")],
@@ -332,8 +333,11 @@ def test_preferred_trial_filters_only_complete_selected_release() -> None:
         inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
     )
     result.raise_for_failure()
+
     first, second = result.target_results
     assert first.pins == second.pins == {"a": Version("20")}
+
+    # Later targets keep both artifacts without filtering the other releases.
     assert first.distributions_seen == 21
     assert second.distributions_seen == 2
     assert second.lock is not None
@@ -345,6 +349,8 @@ def test_upload_cutoff_still_validates_historical_rows() -> None:
     historical = make_wheel(
         "1", package="a", requires_python=">=3.13", upload_time="2020-01-01T00:00:00"
     )
+
+    # The later Python admits the old artifact and must report its invalid time.
     with pytest.raises(InvalidUploadTimeError):
         resolve_with_coordinator(
             make_coordinator(
