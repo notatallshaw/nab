@@ -15,7 +15,7 @@ from nab_provider.errors import (
 )
 from nab_provider.provider import ListingFilterCache, Provider
 from nab_provider.records import DistFile
-from nab_provider.tags import PlatformSpec
+from nab_provider.tags import PlatformSpec, TagSet
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import make_coordinator, make_metadata, make_sdist, make_wheel
 from nab_provider.yanking import append_yanked_file
@@ -174,6 +174,41 @@ def test_late_forced_change_refuses_without_replacing_prepared_state() -> None:
     snapshot = provider.fetch_versions("pkg")
     assert provider.choose_version("pkg", SpecifierSet(">=2").to_range()) is None
     assert provider.fetch_versions("pkg") is snapshot
+
+
+def test_extra_without_a_partial_solution_hint_keeps_preferred_release() -> None:
+    provider = Provider(
+        make_coordinator(
+            [make_wheel("1")],
+            metadata_text=make_metadata("pkg", "1", provides_extra=("speed",)),
+        ),
+        target(),
+        preferences={"pkg": Version("1")},
+        listing_filter_cache=ListingFilterCache(),
+    )
+    provider.prepare_preferred_releases({"pkg[speed]": Version("1")})
+    assert provider.choose_version("pkg[speed]", VersionRange.full()) == Version("1")
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_selected_filter_restores_shared_context_on_success_and_error(
+    fails: bool,
+) -> None:
+    class RejectingTags(TagSet):
+        def accepts(self, wheel_filename: str) -> bool:
+            raise RuntimeError("tag backend failed")
+
+    files = [make_wheel("1"), make_wheel("2")]
+    cache = ListingFilterCache(target_count=48)
+    provider = Provider(make_coordinator(files), target(), listing_filter_cache=cache)
+    provider.prepare_preferred_releases({"pkg": Version("1")})
+    if fails:
+        provider.wheel_tags = RejectingTags((("py3", "none", "any"),))
+        with pytest.raises(RuntimeError, match="tag backend failed"):
+            provider.filter_distributions("pkg", files)
+    else:
+        assert len(provider.filter_distributions("pkg", files)) == 1
+    assert provider.listing_filter_cache is cache
 
 
 @pytest.mark.parametrize("fault", ["sibling-deps", "metadata-hash"])

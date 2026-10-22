@@ -1492,6 +1492,7 @@ class Provider:
         self, normalized: str, files: Sequence[WheelFile | SdistFile]
     ) -> list[tuple[Version, DistFile]]:
         """See :func:`nab_provider._provider.listing.filter_distributions`."""
+        original_cache = self.listing_filter_cache
         self.prepared_listings.pop(normalized, None)
         if raw_versions := getattr(files, "withdrawn_versions", ()):
             self.yanked_versions = self.yanked_versions | {
@@ -1512,15 +1513,18 @@ class Provider:
                 files, self.listing_filter_cache = cache.selected_release(
                     normalized, files, preferred
                 )
-        if not self.defer_yanked:
-            files = [
-                file
-                for file in files
-                if not file.yanked
-                or (normalized, _listing.parsed_version(file.version))
-                in self.yank_admissions
-            ]
-        return _listing.filter_distributions(self, normalized, files)
+        try:
+            if not self.defer_yanked:
+                files = [
+                    file
+                    for file in files
+                    if not file.yanked
+                    or (normalized, _listing.parsed_version(file.version))
+                    in self.yank_admissions
+                ]
+            return _listing.filter_distributions(self, normalized, files)
+        finally:
+            self.listing_filter_cache = original_cache
 
     def pick_best_candidate(
         self,
