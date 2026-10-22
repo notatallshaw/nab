@@ -14,7 +14,6 @@ __lazy_modules__ = (
     "functools",
     "gc",
     "importlib.util",
-    "importlib",
     "nab._run",
     "nab.config.model",
     "nab.output",
@@ -176,7 +175,7 @@ def _make_transport(backend: str) -> AsyncHttpTransport:
     if backend in {"httpx", "httpx2"}:
         try:
             # Distinguish a missing backend from missing HTTP/2 dependencies.
-            if find_spec(backend) is None:
+            if sys.modules.get(backend) is None and find_spec(backend) is None:
                 msg = f"No module named {backend!r}"
                 raise ModuleNotFoundError(msg, name=backend)
             if backend == "httpx":

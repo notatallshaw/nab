@@ -11,12 +11,14 @@ __lazy_modules__ = (
     "nab_index.retry_limits",
     "nab_index.transport",
     "ssl",
+    "sys",
     "truststore",
 )
 
 import asyncio
 import json as _json
 import ssl
+import sys
 from importlib.util import find_spec
 from typing import TYPE_CHECKING, Any
 
@@ -89,7 +91,7 @@ class Httpx2AsyncTransport:
         """Check optional package availability and defer the client until a request."""
         required = ("httpx2", "h2") if http2 else ("httpx2",)
         for module_name in required:
-            if find_spec(module_name) is None:
+            if sys.modules.get(module_name) is None and find_spec(module_name) is None:
                 msg = f"No module named {module_name!r}"
                 raise ModuleNotFoundError(msg, name=module_name)
 

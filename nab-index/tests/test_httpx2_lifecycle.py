@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import builtins
 import ssl
+import subprocess
+import sys
+from types import ModuleType
 
 import httpx2
 import pytest
@@ -101,20 +103,39 @@ def test_requests_reuse_one_client_and_close_it(
 def test_optional_dependencies_are_checked_before_any_request(
     monkeypatch: pytest.MonkeyPatch, module_name: str, *, http2: bool
 ) -> None:
-    actual_import = builtins.__import__
-
-    def import_module(name: str, *args: object, **kwargs: object) -> object:
-        if name == module_name:
-            raise ImportError(name)
-        return actual_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", import_module)
+    monkeypatch.setitem(sys.modules, module_name, None)
     if module_name == "httpx2" or http2:
-        with pytest.raises(ImportError):
-            Httpx2AsyncTransport(http2=True)
+        with pytest.raises(ModuleNotFoundError) as info:
+            Httpx2AsyncTransport(http2=http2)
+        assert info.value.name == module_name
     else:
         transport = Httpx2AsyncTransport(http2=False)
         asyncio.run(transport.aclose())
+
+
+@pytest.mark.parametrize("module_name", ["httpx2", "h2"])
+def test_preloaded_package_needs_no_import_spec(
+    monkeypatch: pytest.MonkeyPatch, module_name: str
+) -> None:
+    monkeypatch.setitem(sys.modules, module_name, ModuleType(module_name))
+    transport = Httpx2AsyncTransport()
+    assert transport.close_without_loop()
+
+
+@pytest.mark.skipif(sys.version_info < (3, 15), reason="requires explicit lazy imports")
+@pytest.mark.parametrize("http2", [False, True])
+def test_unused_transport_keeps_optional_packages_unloaded(*, http2: bool) -> None:
+    code = f"""
+import sys
+from nab_index.httpx2_async_transport import Httpx2AsyncTransport
+transport = Httpx2AsyncTransport(http2={http2!r})
+assert "httpx2" not in sys.modules
+assert "h2" not in sys.modules
+assert transport.close_without_loop()
+"""
+    subprocess.run(  # noqa: S603 - the current interpreter runs only this test's boolean probe
+        [sys.executable, "-c", code], check=True
+    )
 
 
 def test_client_construction_failure_is_a_request_error(

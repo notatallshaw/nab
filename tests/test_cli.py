@@ -7502,6 +7502,19 @@ class TestMakeTransport:
             asyncio.run(transport.aclose())
 
     @pytest.mark.parametrize("backend", ["httpx", "httpx2"])
+    def test_optional_backend_absent_exits_before_initialization(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        backend: str,
+    ) -> None:
+        monkeypatch.setitem(sys.modules, backend, None)
+        with pytest.raises(SystemExit) as info:
+            _make_transport(backend)
+        assert info.value.code == 1
+        assert f"{backend} is not installed" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("backend", ["httpx", "httpx2"])
     def test_optional_backend_missing_exits_with_hint(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -7530,14 +7543,7 @@ class TestMakeTransport:
         backend: str,
     ) -> None:
         """An optional backend installed without ``h2`` exits with a hint."""
-        original_import = builtins.__import__
-
-        def fake_import(name: str, *args: object, **kwargs: object) -> object:
-            if name == "h2":
-                raise ImportError(name)
-            return original_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", fake_import)
+        monkeypatch.setitem(sys.modules, "h2", None)
         with pytest.raises(SystemExit) as info:
             _make_transport(backend)
         assert info.value.code == 1
