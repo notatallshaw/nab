@@ -299,7 +299,7 @@ class _ReleaseSnapshot:
         self.releases: dict[Version, list[DistFile]] = {}
         self.filters: dict[Version, ListingFilterCache] = {}
 
-        # Version equality groups alternate spellings without losing artifacts.
+        # Group versions 1 and 1.0 together, retaining every artifact.
         for dist in files:
             version = _listing.parsed_version(dist.version)
             if version is not None:

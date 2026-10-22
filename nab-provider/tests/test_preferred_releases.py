@@ -22,6 +22,7 @@ from nab_provider.yanking import append_yanked_file
 
 
 def target(python: str = "3.12", platform: str = "linux_x86_64") -> ResolveTarget:
+    """Return a declared CPython target for the provider tests."""
     return ResolveTarget.for_declared(
         python_version=python, spec=PlatformSpec(platform)
     )
@@ -39,7 +40,7 @@ def test_release_groups_keep_aliases_and_reject_different_local_versions() -> No
 
     assert list(selected) == files[:2]
 
-    # Equivalent spellings reuse the same complete release view.
+    # Version 1.0 reuses the complete view prepared for version 1.
     again, same_filters = cache.selected_release("pkg", files, Version("1.0"))
 
     assert again is selected
@@ -118,12 +119,13 @@ def test_fresh_provider_requirement_and_extra_version_agreement() -> None:
 @pytest.mark.parametrize("reason", ["prerelease", "cutoff", "no-cache"])
 def test_global_admission_contexts_keep_full_listing(reason: str) -> None:
     files = [make_wheel("1"), make_wheel("2rc1")]
+    cache = None if reason == "no-cache" else ListingFilterCache()
+    cutoff = datetime(2021, 1, 1, tzinfo=timezone.utc) if reason == "cutoff" else None
+
     provider = Provider(
         make_coordinator(files),
-        listing_filter_cache=None if reason == "no-cache" else ListingFilterCache(),
-        uploaded_prior_to=datetime(2021, 1, 1, tzinfo=timezone.utc)
-        if reason == "cutoff"
-        else None,
+        listing_filter_cache=cache,
+        uploaded_prior_to=cutoff,
     )
     preferred = Version("2rc1") if reason == "prerelease" else Version("1")
     provider.prepare_preferred_releases({"pkg": preferred})
@@ -171,6 +173,7 @@ def test_forced_change_uses_complete_view_before_preparation(package: str) -> No
             make_metadata("pkg", file.version, provides_extra=("speed",)),
             metadata_url=file.metadata_url,
         )
+
     provider = Provider(
         port,
         target(),
@@ -227,6 +230,7 @@ def test_selected_filter_restores_shared_context_on_success_and_error(
     cache = ListingFilterCache(target_count=48)
     provider = Provider(make_coordinator(files), target(), listing_filter_cache=cache)
     provider.prepare_preferred_releases({"pkg": Version("1")})
+
     if fails:
         provider.wheel_tags = RejectingTags((("py3", "none", "any"),))
         with pytest.raises(RuntimeError, match="tag backend failed"):
