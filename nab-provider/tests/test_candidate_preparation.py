@@ -64,6 +64,49 @@ def test_empty_and_invalid_wheel_views() -> None:
     assert view.count_matching(VersionRange.full()) == 0
 
 
+def test_snapshot_matching_requires_row_identity_and_order() -> None:
+    rows: list[tuple[Version, DistFile]] = [
+        (Version("1"), make_wheel("1")),
+        (Version("2"), make_sdist("2")),
+    ]
+    preparation = CandidatePreparation(rows)
+    assert preparation.matches_records(rows.copy())
+    assert not preparation.matches_records(rows[:-1])
+    assert not preparation.matches_records(list(reversed(rows)))
+    assert not preparation.matches_records([(version, dist) for version, dist in rows])
+    assert CandidatePreparation([]).matches_records([])
+
+
+def test_identical_python_snapshots_share_views_and_replay_counters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preparations: list[CandidatePreparation] = []
+    original = CandidatePreparation.__init__
+
+    def initialize(
+        prepared: CandidatePreparation,
+        distributions: Sequence[tuple[Version, DistFile]],
+    ) -> None:
+        preparations.append(prepared)
+        original(prepared, distributions)
+
+    monkeypatch.setattr(CandidatePreparation, "__init__", initialize)
+    files: list[WheelFile | SdistFile] = [make_wheel("1"), make_sdist("2")]
+    port = make_coordinator(files)
+    cache = ListingFilterCache(3, target_count=3)
+    providers = [
+        Provider(port, target(python), listing_filter_cache=cache)
+        for python in ("3.12", "3.13", "3.14")
+    ]
+    for provider in providers:
+        result = provider.filter_distributions("pkg", files)
+        assert [str(version) for version, _ in result] == ["2", "1"]
+        assert provider.stats.distributions_seen == 2
+    first, second, third = [provider.prepared_listings["pkg"] for provider in providers]
+    assert first is second is third
+    assert len(preparations) == 1
+
+
 def test_source_records_and_distinct_equal_version_objects() -> None:
     tags = target(platform="windows_amd64").tags
     assert tags is not None

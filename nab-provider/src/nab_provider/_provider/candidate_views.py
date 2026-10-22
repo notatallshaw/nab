@@ -91,6 +91,14 @@ class CandidatePreparation:
         self._rows = tuple(rows)
         self._views: dict[tuple[bool, ...], CandidateView] = {}
 
+    def matches_records(
+        self, distributions: Sequence[tuple[Version, DistFile]]
+    ) -> bool:
+        """Match the same row objects in order, without record equality callbacks."""
+        return len(distributions) == len(self._rows) and all(
+            pair is row[0] for pair, row in zip(distributions, self._rows, strict=True)
+        )
+
     def for_tags(self, tags: TagSet) -> CandidateView:
         """Reuse a view only when every tag group has the same admission answer."""
         signature = tuple(

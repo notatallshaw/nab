@@ -299,6 +299,8 @@ class ListingFilterCache:
     identical list. Memoising it per (package, Python) shares that preparation.
     Multiple targets also share candidate views when their actual wheel-tag
     admission answers agree.
+    Pre-tag snapshots with the same row objects in the same order also share
+    tag preparation across Pythons.
 
     Most of that half reads no Python either: the version parse, the
     dist-policy exclusion and the upload cutoff reach the same answer for
@@ -326,7 +328,7 @@ class ListingFilterCache:
         ] = {}
         self._prepared: dict[str, tuple[object, tuple[int, ...]]] = {}
         self._diagnosed: dict[tuple[str, str | None], object] = {}
-        self._tagged: dict[tuple[str, str | None], CandidatePreparation] = {}
+        self._tagged: dict[str, dict[str | None, CandidatePreparation]] = {}
 
     def filtered(
         self,
@@ -356,11 +358,17 @@ class ListingFilterCache:
         self, package: str, python_version: str | None, tags: TagSet
     ) -> CandidateView:
         """Project the cache-owned base snapshot through this target's tags."""
-        key = (package, python_version)
-        prepared = self._tagged.get(key)
+        by_python = self._tagged.setdefault(package, {})
+        prepared = by_python.get(python_version)
         if prepared is None:
-            prepared = CandidatePreparation(self._entries[key][0])
-            self._tagged[key] = prepared
+            records = self._entries[(package, python_version)][0]
+            previous = next(reversed(by_python.values()), None)
+            prepared = (
+                previous
+                if previous is not None and previous.matches_records(records)
+                else CandidatePreparation(records)
+            )
+            by_python[python_version] = prepared
         return prepared.for_tags(tags)
 
     def prepared(
