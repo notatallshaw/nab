@@ -13,6 +13,7 @@ from __future__ import annotations
 __lazy_modules__ = (
     "functools",
     "gc",
+    "importlib.util",
     "importlib",
     "nab._run",
     "nab.config.model",
@@ -34,7 +35,7 @@ import gc
 import sys
 from contextlib import contextmanager
 from functools import partial
-from importlib import import_module
+from importlib.util import find_spec
 from typing import TYPE_CHECKING
 
 import tomli
@@ -175,7 +176,9 @@ def _make_transport(backend: str) -> AsyncHttpTransport:
     if backend in {"httpx", "httpx2"}:
         try:
             # Distinguish a missing backend from missing HTTP/2 dependencies.
-            import_module(backend)
+            if find_spec(backend) is None:
+                msg = f"No module named {backend!r}"
+                raise ModuleNotFoundError(msg, name=backend)
             if backend == "httpx":
                 from nab_index.httpx_async_transport import (  # noqa: PLC0415 - optional dependency
                     HttpxAsyncTransport,
