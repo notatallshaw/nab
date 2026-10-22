@@ -347,14 +347,12 @@ def build_target_lock(
 
     if artifacts is None:
         artifacts = ArtifactMemo()
-    if base_roots is None:
-        if selector_roots:
-            msg = (
-                "selector_roots need base_roots:"
-                " without them every package looks selector-only"
-            )
-            raise ValueError(msg)
-        base_roots = ()
+    if base_roots is None and selector_roots:
+        msg = (
+            "selector_roots need base_roots:"
+            " without them every package looks selector-only"
+        )
+        raise ValueError(msg)
 
     lock_pins: dict[str, PinShape] = {}
     for raw_name, version in pins.items():
@@ -399,17 +397,20 @@ def build_target_lock(
     dependencies, base_dependencies = _forward_dependency_graph(
         provider, pins, resolved_keys
     )
+    package_gates: dict[str, tuple[tuple[str, str], ...]] = {}
+    if base_roots is not None:
+        package_gates = _membership_gates(
+            provider,
+            pins,
+            base_roots=base_roots,
+            selector_roots=selector_roots or {},
+        )
     return TargetLock(
         target=target,
         pins=lock_pins,
         dependencies=dependencies,
         base_dependencies=base_dependencies,
-        package_gates=_membership_gates(
-            provider,
-            pins,
-            base_roots=base_roots,
-            selector_roots=selector_roots or {},
-        ),
+        package_gates=package_gates,
     )
 
 
