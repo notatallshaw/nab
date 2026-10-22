@@ -7,7 +7,7 @@ __lazy_modules__ = ("nab_provider.records", "nab_provider.tags")
 from typing import TYPE_CHECKING
 
 from ..records import WheelFile
-from ..tags import wheel_tag_set
+from ..tags import parse_wheel_tag_set
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -82,7 +82,9 @@ class CandidatePreparation:
         for pair in distributions:
             _, dist = pair
             if isinstance(dist, WheelFile):
-                group = groups.setdefault(wheel_tag_set(dist.filename), len(groups))
+                group = groups.setdefault(
+                    parse_wheel_tag_set(dist.filename), len(groups)
+                )
                 rows.append((pair, group))
             else:
                 rows.append((pair, None))

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gc
+import weakref
 from collections.abc import Callable, Sequence
 
 import pytest
@@ -62,6 +64,32 @@ def test_empty_and_invalid_wheel_views() -> None:
     assert view.empty_versions == 1
     assert view.count_matching(VersionRange.full()) == 0
     assert view.count_matching(VersionRange.full()) == 0
+
+
+def test_bulk_preparation_keeps_filename_lifetime_inside_the_snapshot() -> None:
+    class Filename(str):
+        """Make the filename's lifetime observable."""
+
+        __slots__ = ("__weakref__",)
+
+    filename = Filename("bulk_cache_lifetime-1-py3-none-any.whl")
+    reference = weakref.ref(filename)
+    wheel = WheelFile(
+        filename,
+        url="https://example.com/wheel.whl",
+        version="1",
+        requires_python=None,
+        has_metadata=False,
+        upload_time=None,
+    )
+    before = wheel_tag_set.cache_info()
+    prepared = CandidatePreparation([(Version("1"), wheel)])
+    after = wheel_tag_set.cache_info()
+    assert (after.hits, after.misses) == (before.hits, before.misses)
+
+    del prepared, wheel, filename
+    gc.collect()
+    assert reference() is None
 
 
 def test_snapshot_matching_requires_row_identity_and_order() -> None:

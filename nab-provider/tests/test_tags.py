@@ -14,6 +14,7 @@ Pins:
 
 from __future__ import annotations
 
+import pickle
 from contextlib import AbstractContextManager
 from unittest.mock import MagicMock, patch
 
@@ -32,6 +33,7 @@ from nab_provider.tags import (
     _parse_tag_str,
     _platform_tags_for_spec,
     _tags_in_order,
+    parse_wheel_tag_set,
     python_axis_accepts,
     wheel_tag_set,
 )
@@ -40,6 +42,15 @@ from nab_provider.target import PLATFORM_MARKERS
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
 )
+
+
+def test_tag_parsers_keep_picklable_public_entry_points() -> None:
+    for parser in (parse_wheel_tag_set, wheel_tag_set):
+        restored = pickle.loads(  # noqa: S301 - self-generated trusted function data
+            pickle.dumps(parser)
+        )
+        assert restored is parser
+
 
 # numpy 2.5.1 ships one manylinux wheel (tagged 2.27 and 2.28, no older),
 # one musllinux wheel, and one free-threaded wheel per platform.

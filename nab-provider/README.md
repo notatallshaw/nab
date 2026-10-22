@@ -19,6 +19,11 @@ keeping [`nab-index`](https://pypi.org/project/nab-index/) out of the import gra
 
 The API is currently under rapid experimentation, if you use it pin to an exact version.
 
+## Wheel tags
+
+`wheel_tag_set(filename)` caches repeated filename queries. `parse_wheel_tag_set(filename)` shares
+parsing by tag suffix for bulk listings.
+
 ## Value records
 
 Nab's record constructors declare their fields explicitly. `nab_provider.value` shares value

@@ -49,6 +49,7 @@ __all__ = [
     "PlatformSpec",
     "TagSet",
     "TagsSource",
+    "parse_wheel_tag_set",
     "platform_kind",
     "python_axis_accepts",
     "supports_free_threading",
@@ -517,8 +518,7 @@ def _parse_tag_str(tag_str: str) -> frozenset[Tag] | None:
     return frozenset(_intern_tag(t) for t in raw)
 
 
-@lru_cache(maxsize=65536)
-def wheel_tag_set(filename: str) -> frozenset[Tag] | None:
+def parse_wheel_tag_set(filename: str) -> frozenset[Tag] | None:
     """Parse a wheel filename into the set of tags it advertises.
 
     Per PEP 427 the filename's last three dash-separated segments
@@ -526,10 +526,8 @@ def wheel_tag_set(filename: str) -> frozenset[Tag] | None:
     dot-separated compressed set.  Returns ``None`` for a non-wheel
     filename or one with too few segments.
 
-    The tag set is a pure function of the filename, so the whole
-    result is memoized on it, and a repeated filename skips the split.
-    The parse and Tag interning are shared further across distinct
-    filenames by :func:`_parse_tag_str`, keyed on the tag suffix.
+    ``wheel_tag_set`` memoizes filenames. ``parse_wheel_tag_set`` reuses
+    only the tag-suffix cache.
     """
     if not filename.endswith(".whl"):
         return None
@@ -539,6 +537,12 @@ def wheel_tag_set(filename: str) -> frozenset[Tag] | None:
         return None
 
     return _parse_tag_str(filename[len(head) + 1 : -4])
+
+
+wheel_tag_set = lru_cache(maxsize=65536)(parse_wheel_tag_set)
+# Keep the cached entry point's import name for pickling.
+wheel_tag_set.__name__ = "wheel_tag_set"
+wheel_tag_set.__qualname__ = "wheel_tag_set"
 
 
 def _build_tag_sort_key(filename: str) -> tuple[int, str]:
