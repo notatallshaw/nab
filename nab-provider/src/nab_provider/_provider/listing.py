@@ -250,10 +250,16 @@ def prefetch_root_batch(
     )
 
     items: list[tuple[str, str, str, tuple[str, str] | None]] = []
+    previous_version: Version | None = None
+    in_root_range = False
     for version, dist in ordered:
         if len(items) >= PREFETCH_BATCH:
             break
-        if version not in root_range:
+        # Equal versions can retain different text for literal matching.
+        if previous_version is None or version is not previous_version:
+            previous_version = version
+            in_root_range = version in root_range
+        if not in_root_range:
             continue
         if (normalized, version) in provider.deps_cache:
             continue
