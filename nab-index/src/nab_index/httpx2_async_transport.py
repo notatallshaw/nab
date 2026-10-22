@@ -5,6 +5,7 @@ from __future__ import annotations
 __lazy_modules__ = (
     "asyncio",
     "httpx2",
+    "importlib.util",
     "json",
     "nab_index.retry",
     "nab_index.retry_limits",
@@ -16,6 +17,7 @@ __lazy_modules__ = (
 import asyncio
 import json as _json
 import ssl
+from importlib.util import find_spec
 from typing import TYPE_CHECKING, Any
 
 import httpx2
@@ -85,9 +87,11 @@ class Httpx2AsyncTransport:
 
     def __init__(self, *, http2: bool = True) -> None:
         """Validate optional dependencies and defer the client until a request."""
-        __import__("httpx2")
-        if http2:
-            __import__("h2")
+        required = ("httpx2", "h2") if http2 else ("httpx2",)
+        for module_name in required:
+            if find_spec(module_name) is None:
+                msg = f"No module named {module_name!r}"
+                raise ModuleNotFoundError(msg, name=module_name)
 
         self.prefetch_settings = prefetch_settings_for_backend("httpx2")
         self._http2 = http2
