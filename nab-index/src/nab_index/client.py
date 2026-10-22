@@ -656,6 +656,25 @@ def _normalized_url(url: str) -> str:
     return urlunsplit(parts)
 
 
+def _normalized_ascii_http_url(url: str) -> bool:
+    """Recognize HTTP URLs whose split round trip cannot change them."""
+    if type(url) is not str or not url.isascii():
+        return False
+    prefix = "https://" if url.startswith("https://") else "http://"
+    return (
+        url.startswith(prefix)
+        and len(url) > len(prefix)
+        and url[len(prefix)] not in "/?#"
+        and "[" not in url
+        and "]" not in url
+        and "\t" not in url
+        and "\r" not in url
+        and "\n" not in url
+        and not url.endswith(("?", "#"))
+        and "?#" not in url
+    )
+
+
 def _resolve_file_url(raw_url: str, base_url: str) -> str | None:
     """Return the entry's absolute URL, or None when it is not usable.
 
@@ -668,6 +687,8 @@ def _resolve_file_url(raw_url: str, base_url: str) -> str | None:
     ``urlsplit`` deletes a tab, CR or LF anywhere in a URL, so the split
     round trip stores the URL a later parse of the record would yield.
     """
+    if _normalized_ascii_http_url(raw_url):
+        return raw_url
     try:
         # urljoin resolves a same-scheme URL against the base, which would
         # hand ``https:///pkg.whl`` the base's authority.
