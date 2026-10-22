@@ -33,3 +33,20 @@ nab_resolver.types      Incompatibility, IncompatibilityCause,
 
 The package root binds no names, so importing `nab_resolver` pulls in no submodules and a caller
 loads only what it imports.
+
+## Checking preferred versions
+
+`try_resolve_preferred` checks a proposed assignment against the current provider's version choices,
+dependencies and emitted incompatibilities. It returns the reachable pins on success, or `None` when
+ordinary resolution is needed.
+
+```python
+trial = Resolver(make_provider())
+pins = trial.try_resolve_preferred(requirements, preferred, constraints)
+if pins is None:
+    pins = Resolver(make_provider()).resolve(requirements, constraints)
+```
+
+The trial consumes its resolver and provider. Create both again before falling back; provider
+callbacks may have queued facts during the trial. Nab's project layer owns these attempts for each
+target and retains package names and alignment preferences between targets.

@@ -19,6 +19,7 @@ __lazy_modules__ = (
     "nab_provider._vendor.packaging.ranges",
     "nab_provider._vendor.packaging.utils",
     "nab_provider.errors",
+    "nab_provider.policy",
     "nab_provider.provider",
     "nab_provider.resolver_inputs",
     "nab_provider.target",
@@ -38,7 +39,12 @@ from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
+from nab_provider.errors import (
+    MetadataError,
+    MissingExtraError,
+    YankAdmissionRequiredError,
+)
+from nab_provider.policy import BuildPolicy, ResolutionStrategy
 from nab_provider.provider import ListingFilterCache, Provider, join_extra, split_extra
 from nab_provider.resolver_inputs import ProxyConstraints, build_resolver_inputs
 from nab_provider.target import micro_boundary_points, slices_from_points
@@ -46,7 +52,7 @@ from nab_provider.value import FACTORY, FactoryDefault, Record, factory_value, r
 from nab_provider.yanked_resolution import YankProxyProvider
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 from nab_resolver.resolver import Resolver, ResolverObserver
-from nab_resolver.types import IncompatibilityCause
+from nab_resolver.types import IncompatibilityCause, RootRequirement
 
 from .._compat import override
 from ..lockfile import (
@@ -64,7 +70,6 @@ if TYPE_CHECKING:
     from nab_provider._vendor.packaging.requirements import Requirement
     from nab_provider._vendor.packaging.version import Version
     from nab_provider.diagnostics import Diagnostic
-    from nab_provider.provider import ResolutionStrategy
     from nab_provider.resolver_inputs import MarkerHolds
     from nab_provider.target import ResolveTarget
     from nab_resolver.resolver import ResolverStats
@@ -620,6 +625,7 @@ class _EngineSettings(Record):
         "lookahead_versions",
         "warned_dropped_markers",
         "artifacts",
+        "preferred_names",
     )
 
     coordinator: FetchCoordinator
@@ -650,6 +656,7 @@ class _EngineSettings(Record):
 
     # Lock artifacts shared by the targets of one resolve.
     artifacts: ArtifactMemo
+    preferred_names: set[str]
 
     def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
@@ -667,6 +674,7 @@ class _EngineSettings(Record):
         lookahead_versions: int | None = None,
         warned_dropped_markers: set[tuple[str, str]] | FactoryDefault = FACTORY,
         artifacts: ArtifactMemo | FactoryDefault = FACTORY,
+        preferred_names: set[str] | FactoryDefault = FACTORY,
     ) -> None:
         self.coordinator = coordinator
         self.inputs = inputs
@@ -683,6 +691,7 @@ class _EngineSettings(Record):
         self.lookahead_versions = lookahead_versions
         self.warned_dropped_markers = factory_value(warned_dropped_markers, set)
         self.artifacts = factory_value(artifacts, ArtifactMemo)
+        self.preferred_names = factory_value(preferred_names, set)
 
 
 def _threaded_preferences(
@@ -767,6 +776,90 @@ def _make_target_provider(
     )
 
 
+def _new_target_resolver(
+    provider: Provider, progress: ProgressSink | None
+) -> Resolver[str, Version]:
+    """Bind Nab's range backend and progress observer."""
+    return Resolver(
+        provider,
+        observer=_ResolveObserver(progress),
+        range_type=VersionRange,
+        root_version="0",
+        format_range=provider.format_range,
+    )
+
+
+def _preferred_hint(
+    settings: _EngineSettings,
+    preferences: Mapping[str, Version],
+    requirements: Sequence[Requirement],
+    constraints: Sequence[Requirement],
+) -> dict[str, Version] | None:
+    """Propose known package identifiers under the current alignment choices."""
+    inputs = settings.inputs
+    if (
+        not settings.align
+        or settings.resolution is not ResolutionStrategy.HIGHEST
+        or inputs.build_policy is not BuildPolicy.NEVER
+        or inputs.package_overrides
+        or inputs.index_overrides
+        or inputs.local_sources
+        or inputs.vcs_sources
+        or inputs.archive_sources
+        or any(req.url is not None for req in (*requirements, *constraints))
+    ):
+        return None
+    result = {}
+    for package in settings.preferred_names:
+        base, _ = split_extra(package)
+        version = preferences.get(base)
+        if version is not None:
+            result[package] = version
+    return result or None
+
+
+class _TargetAttempt:
+    """Keep a trial's provider and solver together, replacing both on refusal."""
+
+    __slots__ = ("_factory", "_progress", "pins", "prior_stats", "provider", "resolver")
+
+    def __init__(
+        self, factory: Callable[[], Provider], progress: ProgressSink | None
+    ) -> None:
+        """Start with a fresh provider and its bound solver."""
+        self._factory = factory
+        self._progress = progress
+        self.provider = factory()
+        self.resolver = _new_target_resolver(self.provider, progress)
+        self.pins: dict[str, Version] | None = None
+        self.prior_stats: _TargetStats | None = None
+
+    def try_preferred(
+        self,
+        roots: Sequence[RootRequirement[str, Version]],
+        constraints: Mapping[str, VersionRange],
+        hint: Mapping[str, Version] | None,
+    ) -> None:
+        """Retain only a proved model; failed provider state stays behind."""
+        if hint is None:
+            return
+        try:
+            self.pins = self.resolver.try_resolve_preferred(roots, hint, constraints)
+        except ResolutionTerminatedError:
+            raise
+        except (
+            ResolutionError,
+            MetadataError,
+            MissingExtraError,
+            YankAdmissionRequiredError,
+        ):
+            self.pins = None
+        if self.pins is None:
+            self.prior_stats = _target_stats(self.resolver, self.provider)
+            self.provider = self._factory()
+            self.resolver = _new_target_resolver(self.provider, self._progress)
+
+
 def _resolve_one_target(
     target: ResolveTarget,
     requirements: Sequence[Requirement],
@@ -798,7 +891,8 @@ def _resolve_one_target(
     except ResolutionError as exc:
         return TargetResult(target=target, success=False, error=exc)
 
-    provider = _make_target_provider(
+    provider_factory = partial(
+        _make_target_provider,
         settings,
         target,
         resolver_requirements,
@@ -806,22 +900,27 @@ def _resolve_one_target(
         root_extras,
         preferences,
     )
-
-    observer = _ResolveObserver(settings.progress)
-    resolver: Resolver[str, Version] = Resolver(
-        provider,
-        observer=observer,
-        range_type=VersionRange,
-        root_version="0",
-        format_range=provider.format_range,
-    )
+    attempt = _TargetAttempt(provider_factory, settings.progress)
+    provider, resolver = attempt.provider, attempt.resolver
 
     _logger.debug("resolving %s", target.label)
     artifacts = settings.artifacts
     start = time.monotonic()
+    prior_stats: _TargetStats | None = None
     try:
+        attempt.try_preferred(
+            root_requirements,
+            resolver_constraints,
+            _preferred_hint(settings, preferences, requirements, constraints),
+        )
+        provider, resolver = attempt.provider, attempt.resolver
+        prior_stats = attempt.prior_stats
+        raw = attempt.pins
         try:
-            raw = resolver.resolve(root_requirements, constraints=resolver_constraints)
+            if raw is None:
+                raw = resolver.resolve(
+                    root_requirements, constraints=resolver_constraints
+                )
         except (YankAdmissionRequiredError, ResolutionError, MissingExtraError) as exc:
             if isinstance(exc, ResolutionError) and (
                 isinstance(exc, ResolutionTerminatedError)
@@ -836,15 +935,7 @@ def _resolve_one_target(
                 raise
             raw, provider = _resolve_yanked_target(
                 provider,
-                partial(
-                    _make_target_provider,
-                    settings,
-                    target,
-                    resolver_requirements,
-                    resolver_constraints,
-                    root_extras,
-                    preferences,
-                ),
+                provider_factory,
                 root_requirements,
                 constraint_inputs.roots,
                 (*requirements, *constraints),
@@ -862,7 +953,7 @@ def _resolve_one_target(
             success=False,
             error=exc,
             wall_time=time.monotonic() - start,
-            **_target_stats(resolver, provider),
+            **_target_stats(resolver, provider, prior_stats),
         )
     elapsed = time.monotonic() - start
     base_roots, selector_roots = _install_context_roots(
@@ -886,13 +977,15 @@ def _resolve_one_target(
 
     if provider.yank_admissions:
         _warn_selected_yanks(provider, target_lock)
+    settings.preferred_names.update(raw)
+    stats = _target_stats(resolver, provider, prior_stats)
     _logger.info(
         "resolved %d packages for %s in %.2fs (%d distributions seen, %d fetched)",
         len(pins),
         target.label,
         elapsed,
-        provider.stats.distributions_seen,
-        provider.stats.metadata_fetched,
+        stats["distributions_seen"],
+        stats["metadata_fetched"],
     )
 
     return TargetResult(
@@ -902,7 +995,7 @@ def _resolve_one_target(
         consulted=_consulted_markers(provider, requirements, constraints),
         lock=target_lock,
         wall_time=elapsed,
-        **_target_stats(resolver, provider),
+        **stats,
     )
 
 
@@ -1032,9 +1125,13 @@ class _TargetStats(TypedDict):
     distributions_seen: int
 
 
-def _target_stats(resolver: Resolver[str, Version], provider: Provider) -> _TargetStats:
+def _target_stats(
+    resolver: Resolver[str, Version],
+    provider: Provider,
+    prior: _TargetStats | None = None,
+) -> _TargetStats:
     """Return the resolver and provider counters for a :class:`TargetResult`."""
-    return {
+    stats: _TargetStats = {
         "rounds": resolver.stats.rounds,
         "decisions": resolver.stats.decisions,
         "conflicts": resolver.stats.conflicts,
@@ -1042,6 +1139,14 @@ def _target_stats(resolver: Resolver[str, Version], provider: Provider) -> _Targ
         "metadata_fetched": provider.stats.metadata_fetched,
         "distributions_seen": provider.stats.distributions_seen,
     }
+    if prior is not None:
+        stats["rounds"] += prior["rounds"]
+        stats["decisions"] += prior["decisions"]
+        stats["conflicts"] += prior["conflicts"]
+        stats["backjumps"] += prior["backjumps"]
+        stats["metadata_fetched"] += prior["metadata_fetched"]
+        stats["distributions_seen"] += prior["distributions_seen"]
+    return stats
 
 
 def _raise_for_source_python(
