@@ -10,6 +10,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from nab_provider._provider import candidate_views
 from nab_provider._provider.candidate_views import CandidatePreparation
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
@@ -106,6 +107,37 @@ def test_snapshot_matching_requires_row_identity_and_order() -> None:
     assert not preparation.matches_records(list(reversed(rows)))
     assert not preparation.matches_records([(version, dist) for version, dist in rows])
     assert CandidatePreparation([]).matches_records([])
+
+
+@pytest.mark.parametrize("integer_fallback", [False, True])
+def test_projection_preserves_unordered_identity_runs_and_equal_versions(
+    monkeypatch: pytest.MonkeyPatch, integer_fallback: bool
+) -> None:
+    if integer_fallback:
+        monkeypatch.setattr(candidate_views, "_GROUP_CODEPOINT_MAX", 0)
+    first, second, equal_first, third = map(Version, ("1", "2", "1.0", "3"))
+    refused = make_wheel("1", tag="cp312-cp312-win_amd64")
+    accepted = make_wheel("2")
+    rows: list[tuple[Version, DistFile]] = [
+        (first, refused),
+        (second, accepted),
+        (first, refused),
+        (equal_first, accepted),
+        (third, refused),
+        (Version("4"), make_sdist("4")),
+    ]
+    tags = target().tags
+    assert tags is not None
+    view = CandidatePreparation(rows).for_tags(tags)
+    assert view.distributions == (rows[1], rows[3], rows[5])
+    assert view.tag_exclusions == ((first, 2), (third, 1))
+    assert view.empty_versions == 1
+
+    separate = CandidatePreparation(
+        [(first, refused), (equal_first, refused)]
+    ).for_tags(tags)
+    assert separate.tag_exclusions == ((first, 1), (equal_first, 1))
+    assert separate.empty_versions == 1
 
 
 def test_identical_python_snapshots_share_views_and_replay_counters(

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 __lazy_modules__ = ("nab_provider.records", "nab_provider.tags")
 
+import sys
+from itertools import compress
 from typing import TYPE_CHECKING
 
 from ..records import WheelFile
@@ -18,6 +20,9 @@ if TYPE_CHECKING:
 
     from ..records import DistFile
     from ..tags import TagSet
+
+
+_GROUP_CODEPOINT_MAX = sys.maxunicode
 
 
 class CandidateView:
@@ -73,24 +78,32 @@ class CandidateView:
 class CandidatePreparation:
     """Group a fixed pre-tag listing once, then project actual target tags."""
 
-    __slots__ = ("_groups", "_rows", "_views")
+    __slots__ = ("_codes", "_groups", "_rows", "_runs", "_views")
 
     def __init__(self, distributions: Sequence[tuple[Version, DistFile]]) -> None:
         """Classify the cache-owned snapshot without evaluating metadata."""
+        rows = tuple(distributions)
         groups: dict[frozenset[Tag] | None, int] = {}
-        rows: list[tuple[tuple[Version, DistFile], int | None]] = []
-        for pair in distributions:
+        group_ids: list[int] = []
+        for pair in rows:
             _, dist = pair
             if isinstance(dist, WheelFile):
                 group = groups.setdefault(
-                    parse_wheel_tag_set(dist.filename), len(groups)
+                    parse_wheel_tag_set(dist.filename), len(groups) + 1
                 )
-                rows.append((pair, group))
+                group_ids.append(group)
             else:
-                rows.append((pair, None))
+                group_ids.append(0)
 
         self._groups = tuple(groups)
-        self._rows = tuple(rows)
+        self._rows = rows
+        # One code point per group; retain integer IDs beyond Unicode's capacity.
+        self._codes = (
+            "".join(map(chr, group_ids))
+            if len(groups) <= _GROUP_CODEPOINT_MAX
+            else tuple(group_ids)
+        )
+        self._runs: tuple[tuple[Version, int, int], ...] | None = None
         self._views: dict[tuple[bool, ...], CandidateView] = {}
 
     def matches_records(
@@ -98,7 +111,7 @@ class CandidatePreparation:
     ) -> bool:
         """Match the same row objects in order, without record equality callbacks."""
         return len(distributions) == len(self._rows) and all(
-            pair is row[0] for pair, row in zip(distributions, self._rows, strict=True)
+            pair is row for pair, row in zip(distributions, self._rows, strict=True)
         )
 
     def for_tags(self, tags: TagSet) -> CandidateView:
@@ -112,29 +125,47 @@ class CandidatePreparation:
             self._views[signature] = view
         return view
 
-    def _project(self, accepted: tuple[bool, ...]) -> CandidateView:
-        """Filter rows in their original order and retain the diagnostic deltas."""
-        result: list[tuple[Version, DistFile]] = []
-        exclusions: list[tuple[Version, int]] = []
-        run_version: Version | None = None
-        run_length = 0
-        for pair, group in self._rows:
-            version, _ = pair
-            if group is None or accepted[group]:
-                result.append(pair)
-                continue
-            if version is not run_version:
-                if run_version is not None:
-                    exclusions.append((run_version, run_length))
-                run_version = version
-                run_length = 0
-            run_length += 1
-        if run_version is not None:
-            exclusions.append((run_version, run_length))
+    def _version_runs(self) -> tuple[tuple[Version, int, int], ...]:
+        """Cache version-object runs in a nonempty snapshot with rejected rows."""
+        if self._runs is None:
+            runs: list[tuple[Version, int, int]] = []
+            previous = self._rows[0][0]
+            start = 0
+            for index, (version, _) in enumerate(self._rows):
+                if version is not previous:
+                    runs.append((previous, start, index))
+                    previous, start = version, index
+            runs.append((previous, start, len(self._rows)))
+            self._runs = tuple(runs)
+        return self._runs
 
-        empty_versions = 0
-        if exclusions:
-            rejected = {version for version, _ in exclusions}
-            kept = {version for version, _ in result}
-            empty_versions = len(rejected - kept)
-        return CandidateView(result, exclusions, empty_versions)
+    def _project(self, accepted: tuple[bool, ...]) -> CandidateView:
+        """Project original rows and retain the same diagnostic deltas."""
+        # Code zero keeps sdists without consulting wheel tags.
+        if isinstance(self._codes, str):
+            table = {index + 1: int(value) for index, value in enumerate(accepted)}
+            table[0] = 1
+            mask = self._codes.translate(table).encode("ascii")
+        else:
+            mask = bytes(group == 0 or accepted[group - 1] for group in self._codes)
+
+        result = list(compress(self._rows, mask))
+        if not mask.count(b"\0"):
+            return CandidateView(result, [], 0)
+
+        exclusions: list[tuple[Version, int]] = []
+        rejected: set[Version] = set()
+        kept: set[Version] = set()
+        for version, start, stop in self._version_runs():
+            accepted_count = mask.count(b"\1", start, stop)
+            refused_count = stop - start - accepted_count
+            if accepted_count:
+                kept.add(version)
+            if refused_count:
+                rejected.add(version)
+                if exclusions and exclusions[-1][0] is version:
+                    exclusions[-1] = (version, exclusions[-1][1] + refused_count)
+                else:
+                    exclusions.append((version, refused_count))
+
+        return CandidateView(result, exclusions, len(rejected - kept))
