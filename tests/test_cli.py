@@ -19,6 +19,7 @@ import runpy
 import stat
 import subprocess
 import sys
+import sysconfig
 import tarfile
 import zipfile
 from collections.abc import Callable, Iterator
@@ -6798,14 +6799,13 @@ class TestMain:
         assert enabled_during == [False]
         assert gc.isenabled()
 
+    @pytest.mark.skipif(
+        sysconfig.get_config_var("Py_GIL_DISABLED") == 1,
+        reason="requires generational garbage collection",
+    )
     @pytest.mark.usefixtures("restored_gc_state")
     def test_resolve_promotes_what_it_allocated(self, tmp_path: Path) -> None:
-        """Objects the resolve allocated end in generation 2, not generation 0.
-
-        Reads generations directly, so it needs a build whose
-        ``gc.get_objects(generation=...)`` filters by generation; the
-        free-threaded builds return every tracked object for any of them.
-        """
+        """Objects the resolve allocated end in generation 2, not generation 0."""
         pyproject = _make_pyproject(tmp_path)
         config = read_pyproject_config(pyproject)
         allocated: list[object] = []
@@ -7576,6 +7576,7 @@ class _RecordingTransport:
 
 _OFFLINE_LOCK_PROBE = """
 import sys
+import sysconfig
 
 from nab.cli import main
 
