@@ -156,12 +156,9 @@ def test_duplicate_roots_and_constraints_are_intersected() -> None:
     assert Resolver(provider).try_resolve_preferred(
         roots, {"a": 2}, {"a": Range.at_least(2)}
     ) == {"a": 2}
-    assert (
-        Resolver(GraphProvider(provider.packages)).try_resolve_preferred(
-            roots, {"a": 3}
-        )
-        is None
-    )
+    assert Resolver(GraphProvider(provider.packages)).try_resolve_preferred(
+        roots, {"a": 3}
+    ) == {"a": 2}
     impossible: list[RootRequirement[str, int]] = [
         *roots,
         RootRequirement("a", Range.empty(), "third"),
@@ -172,6 +169,19 @@ def test_duplicate_roots_and_constraints_are_intersected() -> None:
         )
         is None
     )
+
+
+@pytest.mark.parametrize("constrained", [False, True])
+def test_requirements_can_force_a_different_preferred_version(
+    constrained: bool,
+) -> None:
+    provider = GraphProvider({"a": {1: {}, 2: {}}})
+    provider.preferences = {"a": 1}
+    roots = {"a": Range.full() if constrained else Range.singleton(2)}
+    constraints = {"a": Range.singleton(2)} if constrained else None
+    assert Resolver(provider).try_resolve_preferred(roots, {"a": 1}, constraints) == {
+        "a": 2
+    }
 
 
 @pytest.mark.parametrize(

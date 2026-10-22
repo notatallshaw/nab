@@ -869,9 +869,10 @@ class Resolver(Generic[PackageType, VersionType]):
         preferred: Mapping[PackageType, VersionType],
         constraints: Mapping[PackageType, RangeProtocol[VersionType]] | None = None,
     ) -> dict[PackageType, VersionType] | None:
-        """Validate preferred choices on a disposable resolver and provider.
+        """Check preferences and forced changes on a disposable solver and provider.
 
         A refusal returns None; discard both objects before ordinary resolution.
+        An incoming requirement or constraint may force a different provider choice.
         Successful trials emit decision callbacks after the complete model is checked.
         """
         if self.preferred_trial_consumed or self.stats.decisions:
@@ -939,8 +940,16 @@ class Resolver(Generic[PackageType, VersionType]):
         if self.stats.rounds >= self.max_iterations or package not in preferred:
             return False
         chosen = decide.choose_version(self, package)
-        if chosen is None or chosen != preferred[package]:
+        if chosen is None:
             return False
+        expected = preferred[package]
+        if chosen != expected:
+            required = model.required[package]
+            constraint = self.constraints.get(package)
+            if constraint is not None:
+                required = required & constraint
+            if expected in required:
+                return False
         if list(self.provider.consume_force_backtrack_targets()):
             return False
         decide.absorb_pending_clauses(self)

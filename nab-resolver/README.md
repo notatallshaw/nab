@@ -40,6 +40,10 @@ loads only what it imports.
 dependencies and emitted incompatibilities. It returns the reachable pins on success, or `None` when
 ordinary resolution is needed.
 
+Requirements or constraints can force a different version from the preference. If the preferred
+version remains in range but the provider chooses another, the trial refuses and leaves the choice
+to ordinary search.
+
 ```python
 trial = Resolver(make_provider())
 pins = trial.try_resolve_preferred(requirements, preferred, constraints)
