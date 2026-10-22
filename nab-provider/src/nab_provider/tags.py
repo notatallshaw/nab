@@ -641,13 +641,14 @@ class _AxisIndex(SlottedValue):
         axis, so no tag is reachable both as a block member and as an entry
         naming its own platform.
         """
+        offset = self.platforms.get(tag.platform)
+        if offset is None:
+            return self.fixed.get(tag)
         base = self.multiplied.get((tag.interpreter, tag.abi))
         if base is None and _is_pypy_native(tag):
             base = self.multiplied.get((tag.interpreter, None))
         if base is not None:
-            offset = self.platforms.get(tag.platform)
-            if offset is not None:
-                return base + offset
+            return base + offset
         return self.fixed.get(tag)
 
 
