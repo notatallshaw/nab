@@ -164,6 +164,18 @@ def fetch_versions(provider: Provider, package: str) -> list[tuple[Version, Dist
 
     # Routed through the method (not the module function) so a subclass
     # override still runs.
+    preferred_releases = provider.preferred_releases
+    if preferred_releases is not None:
+        preferred = preferred_releases.get(normalized)
+        cache = provider.full_listing_filter_cache
+        if getattr(files, "withdrawn_versions", ()):
+            provider.listing_filter_cache = cache
+        elif preferred is None or cache is None:
+            files = ()
+            provider.listing_filter_cache = None
+        else:
+            files = cache.selected_release(normalized, files, preferred)
+            provider.listing_filter_cache = cache.release_filter(preferred)
     result = provider.filter_distributions(normalized, files)
     provider.versions_cache[normalized] = result
     provider.stats.listings_fetched += 1

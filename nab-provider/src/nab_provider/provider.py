@@ -329,6 +329,33 @@ class ListingFilterCache:
         self._prepared: dict[str, tuple[object, tuple[int, ...]]] = {}
         self._diagnosed: dict[tuple[str, str | None], object] = {}
         self._tagged: dict[str, dict[str | None, CandidatePreparation]] = {}
+        self._release_files: dict[str, dict[Version, list[DistFile]]] = {}
+        self._release_filters: dict[Version, ListingFilterCache] = {}
+
+    def selected_release(
+        self, package: str, files: Sequence[DistFile], version: Version
+    ) -> Sequence[DistFile]:
+        """Read one complete release from this operation's immutable listing."""
+        grouped = self._release_files.get(package)
+        if grouped is None:
+            grouped = {}
+            for dist in files:
+                parsed = _listing.parsed_version(dist.version)
+                if parsed is not None:
+                    grouped.setdefault(parsed, []).append(dist)
+            self._release_files[package] = grouped
+        return grouped.get(version, ())
+
+    def release_filter(self, version: Version) -> ListingFilterCache:
+        """Keep restricted snapshots separate from the full-search cache."""
+        cache = self._release_filters.get(version)
+        if cache is None:
+            cache = ListingFilterCache(
+                2 if self.shares_pythons else 1,
+                target_count=2 if self.shares_targets else 1,
+            )
+            self._release_filters[version] = cache
+        return cache
 
     def filtered(
         self,
@@ -679,6 +706,8 @@ class Provider:
         # The pre-tag half of the listing filter, shared with the other
         # targets of this resolve.  ``None`` computes it here instead.
         self.listing_filter_cache = listing_filter_cache
+        self.preferred_releases: Mapping[str, Version] | None = None
+        self.full_listing_filter_cache = listing_filter_cache
 
         self.release_refused_wheels = release_refused_wheels
         self.defer_yanked = defer_yanked
