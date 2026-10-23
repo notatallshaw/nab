@@ -38,7 +38,7 @@ __lazy_modules__ = (
 import os
 import re
 from collections import Counter, defaultdict
-from datetime import timezone
+from datetime import datetime, timezone
 from functools import lru_cache, reduce
 from itertools import product
 from pathlib import Path
@@ -80,7 +80,6 @@ from .groups import BASE_MEMBER
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
     from collections.abc import Set as AbstractSet
-    from datetime import datetime
     from typing import Protocol, TypedDict, TypeVar
 
     from nab_provider._vendor.packaging.utils import NormalizedName
@@ -560,6 +559,13 @@ def _index_document(
     fields: _RootFields, packages: Sequence[_DocumentPackage]
 ) -> dict[str, object]:
     """Serialize the shared policy output after all marker checks have finished."""
+    if not _plain_document_fields(fields, packages):
+        native = Pylock(
+            packages=[_index_package(package._fields) for package in packages],
+            **fields,
+        )
+        return dict(native.to_dict())
+
     environments = fields["environments"]
     python = fields["requires_python"]
     values: dict[str, object] = {
@@ -576,6 +582,49 @@ def _index_document(
         "tool": fields["tool"],
     }
     return {name: value for name, value in values.items() if value is not None}
+
+
+def _plain_document_fields(
+    fields: _RootFields, packages: Sequence[_DocumentPackage]
+) -> bool:
+    """Trust packaging values only in fields normalized by lock policy."""
+    if not _plain_values([fields["tool"]], packaging_values=False):
+        return False
+    pending: list[object] = [value for name, value in fields.items() if name != "tool"]
+    pending.extend(package._fields for package in packages)
+    return _plain_values(pending, packaging_values=True)
+
+
+def _plain_values(pending: list[object], *, packaging_values: bool) -> bool:
+    """Refuse values whose native copying can change serialization."""
+    containers: set[int] = set()
+    while pending:
+        value = pending.pop()
+        kind = type(value)
+        if value is None or kind is str or kind is bool or kind is int or kind is float:
+            continue
+        if packaging_values and (
+            kind is Version or kind is SpecifierSet or kind is Marker
+        ):
+            continue
+        if type(value) is datetime:
+            if value.tzinfo is None or value.tzinfo is timezone.utc:
+                continue
+            return False
+        if type(value) is dict:
+            if id(value) in containers:
+                return False
+            containers.add(id(value))
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif type(value) is list or type(value) is tuple:
+            if id(value) in containers:
+                return False
+            containers.add(id(value))
+            pending.extend(value)
+        else:
+            return False
+    return True
 
 
 def _check_extra_names(extras: Sequence[str]) -> None:
@@ -799,18 +848,7 @@ def _pin_to_package(
         fields = _index_fields(
             pin, marker, lock_dir=lock_dir, dependencies=dependencies
         )
-        sdist = fields["sdist"]
-        wheels = fields["wheels"]
-        return Package(
-            name=fields["name"],
-            version=fields["version"],
-            marker=fields["marker"],
-            dependencies=fields["dependencies"],
-            requires_python=fields["requires_python"],
-            index=fields["index"],
-            sdist=PackageSdist(**sdist) if sdist is not None else None,
-            wheels=tuple(PackageWheel(**wheel) for wheel in wheels) if wheels else None,
-        )
+        return _index_package(fields)
     if isinstance(pin, LocalPin):
         # PEP 751: omit version for directory sources; it is not
         # deterministic (the source tree may change at install time).
@@ -874,6 +912,22 @@ def _normalize_upload_time(upload_time: datetime | None) -> datetime | None:
     except (OverflowError, ValueError) as e:
         msg = "upload-time cannot be represented in UTC"
         raise LockValidationError(msg) from e
+
+
+def _index_package(fields: _IndexFields) -> Package:
+    """Build the native index models from already-validated policy fields."""
+    sdist = fields["sdist"]
+    wheels = fields["wheels"]
+    return Package(
+        name=fields["name"],
+        version=fields["version"],
+        marker=fields["marker"],
+        dependencies=fields["dependencies"],
+        requires_python=fields["requires_python"],
+        index=fields["index"],
+        sdist=PackageSdist(**sdist) if sdist is not None else None,
+        wheels=tuple(PackageWheel(**wheel) for wheel in wheels) if wheels else None,
+    )
 
 
 def _validate_artifact_size(size: int | None) -> int | None:

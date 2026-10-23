@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import TYPE_CHECKING
 
 import pytest
@@ -26,14 +26,21 @@ from nab_project.lockfile import (
 )
 from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.pylock import Package, PackageWheel, Pylock
-from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
+from nab_provider._vendor.packaging.specifiers import (
+    InvalidSpecifier,
+    Specifier,
+    SpecifierSet,
+)
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget, environment_declaration
 from nab_provider.value import replace
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from pathlib import Path
     from types import FrameType
+
+    from typing_extensions import Self
 
 
 _HASHES = (("sha512", "b" * 128), ("sha256", "a" * 64))
@@ -305,3 +312,323 @@ def test_document_collections_do_not_alias_other_emissions(tmp_path: Path) -> No
     assert value.provenance is not None
     assert value.provenance.command_line == ("nab", "lock")
     assert value.targets[next(iter(value.targets))].pins["demo"] == index_pin()
+
+
+class CopyText(str):
+    """Expose the public serializer's scalar-copy behavior."""
+
+    __slots__ = ("replacement",)
+
+    replacement: str
+
+    def __new__(cls, value: str, replacement: str) -> Self:
+        result = super().__new__(cls, value)
+        result.replacement = replacement
+        return result
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> str:
+        """Substitute the text only when native serialization copies it."""
+        return self.replacement
+
+
+class BlockProvenance(Provenance):
+    """Provide supported opaque tool values through the public provenance API."""
+
+    __slots__ = ("block",)
+
+    def __init__(self, block: dict[str, object]) -> None:
+        super().__init__(
+            "0.0.0",
+            datetime(2026, 10, 23, tzinfo=timezone.utc),
+            (),
+            "pyproject.toml",
+            "specific",
+        )
+        self.block = block
+
+    def to_block(self) -> dict[str, object]:
+        return self.block
+
+
+@pytest.mark.parametrize("field", ["index", "url", "hash", "provenance"])
+def test_custom_scalar_copy_uses_native_serialization_once(
+    tmp_path: Path, field: str
+) -> None:
+    pin = index_pin()
+    if field == "index":
+        pin = pin.replace(
+            index=CopyText("https://original.invalid/", "https://copied.invalid/")
+        )
+    elif field in {"url", "hash"}:
+        wheel = pin.wheels[0]
+        pin = pin.replace(
+            wheels=(
+                WheelArtifact(
+                    wheel.filename,
+                    CopyText(wheel.url, "https://copied.invalid/demo.whl")
+                    if field == "url"
+                    else wheel.url,
+                    (("sha256", CopyText("a" * 64, "c" * 64)),)
+                    if field == "hash"
+                    else wheel.hashes,
+                    size=wheel.size,
+                ),
+            )
+        )
+    value = lock_input(pin)
+    if field == "provenance":
+        assert value.provenance is not None
+        value.provenance.nab_version = CopyText("original", "copied")
+    expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
+
+    text, calls = observe_render(value, lock_dir=tmp_path)
+    assert text == expected
+    assert ("copied" if field != "hash" else "c" * 64) in text
+    assert calls == [
+        "disjointness",
+        "coverage",
+        "document",
+        "native-document",
+        "schema",
+    ]
+
+
+def test_marker_subclass_in_tool_values_keeps_native_copy(tmp_path: Path) -> None:
+    class CopiedMarker(Marker):
+        def __deepcopy__(self, _memo: dict[int, object]) -> str:
+            return "copied-marker"
+
+    value = replace(
+        lock_input(index_pin()),
+        provenance=BlockProvenance(
+            {"marker": CopiedMarker('python_version == "3.12"')}
+        ),
+    )
+    expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
+    text, calls = observe_render(value, lock_dir=tmp_path)
+    assert text == expected
+    assert "copied-marker" in text
+    assert calls == [
+        "disjointness",
+        "coverage",
+        "document",
+        "native-document",
+        "schema",
+    ]
+
+
+def test_custom_copy_failure_preserves_policy_and_native_error_order(
+    tmp_path: Path,
+) -> None:
+    class CopyFailure(str):
+        __slots__ = ()
+
+        def __deepcopy__(self, _memo: dict[int, object]) -> str:
+            raise RuntimeError("index copy failed")
+
+    pin = index_pin().replace(index=CopyFailure("https://example.invalid/"))
+    value = replace(lock_input(pin), environments=[Marker('python_version == "3.11"')])
+    with pytest.raises(CoverageError):
+        pylock.render_lock(value, lock_dir=tmp_path)
+
+    # Native traversal reaches the package index before the provenance cycle.
+    cycle: list[object] = []
+    cycle.append(cycle)
+
+    value = replace(
+        value,
+        environments=lock_input(index_pin()).environments,
+        provenance=BlockProvenance({"cycle": cycle}),
+    )
+    with pytest.raises(RuntimeError, match="index copy failed"):
+        pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
+    with pytest.raises(RuntimeError, match="index copy failed"):
+        pylock.render_lock(value, lock_dir=tmp_path)
+
+
+def test_custom_tool_container_uses_native_reconstruction(tmp_path: Path) -> None:
+    class AppendingList(list[str]):
+        def __init__(self, values: Iterable[str]) -> None:
+            super().__init__(values)
+            self.append("copied")
+
+    value = replace(
+        lock_input(index_pin()),
+        provenance=BlockProvenance({"values": AppendingList(["original"])}),
+    )
+    expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
+    text, calls = observe_render(value, lock_dir=tmp_path)
+    assert text == expected
+    assert text.count("copied") == 2
+    assert calls == [
+        "disjointness",
+        "coverage",
+        "document",
+        "native-document",
+        "schema",
+    ]
+
+
+@pytest.mark.parametrize("container", ["list", "dict"])
+def test_tool_cycle_keeps_native_serialization_failure(
+    tmp_path: Path, container: str
+) -> None:
+    cycle: list[object] | dict[str, object]
+    if container == "list":
+        cycle = []
+        cycle.append(cycle)
+    else:
+        cycle = {}
+        cycle["self"] = cycle
+    value = replace(
+        lock_input(index_pin()), provenance=BlockProvenance({"cycle": cycle})
+    )
+    with pytest.raises(RecursionError):
+        pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
+    with pytest.raises(RecursionError):
+        pylock.render_lock(value, lock_dir=tmp_path)
+
+
+def test_custom_metaclass_cannot_admit_a_scalar(tmp_path: Path) -> None:
+    class PretendMarker(type):
+        def __eq__(cls, other: object) -> bool:
+            return other is Marker
+
+        def __hash__(cls) -> int:
+            return type.__hash__(cls)
+
+    class CopiedScalar(str, metaclass=PretendMarker):
+        __slots__ = ()
+
+        def __deepcopy__(self, _memo: dict[int, object]) -> str:
+            return "https://copied.invalid/"
+
+    value = lock_input(
+        index_pin().replace(index=CopiedScalar("https://original.invalid/"))
+    )
+    expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
+    text, calls = observe_render(value, lock_dir=tmp_path)
+    assert text == expected
+    assert "copied" in text
+    assert calls == [
+        "disjointness",
+        "coverage",
+        "document",
+        "native-document",
+        "schema",
+    ]
+
+
+def test_cycle_admission_preserves_earlier_tool_copy_failure(tmp_path: Path) -> None:
+    class CopyFailure(str):
+        __slots__ = ()
+
+        def __deepcopy__(self, _memo: dict[int, object]) -> str:
+            raise RuntimeError("tool copy failed")
+
+    cycle: list[object] = []
+    cycle.append(cycle)
+    value = replace(
+        lock_input(index_pin()),
+        provenance=BlockProvenance({"first": CopyFailure("original"), "cycle": cycle}),
+    )
+    with pytest.raises(RuntimeError, match="tool copy failed"):
+        pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
+    with pytest.raises(RuntimeError, match="tool copy failed"):
+        pylock.render_lock(value, lock_dir=tmp_path)
+
+
+def test_plain_tool_scalars_keep_direct_emission(tmp_path: Path) -> None:
+    value = replace(
+        lock_input(index_pin()),
+        provenance=BlockProvenance({"flag": True, "count": 0, "ratio": 0.5}),
+    )
+    expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
+    text, calls = observe_render(value, lock_dir=tmp_path)
+    assert text == expected
+    assert calls == ["disjointness", "coverage", "document", "schema"]
+
+
+def test_custom_tool_mapping_uses_native_reconstruction(tmp_path: Path) -> None:
+    class AppendingDict(dict[str, str]):
+        def __init__(self, items: Iterable[tuple[str, str]]) -> None:
+            super().__init__(items)
+            self["copies"] = self.get("copies", "") + "x"
+
+    value = replace(
+        lock_input(index_pin()),
+        provenance=BlockProvenance({"values": AppendingDict((("original", "value"),))}),
+    )
+    expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
+    text, calls = observe_render(value, lock_dir=tmp_path)
+    assert text == expected
+    assert 'copies = "xx"' in text
+    assert calls == [
+        "disjointness",
+        "coverage",
+        "document",
+        "native-document",
+        "schema",
+    ]
+
+
+def test_custom_datetime_timezone_keeps_native_copy_failure(tmp_path: Path) -> None:
+    class CopyZone(tzinfo):
+        def utcoffset(self, _value: datetime | None) -> timedelta:
+            return timedelta(0)
+
+        def dst(self, _value: datetime | None) -> None:
+            return None
+
+        def tzname(self, _value: datetime | None) -> str:
+            return "UTC"
+
+        def __deepcopy__(self, _memo: dict[int, object]) -> tzinfo:
+            raise RuntimeError("timezone copy failed")
+
+    value = replace(
+        lock_input(index_pin()),
+        provenance=BlockProvenance(
+            {"created": datetime(2026, 10, 23, tzinfo=CopyZone())}
+        ),
+    )
+    with pytest.raises(RuntimeError, match="timezone copy failed"):
+        pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
+    with pytest.raises(RuntimeError, match="timezone copy failed"):
+        pylock.render_lock(value, lock_dir=tmp_path)
+
+
+def test_naive_tool_datetime_keeps_direct_emission(tmp_path: Path) -> None:
+    value = replace(
+        lock_input(index_pin()),
+        provenance=BlockProvenance(
+            {
+                "created": datetime(2026, 10, 23, tzinfo=timezone.utc).replace(
+                    tzinfo=None
+                )
+            }
+        ),
+    )
+    expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
+    text, calls = observe_render(value, lock_dir=tmp_path)
+    assert text == expected
+    assert calls == ["disjointness", "coverage", "document", "schema"]
+
+
+def test_public_specifier_iterable_in_tool_keeps_native_copy_failure(
+    tmp_path: Path,
+) -> None:
+    class CopySpecifier(Specifier):
+        def __deepcopy__(self, _memo: dict[int, object]) -> Specifier:
+            raise RuntimeError("specifier copy failed")
+
+    value = replace(
+        lock_input(index_pin()),
+        provenance=BlockProvenance(
+            {"requires-python": SpecifierSet([CopySpecifier(">=3")])}
+        ),
+    )
+    with pytest.raises(RuntimeError, match="specifier copy failed"):
+        pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
+    with pytest.raises(RuntimeError, match="specifier copy failed"):
+        pylock.render_lock(value, lock_dir=tmp_path)
