@@ -562,7 +562,7 @@ def _forward_dependency_graph(
     pins: Mapping[str, Version],
     resolved_keys: Iterable[str],
     *,
-    normalized_names: dict[str, NormalizedName] | None = None,
+    normalized_names: dict[str, NormalizedName],
 ) -> tuple[dict[str, tuple[str, ...]], dict[str, tuple[str, ...]]]:
     """Build the forward dependency graph among the locked packages.
 
@@ -576,8 +576,6 @@ def _forward_dependency_graph(
     dropped from both so every edge points at a real ``[[packages]]``
     entry.
     """
-    if normalized_names is None:
-        normalized_names = {}
     activated_extras: defaultdict[str, set[str]] = defaultdict(set)
     for key in resolved_keys:
         base, extra = split_extra(key)
