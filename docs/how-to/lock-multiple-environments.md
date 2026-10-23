@@ -9,7 +9,7 @@ other implementations. See {ref}`how nab chooses coverage <explicit-is-better-th
 
 ## Change the project matrix
 
-For Python 3.12 through 3.15 on Linux x86-64 and Windows x86-64:
+For Python 3.12, 3.13, 3.14 and 3.15 on Linux x86-64 and Windows x86-64:
 
 ```toml
 [tool.nab.matrix]

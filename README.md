@@ -50,7 +50,7 @@ nab lock pyproject.toml
 ```
 
 Or use `uvx nab lock pyproject.toml` without installing nab first. This writes one lock for Python
-3.12 through 3.15 on Linux x86-64 and Apple Silicon macOS.
+3.12, 3.13, 3.14 and 3.15 on Linux x86-64 and Apple Silicon macOS.
 
 Install from it in a covered virtual environment with pip 26.1 or newer:
 
@@ -157,12 +157,10 @@ See
   </picture>
 </p>
 
-Fresh universal locks for `requests==2.32.3` on Python 3.12 through 3.14. All four select matching
+Fresh universal locks for `requests==2.32.3` on Python 3.12, 3.13 and 3.14. All four select matching
 packages and usable wheels across 48 checked targets: eight platforms × three Python versions ×
-CPython/PyPy. Nab resolves and validates each target separately, sharing downloads and caches.
-
-Empty and primed caches; Nab uses HTTPX2. Each panel uses all four tools from the local/CI × Python
-3.15/3.15t run with Nab's lowest median.
+CPython/PyPy. Nab resolves and validates each target separately; uv, Poetry and PDM build universal
+dependency graphs with conditional markers in this comparison.
 
 ## Libraries
 

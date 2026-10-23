@@ -166,8 +166,8 @@ platforms = ["linux_x86_64"]
 implementations = ["cpython", "pypy"]
 ```
 
-By default, each implementation uses the whole Python range. To target CPython 3.10 through 3.15 and
-only PyPy 3.11 on the same platforms, narrow PyPy's range:
+By default, each implementation uses the whole Python range. To target CPython 3.10, 3.11, 3.12,
+3.13, 3.14 and 3.15 and only PyPy 3.11 on the same platforms, narrow PyPy's range:
 
 ```toml
 [tool.nab.matrix]

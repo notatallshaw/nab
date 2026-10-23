@@ -1,8 +1,8 @@
 # Your first universal lock
 
-Create one lock for Python 3.12 through 3.15 on Linux x86-64 and Apple Silicon macOS, then install
-its dependencies on a matching machine. You only need one of those environments to follow the
-tutorial.
+Create one lock for Python 3.12, 3.13, 3.14 and 3.15 on Linux x86-64 and Apple Silicon macOS, then
+install its dependencies on a matching machine. You only need one of those environments to follow
+the tutorial.
 
 nab and its multi-target lockfile format are experimental.
 [What nab locks](../explanation/locking.md) explains requirements, targets and the installer's role.

@@ -57,8 +57,8 @@ empty list are each a config error. See [Universal resolution](../explanation/un
 the axis is modelled and what it puts on the lockfile markers.
 
 `[tool.nab.matrix.overrides.implementations.<name>]` replaces `python` or `platforms` for one
-implementation. Omitted fields inherit the shared matrix values. For CPython 3.10 through 3.15 on
-Linux and Apple Silicon macOS, and PyPy 3.11 on Windows and musl Linux:
+implementation. Omitted fields inherit the shared matrix values. For CPython 3.10, 3.11, 3.12, 3.13,
+3.14 and 3.15 on Linux and Apple Silicon macOS, and PyPy 3.11 on Windows and musl Linux:
 
 ```toml
 [tool.nab.matrix]
