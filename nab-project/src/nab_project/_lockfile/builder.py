@@ -31,6 +31,7 @@ __lazy_modules__ = (
 )
 
 import logging
+import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -784,13 +785,25 @@ def _common_requires_python(files: Iterable[WheelFile | SdistFile]) -> str | Non
     not read.
     """
     seen: set[str] = set()
+    previous: tuple[str, int, int] | None = None
     for f in files:
+        # Preserve property reads on record subclasses.
         if f.requires_python is None:
             return None
-        try:
-            validate_specifier_versions(SpecifierSet(f.requires_python))
-        except ValueError:
-            return None
+        requires_python = f.requires_python
+
+        # An iterator can change parsing limits between records.
+        context = (
+            (requires_python, sys.get_int_max_str_digits(), sys.getrecursionlimit())
+            if type(requires_python) is str and sys.version_info >= (3, 11)
+            else None
+        )
+        if context is None or context != previous:
+            try:
+                validate_specifier_versions(SpecifierSet(requires_python))
+            except ValueError:
+                return None
+            previous = context
         seen.add(f.requires_python)
     if len(seen) == 1:
         return next(iter(seen))
