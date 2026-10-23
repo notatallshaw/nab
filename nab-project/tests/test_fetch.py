@@ -2231,7 +2231,7 @@ class TestFetchCoordinatorCache:
             offline=True,
         ) as coord:
             event = coord.request_listing("testpkg")
-            event.wait(timeout=5)
+            assert event.wait()
             listing = coord.index.get_listing("testpkg")
             assert listing is not None
             assert len(listing) == 2
@@ -2281,14 +2281,14 @@ class TestFetchCoordinatorCache:
         win_hash = ("sha256", hashlib.sha256(win_body).hexdigest())
 
         with _coord(cache_dir=tmp_path) as coord:
-            coord.request_metadata("foo", "1.0", linux_url, linux_hash).wait(timeout=5)
+            assert coord.request_metadata("foo", "1.0", linux_url, linux_hash).wait()
             linux_text = coord.index.get_metadata("foo", "1.0", linux_url)
             assert linux_text == linux_body.decode()
 
         # A later run over the same cache dir, in an environment whose
         # compatible wheel is the win_amd64 one.
         with _coord(cache_dir=tmp_path) as coord:
-            coord.request_metadata("foo", "1.0", win_url, win_hash).wait(timeout=5)
+            assert coord.request_metadata("foo", "1.0", win_url, win_hash).wait()
             assert coord.index.get_metadata_error("foo", "1.0", win_url) is None
             assert coord.index.get_metadata("foo", "1.0", win_url) == win_body.decode()
 
@@ -2489,7 +2489,7 @@ class TestMultiIndexCoordinator:
             ) as coord,
         ):
             event = coord.request_listing("torch")
-            event.wait(timeout=5)
+            assert event.wait()
             listing = coord.index.get_listing("torch")
             assert listing is not None
             assert len(listing) == 1
@@ -2591,7 +2591,7 @@ class TestMultiIndexCoordinator:
             ) as coord,
         ):
             for pkg in ("numpy", "torch"):
-                coord.request_listing(pkg).wait(timeout=5)
+                assert coord.request_listing(pkg).wait()
             assert coord.index.get_listing_index("numpy") == "pypi"
             assert coord.index.get_listing_index("torch") == "torch-cpu"
 
