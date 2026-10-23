@@ -81,17 +81,69 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
     from collections.abc import Set as AbstractSet
     from datetime import datetime
+    from typing import Protocol, TypedDict, TypeVar
 
     from nab_provider._vendor.packaging.utils import NormalizedName
     from nab_provider.target import ResolveTarget
 
     from ..lockfile import (
+        IndexPin,
         LockInput,
         PinShape,
         SdistArtifact,
         TargetLock,
         WheelArtifact,
     )
+    from .disjointness import PackageIdentity
+
+    class _ArtifactFields(TypedDict):
+        """Validated artifact constructor fields in PEP 751 field order."""
+
+        name: str
+        upload_time: datetime | None
+        url: str | None
+        path: str | None
+        size: int | None
+        hashes: dict[str, str]
+
+    class _IndexFields(TypedDict):
+        """One index package's normalized fields before string serialization."""
+
+        name: NormalizedName
+        version: Version
+        marker: Marker | None
+        requires_python: SpecifierSet | None
+        dependencies: list[dict[str, str]] | None
+        index: str
+        sdist: _ArtifactFields | None
+        wheels: tuple[_ArtifactFields, ...] | None
+
+    class _RootFields(TypedDict):
+        """Shared top-level policy values for native and direct document outputs."""
+
+        lock_version: Version
+        environments: tuple[Marker, ...] | None
+        requires_python: SpecifierSet | None
+        extras: tuple[NormalizedName, ...] | None
+        dependency_groups: tuple[NormalizedName, ...] | None
+        default_groups: tuple[NormalizedName, ...] | None
+        created_by: str
+        tool: Mapping[str, object] | None
+
+    _PackageT = TypeVar("_PackageT", bound=PackageIdentity)
+    _PackageT_co = TypeVar("_PackageT_co", bound=PackageIdentity, covariant=True)
+
+    class _PackageOutput(Protocol[_PackageT_co]):
+        """Create one package output after the shared marker policy has decided it."""
+
+        def __call__(
+            self,
+            pin: PinShape,
+            marker: Marker | None = None,
+            *,
+            lock_dir: Path,
+            dependencies: list[dict[str, str]] | None = None,
+        ) -> _PackageT_co: ...
 
 
 __all__ = [
@@ -115,6 +167,47 @@ _PROJECTION_CACHE_UNITS_PER_FORK = 8
 # Table entries, tuple keys and record fields receive conservative reference allowances.
 _PEER_CACHE_FIXED_UNITS = 12
 _CONDITION_CACHE_FIXED_UNITS = 6
+
+
+class _DocumentPackage:
+    """An index document retaining typed identity until marker checks finish."""
+
+    __slots__ = ("_fields", "marker", "name", "version")
+
+    def __init__(self, fields: _IndexFields) -> None:
+        self._fields = fields
+        self.name = fields["name"]
+        self.version = fields["version"]
+        self.marker = fields["marker"]
+
+    def to_document(self) -> dict[str, object]:
+        """Stringify the selected fields only in the serialization phase."""
+        fields = self._fields
+        python = fields["requires_python"]
+        sdist = fields["sdist"]
+        wheels = fields["wheels"]
+        values: dict[str, object] = {
+            "name": self.name,
+            "version": str(self.version),
+            "marker": str(self.marker) if self.marker is not None else None,
+            "requires-python": str(python) if python is not None else None,
+            "dependencies": fields["dependencies"],
+            "index": fields["index"],
+            "sdist": _artifact_document(sdist) if sdist is not None else None,
+            "wheels": tuple(_artifact_document(wheel) for wheel in wheels)
+            if wheels
+            else None,
+        }
+        return {name: value for name, value in values.items() if value is not None}
+
+
+def _artifact_document(fields: _ArtifactFields) -> dict[str, object]:
+    """Emit the already-validated artifact values, preserving zero and empty values."""
+    return {
+        name.replace("_", "-"): value
+        for name, value in fields.items()
+        if value is not None
+    }
 
 
 class _ForkAxes(Record):
@@ -434,18 +527,55 @@ def render_lock(lock_input: LockInput, *, lock_dir: Path | None = None) -> str:
     """
     require_artifact_hashes(lock_input)
     _check_extra_names(lock_input.extras)
-    with intractable_as_error():
-        pylock = build_pylock(lock_input, lock_dir=lock_dir)
-
-    # ``Pylock.validate`` is ``from_dict(to_dict())``, so validating the mapping
-    # about to be emitted runs the same check without a second ``to_dict``.
-    document = dict(pylock.to_dict())
+    if _index_only(lock_input):
+        with intractable_as_error():
+            fields, packages = _prepare_pylock(
+                lock_input, lock_dir=lock_dir, package_output=_pin_to_document
+            )
+        document = _index_document(fields, packages)
+    else:
+        with intractable_as_error():
+            pylock = build_pylock(lock_input, lock_dir=lock_dir)
+        document = dict(pylock.to_dict())
     try:
         Pylock.from_dict(document)
     except PylockValidationError as e:
         raise LockValidationError(str(e)) from e
 
     return tomli_w.dumps(document)
+
+
+def _index_only(lock_input: LockInput) -> bool:
+    """Keep non-index source serialization on the native model path."""
+    from ..lockfile import IndexPin
+
+    return all(
+        isinstance(pin, IndexPin)
+        for lock in lock_input.targets.values()
+        for pin in lock.pins.values()
+    )
+
+
+def _index_document(
+    fields: _RootFields, packages: Sequence[_DocumentPackage]
+) -> dict[str, object]:
+    """Serialize the shared policy output after all marker checks have finished."""
+    environments = fields["environments"]
+    python = fields["requires_python"]
+    values: dict[str, object] = {
+        "lock-version": str(fields["lock_version"]),
+        "environments": [str(marker) for marker in environments]
+        if environments is not None
+        else None,
+        "requires-python": str(python) if python is not None else None,
+        "extras": fields["extras"],
+        "dependency-groups": fields["dependency_groups"],
+        "default-groups": fields["default_groups"],
+        "created-by": fields["created_by"],
+        "packages": [package.to_document() for package in packages],
+        "tool": fields["tool"],
+    }
+    return {name: value for name, value in values.items() if value is not None}
 
 
 def _check_extra_names(extras: Sequence[str]) -> None:
@@ -482,18 +612,20 @@ def _prepare_environment_rows(
 
 
 def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylock:
-    """Build a :class:`Pylock` from the input shape.
+    """Build the native PEP 751 models with paths relative to the lock directory."""
+    fields, packages = _prepare_pylock(
+        lock_input, lock_dir=lock_dir, package_output=_pin_to_package
+    )
+    return Pylock(packages=packages, **fields)
 
-    The resolver-side data structures have already been simplified
-    when this function runs.  The remaining work is shape conversion:
-    ``Pin`` -> ``Package``, plus marker attachment from the per-target
-    map.
 
-    ``lock_dir`` is the directory the lockfile will be written to;
-    local-directory, wheel and sdist paths are emitted relative to it
-    so the lockfile is portable.  It defaults to the current working
-    directory when the caller has no path in mind (e.g. stdout).
-    """
+def _prepare_pylock(
+    lock_input: LockInput,
+    *,
+    lock_dir: Path | None,
+    package_output: _PackageOutput[_PackageT],
+) -> tuple[_RootFields, list[_PackageT]]:
+    """Apply shared lock policy with the requested package output."""
     from ..lockfile import LOCK_VERSION
 
     lock_input = _name_base_group(lock_input)
@@ -515,6 +647,7 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
         env_rows,
         store,
         prepared_sets=prepared_sets,
+        package_output=package_output,
     )
     package_records.sort(key=_package_sort_key)
     validate_marker_disjointness(
@@ -538,28 +671,28 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
         if lock_input.provenance is not None
         else None
     )
-    return Pylock(
-        lock_version=Version(LOCK_VERSION),
-        environments=tuple(lock_input.environments) or None,
-        requires_python=(
+    root_fields: _RootFields = {
+        "lock_version": Version(LOCK_VERSION),
+        "environments": tuple(lock_input.environments) or None,
+        "requires_python": (
             SpecifierSet(lock_input.requires_python)
             if lock_input.requires_python
             else None
         ),
-        extras=_name_array(lock_input.extras),
-        dependency_groups=_group_array(
+        "extras": _name_array(lock_input.extras),
+        "dependency_groups": _group_array(
             lock_input.dependency_groups,
             lock_input.base_group,
             lock_input.build_group,
         ),
-        default_groups=_group_array(
+        "default_groups": _group_array(
             lock_input.default_groups,
             lock_input.base_group if not lock_input.default_groups else None,
         ),
-        created_by=lock_input.created_by,
-        packages=package_records,
-        tool=tool,
-    )
+        "created_by": lock_input.created_by,
+        "tool": tool,
+    }
+    return root_fields, package_records
 
 
 def _name_base_group(lock_input: LockInput) -> LockInput:
@@ -663,23 +796,20 @@ def _pin_to_package(
     from ..lockfile import ArchivePin, IndexPin, LocalPin, VcsPin
 
     if isinstance(pin, IndexPin):
+        fields = _index_fields(
+            pin, marker, lock_dir=lock_dir, dependencies=dependencies
+        )
+        sdist = fields["sdist"]
+        wheels = fields["wheels"]
         return Package(
-            name=canonicalize_name(pin.name),
-            version=Version(pin.version),
-            marker=marker,
-            dependencies=dependencies,
-            requires_python=(
-                SpecifierSet(pin.requires_python) if pin.requires_python else None
-            ),
-            index=pin.index,
-            sdist=(
-                _sdist_to_package(pin.sdist, lock_dir=lock_dir) if pin.sdist else None
-            ),
-            wheels=tuple(
-                _wheel_to_package(w, lock_dir=lock_dir)
-                for w in sorted(pin.wheels, key=_wheel_sort_key)
-            )
-            or None,
+            name=fields["name"],
+            version=fields["version"],
+            marker=fields["marker"],
+            dependencies=fields["dependencies"],
+            requires_python=fields["requires_python"],
+            index=fields["index"],
+            sdist=PackageSdist(**sdist) if sdist is not None else None,
+            wheels=tuple(PackageWheel(**wheel) for wheel in wheels) if wheels else None,
         )
     if isinstance(pin, LocalPin):
         # PEP 751: omit version for directory sources; it is not
@@ -753,54 +883,79 @@ def _validate_artifact_size(size: int | None) -> int | None:
     return size
 
 
-def _wheel_to_package(wheel: WheelArtifact, *, lock_dir: Path) -> PackageWheel:
-    """Convert a wheel artefact to its PEP 751 ``packages.wheels`` entry.
+def _artifact_fields(
+    artifact: WheelArtifact | SdistArtifact, *, lock_dir: Path
+) -> _ArtifactFields:
+    """Validate and normalize an artifact before choosing its output shape."""
+    size = _validate_artifact_size(artifact.size)
+    validate_artifact_hashes(artifact.filename, artifact.hashes)
+    if artifact.local_path is not None:
+        name = artifact.filename
+        path = _relativize_path(artifact.local_path.resolve(), lock_dir)
+        url = None
+    else:
+        name = artifact.filename
+        url = artifact.url
+        path = None
+    hashes = dict(sorted(artifact.hashes))
+    upload_time = _normalize_upload_time(artifact.upload_time)
+    return {
+        "name": name,
+        "upload_time": upload_time,
+        "url": url,
+        "path": path,
+        "size": size,
+        "hashes": hashes,
+    }
 
-    A wheel from a local find-links directory carries its on-disk
-    ``local_path``; it is written as a ``path`` relative to the lock
-    file so the lockfile stays portable.  A remote wheel records its
-    ``url`` verbatim.
-    """
-    size = _validate_artifact_size(wheel.size)
-    validate_artifact_hashes(wheel.filename, wheel.hashes)
-    if wheel.local_path is not None:
-        return PackageWheel(
-            name=wheel.filename,
-            path=_relativize_path(wheel.local_path.resolve(), lock_dir),
-            size=size,
-            hashes=dict(sorted(wheel.hashes)),
-            upload_time=_normalize_upload_time(wheel.upload_time),
+
+def _index_fields(
+    pin: IndexPin,
+    marker: Marker | None,
+    *,
+    lock_dir: Path,
+    dependencies: list[dict[str, str]] | None,
+) -> _IndexFields:
+    """Preserve package parsing and artifact checks for both index outputs."""
+    name = canonicalize_name(pin.name)
+    version = Version(pin.version)
+    python = SpecifierSet(pin.requires_python) if pin.requires_python else None
+    index = pin.index
+    sdist = _artifact_fields(pin.sdist, lock_dir=lock_dir) if pin.sdist else None
+    wheels = (
+        tuple(
+            _artifact_fields(wheel, lock_dir=lock_dir)
+            for wheel in sorted(pin.wheels, key=_wheel_sort_key)
         )
-    return PackageWheel(
-        name=wheel.filename,
-        url=wheel.url,
-        size=size,
-        hashes=dict(sorted(wheel.hashes)),
-        upload_time=_normalize_upload_time(wheel.upload_time),
+        or None
     )
+    return {
+        "name": name,
+        "version": version,
+        "marker": marker,
+        "requires_python": python,
+        "dependencies": dependencies,
+        "index": index,
+        "sdist": sdist,
+        "wheels": wheels,
+    }
 
 
-def _sdist_to_package(sdist: SdistArtifact, *, lock_dir: Path) -> PackageSdist:
-    """Convert an sdist artefact to its PEP 751 ``packages.sdist`` entry.
+def _pin_to_document(
+    pin: PinShape,
+    marker: Marker | None = None,
+    *,
+    lock_dir: Path,
+    dependencies: list[dict[str, str]] | None = None,
+) -> _DocumentPackage:
+    """Build the admitted index output without allocating native artifact models."""
+    from ..lockfile import IndexPin
 
-    See :func:`_wheel_to_package` for the ``local_path`` handling.
-    """
-    size = _validate_artifact_size(sdist.size)
-    validate_artifact_hashes(sdist.filename, sdist.hashes)
-    if sdist.local_path is not None:
-        return PackageSdist(
-            name=sdist.filename,
-            path=_relativize_path(sdist.local_path.resolve(), lock_dir),
-            size=size,
-            hashes=dict(sorted(sdist.hashes)),
-            upload_time=_normalize_upload_time(sdist.upload_time),
-        )
-    return PackageSdist(
-        name=sdist.filename,
-        url=sdist.url,
-        size=size,
-        hashes=dict(sorted(sdist.hashes)),
-        upload_time=_normalize_upload_time(sdist.upload_time),
+    if not isinstance(pin, IndexPin):
+        msg = f"Index document output cannot represent {pin!r}"
+        raise TypeError(msg)
+    return _DocumentPackage(
+        _index_fields(pin, marker, lock_dir=lock_dir, dependencies=dependencies)
     )
 
 
@@ -934,7 +1089,8 @@ def _build_packages(
     store: DecisionStore,
     *,
     prepared_sets: PreparedMarkerSets | None = None,
-) -> list[Package]:
+    package_output: _PackageOutput[_PackageT],
+) -> list[_PackageT]:
     """Collapse the per-target pins into Package entries with markers.
 
     For each canonical package name:
@@ -972,7 +1128,7 @@ def _build_packages(
     :class:`DivergentBaseDependencyError` instead of emitting a lock
     whose no-member context misses it.
     """
-    out: list[Package] = []
+    out: list[_PackageT] = []
     targets = lock_input.targets
     by_name = _group_by_name(targets)
     env_signatures = _env_signatures(targets)
@@ -1033,7 +1189,7 @@ def _build_packages(
                 prepared_sets=prepared_sets if len(groups) > 1 else None,
             )
             out.append(
-                _pin_to_package(
+                package_output(
                     _merge_pins_in_group(pins),
                     marker,
                     lock_dir=lock_dir,
@@ -1987,7 +2143,7 @@ def _wheel_sort_key(wheel: WheelArtifact) -> tuple[str, str, str]:
     return (wheel.filename, wheel.url or "", str(wheel.local_path or ""))
 
 
-def _package_sort_key(package: Package) -> tuple[str, str, str]:
+def _package_sort_key(package: PackageIdentity) -> tuple[str, str, str]:
     """Stable sort key for a package row: name, version, marker string.
 
     The marker tiebreak separates two rows that share a name and version
