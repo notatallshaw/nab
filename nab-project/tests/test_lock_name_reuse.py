@@ -81,7 +81,7 @@ def _normalizations() -> Iterator[list[str]]:
         sys.setprofile(previous)
 
 
-def test_normalize_each_spelling_once_per_target() -> None:
+def test_normalize_each_input_name_once_per_target() -> None:
     provider = _provider()
     pins = dict.fromkeys(("Core_Tool", "Other.Tool", "SHARED_lib"), VERSION)
     expected = {
