@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="370" viewBox="0 0 960 370" role="img" aria-labelledby="title desc">
 <title id="title">Universal lock generation with cold and warm caches</title>
-<desc id="desc">cold cache, GitHub CI · 3.15: uv 0.16 s, nab 0.6 s, Poetry 0.97 s, PDM 1.4 s; warm cache, Local desktop · 3.15: uv 11 ms, nab 0.18 s, Poetry 0.72 s, PDM 0.81 s. Native command totals. Warm Python bars estimate interpreter, imports and other work. Cold bars and uv are shown whole. Same linear scale; shorter is faster.</desc>
+<desc id="desc">cold cache, Local desktop · 3.15: uv 0.23 s, nab 0.57 s, Poetry 0.98 s, PDM 1.2 s; warm cache, Local desktop · 3.15: uv 11 ms, nab 0.17 s, Poetry 0.72 s, PDM 0.81 s. Native command totals. Warm Python bars estimate interpreter, imports and other work. Cold bars and uv are shown whole. Same linear scale; shorter is faster.</desc>
 <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
 <text x="24" y="28" fill="#f0f6fc" font-size="16" font-weight="600">Universal lock generation</text>
 <rect x="468" y="16" width="14" height="14" rx="2" fill="#94a3b8"/>
@@ -10,71 +10,83 @@
 <rect x="710" y="16" width="14" height="14" rx="2" fill="#60a5fa"/>
 <text x="732" y="28" fill="#a1aab6" font-size="13">Other work</text>
 <text x="122" y="65" fill="#f0f6fc" font-size="15" font-weight="600">Cold cache</text>
-<text x="122" y="84" fill="#a1aab6" font-size="12">GitHub CI · 3.15</text>
+<text x="122" y="84" fill="#a1aab6" font-size="12">Local desktop · 3.15</text>
 <path d="M122.000 96V287" stroke="#30363d" stroke-opacity="0.55"/>
 <text x="122.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">0 s</text>
+<path d="M172.000 96V287" stroke="#30363d" stroke-opacity="0.55"/>
+<text x="172.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">0.2 s</text>
 <path d="M222.000 96V287" stroke="#30363d" stroke-opacity="0.55"/>
-<text x="222.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">0.5 s</text>
+<text x="222.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">0.4 s</text>
+<path d="M272.000 96V287" stroke="#30363d" stroke-opacity="0.55"/>
+<text x="272.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">0.6 s</text>
 <path d="M322.000 96V287" stroke="#30363d" stroke-opacity="0.55"/>
-<text x="322.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">1 s</text>
+<text x="322.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">0.8 s</text>
+<path d="M372.000 96V287" stroke="#30363d" stroke-opacity="0.55"/>
+<text x="372.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">1 s</text>
 <path d="M422.000 96V287" stroke="#30363d" stroke-opacity="0.55"/>
-<text x="422.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">1.5 s</text>
-<clipPath id="cold-uv"><rect x="122" y="105" width="31.600" height="25" rx="4"/></clipPath>
+<text x="422.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">1.2 s</text>
+<clipPath id="cold-uv"><rect x="122" y="105" width="57.275" height="25" rx="4"/></clipPath>
 <g clip-path="url(#cold-uv)">
-<rect x="122.000" y="105" width="31.600" height="25" fill="#60a5fa"/>
+<rect x="122.000" y="105" width="57.275" height="25" fill="#60a5fa"/>
 </g>
-<text x="163.600" y="123" fill="#f0f6fc" font-size="15">0.16 s</text>
-<clipPath id="cold-nab"><rect x="122" y="152" width="120.129" height="25" rx="4"/></clipPath>
+<text x="189.275" y="123" fill="#f0f6fc" font-size="15">0.23 s</text>
+<clipPath id="cold-nab"><rect x="122" y="152" width="142.594" height="25" rx="4"/></clipPath>
 <g clip-path="url(#cold-nab)">
-<rect x="122.000" y="152" width="120.129" height="25" fill="#34d399"/>
+<rect x="122.000" y="152" width="142.594" height="25" fill="#34d399"/>
 </g>
-<text x="252.129" y="170" fill="#f0f6fc" font-size="15">0.6 s</text>
-<clipPath id="cold-poetry"><rect x="122" y="199" width="194.065" height="25" rx="4"/></clipPath>
+<text x="274.594" y="170" fill="#f0f6fc" font-size="15">0.57 s</text>
+<clipPath id="cold-poetry"><rect x="122" y="199" width="246.161" height="25" rx="4"/></clipPath>
 <g clip-path="url(#cold-poetry)">
-<rect x="122.000" y="199" width="194.065" height="25" fill="#60a5fa"/>
+<rect x="122.000" y="199" width="246.161" height="25" fill="#60a5fa"/>
 </g>
-<text x="326.065" y="217" fill="#f0f6fc" font-size="15">0.97 s</text>
-<clipPath id="cold-pdm"><rect x="122" y="246" width="281.213" height="25" rx="4"/></clipPath>
+<text x="378.161" y="217" fill="#f0f6fc" font-size="15">0.98 s</text>
+<clipPath id="cold-pdm"><rect x="122" y="246" width="289.809" height="25" rx="4"/></clipPath>
 <g clip-path="url(#cold-pdm)">
-<rect x="122.000" y="246" width="281.213" height="25" fill="#60a5fa"/>
+<rect x="122.000" y="246" width="289.809" height="25" fill="#60a5fa"/>
 </g>
-<text x="413.213" y="264" fill="#f0f6fc" font-size="15">1.4 s</text>
+<text x="421.809" y="264" fill="#f0f6fc" font-size="15">1.2 s</text>
 <text x="570" y="65" fill="#f0f6fc" font-size="15" font-weight="600">Warm cache · estimated split</text>
 <text x="570" y="84" fill="#a1aab6" font-size="12">Local desktop · 3.15</text>
 <path d="M570.000 96V287" stroke="#30363d" stroke-opacity="0.55"/>
 <text x="570.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">0 s</text>
+<path d="M620.000 96V287" stroke="#30363d" stroke-opacity="0.55"/>
+<text x="620.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">0.2 s</text>
 <path d="M670.000 96V287" stroke="#30363d" stroke-opacity="0.55"/>
-<text x="670.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">0.5 s</text>
+<text x="670.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">0.4 s</text>
+<path d="M720.000 96V287" stroke="#30363d" stroke-opacity="0.55"/>
+<text x="720.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">0.6 s</text>
 <path d="M770.000 96V287" stroke="#30363d" stroke-opacity="0.55"/>
-<text x="770.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">1 s</text>
+<text x="770.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">0.8 s</text>
+<path d="M820.000 96V287" stroke="#30363d" stroke-opacity="0.55"/>
+<text x="820.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">1 s</text>
 <path d="M870.000 96V287" stroke="#30363d" stroke-opacity="0.55"/>
-<text x="870.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">1.5 s</text>
-<clipPath id="warm-uv"><rect x="570" y="105" width="2.108" height="25" rx="4"/></clipPath>
+<text x="870.000" y="309" fill="#a1aab6" font-size="12" text-anchor="middle">1.2 s</text>
+<clipPath id="warm-uv"><rect x="570" y="105" width="2.730" height="25" rx="4"/></clipPath>
 <g clip-path="url(#warm-uv)">
-<rect x="570.000" y="105" width="2.108" height="25" fill="#60a5fa"/>
+<rect x="570.000" y="105" width="2.730" height="25" fill="#60a5fa"/>
 </g>
-<text x="582.108" y="123" fill="#f0f6fc" font-size="15">11 ms</text>
-<clipPath id="warm-nab"><rect x="570" y="152" width="36.686" height="25" rx="4"/></clipPath>
+<text x="582.730" y="123" fill="#f0f6fc" font-size="15">11 ms</text>
+<clipPath id="warm-nab"><rect x="570" y="152" width="43.541" height="25" rx="4"/></clipPath>
 <g clip-path="url(#warm-nab)">
-<rect x="570.000" y="152" width="0.748" height="25" fill="#94a3b8"/>
-<rect x="570.748" y="152" width="14.288" height="25" fill="#475569"/>
-<rect x="585.035" y="152" width="21.651" height="25" fill="#34d399"/>
+<rect x="570.000" y="152" width="0.997" height="25" fill="#94a3b8"/>
+<rect x="570.997" y="152" width="17.835" height="25" fill="#475569"/>
+<rect x="588.832" y="152" width="24.709" height="25" fill="#34d399"/>
 </g>
-<text x="616.686" y="170" fill="#f0f6fc" font-size="15">0.18 s</text>
-<clipPath id="warm-poetry"><rect x="570" y="199" width="144.718" height="25" rx="4"/></clipPath>
+<text x="623.541" y="170" fill="#f0f6fc" font-size="15">0.17 s</text>
+<clipPath id="warm-poetry"><rect x="570" y="199" width="179.673" height="25" rx="4"/></clipPath>
 <g clip-path="url(#warm-poetry)">
-<rect x="570.000" y="199" width="0.782" height="25" fill="#94a3b8"/>
-<rect x="570.782" y="199" width="89.843" height="25" fill="#475569"/>
-<rect x="660.624" y="199" width="54.094" height="25" fill="#60a5fa"/>
+<rect x="570.000" y="199" width="0.954" height="25" fill="#94a3b8"/>
+<rect x="570.954" y="199" width="111.284" height="25" fill="#475569"/>
+<rect x="682.238" y="199" width="67.435" height="25" fill="#60a5fa"/>
 </g>
-<text x="724.718" y="217" fill="#f0f6fc" font-size="15">0.72 s</text>
-<clipPath id="warm-pdm"><rect x="570" y="246" width="162.192" height="25" rx="4"/></clipPath>
+<text x="759.673" y="217" fill="#f0f6fc" font-size="15">0.72 s</text>
+<clipPath id="warm-pdm"><rect x="570" y="246" width="203.070" height="25" rx="4"/></clipPath>
 <g clip-path="url(#warm-pdm)">
-<rect x="570.000" y="246" width="0.787" height="25" fill="#94a3b8"/>
-<rect x="570.787" y="246" width="44.066" height="25" fill="#475569"/>
-<rect x="614.853" y="246" width="117.340" height="25" fill="#60a5fa"/>
+<rect x="570.000" y="246" width="0.984" height="25" fill="#94a3b8"/>
+<rect x="570.984" y="246" width="55.622" height="25" fill="#475569"/>
+<rect x="626.606" y="246" width="146.464" height="25" fill="#60a5fa"/>
 </g>
-<text x="742.192" y="264" fill="#f0f6fc" font-size="15">0.81 s</text>
+<text x="783.070" y="264" fill="#f0f6fc" font-size="15">0.81 s</text>
 <text x="24" y="123" fill="#f0f6fc" font-size="16" font-weight="400">uv</text>
 <text x="24" y="170" fill="#34d399" font-size="16" font-weight="600">nab</text>
 <text x="24" y="217" fill="#f0f6fc" font-size="16" font-weight="400">Poetry</text>
