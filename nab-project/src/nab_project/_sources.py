@@ -66,6 +66,7 @@ if TYPE_CHECKING:
 _TREE_DIR = "tree"
 _COMPLETE_MARKER = ".nab-complete"
 _HASHES_MARKER = ".nab-hashes"
+_ROOT_MARKER = ".nab-root"
 
 
 class _SourceCopyError(Exception):
@@ -395,12 +396,33 @@ def _prepare_archive_tree(
 
 
 def _is_published(target: Path) -> bool:
-    """Whether the entry at ``target`` holds a completed extraction.
+    """Whether ``target`` holds a completed, usable extraction.
 
-    A marker whose stat fails counts as unpublished, so an entry this process
-    cannot read is a miss rather than an error.
+    An unreadable marker or missing recorded root makes the entry a cache miss.
     """
-    return path_state(target / _COMPLETE_MARKER) is PathState.FILE
+    return (
+        path_state(target / _COMPLETE_MARKER) is PathState.FILE
+        and _cached_archive_root(target) is not None
+    )
+
+
+def _cached_archive_root(target: Path) -> Path | None:
+    """Return the recorded archive root, or ``None`` for an unusable entry."""
+    try:
+        encoded_name = (target / _ROOT_MARKER).read_text(encoding="ascii")
+        root_name = os.fsdecode(bytes.fromhex(encoded_name))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+
+    if root_name in {".", ".."} or Path(root_name).name != root_name:
+        return None
+
+    root = target / _TREE_DIR
+    if root_name:
+        root /= root_name
+    if path_state(root) is not PathState.DIRECTORY:
+        return None
+    return root.resolve()
 
 
 def _verified_hashes(target: Path) -> set[tuple[str, str]]:
@@ -468,8 +490,9 @@ def _extract_archive(
 ) -> Path:  # pragma: no cover (tar data filter; see _materialize_archive)
     """Extract ``data`` under ``cache_dir`` keyed by ``digest``; return the root.
 
-    The archive's root is published at ``_TREE_DIR`` inside the entry, so no
-    name the archive chose reaches the entry's top level.
+    The archive's payload is published at ``_TREE_DIR`` inside the entry, with
+    a wrapping root retained below it. No archive-chosen name reaches the
+    entry's top level.
 
     ``verified`` names the hashes the caller checked ``data`` against, recorded
     beside the completion marker so a later resolve reuses the tree only for a
@@ -501,9 +524,15 @@ def _extract_archive(
                 msg = f"archive could not be extracted: {exc}"
                 raise UnsupportedSdistError(msg) from exc
 
-            # A flat archive's root is the extraction dir itself, so the move
-            # takes that dir and leaves nothing behind to remove.
-            root.replace(tmp / _TREE_DIR)
+            # Keep the archive's basename below a fixed payload directory so
+            # it cannot collide with the cache's bookkeeping.
+            root_name = "" if root == unpacked.resolve() else root.name
+            tree = tmp / _TREE_DIR
+            if root_name:
+                tree.mkdir()
+                root.replace(tree / root_name)
+            else:
+                root.replace(tree)
             with suppress(FileNotFoundError):
                 unpacked.rmdir()
 
@@ -511,6 +540,9 @@ def _extract_archive(
                 f"{algorithm}={hex_digest}" for algorithm, hex_digest in verified
             )
             (tmp / _HASHES_MARKER).write_text(record, encoding="utf-8")
+            (tmp / _ROOT_MARKER).write_text(
+                os.fsencode(root_name).hex(), encoding="ascii"
+            )
             (tmp / _COMPLETE_MARKER).touch()
 
             try:
@@ -543,5 +575,8 @@ def _cache_write_error(exc: OSError) -> UnsupportedSdistError:
 
 def _extracted_root(target: Path) -> Path:
     """Return the source root inside the extracted tree at ``target``."""
-    # Resolve so the file URI works even for a relative cache dir.
-    return (target / _TREE_DIR).resolve()
+    root = _cached_archive_root(target)
+    if root is None:
+        msg = "extracted archive cache entry is incomplete"
+        raise UnsupportedSdistError(msg)
+    return root
