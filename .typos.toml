@@ -1,5 +1,6 @@
 [default.extend-words]
 # Real words and identifiers typos misreads.
+certifi = "certifi"
 unparseable = "unparseable"
 contextful = "contextful"
 mis = "mis"

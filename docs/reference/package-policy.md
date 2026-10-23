@@ -116,6 +116,48 @@ assume-fresh-seconds = 3600
 `assume-fresh-seconds` extends a cached listing's freshness window. A release published inside that
 window stays hidden until it lapses. The setting never affects metadata or artifacts cached by hash.
 
+## Cooldown exceptions
+
+### Allow a recently uploaded release
+
+Keep a seven-day cooldown, but admit the original files for
+[`certifi` 2026.10.19](https://pypi.org/project/certifi/2026.10.19/):
+
+```toml
+[tool.nab]
+uploaded-prior-to = "P7D"
+
+[tool.nab.packages."certifi==2026.10.19"]
+uploaded-prior-to = "2026-10-20T02:24:17Z"
+```
+
+The fixed timestamp admits that release's original wheel and sdist. Nab still excludes later uploads
+of the same version. Other versions and packages keep the seven-day cooldown.
+
+### Use an index without upload times
+
+For a hypothetical internal index that does not publish upload times, disable the cutoff only for
+that index:
+
+```toml
+[tool.nab]
+uploaded-prior-to = "P7D"
+
+[[tool.nab.indexes]]
+name = "internal"
+url = "https://packages.example.com/simple/"
+
+[[tool.nab.indexes]]
+name = "pypi"
+url = "https://pypi.org/simple/"
+
+[tool.nab.index.internal]
+uploaded-prior-to = false
+```
+
+PyPI keeps the seven-day cooldown. Files without upload times are excluded whenever a cutoff
+applies; see {ref}`Index serialization <index-serialization>`.
+
 ## Conflicts between package and index overrides
 
 Per-package and per-index overrides have equal precedence. If both set the same field for a

@@ -257,7 +257,11 @@ def test_only_build_remote_builds_index_sdists(
 @pytest.mark.parametrize("page", [README, TUTORIAL], ids=lambda page: page.name)
 def test_intro_project_plans_universal_targets(tmp_path: Path, page: Path) -> None:
     """The complete example must load and plan its declared matrix."""
-    blocks = _fenced_blocks(_text(page), "toml")
+    blocks = [
+        block
+        for block in _fenced_blocks(_text(page), "toml")
+        if "project" in tomli.loads(block)
+    ]
     assert len(blocks) == 1
 
     path = tmp_path / "pyproject.toml"

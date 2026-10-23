@@ -82,6 +82,21 @@ during locking.
 
 These controls apply during locking; your installer may still build a locked source distribution.
 
+## Soundness
+
+Nab checks dependencies and artifact compatibility for every environment you declare.
+
+- Nab uses each target's preferred wheel metadata; uv
+  [assumes consistent metadata across a release's wheels](https://docs.astral.sh/uv/reference/internals/resolver/#metadata-consistency).
+- Nab retains dependency `Requires-Python` upper bounds at Python-minor granularity, including
+  bounds
+  [uv deliberately ignores](https://docs.astral.sh/uv/reference/internals/resolver/#requires-python).
+- Nab derives yank permission from active exact pins, including selected transitive pins. Rejected
+  parent versions cannot leave permission behind; uv
+  [builds its allowlist from initial inputs and locked versions](https://github.com/astral-sh/uv/blob/0.13.4/crates/uv-resolver/src/yanks.rs).
+  See [Nab's policy](https://nab.readthedocs.io/en/stable/reference/yanking.html) and the
+  [spec](https://packaging.python.org/en/latest/specifications/file-yanking/).
+
 ## More features
 
 Use [requirements and markers](https://nab.readthedocs.io/en/stable/how-to/choose-dependencies.html)
@@ -90,27 +105,64 @@ scoped policies and metadata overrides, multiple indexes, workspaces, pinned Git
 archives. [Browse the guides](https://nab.readthedocs.io/en/stable/how-to/index.html) for these
 workflows.
 
+## Policy overrides
+
+Nab uses dependency requirements to select which releases a policy overrides.
+
+### Allow a reviewed update during a cooldown
+
+Keep a seven-day cooldown, with an exception for reviewed files of `certifi` 2026.10.19:
+
+```toml
+[tool.nab]
+uploaded-prior-to = "P7D"
+
+[tool.nab.packages."certifi==2026.10.19"]
+uploaded-prior-to = "2026-10-20T02:24:17Z"
+```
+
+The fixed cutoff excludes later uploads of the same version. Other versions keep the global
+cooldown.
+
+### Use an index without upload times
+
+Disable the cutoff only for an internal index that does not publish upload times:
+
+```toml
+[tool.nab]
+uploaded-prior-to = "P7D"
+
+[[tool.nab.indexes]]
+name = "pypi"
+url = "https://pypi.org/simple/"
+
+[[tool.nab.indexes]]
+name = "internal"
+url = "https://packages.example.com/simple/"
+
+[tool.nab.index.internal]
+uploaded-prior-to = false
+```
+
+See
+[package and index policies](https://nab.readthedocs.io/en/stable/reference/package-policy.html).
+
 ## Universal lock benchmark
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="docs/_static/universal-lock-benchmark-light.svg">
     <source media="(prefers-color-scheme: dark)" srcset="docs/_static/universal-lock-benchmark-dark.svg">
-    <img src="https://raw.githubusercontent.com/notatallshaw/nab/main/docs/_static/universal-lock-benchmark-light.svg" alt="Cold and warm universal lock timings for nab, uv, Poetry and PDM. Cold bars show total time; warm Python bars estimate interpreter, imports and other work. Shorter bars are faster." width="960">
+    <img src="https://raw.githubusercontent.com/notatallshaw/nab/main/docs/_static/universal-lock-benchmark-light.svg" alt="Cold and warm universal lock timings for nab, uv, Poetry and PDM, including startup. Each bar shows total time; shorter is faster." width="960">
   </picture>
 </p>
 
-This benchmark locks Requests 2.32.3 for Python 3.12 through 3.14. Nab covers CPython and PyPy on
-eight declared platforms; uv, Poetry and PDM resolve without platform or implementation limits. All
-four locks select the same packages and usable wheels on the 48 checked targets.
+Fresh universal locks for `requests==2.32.3` on Python 3.12 through 3.14. All four select matching
+packages and usable wheels across 48 checked targets: eight platforms × three Python versions ×
+CPython/PyPy. Nab resolves and validates each target separately, sharing downloads and caches.
 
-Each panel selects Nab's lowest median from my local desktop and GitHub CI on Python 3.15 or 3.15t,
-and uses all four tools from that run. Cold runs use empty dependency caches; warm runs use primed
-caches. All runs generate fresh native lockfiles; Nab uses `--http-backend httpx2`.
-
-Warm bars estimate interpreter startup (about 4 ms per Python tool), imports and other work from
-separate probes. Nab uses explicit lazy imports on Python 3.15; PDM and Poetry also defer some
-imports. The import segment includes modules loaded during locking.
+Empty and primed caches; Nab uses HTTPX2. Each panel uses all four tools from the local/CI × Python
+3.15/3.15t run with Nab's lowest median.
 
 ## Libraries
 
