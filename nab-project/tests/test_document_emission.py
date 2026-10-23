@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from pathlib import Path
     from types import FrameType
+    from typing import SupportsIndex
 
     from typing_extensions import Self
 
@@ -632,3 +633,161 @@ def test_public_specifier_iterable_in_tool_keeps_native_copy_failure(
         pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
     with pytest.raises(RuntimeError, match="specifier copy failed"):
         pylock.render_lock(value, lock_dir=tmp_path)
+
+
+class CopyRange(str):
+    """Retain custom text through public specifier parsing operations."""
+
+    __slots__ = ()
+
+    def split(self, sep: str | None = None, maxsplit: int = -1) -> list[str]:
+        return [self]
+
+    def strip(self, chars: str | None = None) -> Self:
+        return self
+
+    def __getitem__(self, key: SupportsIndex | slice) -> str:
+        """Retain the custom scalar in parsed operator and version values."""
+        return type(self)(super().__getitem__(key))
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> str:
+        """Change the parsed version only when the native model copies it."""
+        return "4" if self == "3" else str(self)
+
+
+@pytest.mark.parametrize("field", ["root", "package"])
+@pytest.mark.parametrize("copy_error", [False, True])
+def test_semantic_specifier_text_keeps_native_copy_behavior(
+    tmp_path: Path, field: str, copy_error: bool
+) -> None:
+    class CopyFailureRange(CopyRange):
+        __slots__ = ()
+
+        def __deepcopy__(self, _memo: dict[int, object]) -> str:
+            raise RuntimeError("range copy failed")
+
+    supplied = CopyFailureRange(">=3") if copy_error else CopyRange(">=3")
+    pin = index_pin()
+    if field == "package":
+        pin = pin.replace(requires_python=supplied)
+    value = lock_input(pin)
+    if field == "root":
+        value = replace(value, requires_python=supplied)
+    if copy_error:
+        with pytest.raises(RuntimeError, match="range copy failed"):
+            pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
+        with pytest.raises(RuntimeError, match="range copy failed"):
+            pylock.render_lock(value, lock_dir=tmp_path)
+        with pytest.raises(CoverageError):
+            pylock.render_lock(
+                replace(value, environments=[Marker('python_version == "3.11"')]),
+                lock_dir=tmp_path,
+            )
+        return
+
+    expected = pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
+    if field == "root":
+        assert expected["requires-python"] == ">=4"
+    else:
+        assert expected["packages"][0]["requires-python"] == ">=4"
+    text, calls = observe_render(value, lock_dir=tmp_path)
+    assert text == tomli_w.dumps(expected)
+    assert calls == [
+        "disjointness",
+        "coverage",
+        "document",
+        "native-document",
+        "schema",
+    ]
+
+
+@pytest.mark.parametrize("field", ["root", "package"])
+def test_runtime_specifier_object_keeps_native_member_copy(
+    tmp_path: Path, field: str
+) -> None:
+    class CopySpecifier(Specifier):
+        def __deepcopy__(self, _memo: dict[int, object]) -> Specifier:
+            return Specifier(">=4")
+
+    # These public replace methods accept the non-string value at runtime.
+    supplied = SpecifierSet([CopySpecifier(">=3")])
+    pin = index_pin()
+    if field == "package":
+        pin = pin.replace(requires_python=supplied)
+    value = lock_input(pin)
+    if field == "root":
+        value = replace(value, requires_python=supplied)
+    expected = pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
+    if field == "root":
+        assert expected["requires-python"] == ">=4"
+    else:
+        assert expected["packages"][0]["requires-python"] == ">=4"
+    text, calls = observe_render(value, lock_dir=tmp_path)
+    assert text == tomli_w.dumps(expected)
+    assert calls == [
+        "disjointness",
+        "coverage",
+        "document",
+        "native-document",
+        "schema",
+    ]
+
+
+class CopyOperatorRange(CopyRange):
+    """Keep only the operator as custom scalar state."""
+
+    __slots__ = ()
+
+    def __getitem__(self, key: SupportsIndex | slice) -> str:
+        """Return ordinary version text and a custom operator."""
+        text = str.__getitem__(self, key)
+        return type(self)(text) if text == ">=" else text
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> str:
+        """Change the operator only when native copying reaches it."""
+        return ">"
+
+
+class CopyVersionRange(CopyRange):
+    """Keep only the version as custom scalar state."""
+
+    __slots__ = ()
+
+    def __getitem__(self, key: SupportsIndex | slice) -> str:
+        """Return an ordinary operator and custom version text."""
+        text = str.__getitem__(self, key)
+        return type(self)(text) if text == "3" else text
+
+
+@pytest.mark.parametrize("field", ["root", "package"])
+@pytest.mark.parametrize(
+    ("range_type", "expected_range"),
+    [(CopyOperatorRange, ">3"), (CopyVersionRange, ">=4")],
+)
+def test_semantic_specifier_component_copy_changes_output(
+    tmp_path: Path,
+    field: str,
+    range_type: type[CopyRange],
+    expected_range: str,
+) -> None:
+    supplied = range_type(">=3")
+    pin = index_pin()
+    if field == "package":
+        pin = pin.replace(requires_python=supplied)
+    value = lock_input(pin)
+    if field == "root":
+        value = replace(value, requires_python=supplied)
+    expected = pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
+    if field == "root":
+        assert expected["requires-python"] == expected_range
+    else:
+        assert expected["packages"][0]["requires-python"] == expected_range
+    text, calls = observe_render(value, lock_dir=tmp_path)
+    assert text == tomli_w.dumps(expected)
+    assert calls == [
+        "disjointness",
+        "coverage",
+        "document",
+        "native-document",
+        "schema",
+    ]

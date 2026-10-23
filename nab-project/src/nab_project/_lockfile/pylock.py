@@ -64,7 +64,7 @@ from nab_provider._vendor.packaging.pylock import (
     Pylock,
     PylockValidationError,
 )
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.specifiers import Specifier, SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name, is_normalized_name
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_provider.conflict_kind import KIND_GROUP, MARKER_VARIABLE_FOR_KIND
@@ -603,9 +603,7 @@ def _plain_values(pending: list[object], *, packaging_values: bool) -> bool:
         kind = type(value)
         if value is None or kind is str or kind is bool or kind is int or kind is float:
             continue
-        if packaging_values and (
-            kind is Version or kind is SpecifierSet or kind is Marker
-        ):
+        if packaging_values and _plain_packaging_value(value):
             continue
         if type(value) is datetime:
             if value.tzinfo is None or value.tzinfo is timezone.utc:
@@ -625,6 +623,21 @@ def _plain_values(pending: list[object], *, packaging_values: bool) -> bool:
         else:
             return False
     return True
+
+
+def _plain_packaging_value(value: object) -> bool:
+    """Require native specifier members and plain public component strings."""
+    kind = type(value)
+    if kind is Version or kind is Marker:
+        return True
+    if type(value) is not SpecifierSet:
+        return False
+    return all(
+        type(specifier) is Specifier
+        and type(specifier.operator) is str
+        and type(specifier.version) is str
+        for specifier in value
+    )
 
 
 def _check_extra_names(extras: Sequence[str]) -> None:
