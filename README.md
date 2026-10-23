@@ -96,22 +96,21 @@ workflows.
   <picture>
     <source media="(prefers-color-scheme: light)" srcset="docs/_static/universal-lock-benchmark-light.svg">
     <source media="(prefers-color-scheme: dark)" srcset="docs/_static/universal-lock-benchmark-dark.svg">
-    <img src="https://raw.githubusercontent.com/notatallshaw/nab/main/docs/_static/universal-lock-benchmark-light.svg" alt="Cold and warm universal lock timings for nab, uv, Poetry and PDM, split into interpreter, imports and other work; shorter bars are faster." width="960">
+    <img src="https://raw.githubusercontent.com/notatallshaw/nab/main/docs/_static/universal-lock-benchmark-light.svg" alt="Cold and warm universal lock timings for nab, uv, Poetry and PDM. Cold bars show total time; warm Python bars estimate interpreter, imports and other work. Shorter bars are faster." width="960">
   </picture>
 </p>
 
-Locking Requests 2.32.3 for Python 3.12–3.14. Each panel selects the lowest median Nab time from my
-local desktop and GitHub CI, on Python 3.15 and 3.15t. All four tools in a panel are measured in
-that environment; the Python tools use the runtime shown. Nab covers CPython and PyPy on its eight
-supported platforms. uv, Poetry and PDM resolve without platform or implementation limits. All four
-locks select the same packages and usable wheels on the 48 checked targets.
+This benchmark locks Requests 2.32.3 for Python 3.12 through 3.14. Nab covers CPython and PyPy on
+eight declared platforms; uv, Poetry and PDM resolve without platform or implementation limits. All
+four locks select the same packages and usable wheels on the 48 checked targets.
 
-Cold runs use empty dependency caches; warm runs use primed caches. Both generate fresh native
-lockfiles. Nab uses `--http-backend httpx2`.
+Each panel selects Nab's lowest median from my local desktop and GitHub CI on Python 3.15 or 3.15t,
+and uses all four tools from that run. Cold runs use empty dependency caches; warm runs use primed
+caches. All runs generate fresh native lockfiles; Nab uses `--http-backend httpx2`.
 
-The Python bars separate interpreter launch, imports and other work, including resolution and file
-writing. The split is estimated from separate probes; imports include deferred loads during locking.
-Nab uses Python 3.15 lazy imports. PDM and Poetry also defer some imports. uv is shown whole.
+Warm bars estimate interpreter startup (about 4 ms per Python tool), imports and other work from
+separate probes. Nab uses explicit lazy imports on Python 3.15; PDM and Poetry also defer some
+imports. The import segment includes modules loaded during locking.
 
 ## Libraries
 
