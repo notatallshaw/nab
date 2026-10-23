@@ -357,8 +357,9 @@ def build_target_lock(
         raise ValueError(msg)
 
     lock_pins: dict[str, PinShape] = {}
+    normalized_names: dict[str, NormalizedName] = {}
     for raw_name, version in pins.items():
-        canonical = canonicalize_name(raw_name)
+        canonical = _lock_name(raw_name, normalized_names)
         pruned = provider.tag_excluded_wheel_count(canonical, version)
         if pruned:
             logger.debug(
@@ -401,7 +402,7 @@ def build_target_lock(
         )
 
     dependencies, base_dependencies = _forward_dependency_graph(
-        provider, pins, resolved_keys
+        provider, pins, resolved_keys, normalized_names=normalized_names
     )
 
     package_gates: dict[str, tuple[tuple[str, str], ...]] = {}
@@ -541,10 +542,27 @@ def _reachable_names(
     return reached
 
 
+def _lock_name(
+    name: str, normalized_names: dict[str, NormalizedName]
+) -> NormalizedName:
+    """Reuse a native string's normalized name within one target lock."""
+    # Subclasses can customize dictionary key hashing and equality.
+    if type(name) is not str:
+        return canonicalize_name(name)
+
+    normalized = normalized_names.get(name)
+    if normalized is None:
+        normalized = canonicalize_name(name)
+        normalized_names[name] = normalized
+    return normalized
+
+
 def _forward_dependency_graph(
     provider: LockInputProvider,
     pins: Mapping[str, Version],
     resolved_keys: Iterable[str],
+    *,
+    normalized_names: dict[str, NormalizedName] | None = None,
 ) -> tuple[dict[str, tuple[str, ...]], dict[str, tuple[str, ...]]]:
     """Build the forward dependency graph among the locked packages.
 
@@ -558,21 +576,23 @@ def _forward_dependency_graph(
     dropped from both so every edge points at a real ``[[packages]]``
     entry.
     """
+    if normalized_names is None:
+        normalized_names = {}
     activated_extras: defaultdict[str, set[str]] = defaultdict(set)
     for key in resolved_keys:
         base, extra = split_extra(key)
         if extra is not None:
-            activated_extras[canonicalize_name(base)].add(extra)
+            activated_extras[_lock_name(base, normalized_names)].add(extra)
 
-    pinned = {canonicalize_name(name) for name in pins}
+    pinned = {_lock_name(name, normalized_names) for name in pins}
     graph: dict[str, tuple[str, ...]] = {}
     base_graph: dict[str, tuple[str, ...]] = {}
     extra_deps_map = provider.extra_deps_map
     for raw_name, version in pins.items():
-        canonical = canonicalize_name(raw_name)
+        canonical = _lock_name(raw_name, normalized_names)
         cache_key = (canonical, version)
         base_deps = {
-            canonicalize_name(split_extra(dep)[0])
+            _lock_name(split_extra(dep)[0], normalized_names)
             for dep in provider.deps_cache.get(cache_key, {})
         }
         all_deps = set(base_deps)
@@ -584,7 +604,7 @@ def _forward_dependency_graph(
             extra_map = extra_deps_map.get(cache_key, {})
             for extra in activated:
                 all_deps.update(
-                    canonicalize_name(split_extra(dep)[0])
+                    _lock_name(split_extra(dep)[0], normalized_names)
                     for dep in extra_map.get(extra, {})
                 )
 
