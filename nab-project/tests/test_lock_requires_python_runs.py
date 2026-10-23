@@ -160,6 +160,22 @@ def test_old_runtime_keeps_original_validation(monkeypatch: pytest.MonkeyPatch) 
     assert len(calls) == 3
 
 
+def test_supported_runtime_reuses_repeated_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = _files((">=3.12", ">=3.12", ">=3.12"))
+
+    with monkeypatch.context() as context:
+        context.setattr(sys, "version_info", (3, 11))
+        # Python 3.10.4 has no integer-limit getter to preserve.
+        context.setattr(sys, "get_int_max_str_digits", lambda: 0, raising=False)
+        with _validation_calls() as calls:
+            actual = builder._common_requires_python(files)
+
+    assert actual == ">=3.12"
+    assert len(calls) == 1
+
+
 @pytest.mark.skipif(
     sys.version_info < (3, 11), reason="Reuse is enabled from Python 3.11"
 )
