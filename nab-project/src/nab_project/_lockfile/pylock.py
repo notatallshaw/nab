@@ -545,14 +545,23 @@ def render_lock(lock_input: LockInput, *, lock_dir: Path | None = None) -> str:
 
 
 def _index_only(lock_input: LockInput) -> bool:
-    """Keep non-index source serialization on the native model path."""
-    from ..lockfile import IndexPin
+    """Inspect only native containers and records before choosing direct output."""
+    from ..lockfile import IndexPin, LockInput, TargetLock
 
-    return all(
-        isinstance(pin, IndexPin)
-        for lock in lock_input.targets.values()
-        for pin in lock.pins.values()
-    )
+    if type(lock_input) is not LockInput:
+        return False
+    targets = lock_input.targets
+    if type(targets) is not dict:
+        return False
+    for lock in targets.values():
+        if type(lock) is not TargetLock:
+            return False
+        pins = lock.pins
+        if type(pins) is not dict:
+            return False
+        if any(type(pin) is not IndexPin for pin in pins.values()):
+            return False
+    return True
 
 
 def _index_document(
