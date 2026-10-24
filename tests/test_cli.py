@@ -82,7 +82,12 @@ from nab_project.lockfile import (
     TargetLock,
     WheelArtifact,
 )
-from nab_project.resolve import ResolveResult, TargetResult, env_signature
+from nab_project.resolve import (
+    ResolveResult,
+    TargetResult,
+    env_signature,
+    resolve_for_targets,
+)
 from nab_provider._vendor.packaging import markers as packaging_markers
 from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider._vendor.packaging.requirements import Requirement
@@ -99,7 +104,7 @@ from nab_provider.records import WheelFile
 from nab_provider.requirements_file import InvalidProjectRequirementError
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import IntractableMarkerError, ResolveTarget, host_environment
-from nab_provider.testing import make_metadata, make_wheel
+from nab_provider.testing import FakeFetchPort, make_metadata, make_wheel
 from nab_resolver.errors import ResolutionError
 
 requires_int_limit = pytest.mark.skipif(
@@ -2154,26 +2159,87 @@ class TestLockCommandSpecific:
         assert "cannot write output" in capsys.readouterr().err
         assert out.read_bytes() == committed
 
-    def test_resolution_flag_threads_to_resolver(self, tmp_path: Path) -> None:
-        """``--project-resolution lowest`` reaches resolve_for_targets as the enum."""
-        pyproject = _make_pyproject(tmp_path)
-        out = tmp_path / "pylock.toml"
-        with patch(
-            "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
-        ) as mock_resolve:
-            lock(pyproject, output=out, project_resolution="lowest")
+    @pytest.fixture
+    def strategy_coordinator(self) -> FakeFetchPort:
+        """Offer two versions of a root and its transitive dependency."""
+        listings = {
+            name: [
+                make_wheel(version, package=name, hashes=(("sha256", "a" * 64),))
+                for version in ("2.0", "1.0")
+            ]
+            for name in ("foo", "leaf")
+        }
+        metadata = {
+            wheel.metadata_url: make_metadata(
+                name, str(wheel.version), *(["leaf>=1"] if name == "foo" else [])
+            )
+            for name, wheels in listings.items()
+            for wheel in wheels
+        }
+        return make_coordinator(listings=listings, metadata_by_url=metadata)
+
+    def test_resolution_flag_threads_to_resolver(
+        self, hermetic_roots: Path, strategy_coordinator: FakeFetchPort
+    ) -> None:
+        """Explicit lowest overrides configured highest for roots and dependencies."""
+        pyproject = _make_pyproject(
+            hermetic_roots,
+            '[project]\ndependencies = ["foo>=1"]\n'
+            '[tool.nab]\nresolution = "highest"\nbuild-policy = "never"\n',
+        )
+        out = hermetic_roots / "pylock.toml"
+        with (
+            patch(
+                "nab_project.resolve.FetchCoordinator",
+                return_value=contextlib.nullcontext(strategy_coordinator),
+            ),
+            patch(
+                "nab._resolve.resolve_for_targets", wraps=resolve_for_targets
+            ) as mock_resolve,
+        ):
+            lock(
+                pyproject,
+                output=out,
+                project_resolution="lowest",
+                offline=True,
+                cache=False,
+            )
         kwargs = mock_resolve.call_args.kwargs
         assert kwargs["resolution_strategy"] is ResolutionStrategy.LOWEST
 
-    def test_resolution_flag_default_none(self, tmp_path: Path) -> None:
-        """No --project-resolution: resolve_for_targets sees ``None`` (config wins)."""
-        pyproject = _make_pyproject(tmp_path)
-        out = tmp_path / "pylock.toml"
-        with patch(
-            "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
-        ) as mock_resolve:
-            lock(pyproject, output=out)
+        written = Pylock.from_dict(tomli.loads(out.read_text()))
+        assert {pkg.name: str(pkg.version) for pkg in written.packages} == {
+            "foo": "1.0",
+            "leaf": "1.0",
+        }
+
+    def test_resolution_flag_default_none(
+        self, hermetic_roots: Path, strategy_coordinator: FakeFetchPort
+    ) -> None:
+        """Omitting the strategy selects the highest root and dependency versions."""
+        pyproject = _make_pyproject(
+            hermetic_roots,
+            '[project]\ndependencies = ["foo>=1"]\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        out = hermetic_roots / "pylock.toml"
+        with (
+            patch(
+                "nab_project.resolve.FetchCoordinator",
+                return_value=contextlib.nullcontext(strategy_coordinator),
+            ),
+            patch(
+                "nab._resolve.resolve_for_targets", wraps=resolve_for_targets
+            ) as mock_resolve,
+        ):
+            lock(pyproject, output=out, offline=True, cache=False)
         assert mock_resolve.call_args.kwargs["resolution_strategy"] is None
+
+        written = Pylock.from_dict(tomli.loads(out.read_text()))
+        assert {pkg.name: str(pkg.version) for pkg in written.packages} == {
+            "foo": "2.0",
+            "leaf": "2.0",
+        }
 
     def test_cli_project_override_prints_notice(
         self,
