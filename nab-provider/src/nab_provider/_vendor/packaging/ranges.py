@@ -113,8 +113,8 @@ def __dir__() -> list[str]:
 
 
 # Range algebra: intersection and the empty-interval test live in the engine
-# (``intersect_ranges`` / ``range_is_empty``); union and complement are only
-# needed here, so they live in this module.
+# (``intersect_ranges`` / ``range_is_empty``); union, complement and difference
+# are only needed here, so they live in this module.
 
 
 def _union_ranges(
@@ -216,27 +216,6 @@ def _relate_bounds(
     return _DISJOINT_REL if disjoint else _OVERLAPPING_REL
 
 
-def _subset_bounds(left: Sequence[Interval], right: Sequence[Interval]) -> bool:
-    """Return whether every version in ``left`` is also in ``right``.
-
-    The canonical lists let one two-pointer walk decide containment: skip the
-    right intervals that end too early, then check that the surviving one starts
-    early enough.
-    """
-    right_index = 0
-    right_len = len(right)
-    for left_lower, left_upper in left:
-        # A right interval ending below this one cannot cover it, and the left
-        # list ascends, so it cannot cover any later one either.
-        while right_index < right_len and right[right_index][1] < left_upper:
-            right_index += 1
-        if right_index == right_len:
-            return False
-        if right[right_index][0] > left_lower:
-            return False
-    return True
-
-
 def _disjoint_bounds(left: Sequence[Interval], right: Sequence[Interval]) -> bool:
     """Return whether no version lies in both ``left`` and ``right``.
 
@@ -304,35 +283,38 @@ def _complement_ranges(ranges: Sequence[Interval]) -> list[Interval]:
 
 
 def _difference_ranges(
-    left: Sequence[Interval], right: Sequence[Interval]
-) -> tuple[Interval, ...]:
-    """Subtract sorted intervals without constructing the right-hand complement."""
-    result: list[Interval] = []
+    left: tuple[Interval, ...], right: tuple[Interval, ...]
+) -> Iterator[Interval]:
+    """Subtract right from left. Both must be sorted, disjoint and non-touching."""
+    if right == FULL_RANGE:
+        return
+
     right_index = 0
-    for lower, upper in left:
+    for left_lower, upper in left:
+        lower = left_lower
+        unconsumed = True
         while right_index < len(right):
             right_lower, right_upper = right[right_index]
             if range_is_empty(lower, right_upper):
                 right_index += 1
                 continue
             if range_is_empty(right_lower, upper):
-                if not range_is_empty(lower, upper):
-                    result.append((lower, upper))
                 break
 
             if lower < right_lower:
                 gap_upper = UpperBound(right_lower.version, not right_lower.inclusive)
                 if not range_is_empty(lower, gap_upper):
-                    result.append((lower, gap_upper))
+                    yield lower, gap_upper
             if right_upper >= upper:
+                # Keep this exclusion for any later left intervals it overlaps.
+                unconsumed = False
                 break
 
             lower = LowerBound(right_upper.version, not right_upper.inclusive)
             right_index += 1
-        else:
-            if not range_is_empty(lower, upper):
-                result.append((lower, upper))
-    return tuple(result)
+
+        if unconsumed and not range_is_empty(lower, upper):
+            yield lower, upper
 
 
 def _canonical_floor(bounds: tuple[Interval, ...]) -> tuple[Interval, ...]:
@@ -1627,7 +1609,7 @@ class VersionRange:
         if not other._bounds and not other._admit:
             return self
 
-        new_bounds = _difference_ranges(self._bounds, other._bounds)
+        new_bounds = tuple(_difference_ranges(self._bounds, other._bounds))
 
         # Match ``self & ~other`` on the opt-in region: a complement carries no
         # opt-in, so only ``self``'s region survives. ``other`` acts as a
@@ -1752,15 +1734,6 @@ class VersionRange:
         False
         >>> VersionRange.empty().is_subset(outer)
         True
-
-        A range with an exclusion is a subset of its span, but the span is not a
-        subset of it:
-
-        >>> punctured = SpecifierSet(">=1.0,<2.0,!=1.5").to_range()
-        >>> punctured.is_subset(outer)
-        True
-        >>> outer.is_subset(punctured)
-        False
         """
         self._check_policy_compat(other)
 
@@ -1771,7 +1744,7 @@ class VersionRange:
 
         # Plain ranges: subset reduces to bounds containment, no algebra needed.
         if self._is_plain() and other._is_plain():
-            return _subset_bounds(self._bounds, other._bounds)
+            return next(_difference_ranges(self._bounds, other._bounds), None) is None
 
         # difference (unlike intersection with the one-way complement) resolves
         # ``===`` literals against both operands, so it stays correct for them.

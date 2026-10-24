@@ -1,11 +1,4 @@
-"""Tests for the vendored patch's ``_format_marker`` dispatch.
-
-The patched helper tests for a marker item first and serialises it from an
-f-string, so the list case owns the ``[[...]]`` unwrap and the parenthesising
-``first`` controls. Each test pins the string one shape serialises to;
-``Marker.__eq__`` and ``__hash__`` both read ``__str__``, so the exact text
-matters.
-"""
+"""Marker serialization preserves grouping and operator precedence."""
 
 from __future__ import annotations
 

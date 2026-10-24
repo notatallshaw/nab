@@ -82,8 +82,7 @@ class BoundaryVersion:
         "version",
     )
 
-    #: A boundary has no PEP 440 comparison key. Bound ordering reads this off
-    #: either operand type, so a boundary falls back to the version operators.
+    # Synthetic boundaries must use version operators rather than cached keys.
     _key_cache: None = None
 
     def __init__(self, version: Version, kind: BoundaryKind) -> None:
@@ -182,7 +181,8 @@ if TYPE_CHECKING:
 class LowerBound:
     """Lower bound of a version range.
 
-    A version *v* of ``None`` means unbounded below (-inf).
+    A version *v* of ``None`` means unbounded below (-inf), with
+    ``inclusive`` forced to ``False``.
     At equal versions, ``[v`` sorts before ``(v`` because an inclusive
     bound starts earlier.
     """
@@ -190,8 +190,7 @@ class LowerBound:
     __slots__ = ("_above", "inclusive", "version")
 
     def __init__(self, version: _VersionOrBoundary, inclusive: bool) -> None:
-        # -inf is not a version, so "inclusive of -inf" has no content;
-        # canonicalizing it keeps the bound order total.
+        # Two spellings of -inf would sort above each other under total_ordering.
         if version is None:
             inclusive = False
 
@@ -227,19 +226,20 @@ class LowerBound:
             return other.version is not None
         if other.version is None:
             return False
-        # A boundary has no key, and a version's is computed on first use.
+
+        # Use cached keys when both exist; cold versions and boundaries use operators.
         self_key = self.version._key_cache
         other_key = other.version._key_cache
-        if self_key is not None and other_key is not None:
-            if self_key != other_key:
-                return self_key < other_key
-        elif self.version != other.version:
-            return self.version < other.version
+        if self_key is None or other_key is None:
+            if self.version != other.version:
+                return self.version < other.version
+        elif self_key != other_key:
+            return self_key < other_key
+
         # [v < (v: inclusive starts earlier.
         return self.inclusive and not other.inclusive
 
-    # Written out rather than left to functools.total_ordering, whose shims
-    # reach the same answer through ``__lt__`` and ``__eq__``.
+    # Explicit operators avoid total_ordering's repeated comparison dispatch.
     def __gt__(self, other: LowerBound) -> bool:
         if not isinstance(other, LowerBound):
             return NotImplemented
@@ -247,13 +247,15 @@ class LowerBound:
             return False
         if other.version is None:
             return True
+
         self_key = self.version._key_cache
         other_key = other.version._key_cache
-        if self_key is not None and other_key is not None:
-            if self_key != other_key:
-                return not self_key < other_key
-        elif self.version != other.version:
-            return not self.version < other.version
+        if self_key is None or other_key is None:
+            if self.version != other.version:
+                return other.version < self.version
+        elif self_key != other_key:
+            return other_key < self_key
+
         return other.inclusive and not self.inclusive
 
     def __le__(self, other: LowerBound) -> bool:
@@ -263,13 +265,15 @@ class LowerBound:
             return True
         if other.version is None:
             return False
+
         self_key = self.version._key_cache
         other_key = other.version._key_cache
-        if self_key is not None and other_key is not None:
-            if self_key != other_key:
-                return self_key < other_key
-        elif self.version != other.version:
-            return self.version < other.version
+        if self_key is None or other_key is None:
+            if self.version != other.version:
+                return self.version < other.version
+        elif self_key != other_key:
+            return self_key < other_key
+
         return self.inclusive or not other.inclusive
 
     def __hash__(self) -> int:
@@ -284,7 +288,8 @@ class LowerBound:
 class UpperBound:
     """Upper bound of a version range.
 
-    A version *v* of ``None`` means unbounded above (+inf).
+    A version *v* of ``None`` means unbounded above (+inf), with
+    ``inclusive`` forced to ``False``.
     At equal versions, ``v)`` sorts before ``v]`` because an exclusive
     bound ends earlier.
     """
@@ -292,7 +297,7 @@ class UpperBound:
     __slots__ = ("_below", "inclusive", "version")
 
     def __init__(self, version: _VersionOrBoundary, inclusive: bool) -> None:
-        # See LowerBound: +inf carries no inclusivity either.
+        # Two spellings of +inf would sort above each other under total_ordering.
         if version is None:
             inclusive = False
 
@@ -325,23 +330,24 @@ class UpperBound:
     def __lt__(self, other: UpperBound) -> bool:
         if not isinstance(other, UpperBound):
             return NotImplemented
-        # Nothing < +inf (except +inf itself).
+        # An unbounded upper endpoint does not sort before any endpoint.
         if self.version is None:
             return False
         if other.version is None:
             return True
-        # See LowerBound.__lt__ for why this reads the cached keys.
+
+        # Use cached keys when both exist; cold versions and boundaries use operators.
         self_key = self.version._key_cache
         other_key = other.version._key_cache
-        if self_key is not None and other_key is not None:
-            if self_key != other_key:
-                return self_key < other_key
-        elif self.version != other.version:
-            return self.version < other.version
+        if self_key is None or other_key is None:
+            if self.version != other.version:
+                return self.version < other.version
+        elif self_key != other_key:
+            return self_key < other_key
+
         # v) < v]: exclusive ends earlier.
         return not self.inclusive and other.inclusive
 
-    # Written out for the same reason as on ``LowerBound``.
     def __gt__(self, other: UpperBound) -> bool:
         if not isinstance(other, UpperBound):
             return NotImplemented
@@ -349,13 +355,15 @@ class UpperBound:
             return other.version is not None
         if other.version is None:
             return False
+
         self_key = self.version._key_cache
         other_key = other.version._key_cache
-        if self_key is not None and other_key is not None:
-            if self_key != other_key:
-                return not self_key < other_key
-        elif self.version != other.version:
-            return not self.version < other.version
+        if self_key is None or other_key is None:
+            if self.version != other.version:
+                return other.version < self.version
+        elif self_key != other_key:
+            return other_key < self_key
+
         return self.inclusive and not other.inclusive
 
     def __hash__(self) -> int:
