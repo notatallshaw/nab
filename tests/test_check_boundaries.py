@@ -170,6 +170,7 @@ def test_shared_records_use_the_public_provider_module(
     )
 
     assert check_boundaries.main() == status
+
     if status:
         assert "nab_provider._value is private" in capsys.readouterr().err
 

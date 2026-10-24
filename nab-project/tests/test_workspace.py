@@ -27,6 +27,7 @@ from nab_provider.value import replace
 def test_workspace_config_preserves_literal_members_when_copied() -> None:
     members = ("packages/*", "../shared", ".", "pkg_foo")
     config = WorkspaceConfig(members)
+
     assert config.members == members
     assert replace(config) == config
     assert replace(config, members=("other",)).members == ("other",)

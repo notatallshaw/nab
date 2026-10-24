@@ -367,10 +367,13 @@ def test_records_are_detached_values(tmp_path: Path) -> None:
     data = selected.lock.dependency_requirements
     assert data is not None
     record = data["parent"]["child-name"][0]
+
     assert isinstance(record, DependencyDeclaration)
     assert record.dependency_specifier == "~=2.0"
     assert record.requirement_text == 'child-name~=2.0; python_version >= "3.10"'
+
     again = _resolve(tmp_path)
+
     assert _text_requirements(again) == _text_requirements(selected)
 
 

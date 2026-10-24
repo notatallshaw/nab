@@ -77,9 +77,11 @@ def check_supports(harness: Harness, selected: dict[Node, Artifact]) -> None:
         in search.catalogue.facts
     )
     expected = harness.case.reachable(files, frozenset(selected), available)
+
     assert {
         node_for(search.items[token].package) for token in search.supports
     } == expected
+
     for node, artifact in selected.items():
         candidate = Candidate(
             node.text, Version(artifact.version), withdrawn=artifact.withdrawn

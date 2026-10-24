@@ -3363,6 +3363,7 @@ class TestVcsDocExample:
         """The example names each key ``[tool.nab.vcs]`` accepts."""
         example = tomli.loads(section_doc_example("VCS policy"))
         shown = set(example["tool"]["nab"]["vcs"])
+
         assert shown == {name.replace("_", "-") for name in field_names(VcsConfig)}
 
     def test_allowlists_admit_the_repo_they_name(self, tmp_path: Path) -> None:

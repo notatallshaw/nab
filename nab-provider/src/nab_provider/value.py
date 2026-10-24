@@ -136,6 +136,7 @@ def replace(value: _T, /, **changes: object) -> _T:
     else:
         msg = "replace() requires a record instance"
         raise TypeError(msg)
+
     for name in names:
         if name not in init_names:
             if name in changes:
@@ -146,6 +147,7 @@ def replace(value: _T, /, **changes: object) -> _T:
                 raise ValueError(msg)
         elif name not in changes:
             changes[name] = getattr(value, name)
+
     constructor: Callable[..., _T] = type(value)
     return constructor(**changes)
 

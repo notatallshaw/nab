@@ -180,8 +180,10 @@ def _assert_record_equal(got: object, want: object) -> None:
         w = getattr(want, field)
         assert g == w, field
         assert type(g) is type(w), field
+
     # local_path is never carried through the parsed form.
     assert got.local_path is None
+
     # requires_python is interned on both paths, so identity must hold.
     if want.requires_python is not None:
         assert got.requires_python is want.requires_python
