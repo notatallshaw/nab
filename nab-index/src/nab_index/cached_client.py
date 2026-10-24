@@ -362,9 +362,11 @@ def _reusable_metadata_hash(
     """Return an advertised digest only when its algorithm admits sidecar reuse."""
     if metadata_hash is None:
         return None
+
     algorithm, _ = metadata_hash
     if algorithm not in ACCEPTED_HASH_ALGORITHMS:
         return None
+
     return metadata_hash
 
 

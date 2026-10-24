@@ -209,6 +209,7 @@ def test_variants_of_the_same_version_remain_reusable() -> None:
                 )
 
     asyncio.run(read())
+
     assert transport.requests == [_FIRST, _SECOND]
 
 
@@ -247,6 +248,7 @@ def test_a_new_version_replaces_previous_version_bodies() -> None:
                 )
 
     asyncio.run(read())
+
     assert transport.requests == [_FIRST, _SECOND, third]
 
 
@@ -280,4 +282,5 @@ def test_concurrent_variants_merge_into_the_current_version() -> None:
             )
 
     asyncio.run(read())
+
     assert transport.requests == [_FIRST, _SECOND]
