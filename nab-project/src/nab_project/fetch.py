@@ -362,14 +362,17 @@ class FetchCoordinator:
         """
         if indexes is None:
             indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
+
         if not indexes:
             msg = "indexes must contain at least one IndexConfig"
             raise ValueError(msg)
+
         names = [idx.name for idx in indexes]
         if len(names) != len(set(names)):
             duplicates = sorted({n for n in names if names.count(n) > 1})
             msg = f"duplicate index names: {duplicates}"
             raise ValueError(msg)
+
         self.indexes = list(indexes)
         self._transport = transport
         self._max_concurrency = max_concurrency
@@ -400,15 +403,14 @@ class FetchCoordinator:
             )
         else:
             self._cache = NullCache()
+
         self._cache_dir = cache_dir
         self._build_config = build_config
         self._build_transport_factory = build_transport_factory
         self._index_routes = list(index_routes or [])
         self._index_cache_floors = dict(index_cache_floors or {})
-        # The sync warm-hit path serves one shape only: a single non-file index
-        # over an OnDiskCache, unrouted, so the serving index is always
-        # indexes[0] and the probe reads the same backend the fetcher's client
-        # reads. Everything else declines to the async path.
+
+        # Inline listing reads require one unrouted remote index.
         self._sync_listing_enabled = (
             len(self.indexes) == 1
             and not self._index_routes
@@ -420,22 +422,18 @@ class FetchCoordinator:
             and type(self._cache) is OnDiskCache
             and not (cache_backend is not None and cache_dir is not None)
         )
-        # Progress hook: fired once per successful listing fetch, from the
-        # fetcher thread.  ``None`` when nothing is watching (the common case).
+
         self._on_fetch = on_fetch
         self.index = InMemoryIndex()
-        # Shared per-run range-capability memo.  Rebuilt fresh on the fetcher
-        # loop in _async_fetcher so each run starts with empty per-netloc state;
-        # built here too so the attribute is always a real memo for typing.
+
+        # Share range capability decisions and cache counters across index clients.
         self._range_memo = RangeCapabilityMemo()
-        # Shared per-run parsed-listing cache counters, injected into every
-        # index client the same way; rebuilt on the fetcher loop so each run
-        # starts at zero.
         self._parsed_cache_stats = ParsedCacheStats()
-        # Only a resolve that can build a remote sdist holds archives, so
-        # nothing else pays the memory.
+
+        # Only remote builds need retained source archives.
         self._holds_sdist_archives = _builds_remote_sdists(build_config)
         self._sdist_archive_hold: SdistArchiveHold | None = None
+
         self._warm_sync_stats = WarmSyncStats()
         self._warm_sync_min_blob_bytes = _WARM_SYNC_MIN_BLOB_BYTES
         self._thread: threading.Thread | None = None
@@ -674,9 +672,11 @@ class FetchCoordinator:
         """Fulfill a claimed metadata request from the owned immutable cache."""
         if not self._sync_metadata_enabled:
             return False
+
         text = self._cache.get_metadata(package, url)
         if text is None:
             return False
+
         self.index.store_metadata(package, version, text, metadata_url=url)
         return True
 
@@ -693,6 +693,7 @@ class FetchCoordinator:
             done = threading.Event()
             done.set()
             return done
+
         key = metadata_pending_key(package, version, url)
         event, existed = self.index.get_or_create_pending(key)
         if not existed and not self._try_metadata_sync(package, version, url):
@@ -705,6 +706,7 @@ class FetchCoordinator:
                     metadata_hash=metadata_hash,
                 )
             )
+
         return event
 
     def request_range_metadata(
@@ -885,10 +887,12 @@ class FetchCoordinator:
         self._check_alive()
         results: list[tuple[str, str, threading.Event]] = []
         batch: list[FetchRequest] = []
+
         for package, version, url, metadata_hash in items:
             if self.index.has_metadata(package, version, url):
                 results.append((package, version, _done_event()))
                 continue
+
             key = metadata_pending_key(package, version, url)
             event, existed = self.index.get_or_create_pending(key)
             if not existed and not self._try_metadata_sync(package, version, url):
@@ -901,9 +905,12 @@ class FetchCoordinator:
                         metadata_hash=metadata_hash,
                     )
                 )
+
             results.append((package, version, event))
+
         if batch:
             self._submit(batch)
+
         return results
 
     def _run_loop(self) -> None:

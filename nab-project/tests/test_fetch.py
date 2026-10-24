@@ -4427,6 +4427,7 @@ class TestSyncMetadata:
             event = coord.request_metadata_batch([("pkg", "1.0", url, None)])[0][2]
         else:
             event = coord.request_metadata("pkg", "1.0", url)
+
         assert event.is_set()
         assert coord.index.get_metadata("pkg", "1.0", url) == "cached text"
         assert coord.index.get_metadata("pkg", "1.0", url + "other") is None
@@ -4442,11 +4443,14 @@ class TestSyncMetadata:
         pending, existed = coord.index.get_or_create_pending(
             metadata_pending_key("pkg", "1.0", url)
         )
+
         assert not existed
+
         if batch:
             event = coord.request_metadata_batch([("pkg", "1.0", url, None)])[0][2]
         else:
             event = coord.request_metadata("pkg", "1.0", url)
+
         assert event is pending
         assert not pending.is_set()
         assert coord.index.get_metadata("pkg", "1.0", url) is None
@@ -4457,6 +4461,7 @@ class TestSyncMetadata:
         cache.put_metadata("pkg", url, "wrong cache")
         coord = _coord(cache_backend=cache, cache_dir=tmp_path / "actual")
         event = coord.request_metadata("pkg", "1.0", url)
+
         assert event.is_set()
         assert coord.index.get_metadata("pkg", "1.0", url) is None
 
@@ -4482,6 +4487,7 @@ class TestSyncMetadata:
                 event = coord.request_metadata("pkg", "1.0", url)
             assert event.wait(5)
             assert coord.index.get_metadata("pkg", "1.0", url) == "cached text"
+
         assert reads == ["nab-fetcher"]
 
     @respx.mock
@@ -4525,6 +4531,7 @@ class TestSyncMetadata:
                 event = coord.request_metadata("pkg", "1.0", url)
             assert event.wait(5)
             assert coord.index.get_metadata("pkg", "1.0", url) == "fresh text"
+
         assert route.call_count == 1
         assert cache.get_metadata("pkg", url) == "fresh text"
 
@@ -4561,5 +4568,6 @@ class TestSyncMetadata:
             event = coord.request_metadata_batch([("pkg", "1.0", url, None)])[0][2]
         else:
             event = coord.request_metadata("pkg", "1.0", url)
+
         assert event.is_set()
         assert coord.index.get_metadata("pkg", "1.0", url) is None
