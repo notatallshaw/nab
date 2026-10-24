@@ -347,6 +347,7 @@ def _coordinator_cache(
             " index: pass cache_dir so each index gets its own cache."
         )
         raise ValueError(msg)
+
     if cache_backend is not None and any(
         idx.serialization is not SimpleSerialization.NEGOTIATE for idx in indexes
     ):
@@ -356,12 +357,15 @@ def _coordinator_cache(
             " cache of its own."
         )
         raise ValueError(msg)
+
     if cache_backend is not None:
         return cache_backend
+
     if cache_dir is not None:
         return OnDiskCache(
             cache_dir, indexes[0].url, serialization=indexes[0].serialization
         )
+
     return NullCache()
 
 
@@ -499,6 +503,7 @@ class FetchCoordinator:
     def __enter__(self) -> Self:
         """Start the worker, or defer it for supported coherent cache reads."""
         transport = self._transport
+
         if (
             self._start_on_demand
             and self._sync_metadata_enabled
@@ -511,6 +516,7 @@ class FetchCoordinator:
             self._parsed_cache_stats = ParsedCacheStats()
         else:
             self.start()
+
         return self
 
     def __exit__(self, *args: object) -> None:
@@ -537,6 +543,8 @@ class FetchCoordinator:
         with self._start_lock:
             if self._started:
                 return
+
+            # On-demand startup retains cache hits already counted in this run.
             if self._idle_transport is None:
                 self._warm_sync_stats = WarmSyncStats()
             self._start_worker()
@@ -550,12 +558,15 @@ class FetchCoordinator:
             daemon=True,
             name="nab-fetcher",
         )
+
         try:
             self._thread.start()
         except BaseException:
             self._thread = None
             self._started = False
             raise
+
+        # Worker startup failure also wakes this waiter.
         self._queue_ready.wait()
 
     def shutdown(self) -> None:
@@ -566,13 +577,19 @@ class FetchCoordinator:
             if idle is not None and not self._started:
                 if idle.close_without_loop():
                     return
+
+                # The idle transport may still need an event loop to close.
                 self._start_worker()
+
             thread = self._thread
             if thread is None:
                 return
             self._submit(None)
+
         thread.join(timeout=_COORDINATOR_JOIN_TIMEOUT_SECONDS)
+
         with self._start_lock:
+            # Another caller may have replaced the worker while the join waited.
             if self._thread is thread:
                 self._thread = None
                 self._started = False
@@ -587,6 +604,7 @@ class FetchCoordinator:
         Requests the loop cannot take are recorded as failures so their
         waiters unblock instead of hanging.
         """
+        # Start a deferred worker before trying to queue the request.
         if item is not None and self._idle_transport is not None:
             try:
                 self.start()
@@ -594,11 +612,13 @@ class FetchCoordinator:
             except BaseException:
                 self._refuse(item)
                 raise
+
         loop = self._loop
         queue = self._async_q
         if loop is None or queue is None:
             self._refuse(item)
             return
+
         try:
             loop.call_soon_threadsafe(queue.put_nowait, item)
         except RuntimeError:
@@ -724,22 +744,24 @@ class FetchCoordinator:
         self._check_alive()
         if self._idle_transport is not None and not self._started:
             speculative = False
+
         if self.index.get_listing(package) is not None:
             done = threading.Event()
             done.set()
             return done
+
         key = f"listing:{package}"
         event, existed = self.index.get_or_create_pending(key)
         if existed:
             return event
+
+        # Only the pending request owner may fulfill a synchronous cache hit.
         if not speculative:
             if self._overlap_gate_admits(package):
                 parsed = self._try_listing_sync(package)
                 if parsed is not None:
                     records = parsed.files
-                    # Store the serving index before store_listing fires the
-                    # pending, matching the async path's ordering. The tail runs
-                    # on the fetcher loop, or inline when the loop is gone.
+                    # Publish the serving index before waking waiters.
                     self.index.store_listing_index(package, self.indexes[0].name)
                     self.index.store_listing(
                         package,
@@ -756,6 +778,7 @@ class FetchCoordinator:
             else:
                 self._warm_sync_stats.declined_small_blob += 1
             self._warm_sync_stats.listing_declines += 1
+
         self._submit(FetchRequest(kind=FetchKind.LISTING, package=package))
         return event
 
@@ -1005,6 +1028,7 @@ class FetchCoordinator:
         return results
 
     def _run_loop(self) -> None:
+        # A later run may replace the coordinator's readiness event.
         ready = self._queue_ready
         try:
             asyncio.run(self._async_fetcher())

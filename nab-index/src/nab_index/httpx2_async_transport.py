@@ -177,5 +177,6 @@ class Httpx2AsyncTransport:
         """Close synchronously only when no client has been constructed."""
         if self._client is not None:
             return False
+
         self._closed = True
         return True

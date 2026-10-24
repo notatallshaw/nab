@@ -4645,10 +4645,13 @@ class TestCacheFirst:
             assert coord.request_listing("pkg", speculative=True).is_set()
             assert coord.index.get_listing("pkg") == files
             assert coord.warm_sync_stats.listing_hits == 1
+
         assert not fetcher_starts
         assert not cache_first_network
+
         with pytest.raises(HttpError):
             asyncio.run(transport.get("https://example.com/closed"))
+
         assert not cache_first_network
 
     def test_cached_metadata_and_tail_remain_inline(
@@ -4674,6 +4677,7 @@ class TestCacheFirst:
             assert coord.request_listing("pkg", speculative=True).is_set()
             assert coord.request_metadata("pkg", "1.0", url).is_set()
             assert coord.index.get_metadata("pkg", "1.0", url) == "cached metadata"
+
         assert len(fetched) == 1
         assert not fetcher_starts
         assert not cache_first_network
@@ -4703,6 +4707,7 @@ class TestCacheFirst:
         with coord:
             assert coord.request_listing("pkg", speculative=True).wait(5)
             assert coord.index.get_listing("pkg") is not None
+
         assert len(fetcher_starts) == 1
         assert bool(cache_first_network) == (condition == "stale")
 
@@ -4722,6 +4727,7 @@ class TestCacheFirst:
             assert not fetcher_starts
             assert coord.request_listing("missing").wait(5)
             assert coord.warm_sync_stats.listing_hits == 1
+
         assert len(fetcher_starts) == 1
         assert cache_first_network
 
@@ -4737,6 +4743,7 @@ class TestCacheFirst:
             coord.start()
             assert coord._loop is not None
             assert coord._queue_ready.is_set()
+
         assert len(fetcher_starts) == 1
 
     def test_normal_context_still_starts_eagerly(
@@ -4747,6 +4754,7 @@ class TestCacheFirst:
         with coord:
             assert len(fetcher_starts) == 1
             assert coord._loop is not None
+
         assert coord._thread is None
 
     @pytest.mark.parametrize(
@@ -4775,12 +4783,16 @@ class TestCacheFirst:
     ) -> None:
         transport = Httpx2AsyncTransport()
         asyncio.run(transport.get("https://example.com/simple/pkg/"))
+
         assert len(cache_first_network) == 1
+
         cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
         coord = FetchCoordinator(transport, cache_backend=cache, start_on_demand=True)
         with coord:
             assert not fetcher_starts
+
         assert len(fetcher_starts) == 1
+
         with pytest.raises(HttpError):
             asyncio.run(transport.get("https://example.com/closed"))
 
@@ -4799,6 +4811,7 @@ class TestCacheFirst:
         with coord, pytest.raises(RuntimeError):
             coord.request_listing("missing")
         event, existed = coord.index.get_or_create_pending("listing:missing")
+
         assert existed
         assert event.is_set()
         assert coord.index.get_listing_error("missing") is not None
@@ -4823,6 +4836,7 @@ class TestCacheFirst:
             assert coord.warm_sync_stats.listing_hits == 0
             coord.index.store_listing("pkg", files)
             assert pending.is_set()
+
         assert not fetcher_starts
 
     def test_concurrent_misses_share_one_ready_worker(
@@ -4848,6 +4862,7 @@ class TestCacheFirst:
             for package in packages:
                 assert coord.index.get_listing(package) == []
                 assert coord.index.is_offline_listing_miss(package)
+
         assert len(fetcher_starts) == 1
 
     def test_an_existing_worker_uses_the_ordinary_context(
@@ -4861,6 +4876,7 @@ class TestCacheFirst:
         with coord:
             assert coord._queue_ready.is_set()
             assert len(fetcher_starts) == 1
+
         assert coord._thread is None
 
     def test_nested_scope_retains_eager_context_closure(
@@ -4876,6 +4892,7 @@ class TestCacheFirst:
             assert coord._thread is None
             assert coord.request_listing("missing").is_set()
             assert isinstance(coord.index.get_listing_error("missing"), RuntimeError)
+
         assert len(fetcher_starts) == 1
 
     def test_a_null_cache_keeps_eager_startup(
@@ -4886,6 +4903,7 @@ class TestCacheFirst:
         )
         with coord:
             assert len(fetcher_starts) == 1
+
         assert coord._thread is None
 
     def test_worker_exit_signals_its_own_startup_event(
@@ -4903,6 +4921,7 @@ class TestCacheFirst:
 
         monkeypatch.setattr(asyncio, "run", failed_run)
         coord._run_loop()
+
         assert ready.is_set()
         assert not later.is_set()
         assert coord._crashed
@@ -4922,5 +4941,6 @@ class TestCacheFirst:
 
         monkeypatch.setattr(threading.Thread, "join", joined)
         coord.shutdown()
+
         assert coord._thread is current
         assert coord._started

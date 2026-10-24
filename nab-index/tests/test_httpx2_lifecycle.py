@@ -169,6 +169,7 @@ def test_synchronous_unused_close_is_permanent(
     clients: list[httpx2.AsyncClient],
 ) -> None:
     transport = Httpx2AsyncTransport()
+
     assert isinstance(transport, IdleClosableTransport)
     assert transport.close_without_loop()
     assert transport.close_without_loop()
@@ -179,6 +180,7 @@ def test_synchronous_unused_close_is_permanent(
         await transport.aclose()
 
     asyncio.run(run())
+
     assert not clients
 
 
@@ -197,6 +199,7 @@ def test_synchronous_close_refuses_an_existing_client(
             ).content == b"/second"
         finally:
             await transport.aclose()
+
         assert clients[0].is_closed
 
     asyncio.run(run())

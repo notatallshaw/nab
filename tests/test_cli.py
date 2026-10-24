@@ -7741,6 +7741,7 @@ class TestResolveTransport:
             assert not transport.close_without_loop()
             assert inner.closes == 0
             asyncio.run(transport.aclose())
+
         assert inner.closes == 1
 
     def test_offline_httpx_resolve_gets_it_up_front_too(self) -> None:
