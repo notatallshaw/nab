@@ -324,13 +324,21 @@ class _PendingBuild(Record):
         return chain_label(self.name, self.version)
 
 
-class _BuiltRequiresPythonError(BuildEnvError):
+class _WheelRequiresPythonError(BuildEnvError):
+    """A wheel whose Python restriction excludes the host."""
+
+    def __init__(self, spec: SpecifierSet, message: str) -> None:
+        super().__init__(message)
+        self.spec = spec
+
+
+class _BuiltRequiresPythonError(_WheelRequiresPythonError):
     """A built release whose Python restriction excludes the host."""
 
     def __init__(
         self, pending: _PendingBuild, spec: SpecifierSet, message: str
     ) -> None:
-        super().__init__(message)
+        super().__init__(spec, message)
         self.package_override = PackageOverride(
             requirement=parse_requirement(f"{pending.name}=={pending.version}"),
             name=canonicalize_name(pending.name),
@@ -635,6 +643,11 @@ class NabBuildEnv:
 
         all_paths = list(download_result.written) + list(download_result.skipped)
         wheels = [p for p in all_paths if p.suffix == ".whl"]
+        for wheel in wheels:
+            name, version, _build, _tags = parse_wheel_filename(wheel.name)
+            _check_wheel_requires_python(
+                name, str(version), wheel, self._config.package_overrides
+            )
         wheels.extend(
             self._build_requirement(pending, wheel_dir) for pending in to_build
         )
@@ -800,21 +813,32 @@ def _check_built_wheel(pending: _PendingBuild, wheel: Path) -> None:
 def _check_built_requires_python(
     pending: _PendingBuild, wheel: Path, overrides: tuple[PackageOverride, ...]
 ) -> None:
-    """Check nested wheel Python compatibility, honoring package overrides."""
+    """Turn a built wheel's Python rejection into a release restriction for retry."""
+    try:
+        _check_wheel_requires_python(pending.name, pending.version, wheel, overrides)
+    except _WheelRequiresPythonError as exc:
+        raise _BuiltRequiresPythonError(pending, exc.spec, str(exc)) from exc
+
+
+def _check_wheel_requires_python(
+    name: str, version: str, wheel: Path, overrides: tuple[PackageOverride, ...]
+) -> None:
+    """Check host Python compatibility using wheel metadata and package overrides."""
+    label = chain_label(name, version)
     try:
         text = read_wheel_metadata(wheel)
     except (UnreadableLocalIndexError, UnsupportedWheelError) as exc:
-        msg = f"build requirement {pending.label} has unreadable wheel metadata: {exc}"
+        msg = f"build requirement {label} has unreadable wheel metadata: {exc}"
         raise BuildEnvError(msg) from exc
     if text is None:
-        msg = f"build requirement {pending.label} has no readable wheel METADATA"
+        msg = f"build requirement {label} has no readable wheel METADATA"
         raise BuildEnvError(msg)
 
     requires_python = message_from_string(text).get("Requires-Python")
     for package_override in overrides:
         if (
-            package_override.name == canonicalize_name(pending.name)
-            and Version(pending.version) in package_override.version_range
+            package_override.name == canonicalize_name(name)
+            and Version(version) in package_override.version_range
             and package_override.requires_python is not None
         ):
             requires_python = package_override.requires_python
@@ -828,7 +852,7 @@ def _check_built_requires_python(
         validate_specifier_versions(spec)
     except ValueError as exc:
         msg = (
-            f"build requirement {pending.label} has invalid Requires-Python"
+            f"build requirement {label} has invalid Requires-Python"
             f" {requires_python!r}: {exc}"
         )
         raise BuildEnvError(msg) from exc
@@ -836,10 +860,10 @@ def _check_built_requires_python(
     host = ResolveTarget.for_host()
     if not host.admits_requires_python(spec):
         msg = (
-            f"build requirement {pending.label} requires Python {spec} but the"
+            f"build requirement {label} requires Python {spec} but the"
             f" host is Python {host.python_full_version}"
         )
-        raise _BuiltRequiresPythonError(pending, spec, msg)
+        raise _WheelRequiresPythonError(spec, msg)
 
 
 def _chain_suffix(chain: BuildChain) -> str:
