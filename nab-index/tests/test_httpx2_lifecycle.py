@@ -119,6 +119,7 @@ def test_preloaded_package_needs_no_import_spec(
 ) -> None:
     monkeypatch.setitem(sys.modules, module_name, ModuleType(module_name))
     transport = Httpx2AsyncTransport()
+
     assert transport.close_without_loop()
 
 

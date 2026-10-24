@@ -7511,6 +7511,7 @@ class TestMakeTransport:
         monkeypatch.setitem(sys.modules, backend, None)
         with pytest.raises(SystemExit) as info:
             _make_transport(backend)
+
         assert info.value.code == 1
         assert f"{backend} is not installed" in capsys.readouterr().err
 
@@ -7546,8 +7547,11 @@ class TestMakeTransport:
         monkeypatch.setitem(sys.modules, "h2", None)
         with pytest.raises(SystemExit) as info:
             _make_transport(backend)
+
         assert info.value.code == 1
+
         err = capsys.readouterr().err
+
         assert f"nab[{backend}]" in err
         assert "HTTP/2" in err
         assert f"{backend} is not installed" not in err

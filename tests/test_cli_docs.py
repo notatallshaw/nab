@@ -564,12 +564,14 @@ class TestCliRefusals:
             _make_transport(backend)
 
         assert caught.value.code == 1
+
         expected = (
             f"{backend} is not installed"
             if missing == "backend"
             else f"{backend} is installed without HTTP/2 support"
         )
         err = capsys.readouterr().err
+
         assert expected in err
         assert f"pip install nab[{backend}]" in err
         assert "Traceback" not in err
