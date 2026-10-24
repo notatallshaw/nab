@@ -159,6 +159,21 @@ commands and CI; ty receives explicit filenames so its directory exclusions cann
 | Cross-checker casts                                   | Pyrefly can narrow checked `Literal` conversions that Mypy and ty still require. Zuban's recursive marker-alias narrowing has one documented line exception.                                                                                      |
 | Test annotation completeness                          | Pyright keeps checking resolver tests while allowing unannotated fixtures and generic strategy annotations. Production definitions retain completeness checks.                                                                                    |
 
+## Code readability
+
+Before opening or updating a pull request, read each changed function in full after formatting.
+Separate validation, setup, cache access, state changes and output with blank lines where they are
+independent steps. Keep a cohesive call, literal or sequence of field assignments together. Tests
+need the same separation between setup, the operation and assertion groups.
+
+Add a short comment when novel code relies on a non-obvious cache, ownership or concurrency rule.
+Explain why the step is needed; avoid repeating what the statement says. A function docstring and a
+formatter cannot replace this review of the body.
+
+Review each stacked pull request against its own parent. Put readability fixes on the pull request
+that introduces or changes the function, then rebase its descendants. Keep behavior, failure order,
+public interfaces and measurement boundaries unchanged.
+
 ## Markdown source
 
 Use `hatch run lint:fmt` to format Markdown and Python, or `hatch run lint:fmt-check` to check both.

@@ -5381,6 +5381,7 @@ def test_without_hashes_sorts_package_names() -> None:
         "alpha": _index_pin(name="alpha", version="1.0"),
     }
     text = write_requirements_without_hashes(LockInput(targets=_one(pins)))
+
     assert text.splitlines() == ["alpha==1.0", "zeta==2.0"]
 
 

@@ -262,11 +262,13 @@ def test_intro_project_plans_universal_targets(tmp_path: Path, page: Path) -> No
         for block in _fenced_blocks(_text(page), "toml")
         if "project" in tomli.loads(block)
     ]
+
     assert len(blocks) == 1
 
     path = tmp_path / "pyproject.toml"
     path.write_text(blocks[0], encoding="utf-8")
     config = read_pyproject_config(path, discover_workspace=False)
+
     assert len(plan_targets(config)) == 8
 
 

@@ -3266,6 +3266,7 @@ class TestIndexSerialization:
     def test_reference_example_parses(self, tmp_path: Path) -> None:
         path = write(tmp_path, section_doc_example("indexes.md"))
         pins = {i.name: i.serialization for i in read_pyproject_config(path).indexes}
+
         assert pins["pypi"] is SimpleSerialization.NEGOTIATE
         assert pins["internal"] is SimpleSerialization.HTML
 
@@ -3359,6 +3360,7 @@ class TestVcsDocExample:
         path = write(tmp_path, section_doc_example("dependency-sources.md"))
         opened = replace(read_pyproject_config(path).vcs, policy=VcsPolicy.ALLOW)
         pinned = f"git+https://github.com/me/x@{'a' * 40}"
+
         assert admit_vcs_url(pinned, opened) == "git+https"
 
 
