@@ -3135,7 +3135,7 @@ class TestRefusalNamesTheDistPolicyThatBarsTheWheels:
             },
         )
 
-        assert "demo 1.0 publishes no wheel this build host can install" in message
+        assert "demo 1.0 has no admissible wheel for this build host" in message
         assert "dist-policy" not in message
 
     def test_an_index_override_on_another_index_is_not_named(self) -> None:
@@ -3150,7 +3150,7 @@ class TestRefusalNamesTheDistPolicyThatBarsTheWheels:
             },
         )
 
-        assert "demo 1.0 publishes no wheel this build host can install" in message
+        assert "demo 1.0 has no admissible wheel for this build host" in message
         assert "dist-policy" not in message
 
     @pytest.mark.parametrize(
@@ -3168,7 +3168,7 @@ class TestRefusalNamesTheDistPolicyThatBarsTheWheels:
         """The name, the range, and the policy value all have to match."""
         message = self._refusal(package_overrides=(override,))
 
-        assert "demo 1.0 publishes no wheel this build host can install" in message
+        assert "demo 1.0 has no admissible wheel for this build host" in message
         assert "dist-policy" not in message
 
 
@@ -3245,6 +3245,90 @@ class TestDistPolicyExcludesAWheelTheHostCanInstall:
         message = str(excinfo.value)
         assert f"{self.NAME} {self.VERSION} has dist-policy 'sdist-only'" in message
         assert "publishes no wheel" not in message
+
+
+def test_build_wheel_cutoff_refusal_does_not_claim_nonpublication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A filtered wheel is refused; removing only the cutoff installs it."""
+    index = tmp_path / "index"
+    _make_local_index(index, "buildstub", "1.0")
+    artifacts = index / "buildstub"
+    wheel = "buildstub-1.0-py3-none-any.whl"
+    sdist = "buildstub-1.0.tar.gz"
+    payloads = {name: (artifacts / name).read_bytes() for name in (wheel, sdist)}
+    listing = {
+        "meta": {"api-version": "1.0"},
+        "name": "buildstub",
+        "files": [
+            {
+                "filename": filename,
+                "url": f"https://index.example/{filename}",
+                "hashes": {"sha256": hashlib.sha256(payloads[filename]).hexdigest()},
+                "core-metadata": filename == wheel,
+                "upload-time": uploaded,
+            }
+            for filename, uploaded in [
+                (wheel, "2024-02-01T00:00:00Z"),
+                (sdist, "2024-01-01T00:00:00Z"),
+            ]
+        ],
+    }
+    with zipfile.ZipFile(artifacts / wheel) as archive:
+        metadata = archive.read("buildstub-1.0.dist-info/METADATA")
+    requests: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path == "/simple/buildstub/":
+            return httpx.Response(
+                200,
+                stream=httpx.ByteStream(json.dumps(listing).encode()),
+                headers={"content-type": "application/vnd.pypi.simple.v1+json"},
+            )
+        if request.url.path == f"/{wheel}.metadata":
+            return httpx.Response(200, stream=httpx.ByteStream(metadata))
+        assert request.url.path in {f"/{wheel}", f"/{sdist}"}
+        return httpx.Response(
+            200,
+            stream=httpx.ByteStream(payloads[request.url.path[1:]]),
+        )
+
+    mock_client = partial(httpx.AsyncClient, transport=httpx.MockTransport(respond))
+    monkeypatch.setattr(httpx, "AsyncClient", mock_client)
+
+    source = tmp_path / "source"
+    source.mkdir()
+    _write_fake_backend_project(source)
+    project = source / "pyproject.toml"
+    project.write_text(
+        project.read_text().replace("requires = []", 'requires = ["buildstub==1.0"]')
+    )
+    backend = source / "nab_test_backend.py"
+    backend.write_text("import buildstub\n" + backend.read_text())
+
+    config = ResolveInputs(
+        indexes=(IndexConfig("fixture", "https://index.example/simple/"),),
+        uploaded_prior_to=datetime(2024, 1, 15, tzinfo=timezone.utc),
+    )
+
+    with pytest.raises(BuildBackendError) as excinfo:
+        extract_metadata(source, config=config, transport_factory=HttpxAsyncTransport)
+
+    message = str(excinfo.value)
+    assert "buildstub 1.0 has no admissible wheel for this build host" in message
+    assert "build-requires-depth is 0" in message
+    assert f"/{wheel}" not in requests
+
+    requests.clear()
+    result = extract_metadata(
+        source,
+        config=config.replace(uploaded_prior_to=None),
+        transport_factory=HttpxAsyncTransport,
+    )
+
+    assert (result.name, str(result.version)) == ("fake-pkg", "1.2.3")
+    assert f"/{wheel}" in requests
 
 
 class TestDistPolicyOverAPackageThatPublishesNoWheel:

@@ -906,10 +906,10 @@ def _serving_index_dist_policy(
 
 
 def _no_wheel_clause(inputs: ResolveInputs, pin: IndexPin, label: str) -> str:
-    """Return the opening of a refusal: why the env has no wheel of ``label``."""
+    """Return a refusal clause for a build requirement with no admissible wheel."""
     barred_by = _wheel_barring_dist_policy(inputs, pin)
     if barred_by is None:
-        return f"{label} publishes no wheel this build host can install"
+        return f"{label} has no admissible wheel for this build host"
     return (
         f"{label} has dist-policy '{barred_by.value}',"
         " which admits no wheel into the build env"
