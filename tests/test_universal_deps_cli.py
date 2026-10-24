@@ -182,15 +182,18 @@ def test_rejected_dynamic_releases_are_quiet_when_an_older_version_resolves(
 
     captured = capsys.readouterr()
     pylock = Pylock.from_dict(loads(captured.out))
+
     assert {str(package.name) for package in pylock.packages} == {
         "application",
         "watchdog",
         "macos-dep",
         "linux-dep",
     }
+
     watchdog = next(
         package for package in pylock.packages if package.name == "watchdog"
     )
+
     assert str(watchdog.version) == "5.0.3"
     assert "assume-universal-deps" not in captured.err + caplog.text
 
@@ -211,6 +214,7 @@ def test_rejected_dynamic_releases_do_not_add_hints_to_an_unrelated_failure(
     assert _lock(wider_project) == 1
 
     captured = capsys.readouterr()
+
     assert "absent" in captured.err
     assert "assume-universal-deps" not in captured.err + caplog.text
 
@@ -231,6 +235,7 @@ def test_many_dynamic_rejections_produce_one_hint_per_command(
     assert _lock(wider_project) == 1
 
     captured = capsys.readouterr()
+
     assert captured.out == ""
     assert captured.err.count("try:") == 1
     assert captured.err.count("assume-universal-deps = true") == 1
@@ -247,9 +252,11 @@ def test_dynamic_sdist_failure_suggests_a_release_scoped_assertion(
         ),
         encoding="utf-8",
     )
+
     assert _lock(release_project) == 1
 
     captured = capsys.readouterr()
+
     assert captured.out == ""
     assert "every version in range was rejected on its metadata" in captured.err
     assert '[tool.nab.packages."watchdog==6.0.0"]' in captured.err
@@ -274,9 +281,11 @@ def test_assertion_locks_the_sdist_with_target_conditioned_dependencies(
     pylock = Pylock.from_dict(loads(capsys.readouterr().out))
     pylock.validate()
     packages = {str(package.name): package for package in pylock.packages}
+
     assert set(packages) == {"watchdog", "macos-dep", "linux-dep"}
 
     watchdog = packages["watchdog"]
+
     assert str(watchdog.version) == "6.0.0"
     assert watchdog.sdist is not None
     assert watchdog.sdist.filename == "watchdog-6.0.0.tar.gz"

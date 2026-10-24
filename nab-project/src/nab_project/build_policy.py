@@ -87,6 +87,7 @@ def enforce_build_policy_for_targets(
                 ),
             )
             raise ConfigError(report)
+
         if build_policy_set and universal_assertion:
             return build_policy
         return BuildPolicy.NEVER

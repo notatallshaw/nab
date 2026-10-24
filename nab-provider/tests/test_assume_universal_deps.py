@@ -94,6 +94,7 @@ def test_strict_default_refuses_dynamic_sdist_and_suggests_scoped_option() -> No
     provider = Provider(port, _MAC_TARGET)
 
     assert provider.effective_assume_universal_deps("pkg", _VERSION) is False
+
     with pytest.raises(UnsupportedSdistError) as caught:
         provider.get_dependencies("pkg", _VERSION)
 
@@ -250,6 +251,7 @@ def test_assumption_never_uses_unverified_pkginfo_dependencies(
 
     with pytest.raises(UnsupportedSdistError):
         provider.get_dependencies("pkg", _VERSION)
+
     assert ("pkg", _VERSION) not in provider.deps_cache
 
 
@@ -281,7 +283,9 @@ def test_only_dependency_fields_are_borrowed() -> None:
     )
 
     assert set(provider.get_dependencies("pkg", _VERSION)) == {"wheel-dep"}
+
     metadata = provider.metadata_cache[("pkg", _VERSION)]
+
     assert metadata.name == "pkg"
     assert str(metadata.version) == "1.0"
     assert str(metadata.requires_python) == ">=3.10"
@@ -335,6 +339,7 @@ def test_sidecar_integrity_error_is_not_replaced_by_build_fallback() -> None:
 
     with pytest.raises(MetadataHashMismatchError, match="sidecar hash mismatch"):
         provider.get_dependencies("pkg", _VERSION)
+
     assert port.calls_to("request_built_metadata") == []
 
 
@@ -400,6 +405,7 @@ def test_unreadable_local_metadata_is_not_replaced_by_a_build(tmp_path: Path) ->
 
     with pytest.raises(IndexAccessError, match="cannot read local wheel"):
         provider.get_dependencies("pkg", _VERSION)
+
     assert port.calls_to("request_built_metadata") == []
 
 
@@ -415,6 +421,7 @@ def test_assumption_alone_does_not_authorize_builds(build_policy: BuildPolicy) -
 
     with pytest.raises(UnsupportedSdistError) as caught:
         provider.get_dependencies("pkg", _VERSION)
+
     assert "assume-universal-deps = true" not in str(caught.value)
     assert port.calls_to("request_built_metadata") == []
 
@@ -476,6 +483,7 @@ def test_assumption_relaxes_only_wheel_tags(restriction: str) -> None:
 
     with pytest.raises(UnsupportedSdistError):
         provider.get_dependencies("pkg", _VERSION)
+
     assert port.calls_to("request_metadata") == []
 
 
@@ -615,4 +623,5 @@ def test_unversioned_source_override_controls_cross_target_build_policy(
     )
 
     expected = BuildPolicy.BUILD_REMOTE if assume else BuildPolicy.NEVER
+
     assert provider.effective_build_policy_for_source("pkg") is expected

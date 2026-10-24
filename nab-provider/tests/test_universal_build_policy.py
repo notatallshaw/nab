@@ -129,6 +129,7 @@ def test_source_builds_ignore_version_scoped_assertions(
     )
 
     expected = BuildPolicy.BUILD_REMOTE if global_assumption else BuildPolicy.NEVER
+
     assert provider.effective_build_policy_for_source("pkg") is expected
 
 
@@ -144,6 +145,7 @@ def test_host_built_metadata_cannot_supply_a_later_strict_declared_target() -> N
 
     with pytest.raises(UnsupportedSdistError):
         declared.get_dependencies("pkg", _V1)
+
     assert len(port.calls_to("request_built_metadata")) == 1
 
 
@@ -178,6 +180,7 @@ def test_cached_build_metadata_is_validated_for_each_target(invalid_field: str) 
         build_policy=BuildPolicy.BUILD_REMOTE,
         assume_universal_deps=True,
     )
+
     assert set(first.get_dependencies("pkg", _V1)) == {"shared-dep"}
 
     if invalid_field != "requires-python":
@@ -206,6 +209,7 @@ def test_cached_build_metadata_is_validated_for_each_target(invalid_field: str) 
     )
     with pytest.raises(UnsupportedSdistError, match=expected_error):
         second.get_dependencies("pkg", _V1)
+
     assert len(port.calls_to("request_built_metadata")) == 1
 
 
@@ -222,8 +226,10 @@ def test_build_helper_revalidates_cached_python_requirement() -> None:
         port, target, build_policy=BuildPolicy.BUILD_REMOTE, assume_universal_deps=True
     )
     second.fetch_versions("pkg")
+
     assert second.effective_build_policy("pkg", _V1) is BuildPolicy.BUILD_REMOTE
 
     with pytest.raises(UnsupportedSdistError, match="requires Python"):
         build_remote_sdist(second, "pkg", _V1)
+
     assert len(port.calls_to("request_built_metadata")) == 1

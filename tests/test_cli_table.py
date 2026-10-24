@@ -184,6 +184,7 @@ class TestTheDeclaredTable:
         assert len(root) + len(command) + len(file_only) == len(ALL) == 65
 
         keyed = [row for row in ALL if row.key]
+
         assert len(keyed) == 30
         assert sum(1 for row in keyed if row.cli_flag) == 17
         assert sum(1 for row in keyed if not row.commands) == 13
@@ -286,6 +287,7 @@ class TestTheDeclaredTable:
         negatable = [row for row in ALL if row.kind in _BOOL_KINDS]
 
         assert len(negatable) == 13
+
         for row in negatable:
             assert row.negatable is not row.name.startswith("no-"), row.name
 

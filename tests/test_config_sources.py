@@ -1045,6 +1045,7 @@ class TestReproducibilityNotice:
             },
             flags={},
         )
+
         assert overrides == {
             "resolution": "lowest",
             "cache-dir": Path("/c"),

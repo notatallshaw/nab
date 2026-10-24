@@ -746,6 +746,7 @@ def resolve_dynamic_sdist(
     if augmented is not None:
         index.store_resolved_sdist_metadata(canonical, source_key, augmented)
         return augmented
+
     assume_universal = provider.effective_assume_universal_deps(
         canonical, version, provider.serving_index(canonical)
     )
@@ -753,11 +754,13 @@ def resolve_dynamic_sdist(
         assumed = _assumed_wheel_dependencies(provider, canonical, version, metadata)
         if assumed is not None:
             return assumed
+
     effective = provider.effective_build_policy(
         canonical, version, provider.serving_index(canonical)
     )
     if effective is BuildPolicy.BUILD_REMOTE:
         return build_remote_sdist(provider, package, version)
+
     provider.stats.excluded_by_build_policy += 1
     msg = (
         f"{package}=={version} sdist has dynamic dependencies and no static"
@@ -799,12 +802,16 @@ def _assumed_wheel_dependencies(
         and (not dist.yanked or (package, version) in provider.yank_admissions)
     ]
     candidates.sort(key=lambda dist: (not dist.has_metadata, dist.filename, dist.url))
+
     for wheel in candidates:
         text = _read_assumed_wheel(provider, package, str(version), wheel)
         if text is None:
             continue
+
         metadata = _parsed_metadata(provider, (package, version), text)
         _reject_foreign_metadata((package, version), metadata)
+
+        # Borrow only dependencies; keep the sdist identity and Python requirements.
         return WheelMetadata(
             name=sdist_metadata.name,
             version=sdist_metadata.version,
@@ -814,6 +821,7 @@ def _assumed_wheel_dependencies(
             metadata_version=sdist_metadata.metadata_version,
             dynamic=sdist_metadata.dynamic,
         )
+
     return None
 
 
@@ -826,6 +834,7 @@ def _read_assumed_wheel(
     text, _ = index.get_metadata_with_origin(package, version, url)
     if text is not None:
         return text
+
     text, _, error = _read_direct_wheel_metadata(provider, wheel, package, version)
     if error is not None:
         raise error
@@ -833,6 +842,7 @@ def _read_assumed_wheel(
         text, _ = _read_range_metadata(
             provider, package, version, wheel.url, wheel.hashes
         )
+
     return text
 
 

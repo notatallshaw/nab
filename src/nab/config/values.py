@@ -966,6 +966,7 @@ def _build_package_overrides(
         if "assume-universal-deps" in body
         else None
     )
+
     build_policy = (
         parse_enum(
             body["build-policy"],
@@ -976,18 +977,21 @@ def _build_package_overrides(
         if "build-policy" in body
         else None
     )
+
     uploaded_prior_to, uploaded_disabled = _parse_override_uploaded_prior_to(
         body.get("uploaded-prior-to"),
         where,
         anchor=anchor,
         present="uploaded-prior-to" in body,
     )
+
     route = _parse_override_index(body, where)
     dependencies = _parse_override_dependencies(body.get("dependencies"), where)
     requires_python = _parse_override_requires_python(
         body.get("requires-python"), where
     )
     provides_extra = _parse_override_provides_extra(body.get("provides-extra"), where)
+
     has_body = (
         dist_policy is not None
         or dist_trust is not None
@@ -1006,6 +1010,7 @@ def _build_package_overrides(
             f" {sorted(_PACKAGE_OVERRIDE_BODY_KEYS)!r}"
         )
         raise SourceConfigError(msg)
+
     if route is not None:
         for requirement in requirements:
             if str(requirement.specifier):
@@ -1160,6 +1165,7 @@ def _parse_index_override_body(
     if not isinstance(body, dict):
         msg = f"{where} must be a table, got {type(body).__name__}"
         raise SourceConfigError(msg)
+
     _reject_deferred(body, where, flat_metadata_advice=False)
     unknown = sorted(set(body) - _INDEX_OVERRIDE_KEYS)
     if unknown:
@@ -1169,6 +1175,7 @@ def _parse_index_override_body(
             " routing and no version scope)"
         )
         raise SourceConfigError(msg)
+
     dist_policy, dist_trust = _parse_override_dist(body.get("dist-policy"), where)
     assume_universal_deps = (
         _parse_bool(
@@ -1179,6 +1186,7 @@ def _parse_index_override_body(
         if "assume-universal-deps" in body
         else None
     )
+
     build_policy = (
         parse_enum(
             body["build-policy"],
@@ -1189,6 +1197,7 @@ def _parse_index_override_body(
         if "build-policy" in body
         else None
     )
+
     uploaded_prior_to, uploaded_disabled = _parse_override_uploaded_prior_to(
         body.get("uploaded-prior-to"),
         where,
@@ -1198,6 +1207,7 @@ def _parse_index_override_body(
     assume_fresh_seconds = _parse_index_assume_fresh(
         body.get("assume-fresh-seconds"), where
     )
+
     has_body = (
         dist_policy is not None
         or dist_trust is not None
@@ -1213,6 +1223,7 @@ def _parse_index_override_body(
             f" {sorted(_INDEX_OVERRIDE_KEYS)!r}"
         )
         raise SourceConfigError(msg)
+
     return IndexOverride(
         dist_policy=dist_policy,
         dist_trust_unverified_deps=dist_trust,

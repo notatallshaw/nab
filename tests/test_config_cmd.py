@@ -1566,6 +1566,7 @@ class TestDownloadCliOverrides:
             proj, [arg for pair in _DOWNLOAD_PROJECT_ARGV for arg in pair]
         )
         inputs = kwargs["inputs"]
+
         assert isinstance(inputs, ResolveInputs)
 
         # --project-resolution keeps its own path into the resolver, so it is
