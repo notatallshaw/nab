@@ -563,10 +563,9 @@ class TestClauseText:
         )
 
     def test_sdist_install_without_an_sdist(self) -> None:
-        """The whole sentence: this clause already says no sdist is available."""
         assert reason_for([wheel("1.0")], dist_policy=DistPolicy.SDIST_INSTALL) == (
             'dist-policy = "sdist-install" excluded every version\ndist-policy '
-            '= "sdist-install" excluded 1 version that publishes no sdist '
+            '= "sdist-install" excluded 1 version with no admissible sdist '
             '(1.0)\ntry: set packages."pkg".dist-policy = '
             '"wheel-or-sdist"\n     The project-wide dist-policy setting '
             "rejected these files."
@@ -585,20 +584,19 @@ class TestClauseText:
             dist_policy=DistPolicy.SDIST_INSTALL,
         ) == (
             'dist-policy = "sdist-install" excluded every version\ndist-policy '
-            '= "sdist-install" excluded 1 version that publishes no sdist '
+            '= "sdist-install" excluded 1 version with no admissible sdist '
             '(1.0)\ntry: set packages."pkg".dist-policy = '
             '"wheel-or-sdist"\n     The project-wide dist-policy setting '
             "rejected these files."
         )
 
     def test_two_wheels_of_one_release_are_one_version(self) -> None:
-        """This clause counts versions where every other one counts files."""
         assert reason_for(
             [wheel("1.0"), wheel("1.0", tag="py2-none-any")],
             dist_policy=DistPolicy.SDIST_INSTALL,
         ) == (
             'dist-policy = "sdist-install" excluded every version\ndist-policy '
-            '= "sdist-install" excluded 1 version that publishes no sdist '
+            '= "sdist-install" excluded 1 version with no admissible sdist '
             '(1.0)\ntry: set packages."pkg".dist-policy = '
             '"wheel-or-sdist"\n     The project-wide dist-policy setting '
             "rejected these files."
@@ -606,11 +604,44 @@ class TestClauseText:
 
     def test_sdist_install_without_an_sdist_plural(self) -> None:
         assert (
-            'dist-policy = "sdist-install" excluded 2 versions that publish no'
+            'dist-policy = "sdist-install" excluded 2 versions with no admissible'
             " sdist (newest: 2.0)"
         ) in reason_for(
             [wheel("1.0"), wheel("2.0")], dist_policy=DistPolicy.SDIST_INSTALL
         )
+
+    @pytest.mark.parametrize(
+        ("source", "filter_clause"),
+        [
+            pytest.param(
+                sdist("1.0", requires_python=">=3.13"),
+                "requires-python excluded 1 file (1.0 requires >=3.13, the resolve"
+                " targets Python 3.12)",
+                id="requires-python",
+            ),
+            pytest.param(
+                sdist("1.0", upload_time=AFTER),
+                f"the uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file"
+                f" uploaded at {AFTER} (1.0)",
+                id="uploaded-prior-to",
+            ),
+        ],
+    )
+    def test_sdist_install_with_a_filtered_sdist(
+        self, source: SdistFile, filter_clause: str
+    ) -> None:
+        diagnostic = diagnostic_for(
+            [wheel("1.0"), source],
+            target=_LINUX312,
+            uploaded_prior_to=CUTOFF,
+            dist_policy=DistPolicy.SDIST_INSTALL,
+        )
+
+        assert (
+            'dist-policy = "sdist-install" excluded 1 version with no admissible'
+            " sdist (1.0)"
+        ) in diagnostic.detail
+        assert filter_clause in diagnostic.detail
 
     def test_requires_python(self) -> None:
         assert (
@@ -1943,12 +1974,7 @@ def extra_entry(kind: str, **kwargs: object) -> Diagnostic:
 
 
 def every_shape() -> dict[str, Diagnostic]:
-    """One entry per shape the ``Diagnostics:`` section can print.
-
-    The two rules below hold over the whole report rather than over the
-    cases a test happened to write down, so they are checked against this
-    table.  It is also what the line-length census is counted from.
-    """
+    """Return representative entries for the report rendering checks."""
     blocked = [blocker("bar", diagnosis_mod.BlockerKind.DECIDED)]
     unreadable = (diagnosis_mod.MetadataBlock("No metadata for pkg==2.0"),)
     return {

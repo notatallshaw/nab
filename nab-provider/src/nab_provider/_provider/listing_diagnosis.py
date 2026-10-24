@@ -926,8 +926,8 @@ _CLAUSE_TEMPLATES: dict[Cause | None, str] = {
         'dist-policy = "{detail}" excluded {n} [{kind} ({v})|{kind}s (newest: {v})]'
     ),
     DropCause.SDIST_INSTALL_NO_SDIST: (
-        'dist-policy = "{detail}" excluded {n} [version that'
-        " publishes|versions that publish] no sdist ([|newest: ]{v})"
+        'dist-policy = "{detail}" excluded {n} [version|versions]'
+        " with no admissible sdist ([|newest: ]{v})"
     ),
     DropCause.REQUIRES_PYTHON: (
         "requires-python excluded {n} [file|files] ([|newest: ]{v} requires"
