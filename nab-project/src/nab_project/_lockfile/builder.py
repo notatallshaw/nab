@@ -347,6 +347,7 @@ def build_target_lock(
 
     if artifacts is None:
         artifacts = ArtifactMemo()
+
     if base_roots is None and selector_roots:
         msg = (
             "selector_roots need base_roots:"
@@ -365,6 +366,7 @@ def build_target_lock(
                 version,
                 pruned,
             )
+
         local_source = provider.local_source_for(canonical)
         if local_source is not None:
             lock_pins[canonical] = LocalPin(
@@ -375,6 +377,7 @@ def build_target_lock(
                 subdirectory=local_source.subdirectory,
             )
             continue
+
         vcs_source = provider.vcs_source_for(canonical)
         if vcs_source is not None:
             lock_pins[canonical] = _vcs_pin_from_source(
@@ -384,12 +387,14 @@ def build_target_lock(
                 resolved_sha=provider.vcs_pin_for(canonical),
             )
             continue
+
         archive_source = provider.archive_source_for(canonical)
         if archive_source is not None:
             lock_pins[canonical] = _archive_pin_from_source(
                 canonical, version, archive_source
             )
             continue
+
         lock_pins[canonical] = _index_pin_from_listing(
             provider, canonical, version, indexes, artifacts
         )
@@ -397,6 +402,7 @@ def build_target_lock(
     dependencies, base_dependencies = _forward_dependency_graph(
         provider, pins, resolved_keys
     )
+
     package_gates: dict[str, tuple[tuple[str, str], ...]] = {}
     if base_roots is not None:
         package_gates = _membership_gates(
@@ -405,6 +411,7 @@ def build_target_lock(
             base_roots=base_roots,
             selector_roots=selector_roots or {},
         )
+
     return TargetLock(
         target=target,
         pins=lock_pins,
