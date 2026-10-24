@@ -29,6 +29,7 @@ def test_staging_retries_occupied_names(
     else:
         atomic.atomic_write(target, b"new")
         assert target.read_bytes() == b"new"
+
     assert occupied.read_bytes() == b"keep"
     assert set(tmp_path.iterdir()) <= {target, occupied}
 
@@ -50,6 +51,7 @@ def test_staging_never_follows_an_occupied_name(
     names = iter([b"a" * 6, b"b" * 6])
     monkeypatch.setattr(atomic.os, "urandom", lambda _size: next(names))
     atomic.atomic_write(tmp_path / "lock", b"new")
+
     assert original.read_bytes() == b"keep"
     assert occupied.is_symlink() == (kind == "symlink")
     assert occupied.is_dir() == (kind == "directory")
@@ -81,8 +83,11 @@ def test_audit_policy_can_refuse_creation(
     monkeypatch.setattr(atomic.sys, "audit", audit)
     with pytest.raises(PermissionError):
         atomic.atomic_write(target, b"new")
+
     assert len(events) == 1
+
     event, name = events[0]
+
     assert event == "tempfile.mkstemp"
     assert isinstance(name, str)
     assert Path(name).parent == tmp_path
@@ -106,6 +111,7 @@ def test_access_denials_are_bounded(
         context.setattr(atomic.os, "open", denied)
         with pytest.raises(PermissionError):
             atomic.atomic_write(tmp_path / "lock", b"new")
+
     assert calls == (20 if platform == "win32" else 1)
     assert list(tmp_path.iterdir()) == []
 
@@ -127,6 +133,7 @@ def test_windows_transient_denial_can_recover(
         context.setattr(atomic.sys, "platform", "win32")
         context.setattr(atomic.os, "open", open_file)
         atomic.atomic_write(tmp_path / "lock", b"new")
+
     assert calls == 2
     assert (tmp_path / "lock").read_bytes() == b"new"
 
@@ -135,6 +142,7 @@ def test_binary_content_is_preserved(tmp_path: Path) -> None:
     data = b"line\r\n\x00\xff"
     target = tmp_path / "lock"
     atomic.atomic_write(target, data)
+
     assert target.read_bytes() == data
 
 
@@ -152,6 +160,7 @@ def test_overwrite_retains_the_destination_mode(
     else:
         expected = reference.stat().st_mode
     atomic.atomic_write_text(target, "new")
+
     assert target.read_text() == "new"
     assert target.stat().st_mode == expected
 
@@ -161,5 +170,6 @@ def test_staging_fits_the_existing_filename_budget(tmp_path: Path) -> None:
     maximum = os.pathconf(tmp_path, "PC_NAME_MAX")
     target = tmp_path / ("x" * (maximum - len(".12345678.tmp")))
     atomic.atomic_write(target, b"new")
+
     assert target.read_bytes() == b"new"
     assert list(tmp_path.iterdir()) == [target]

@@ -70,6 +70,7 @@ def _temporary_file(path: Path) -> tuple[int, Path]:
         token = urlsafe_b64encode(os.urandom(_TEMP_NAME_BYTES)).decode("ascii")
         temporary = directory / f"{path.name}.{token}.tmp"
         sys.audit("tempfile.mkstemp", os.fspath(temporary))
+
         try:
             fd = os.open(temporary, _STAGING_OPEN_FLAGS, 0o600)
         except FileExistsError:
@@ -83,6 +84,7 @@ def _temporary_file(path: Path) -> tuple[int, Path]:
                 continue
             raise
         return fd, temporary
+
     raise FileExistsError(errno.EEXIST, "No usable temporary file name found")
 
 
