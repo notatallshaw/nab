@@ -27,6 +27,7 @@ def test_repeated_actions_keep_every_package_cause() -> None:
         ),
     )
     rendered = str(message)
+
     assert "first: offline" in rendered
     assert "second: offline" in rendered
     assert rendered.count("try: re-run with --no-offline") == 1
@@ -48,6 +49,7 @@ def test_distinct_policy_scopes_survive_deduplication() -> None:
             for name in ("public", "internal")
         ),
     )
+
     assert str(message).count("try:") == 2
 
 
@@ -73,10 +75,13 @@ def test_compact_report_offers_the_primary_action_and_verbose_keeps_other_fixes(
         ),
     )
     compact = str(message)
+
     assert "Diagnostics: (-v for detail)" in compact
     assert "try: change cutoff" in compact
     assert "change distribution policy" not in compact
+
     verbose = message.render(verbose=True)
+
     assert "the cutoff rejected one file" in verbose
     assert "The project sets this cutoff." in verbose
     assert "try: change cutoff" in verbose
@@ -85,6 +90,7 @@ def test_compact_report_offers_the_primary_action_and_verbose_keeps_other_fixes(
 
 def test_cause_only_reports_need_no_verbose_pointer() -> None:
     message = ResolutionMessage("no solution", (("pkg", Diagnostic("missing")),))
+
     assert str(message) == "no solution\n\nDiagnostics:\n  - pkg: missing"
 
 
@@ -94,6 +100,7 @@ def test_secondary_corrections_are_advertised_as_verbose_detail() -> None:
         suggestions=(Suggestion("change cutoff"), Suggestion("change policy")),
     )
     message = ResolutionMessage("no solution", (("pkg", diagnostic),))
+
     assert "Diagnostics: (-v for detail)" in str(message)
     assert "try: change policy" in message.render(verbose=True)
 
@@ -105,6 +112,7 @@ def test_exception_context_preserves_attribution_and_rendering() -> None:
     contextual = error_message(ResolutionError(original)).prefixed(
         "build requirement: "
     )
+
     assert isinstance(contextual, ResolutionMessage)
     assert contextual.entries == original.entries
     assert str(contextual).startswith("build requirement: no solution")
@@ -117,8 +125,11 @@ def test_shared_state_suppresses_advice_across_targets_without_hiding_causes() -
         "no solution", (("pkg", Diagnostic("missing", remedy="choose another index")),)
     )
     seen: set[str] = set()
+
     assert "try:" in message.render(seen=seen)
+
     repeated = message.render(seen=seen)
+
     assert "pkg: missing" in repeated
     assert "try:" not in repeated
     assert "try:" in message.render()

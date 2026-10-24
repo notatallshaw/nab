@@ -81,6 +81,7 @@ def enforce_build_policy_for_targets(
             )
             raise ConfigError(report)
         return BuildPolicy.NEVER
+
     if not all(target.host_faithful for target in targets):
         _logger.warning(
             DiagnosticMessage(
@@ -93,6 +94,7 @@ def enforce_build_policy_for_targets(
                 ),
             )
         )
+
     return build_policy
 
 

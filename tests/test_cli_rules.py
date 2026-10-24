@@ -957,6 +957,7 @@ class TestTheShippedTable:
             _shipped(["lock", "--cach"])
 
         text = diagnose(caught.value)
+
         assert "try: use one of '--cache-dir', '--cache'" in text
 
     def test_the_star_options_take_every_word_up_to_the_next_option(self) -> None:
@@ -1495,6 +1496,7 @@ def test_a_refused_line_writes_to_stderr_alone_and_exits_two(
     status = run(tuple(argv))
 
     captured = capsys.readouterr()
+
     assert status == 2, rule
     assert captured.out == "", rule
     assert expected in captured.err, rule

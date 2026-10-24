@@ -740,8 +740,10 @@ def _fast_fail_locked(
             )
         )
         sys.exit(1)
+
     if disqualification is None:
         return
+
     printer().error(
         DiagnosticMessage(
             (f"--locked: lockfile {target} is out of date: {disqualification.reason}"),
@@ -1046,6 +1048,7 @@ def _refuse_untemplated(lock_input: LockInput, output: Path) -> NoReturn:
             )
         )
         sys.exit(1)
+
     placeholders = _and_list([f"{{{name}}}" for name in separating])
     example = "constraints" + "".join(f"-{{{name}}}" for name in separating) + ".txt"
     printer().error(
@@ -1349,8 +1352,10 @@ def _validate_pylock_output_name(
     """
     if format != "pylock" or output is None or is_stdout(output):
         return
+
     if is_valid_pylock_path(output):
         return
+
     if not output.name:
         printer().error(
             f"--output {str(output)!r} names a directory, not a file; the"

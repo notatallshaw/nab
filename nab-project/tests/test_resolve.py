@@ -3327,6 +3327,7 @@ class TestBuildResolverInputs:
             )
 
         (record,) = caplog.records
+
         assert record.message.startswith(
             "Root requirement 'foo<2.0; extra == \"fast\"'"
         )
@@ -3539,12 +3540,14 @@ class TestBuildConstraints:
     ) -> None:
         """The repair the warning asks for parses and still bounds foo."""
         message = self._drop_warning(caplog)
+
         assert message.endswith(
             "try: drop the membership test from the marker and keep the rest"
         )
 
         inputs = ResolveInputs(constraints=("foo<2.0",))
         out = _build_constraints(inputs, environment={})
+
         assert V("1.0") in out["foo"]
         assert V("5.0") not in out["foo"]
 
@@ -3569,10 +3572,12 @@ class TestBuildConstraints:
 
         inputs = ResolveInputs(constraints=("foo<2.0 ; python_version < '3.10'",))
         out = _build_constraints(inputs, environment=on_39)
+
         assert V("1.0") in out["foo"]
         assert V("5.0") not in out["foo"]
 
         on_311 = {"python_version": "3.11", "python_full_version": "3.11.2"}
+
         assert "foo" not in _build_constraints(inputs, environment=on_311)
 
 

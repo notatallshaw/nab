@@ -445,6 +445,7 @@ def _warn_unknown_env(
     known = {spec.env_var for spec in OPTIONS if spec.env_var is not None}
     renamed = set(_renamed_env_names())
     honoured = ", ".join(sorted(known | env.OUTPUT_OWNED))
+
     for name in environ:
         if (
             not name.startswith("NAB_")
@@ -453,17 +454,20 @@ def _warn_unknown_env(
             or name in env.OUTPUT_OWNED
         ):
             continue
+
         report = DiagnosticMessage(
             f"{name} is not a recognized nab setting and was ignored",
             suggestions=(
                 Suggestion(f"use one of the known NAB_* variables: {honoured}"),
             ),
         )
+
         if rejections is not None:
             rejections.append(
                 RejectedLayer(Origin(SourceKind.ENV, name), name, str(report))
             )
             continue
+
         _logger.warning("%s", report)
 
 
@@ -510,6 +514,7 @@ def _warn_renamed_env(
                     ),
                 ),
             )
+
             if rejections is not None:
                 rejections.append(
                     RejectedLayer(
@@ -517,6 +522,7 @@ def _warn_renamed_env(
                     )
                 )
                 continue
+
             _logger.warning("%s", report)
 
 

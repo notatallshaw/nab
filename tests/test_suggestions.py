@@ -41,8 +41,11 @@ def test_suppressed_warnings_do_not_consume_later_error_suggestions() -> None:
     stream = io.StringIO()
     printer = Printer(verbosity=Verbosity.SILENT, stderr=stream)
     printer.warning(_message())
+
     assert stream.getvalue() == ""
+
     printer.error(_message())
+
     assert "try: change policy" in stream.getvalue()
 
 
@@ -50,6 +53,7 @@ def test_each_command_gets_fresh_emission_state() -> None:
     stream = io.StringIO()
     for _ in range(2):
         Printer(stderr=stream).error(_message())
+
     assert stream.getvalue().count("try: change policy") == 2
 
 
@@ -70,6 +74,7 @@ def test_logging_interpolation_and_direct_errors_share_suggestion_state(
     printer.error(_message("terminal"))
 
     output = stream.getvalue()
+
     assert "logged" in output
     assert "terminal" in output
     assert output.count("try: change policy") == 1
@@ -80,6 +85,7 @@ def test_standalone_log_formatter_owns_only_its_own_emission_state() -> None:
     record = logging.LogRecord(
         "nab_project", logging.WARNING, __file__, 1, _message(), (), None
     )
+
     assert "try: change policy" in formatter.format(record)
     assert "try:" not in formatter.format(record)
     assert "try: change policy" in _LevelFormatter(
@@ -97,6 +103,7 @@ def test_verbose_logging_keeps_suggestion_context() -> None:
             suggestions=(Suggestion("edit policy", detail="This source sets it."),),
         )
     )
+
     assert "try: edit policy" in stream.getvalue()
     assert "This source sets it." in stream.getvalue()
 
@@ -110,6 +117,7 @@ def test_typed_resolution_reports_share_the_command_renderer() -> None:
     for target in ("linux", "macos"):
         printer.error(ResolutionError(message), prefix=f"{target}: ")
     output = stream.getvalue()
+
     assert "linux: unsatisfiable" in output
     assert "macos: unsatisfiable" in output
     assert output.count("pkg: refused") == 2
@@ -147,6 +155,9 @@ def test_legacy_resolution_hosts_keep_their_verbose_report(
     error = ResolutionError("compact legacy report")
     error.verbose_message = "detailed legacy report"
     monkeypatch.setattr("nab.output._printer", Printer(verbosity=Verbosity.VERBOSE))
+
     assert _error_text(error) == "detailed legacy report"
+
     monkeypatch.setattr("nab.output._printer", Printer())
+
     assert _error_text(error) == "compact legacy report"

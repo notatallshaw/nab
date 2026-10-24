@@ -152,16 +152,20 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     )
     project_overrides = project_config_overrides(overrides)
     _project_cli_overrides_or_exit(project_overrides)
+
     ladder = read_config_ladder(path, overrides)
     _reject_python_flag_in_universal(ladder, python)
+
     config = _load_config(
         path,
         discover_workspace=workspace_discovery,
         cli_overrides=project_overrides,
     )
+
     settings = _layered_run_settings_or_exit(ladder, produces_lock=False)
     effective_cache_dir = _resolve_effective_cache_dir(settings.cache_dir, cache=cache)
     _check_targets_or_exit(config)
+
     transport = _make_transport(settings.http_backend)
     result = _resolve(
         path,
@@ -177,6 +181,7 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
         progress=ProgressReporter(printer()),
         max_concurrency=settings.max_concurrency,
     )
+
     lock_input = build_lock_input(
         result,
         inputs=config.resolve_inputs(),

@@ -816,9 +816,11 @@ class TestTheRemedyNamesTheLayer:
             index_overrides={index_name: IndexOverride(uploaded_prior_to=CUTOFF)},
         )
         provider.coordinator.index.store_listing_index("pkg", index_name)
+
         assert provider.choose_version("pkg", SpecifierSet("").to_range()) is None
 
         diagnostic = provider.get_no_versions_reason("pkg")
+
         assert diagnostic is not None
         assert render(diagnostic).endswith(
             f"the uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file "
@@ -1460,6 +1462,7 @@ class TestTheInRangeLead:
             target=_LINUX312,
             uploaded_prior_to=CUTOFF,
         )
+
         assert reason == (
             "uploaded-prior-to, requires-python and wheel tags excluded every "
             "version in range\nthe uploaded-prior-to cutoff "
@@ -2082,6 +2085,7 @@ class TestTheTwoDepths:
         entry = every_shape()[name]
         if entry.remedy is None:
             return
+
         assert f"try: {entry.remedy}" in entry.lines(verbose=True)
 
     @pytest.mark.parametrize("name", list(every_shape()))

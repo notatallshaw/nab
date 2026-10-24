@@ -18,6 +18,7 @@ def test_repeated_actions_share_one_rendering_without_dropping_distinct_fixes() 
         Suggestion('set packages."a".dist-policy = "wheel-or-sdist"'),
         Suggestion('set packages."b".dist-policy = "wheel-or-sdist"'),
     )
+
     assert suggestion_lines(actions) == (
         '    try: set packages."a".dist-policy = "wheel-or-sdist"',
         '    try: set packages."b".dist-policy = "wheel-or-sdist"',
@@ -46,6 +47,7 @@ def test_conditions_remain_part_of_the_action_identity() -> None:
         Suggestion("if this release has universal dependencies, enable borrowing"),
         Suggestion("if the host can build this release, permit its metadata build"),
     )
+
     assert len(suggestion_lines(actions)) == 2
 
 
@@ -58,6 +60,7 @@ def test_verbose_context_does_not_change_the_action_or_repeat_it(
         detail="The index sets this cutoff.\nOther indexes retain theirs.",
     )
     lines = suggestion_lines((action, action), verbose=verbose, indent="  ")
+
     assert lines[0] == "  try: set index.internal.uploaded-prior-to = false"
     assert lines[1:] == (
         ("       The index sets this cutoff.", "       Other indexes retain theirs.")
@@ -87,6 +90,7 @@ def test_outer_context_preserves_the_suggestion_without_mutating_the_original() 
 
 def test_exception_representations_keep_the_diagnostic_text() -> None:
     message = DiagnosticMessage("refused", suggestions=(Suggestion("change policy"),))
+
     assert repr(ValueError(message)) == f"ValueError({str(message)!r})"
 
 
@@ -104,6 +108,7 @@ def test_message_conversion_never_logs_a_suggestion(
     message = DiagnosticMessage(
         "rejected candidate", suggestions=(Suggestion("edit policy"),)
     )
+
     assert "edit policy" in str(message)
     assert caplog.records == []
 

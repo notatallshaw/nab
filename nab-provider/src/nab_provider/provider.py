@@ -2929,6 +2929,7 @@ class Provider:
         is answered from cache. Hard errors propagate unrecorded.
         """
         package, version = cache_key
+
         try:
             self.parse_and_cache_metadata(
                 cache_key, metadata_text, from_sdist=from_sdist

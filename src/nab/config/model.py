@@ -833,8 +833,10 @@ def _check_requires_python_admits_target(
     """
     if requires_python is None:
         return
+
     if target.admits_requires_python(SpecifierSet(requires_python)):
         return
+
     excludes = (
         f"{source} = {requires_python!r} excludes the resolve target"
         f" Python {target.python_version} ({target.label})."
@@ -868,6 +870,7 @@ def _check_requires_python_admits_target(
                 ),
             ),
         )
+
     raise ConfigError(report)
 
 
@@ -1175,14 +1178,17 @@ def _environment_from_effective(
             **_environment_from_marker_environment(marker_environment),
             **declared,
         }
+
     if not declared:
         return None
+
     platform = declared.get("platform")
     environment = EnvironmentConfig(
         python=declared.get("python"),
         platform=None if platform is None else environment_platform_spec(platform),
         implementation=declared.get("implementation"),
     )
+
     if environment.implementation is not None and environment.platform is None:
         # The message asks for environment.platform, so name that table even
         # when the deprecated overlay is what declared it.
@@ -1200,6 +1206,7 @@ def _environment_from_effective(
             suggestions=(Suggestion(f"add platform = one of {valid!r}."),),
         )
         raise ConfigError(report)
+
     return environment
 
 

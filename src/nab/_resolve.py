@@ -421,8 +421,10 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     if not result.success:
         _report_failures(result)
         sys.exit(1)
+
     if printer().verbosity >= Verbosity.DEBUG:
         _report_dependency_requirements(result)
+
     return result
 
 

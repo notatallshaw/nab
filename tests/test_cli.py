@@ -2659,6 +2659,7 @@ class TestPythonFlag:
             " python axis\n    try: pass one of them" in capsys.readouterr().err
         )
         assert not out.exists()
+
         mock_resolve.assert_not_called()
 
     def test_the_python_flag_is_recorded_and_noticed(
@@ -4019,6 +4020,7 @@ class TestLockCommandUniversal:
             )
 
         err = capsys.readouterr().err
+
         assert (
             "#       the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00"
             " excluded 1 file uploaded at 2030-01-01T00:00:00Z (1.0)"
@@ -4327,6 +4329,7 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, format="requirements-without-hashes", output=out)
         err = capsys.readouterr().err
+
         assert "4 tuples" in err
         assert "tells them apart" in err
         assert "try: emit pylock output instead" in err
@@ -4348,6 +4351,7 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, format="requirements-without-hashes", output=out)
         err = capsys.readouterr().err
+
         assert "both map to" in err
         assert "tells them apart" in err
         assert "try: emit pylock output instead" in err

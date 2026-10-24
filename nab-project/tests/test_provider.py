@@ -1599,6 +1599,7 @@ class TestNoVersionsReasons:
             provider = Provider(coordinator)
             provider.choose_version("foo", SpecifierSet("").to_range())
         diagnostic = provider.get_no_versions_reason("foo")
+
         assert diagnostic is not None
         assert diagnostic.short == (
             "offline mode skipped an index with no cached listing"
@@ -2310,6 +2311,7 @@ class TestNoVersionsReasons:
         coordinator = make_coordinator([make_sdist("1.0")], package="foo")
         provider = Provider(coordinator, dist_policy=DistPolicy.WHEEL_ONLY)
         provider.choose_version("foo", SpecifierSet("").to_range())
+
         assert rendered_reason(provider, "foo") == (
             'dist-policy = "wheel-only" excluded every file'
             '\ndist-policy = "wheel-only" excluded 1 sdist (1.0)'
@@ -2745,6 +2747,7 @@ class TestNoVersionsReasons:
         )
 
         diagnostic = provider.get_no_versions_reason("pkg")
+
         assert diagnostic is not None
         assert diagnostic.short == (
             "some versions are blocked by bar or rejected on their metadata"
@@ -12073,6 +12076,7 @@ class TestExtrasInvalidMetadata:
         provider = Provider(coordinator, target=_PY312, extras_mode=ExtrasMode.WARN)
         provider._invalid_metadata[("foo", V("2.0"))] = MetadataBlock("stub")
         version = provider.choose_version("foo[security]", VersionRange.full())
+
         assert version == V("1.0")
 
     def test_skip_when_get_dependencies_marks_invalid(self) -> None:
@@ -12108,6 +12112,7 @@ class TestExtrasInvalidMetadata:
         )
         provider._invalid_metadata[("foo", V("2.0"))] = MetadataBlock("stub")
         version = provider.choose_version("foo[security]", VersionRange.full())
+
         assert version == V("1.0")
 
     def test_user_extra_skips_unsupported_sdist(self) -> None:

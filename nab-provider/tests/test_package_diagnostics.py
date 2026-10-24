@@ -29,6 +29,7 @@ def test_legacy_diagnostic_hosts_can_still_read_the_primary_remedy() -> None:
     diagnostic = Diagnostic(
         "refused", ("evidence",), "old action", suggestions=(Suggestion("new action"),)
     )
+
     assert diagnostic.remedy == "old action"
     assert [suggestion.action for suggestion in diagnostic.suggestions] == [
         "old action",
