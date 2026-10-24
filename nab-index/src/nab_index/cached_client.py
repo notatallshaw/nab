@@ -432,6 +432,7 @@ class CachedAsyncSimpleClient:
         self._parsed_store_failed = False
         self._sdist_archive_hold = sdist_archive_hold
         self._policy_writes: set[asyncio.Task[None]] = set()
+
         # Replace old variants so backtracking cannot accumulate sidecar bodies.
         self._verified_sidecars: dict[str, tuple[tuple[str, str, str], str]] = {}
 
@@ -439,6 +440,7 @@ class CachedAsyncSimpleClient:
         """Wait for policy writes, then close the underlying transport."""
         if self._policy_writes:
             await asyncio.gather(*self._policy_writes, return_exceptions=True)
+
         self._verified_sidecars.clear()
         await self._transport.aclose()
 
@@ -904,6 +906,7 @@ class CachedAsyncSimpleClient:
         content = response.content
         if metadata_hash is not None:
             _verify_metadata_hash(content, metadata_hash)
+
         try:
             text = content.decode("utf-8")
         except UnicodeDecodeError as exc:
@@ -912,9 +915,11 @@ class CachedAsyncSimpleClient:
                 f"for {package}=={version}: body is not valid UTF-8"
             )
             raise MalformedSimpleResponseError(msg) from exc
+
         self._cache.put_metadata(package, metadata_url, text)
         if identity is not None:
             self._verified_sidecars[package] = identity, text
+
         return text
 
     async def get_range_metadata(

@@ -63,6 +63,7 @@ def test_equal_digest_avoids_a_second_request(
     asyncio.run(read())
 
     assert transport.requests == [_FIRST]
+
     if backend == "disk":
         assert cache.get_metadata("demo", _SECOND) == _BODY.decode()
 
@@ -78,6 +79,7 @@ def test_different_coordinates_fetch_separately(coordinate: tuple[str, str]) -> 
             await client.get_metadata_text(*coordinate, _SECOND, _SHA256)
 
     asyncio.run(read())
+
     assert transport.requests == [_FIRST, _SECOND]
 
 
@@ -95,6 +97,7 @@ def test_different_metadata_digests_do_not_share() -> None:
             assert result == other.decode()
 
     asyncio.run(read())
+
     assert transport.requests == [_FIRST, _SECOND]
 
 
@@ -115,6 +118,7 @@ def test_missing_or_weak_hashes_fetch_each_url(algorithm: str | None) -> None:
                 )
 
     asyncio.run(read())
+
     assert transport.requests == [_FIRST, _SECOND]
 
 
@@ -132,6 +136,7 @@ def test_failed_verification_cannot_supply_another_url() -> None:
             )
 
     asyncio.run(read())
+
     assert transport.requests == [_FIRST, _SECOND]
 
 
@@ -153,6 +158,7 @@ def test_unverified_cached_text_does_not_leak_to_another_url(tmp_path: Path) -> 
             )
 
     asyncio.run(read())
+
     assert transport.requests == [_SECOND]
 
 
@@ -168,6 +174,7 @@ def test_an_offline_missing_url_remains_a_miss(tmp_path: Path) -> None:
                 await client.get_metadata_text("demo", "1.0", _SECOND, _SHA256)
 
     asyncio.run(read())
+
     assert transport.requests == []
 
 
@@ -182,6 +189,7 @@ def test_reuse_does_not_escape_the_client_lifetime() -> None:
                 await client.get_metadata_text("demo", "1.0", url, _SHA256)
 
     asyncio.run(read())
+
     assert transport.requests == [_FIRST, _SECOND]
 
 
@@ -201,6 +209,7 @@ def test_a_new_variant_replaces_the_packages_previous_body() -> None:
                 )
 
     asyncio.run(read())
+
     assert transport.requests == [_FIRST, _SECOND, third]
 
 
@@ -215,4 +224,5 @@ def test_close_releases_verified_bodies() -> None:
             assert client._verified_sidecars
 
     asyncio.run(read())
+
     assert not client._verified_sidecars
