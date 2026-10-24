@@ -70,6 +70,7 @@ def test_snapshot_matching_requires_row_identity_and_order() -> None:
         (Version("2"), make_sdist("2")),
     ]
     preparation = CandidatePreparation(rows)
+
     assert preparation.matches_records(rows.copy())
     assert not preparation.matches_records(rows[:-1])
     assert not preparation.matches_records(list(reversed(rows)))
@@ -103,6 +104,7 @@ def test_identical_python_snapshots_share_views_and_replay_counters(
         assert [str(version) for version, _ in result] == ["2", "1"]
         assert provider.stats.distributions_seen == 2
     first, second, third = [provider.prepared_listings["pkg"] for provider in providers]
+
     assert first is second is third
     assert len(preparations) == 1
 
