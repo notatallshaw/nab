@@ -111,9 +111,13 @@ The default depth `0` refuses a nested build and reports the requirement and its
 depth `1`, nab may build it from an sdist; that build's own requirements must be wheels. A value `n`
 permits `n` nested build environments.
 
-The resolve is never narrowed to wheels; that would settle on an older backend than
-`[build-system].requires` asked for without saying so. The requirement resolves as written and the
-refusal names the version it landed on.
+Build requirements are not restricted to releases with host-compatible wheels. If a selected release
+needs a build beyond `build-requires-depth`, nab refuses it and names the version.
+
+If a built wheel's `Requires-Python` excludes the host interpreter, nab records that restriction for
+the release and resolves the build requirements again. This can select an older release within the
+original requirement bounds. If no compatible solution remains, nab reports the built wheel's Python
+incompatibility.
 
 A per-package or per-index `dist-policy` narrows the resolve the other way. `sdist-only` and
 `sdist-install` keep a build requirement's wheels out of the environment even where the index
