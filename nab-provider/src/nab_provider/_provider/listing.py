@@ -726,6 +726,7 @@ def _prepared_tag_result(
         provider.prepared_listings[normalized] = prepared
         for version, count in prepared.tag_exclusions:
             _tally_tag_exclusions(provider, normalized, version, count)
+
         provider.stats.excluded_versions_no_compatible_wheel += prepared.empty_versions
         return list(prepared.distributions)
 

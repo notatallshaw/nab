@@ -52,6 +52,7 @@ class CandidateView:
         previous = self._last_matching
         if previous is not None and version_range == previous[0]:
             return previous[1]
+
         prepared = self._version_counts
         if prepared is None:
             counts: dict[Version, int] = {}
@@ -59,6 +60,7 @@ class CandidateView:
                 counts[version] = counts.get(version, 0) + 1
             prepared = (tuple(counts), counts)
             self._version_counts = prepared
+
         versions, counts = prepared
         count = sum(
             counts[version]
@@ -84,6 +86,7 @@ class CandidatePreparation:
                 rows.append((pair, group))
             else:
                 rows.append((pair, None))
+
         self._groups = tuple(groups)
         self._rows = tuple(rows)
         self._views: dict[tuple[bool, ...], CandidateView] = {}

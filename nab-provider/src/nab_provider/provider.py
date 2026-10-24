@@ -1377,6 +1377,7 @@ class Provider:
         prepared = self.prepared_listings.get(normalized)
         if prepared is not None:
             return prepared.count_matching(version_range)
+
         distinct = self.versions_only(normalized, versions)
         counts = self.version_record_counts[normalized]
         return sum(

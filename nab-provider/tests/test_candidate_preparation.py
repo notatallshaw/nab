@@ -50,10 +50,13 @@ def test_parsed_tag_groups_preserve_filename_admission() -> None:
 
 def test_empty_and_invalid_wheel_views() -> None:
     tags = target().tags
+
     assert tags is not None
     assert CandidatePreparation([]).for_tags(tags).distributions == ()
+
     bad = make_wheel(tag="bad")
     view = CandidatePreparation([(Version("1"), bad)]).for_tags(tags)
+
     assert view.distributions == ()
     assert view.tag_exclusions == ((Version("1"), 1),)
     assert view.empty_versions == 1
@@ -71,6 +74,7 @@ def test_source_records_and_distinct_equal_version_objects() -> None:
         (Version("1.0"), make_wheel("1.0", tag="cp312-cp312-manylinux_2_17_x86_64")),
     ]
     view = CandidatePreparation(rows).for_tags(tags)
+
     assert view.distributions == (rows[2],)
     assert sum(count for _, count in view.tag_exclusions) == 3
     assert view.empty_versions == 1
@@ -149,15 +153,19 @@ def test_cache_hit_does_not_walk_every_file_again(
         port, target(platform="windows_amd64"), listing_filter_cache=cache
     )
     result = second.filter_distributions("pkg", files)
+
     assert len(result) == len(files)
     assert calls == 1
+
     result.clear()
+
     assert len(second.filter_distributions("pkg", files)) == len(files)
 
 
 def test_identical_admission_keeps_each_targets_wheel_ranking() -> None:
     specific = make_wheel("1", tag="cp312-none-any")
     generic = make_wheel("1")
+
     assert specific.metadata_url is not None
     assert generic.metadata_url is not None
     port = make_coordinator(
@@ -172,6 +180,7 @@ def test_identical_admission_keeps_each_targets_wheel_ranking() -> None:
     second = Provider(port, target(), listing_filter_cache=cache)
     first.wheel_tags = TagSet((("cp312", "none", "any"), ("py3", "none", "any")))
     second.wheel_tags = TagSet((("py3", "none", "any"), ("cp312", "none", "any")))
+
     assert set(first.get_dependencies("pkg", Version("1"))) == {"specific-dep"}
     assert set(second.get_dependencies("pkg", Version("1"))) == {"generic-dep"}
 
@@ -192,6 +201,7 @@ def test_same_wheel_metadata_is_evaluated_for_each_target() -> None:
     windows = Provider(
         port, target(platform="windows_amd64"), listing_filter_cache=cache
     )
+
     assert set(linux.get_dependencies("pkg", Version("1"))) == {"linux-dep"}
     assert set(windows.get_dependencies("pkg", Version("1"))) == {"win-dep"}
 
@@ -210,6 +220,7 @@ def test_custom_provider_filter_keeps_its_matching_semantics() -> None:
         listing_filter_cache=ListingFilterCache(target_count=2),
     )
     filtered = provider.filter_distributions("pkg", files)
+
     assert provider.count_matching_records("pkg", VersionRange.full(), filtered) == 1
 
 
@@ -228,6 +239,7 @@ def test_custom_cache_can_filter_without_populating_native_entries() -> None:
     provider = Provider(
         make_coordinator(files), target(), listing_filter_cache=Uncached(target_count=2)
     )
+
     assert len(provider.filter_distributions("pkg", files)) == 1
 
 
@@ -243,6 +255,7 @@ def test_custom_tag_admission_and_payload_release_use_normal_filter() -> None:
         listing_filter_cache=ListingFilterCache(target_count=2),
     )
     provider.wheel_tags = RejectingTags((("py3", "none", "any"),))
+
     assert provider.filter_distributions("pkg", files) == []
     assert provider.stats.excluded_by_wheel_tags == 1
 
@@ -253,6 +266,7 @@ def test_custom_tag_admission_and_payload_release_use_normal_filter() -> None:
         listing_filter_cache=ListingFilterCache(target_count=2),
         release_refused_wheels=True,
     )
+
     assert releasing.filter_distributions("pkg", [refused]) == []
     assert refused.url == ""
 
@@ -261,6 +275,7 @@ def test_tied_sibling_metadata_is_still_checked_after_view_reuse() -> None:
     first = make_wheel("1")
     sibling = make_wheel("1.0")
     port = make_coordinator([first, sibling])
+
     assert first.metadata_url is not None
     assert sibling.metadata_url is not None
     port.index.store_metadata(
@@ -320,6 +335,7 @@ def test_single_target_does_not_prepare_candidate_views(
         listing_filter_cache=ListingFilterCache(target_count=1),
     )
     result = provider.filter_distributions("pkg", files)
+
     assert len(result) == 1
     assert provider.count_matching_records("pkg", VersionRange.full(), result) == 1
     assert calls == 0
@@ -334,6 +350,7 @@ def test_python_admission_precedes_shared_tag_projection() -> None:
     cache = ListingFilterCache(2, target_count=2)
     first = Provider(port, target("3.11"), listing_filter_cache=cache)
     second = Provider(port, target("3.12"), listing_filter_cache=cache)
+
     assert [
         str(version) for version, _ in first.filter_distributions("pkg", files)
     ] == ["2"]
@@ -382,6 +399,7 @@ def test_preparation_preserves_declared_tag_rules(
         port, environment, listing_filter_cache=ListingFilterCache(target_count=2)
     )
     fresh = Provider(port, environment)
+
     assert cached.filter_distributions("pkg", files) == fresh.filter_distributions(
         "pkg", files
     )
