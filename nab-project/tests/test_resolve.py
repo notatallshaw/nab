@@ -293,6 +293,23 @@ def conflict_fetch_port() -> Iterator[FakeFetchPort]:
         yield coordinator
 
 
+@pytest.fixture
+def group_conflict_fetch_port() -> Iterator[FakeFetchPort]:
+    """Serve root and group dependencies for the group-conflict checks."""
+    coordinator = make_coordinator(
+        listings={
+            "foo": _index_wheels("foo", "1.0", "2.0"),
+            "sphinx": _index_wheels("sphinx", "6.0", "7.0"),
+            "pytest": _index_wheels("pytest", "7.0", "8.0"),
+        },
+        auto_metadata=True,
+    )
+    with patch(
+        "nab_project.resolve.FetchCoordinator", return_value=nullcontext(coordinator)
+    ):
+        yield coordinator
+
+
 def test_umbrella_extra_retains_dependency_on_prerelease_python(tmp_path: Path) -> None:
     path = tmp_path / "pyproject.toml"
     path.write_text(
@@ -3896,8 +3913,6 @@ class TestFindGroupConflictsManyGroups:
 
 
 class TestResolvePyprojectGroupConflict:
-    """End-to-end: a two-group direct conflict names the groups."""
-
     def test_conflict_message_names_groups(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
@@ -3946,28 +3961,14 @@ class TestResolvePyprojectGroupConflict:
             " sphinx>=7, sphinx<6."
         )
 
-    @patch("nab_project._resolve.engine.build_target_lock")
-    @patch("nab_project._resolve.engine.Resolver")
-    @patch("nab_project._resolve.engine.Provider")
-    @patch("nab_project.resolve.FetchCoordinator")
-    def test_single_group_skips_check(
-        self,
-        mock_coord_cls: MagicMock,
-        mock_provider_cls: MagicMock,
-        mock_resolver_cls: MagicMock,
-        mock_build_lock: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """One group means no pair to check; the resolve proceeds."""
+    @pytest.mark.usefixtures("group_conflict_fetch_port")
+    def test_single_group_resolves(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             '[project]\nname = "x"\ndependencies = ["foo>=1.0"]\n'
             "[dependency-groups]\n"
             'docs = ["sphinx<7"]\n'
         )
-        mock_coord_cls.return_value.__enter__ = lambda s: s
-        mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-        mock_resolver_cls.return_value.resolve.return_value = {"foo": V("2.0")}
 
         result = _resolved(
             pyproject,
@@ -3975,43 +3976,31 @@ class TestResolvePyprojectGroupConflict:
             python_version="3.12.0",
             groups=["docs"],
         )
-        assert "foo" in _pins(result)
+        assert _pins(result) == {"foo": V("2.0"), "sphinx": V("6.0")}
 
-    @patch("nab_project._resolve.engine.build_target_lock")
-    @patch("nab_project._resolve.engine.Resolver")
-    @patch("nab_project._resolve.engine.Provider")
-    @patch("nab_project.resolve.FetchCoordinator")
-    def test_no_groups_skips_check(
-        self,
-        mock_coord_cls: MagicMock,
-        mock_provider_cls: MagicMock,
-        mock_resolver_cls: MagicMock,
-        mock_build_lock: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """Zero groups means the check is a no-op and the resolve runs."""
+        lock = result.target_results[0].lock
+        assert lock is not None
+        assert {name: pin.version for name, pin in lock.pins.items()} == {
+            "foo": "2.0",
+            "sphinx": "6.0",
+        }
+
+    @pytest.mark.usefixtures("group_conflict_fetch_port")
+    def test_no_groups_resolves(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text('[project]\ndependencies = ["foo>=1.0"]\n')
-        mock_coord_cls.return_value.__enter__ = lambda s: s
-        mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-        mock_resolver_cls.return_value.resolve.return_value = {"foo": V("2.0")}
 
         result = _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
-        assert "foo" in _pins(result)
+        assert _pins(result) == {"foo": V("2.0")}
 
-    @patch("nab_project._resolve.engine.build_target_lock")
-    @patch("nab_project._resolve.engine.Resolver")
-    @patch("nab_project._resolve.engine.Provider")
-    @patch("nab_project.resolve.FetchCoordinator")
-    def test_no_conflict_multi_group_resolves(
-        self,
-        mock_coord_cls: MagicMock,
-        mock_provider_cls: MagicMock,
-        mock_resolver_cls: MagicMock,
-        mock_build_lock: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """Two compatible groups pass the check and resolve normally."""
+        lock = result.target_results[0].lock
+        assert lock is not None
+        assert {name: pin.version for name, pin in lock.pins.items()} == {
+            "foo": "2.0",
+        }
+
+    @pytest.mark.usefixtures("group_conflict_fetch_port")
+    def test_compatible_groups_resolve(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             '[project]\nname = "x"\ndependencies = ["foo>=1.0"]\n'
@@ -4019,9 +4008,6 @@ class TestResolvePyprojectGroupConflict:
             'docs = ["sphinx>=6"]\n'
             'test = ["pytest>=8"]\n'
         )
-        mock_coord_cls.return_value.__enter__ = lambda s: s
-        mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-        mock_resolver_cls.return_value.resolve.return_value = {"foo": V("2.0")}
 
         result = _resolved(
             pyproject,
@@ -4029,7 +4015,19 @@ class TestResolvePyprojectGroupConflict:
             python_version="3.12.0",
             groups=["docs", "test"],
         )
-        assert "foo" in _pins(result)
+        assert _pins(result) == {
+            "foo": V("2.0"),
+            "sphinx": V("7.0"),
+            "pytest": V("8.0"),
+        }
+
+        lock = result.target_results[0].lock
+        assert lock is not None
+        assert {name: pin.version for name, pin in lock.pins.items()} == {
+            "foo": "2.0",
+            "sphinx": "7.0",
+            "pytest": "8.0",
+        }
 
 
 def _diagnostics(error: ResolutionError, *, detailed: bool = True) -> str:
