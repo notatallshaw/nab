@@ -129,6 +129,7 @@ def test_projection_preserves_unordered_identity_runs_and_equal_versions(
     tags = target().tags
     assert tags is not None
     view = CandidatePreparation(rows).for_tags(tags)
+
     assert view.distributions == (rows[1], rows[3], rows[5])
     assert view.tag_exclusions == ((first, 2), (third, 1))
     assert view.empty_versions == 1
@@ -136,6 +137,7 @@ def test_projection_preserves_unordered_identity_runs_and_equal_versions(
     separate = CandidatePreparation(
         [(first, refused), (equal_first, refused)]
     ).for_tags(tags)
+
     assert separate.tag_exclusions == ((first, 1), (equal_first, 1))
     assert separate.empty_versions == 1
 
