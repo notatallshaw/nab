@@ -7,11 +7,13 @@ vocabulary.
 
 from __future__ import annotations
 
+__lazy_modules__ = ("nab_provider.subdir",)
+
 import re
 from typing import TYPE_CHECKING
 
-from ._value import SlottedValue
 from .subdir import subdirectory_escapes
+from .value import SlottedValue
 
 if TYPE_CHECKING:
     from pathlib import Path

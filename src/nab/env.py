@@ -6,6 +6,11 @@ Help and refusal paths import this module, so it avoids :mod:`typing`.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections.abc",
+    "os",
+)
+
 import os
 from collections.abc import Mapping  # noqa: TC003 - that block imports typing
 

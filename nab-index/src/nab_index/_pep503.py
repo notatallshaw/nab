@@ -7,6 +7,13 @@ client both have to read the same anchor-tag shape.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "hashlib",
+    "json",
+    "nab_provider.digest",
+    "urllib.parse",
+)
+
 import hashlib
 import json
 from typing import TYPE_CHECKING

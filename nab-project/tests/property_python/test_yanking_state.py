@@ -57,7 +57,9 @@ def cache_data(harness: Harness, artifact: Artifact, node: Node) -> Candidate:
             pins.append(Requirement(request.text))
     if node.extra:
         dependencies[node.name] = VersionRange.singleton(Version(artifact.version))
-    candidate = Candidate(node.text, Version(artifact.version), artifact.withdrawn)
+    candidate = Candidate(
+        node.text, Version(artifact.version), withdrawn=artifact.withdrawn
+    )
     harness.search.catalogue.facts[candidate] = CandidateData(
         harness.search.catalogue.provider, dependencies, tuple(pins)
     )
@@ -71,15 +73,19 @@ def check_supports(harness: Harness, selected: dict[Node, Artifact]) -> None:
     available = frozenset(
         node
         for node, artifact in selected.items()
-        if Candidate(node.text, Version(artifact.version), artifact.withdrawn)
+        if Candidate(node.text, Version(artifact.version), withdrawn=artifact.withdrawn)
         in search.catalogue.facts
     )
     expected = harness.case.reachable(files, frozenset(selected), available)
+
     assert {
         node_for(search.items[token].package) for token in search.supports
     } == expected
+
     for node, artifact in selected.items():
-        candidate = Candidate(node.text, Version(artifact.version), artifact.withdrawn)
+        candidate = Candidate(
+            node.text, Version(artifact.version), withdrawn=artifact.withdrawn
+        )
         token = search.identify(candidate)
         assert search.is_ready(MetadataProxy(token)) == (node in expected)
 
@@ -150,7 +156,7 @@ def test_grounding_and_proofs_survive_selection_and_cache_changes(
         }
         decisions = {
             node.text: harness.search.identify(
-                Candidate(node.text, Version(item.version), item.withdrawn)
+                Candidate(node.text, Version(item.version), withdrawn=item.withdrawn)
             )
             for node, item in selected.items()
         }

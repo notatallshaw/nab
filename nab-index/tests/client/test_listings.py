@@ -99,7 +99,7 @@ def test_unusable_url_is_skipped(file_entry: dict[str, object], bad_url: str) ->
 
 
 @pytest.mark.parametrize(
-    "suffix", ["py3-none-any.whl", "tar.gz"], ids=["wheel", "sdist"]
+    "suffix", ["py3-none-any.whl", "tar.gz", "zip"], ids=["wheel", "sdist", "zip"]
 )
 def test_oversized_version_is_skipped(
     wheel_entry: dict[str, object], oversized_integer: str, suffix: str

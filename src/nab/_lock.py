@@ -12,6 +12,30 @@ defines it.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_resolver.diagnostics",
+    "datetime",
+    "errno",
+    "nab._cli.parse",
+    "nab._resolve",
+    "nab._run",
+    "nab._version",
+    "nab.config.model",
+    "nab.flagtypes",
+    "nab.output",
+    "nab_project",
+    "nab_project.lockfile",
+    "nab_project.paths",
+    "nab_project.pyproject_files",
+    "nab_project.resolve",
+    "nab_provider.requirements_file",
+    "nab_provider.target",
+    "os",
+    "stat",
+    "string",
+    "tempfile",
+)
+
 import contextlib
 import errno
 import os
@@ -19,7 +43,6 @@ import shlex
 import stat
 import sys
 import tempfile
-from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from string import Formatter
@@ -70,6 +93,8 @@ from nab_provider.requirements_file import (
     resolve_groups_to_requirements,
 )
 from nab_provider.target import IntractableMarkerError, UnevaluableMarkerError
+from nab_provider.value import Record, replace
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from ._cli.parse import is_option, option_tokens
 from ._resolve import (
@@ -168,6 +193,8 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     project_requires_python: str | None = None,
     project_uploaded_prior_to: str | None = None,
     project_dist_policy: DistPolicyFlag | None = None,
+    project_assume_universal_deps: bool | None = None,
+    project_allow_zip_sdists: bool | None = None,
     project_build_policy: BuildPolicyFlag | None = None,
     project_build_requires_depth: int | None = None,
     project_decision_order: DecisionOrderFlag | None = None,
@@ -218,6 +245,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     if locked and (format != "pylock" or is_stdout(output)):
         printer().error("--locked is only supported for pylock output to a file.")
         sys.exit(1)
+
     if build_requirements:
         _refuse_group_selection_with_build_requirements(
             groups=groups,
@@ -228,6 +256,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
             base_group=project_base_group,
             build_group=project_build_group,
         )
+
     overrides = _cli_overrides(
         cli_resolution=project_resolution,
         cli_offline=offline,
@@ -237,6 +266,8 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         cli_requires_python=project_requires_python,
         cli_uploaded_prior_to=project_uploaded_prior_to,
         cli_dist_policy=project_dist_policy,
+        cli_assume_universal_deps=project_assume_universal_deps,
+        cli_allow_zip_sdists=project_allow_zip_sdists,
         cli_build_policy=project_build_policy,
         cli_build_requires_depth=project_build_requires_depth,
         cli_decision_order=project_decision_order,
@@ -256,6 +287,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     )
     project_overrides = project_config_overrides(overrides)
     _project_cli_overrides_or_exit(project_overrides)
+
     ladder = read_config_ladder(path, overrides)
     _reject_python_flag_in_universal(ladder, python)
     anchor = _determine_lock_anchor(
@@ -265,6 +297,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         build_requirements=build_requirements,
         upgrade=upgrade,
     )
+
     config = _load_config(
         path,
         discover_workspace=workspace_discovery,
@@ -272,20 +305,25 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         cli_overrides=project_overrides,
     )
     inputs = config.resolve_inputs()
+
     if build_requirements:
         inputs = inputs_for_build_requirements(inputs)
+
     if locked and config.mode is ResolveMode.UNIVERSAL:
         printer().error("--locked is not supported in universal mode.")
         sys.exit(1)
+
     _check_targets_or_exit(config)
     settings = _layered_run_settings_or_exit(ladder)
     effective_cache_dir = _resolve_effective_cache_dir(settings.cache_dir, cache=cache)
+
     provenance = _build_provenance(
         path,
         config=config,
         anchor=anchor,
         cli_project_overrides=settings.cli_project_overrides,
     )
+
     selected_groups = resolve_group_selection(
         path, groups=groups, all_groups=all_groups
     )
@@ -323,7 +361,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
             run, config=config, inputs=inputs, workspace_to_drop=workspace_to_drop
         )
 
-    transport = _make_resolve_transport(settings.http_backend, offline=settings.offline)
+    transport = _make_resolve_transport(settings.http_backend)
     result = _resolve(
         path,
         config=config,
@@ -354,6 +392,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     if locked:
         _check_locked(lock_input, run=run)
         return
+
     _emit_or_exit(
         lambda: _emit(
             lock_input,
@@ -486,13 +525,27 @@ _join_command: Callable[[Iterable[str]], str] = (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class _LockRun:
+class _LockRun(Record):
     """The flags that decide which file ``nab lock`` writes and what goes in it.
 
     ``--locked`` writes nothing, so its failure has to name the run that would
     rewrite the file it just read.
     """
+
+    __slots__ = __match_args__ = (
+        "path",
+        "output",
+        "groups",
+        "all_groups",
+        "extras",
+        "all_extras",
+        "offline",
+        "build_requirements",
+        "workspace_discovery",
+        "no_emit_workspace",
+        "cli_overrides",
+        "upgrade",
+    )
 
     path: Path
     output: Path | None
@@ -506,6 +559,35 @@ class _LockRun:
     no_emit_workspace: bool
     cli_overrides: Mapping[str, object]
     upgrade: bool
+
+    def __init__(  # noqa: PLR0913 - One argument per record field.
+        self,
+        *,
+        path: Path,
+        output: Path | None,
+        groups: tuple[str, ...],
+        all_groups: bool,
+        extras: tuple[str, ...],
+        all_extras: bool,
+        offline: bool | None,
+        build_requirements: bool,
+        workspace_discovery: bool,
+        no_emit_workspace: bool,
+        cli_overrides: Mapping[str, object],
+        upgrade: bool,
+    ) -> None:
+        self.path = path
+        self.output = output
+        self.groups = groups
+        self.all_groups = all_groups
+        self.extras = extras
+        self.all_extras = all_extras
+        self.offline = offline
+        self.build_requirements = build_requirements
+        self.workspace_discovery = workspace_discovery
+        self.no_emit_workspace = no_emit_workspace
+        self.cli_overrides = cli_overrides
+        self.upgrade = upgrade
 
     def refresh_command(self) -> str:
         """Render this run without ``--locked``, ready to paste into a shell."""
@@ -618,7 +700,10 @@ def _fast_fail_locked(
     # A stat that failed is not an absent lock.
     if path_state(target) is PathState.ABSENT:
         printer().error(
-            f"--locked: no lockfile at {target} to check; run `{refresh}` first."
+            DiagnosticMessage(
+                f"--locked: no lockfile at {target} to check",
+                suggestions=(Suggestion(f"run `{refresh}` first."),),
+            )
         )
         sys.exit(1)
 
@@ -645,21 +730,29 @@ def _fast_fail_locked(
         sys.exit(1)
     except LockfileSyntaxError as e:
         printer().error(
-            f"--locked: lockfile {target} is not valid TOML: {e};"
-            f" re-run `{refresh}` to regenerate it."
+            DiagnosticMessage(
+                (f"--locked: lockfile {target} is not valid TOML: {e}"),
+                suggestions=(Suggestion(f"re-run `{refresh}` to regenerate it."),),
+            )
         )
         sys.exit(1)
     except InvalidLockfileError as e:
         printer().error(
-            f"--locked: lockfile {target} is not a valid PEP 751 lockfile: {e};"
-            f" re-run `{refresh}` to regenerate it."
+            DiagnosticMessage(
+                (f"--locked: lockfile {target} is not a valid PEP 751 lockfile: {e}"),
+                suggestions=(Suggestion(f"re-run `{refresh}` to regenerate it."),),
+            )
         )
         sys.exit(1)
+
     if disqualification is None:
         return
+
     printer().error(
-        f"--locked: lockfile {target} is out of date: {disqualification.reason};"
-        f" re-run `{refresh}` to update it."
+        DiagnosticMessage(
+            (f"--locked: lockfile {target} is out of date: {disqualification.reason}"),
+            suggestions=(Suggestion(f"re-run `{refresh}` to update it."),),
+        )
     )
     sys.exit(1)
 
@@ -747,8 +840,12 @@ def _check_locked(lock_input: LockInput, *, run: _LockRun) -> None:
         printer().done(f"Lockfile {target} is up to date.")
         return
     printer().error(
-        f"--locked: lockfile {target} is out of date;"
-        f" re-run `{run.refresh_command()}` to update it."
+        DiagnosticMessage(
+            (f"--locked: lockfile {target} is out of date"),
+            suggestions=(
+                Suggestion(f"re-run `{run.refresh_command()}` to update it."),
+            ),
+        )
     )
     sys.exit(1)
 
@@ -780,10 +877,10 @@ def _render_or_exit(render: Callable[[], str]) -> str:
     try:
         return render()
     except (MissingHashError, LockValidationError, IntractableMarkerError) as e:
-        printer().error(f"cannot lock: {e}")
+        printer().error(e, prefix="cannot lock: ")
         sys.exit(1)
     except (DisjointnessError, DivergentBaseDependencyError) as e:
-        printer().error(str(e))
+        printer().error(e)
         sys.exit(1)
 
 
@@ -946,17 +1043,30 @@ def _refuse_untemplated(lock_input: LockInput, output: Path) -> NoReturn:
     separating = _separating_vars(targets)
     if not separating:
         printer().error(
-            f"the resolve produced {count} tuples and no --output template"
-            f" variable tells them apart, so {output} cannot hold them."
-            "  Emit pylock output instead."
+            DiagnosticMessage(
+                (
+                    f"the resolve produced {count} tuples and no --output template "
+                    f"variable tells them apart, so {output} cannot hold them"
+                ),
+                suggestions=(Suggestion("emit pylock output instead"),),
+            )
         )
         sys.exit(1)
+
     placeholders = _and_list([f"{{{name}}}" for name in separating])
     example = "constraints" + "".join(f"-{{{name}}}" for name in separating) + ".txt"
     printer().error(
-        f"the resolve produced {count} tuples but --output {output} has no"
-        f" template variable to disambiguate.  Use {placeholders} in the path,"
-        f" e.g.:\n  --output '{example}'"
+        DiagnosticMessage(
+            (
+                f"the resolve produced {count} tuples but --output {output} has no "
+                "template variable to disambiguate"
+            ),
+            suggestions=(
+                Suggestion(
+                    f"use {placeholders} in the path, e.g.:\n  --output '{example}'"
+                ),
+            ),
+        )
     )
     sys.exit(1)
 
@@ -987,14 +1097,21 @@ def _refuse_collision(
     )
     if not missing:
         printer().error(
-            f"{head} no --output template variable tells them apart."
-            "  Emit pylock output instead."
+            DiagnosticMessage(
+                f"{head} no --output template variable tells them apart",
+                suggestions=(Suggestion("emit pylock output instead"),),
+            )
         )
         sys.exit(1)
     placeholders = _and_list([f"{{{name}}}" for name in missing])
     printer().error(
-        f"{head} --output {output} is missing a template variable to"
-        f" disambiguate.  Add {placeholders} to the path."
+        DiagnosticMessage(
+            (
+                f"{head} --output {output} is missing a template variable to "
+                "disambiguate"
+            ),
+            suggestions=(Suggestion(f"add {placeholders} to the path."),),
+        )
     )
     sys.exit(1)
 
@@ -1115,7 +1232,7 @@ def _render_requirements_or_exit(
                 lock_input, output_path=output_path
             )
     except MissingHashError as e:
-        printer().error(f"cannot lock: {e}")
+        printer().error(e, prefix="cannot lock: ")
         sys.exit(1)
     return text, sum(len(lock.pins) for lock in lock_input.targets.values())
 
@@ -1139,7 +1256,7 @@ def _build_provenance(
     """
     python_specifier: str | None
     platforms: tuple[str, ...]
-    if config.mode is ResolveMode.UNIVERSAL and config.matrix is not None:
+    if config.matrix is not None:
         python_specifier = config.matrix.python
         platforms = tuple(p.label for p in config.matrix.platforms)
     else:
@@ -1239,8 +1356,10 @@ def _validate_pylock_output_name(
     """
     if format != "pylock" or output is None or is_stdout(output):
         return
+
     if is_valid_pylock_path(output):
         return
+
     if not output.name:
         printer().error(
             f"--output {str(output)!r} names a directory, not a file; the"
@@ -1253,8 +1372,13 @@ def _validate_pylock_output_name(
     dotted = output.name.replace("-", ".")
     suggestion = dotted if is_valid_pylock_path(Path(dotted)) else "pylock.toml"
     printer().error(
-        f"output file name {output.name!r} must match 'pylock.toml'"
-        " or 'pylock.<name>.toml' per PEP 751 (note the dot separator,"
-        f" not a hyphen).  Try {suggestion!r}."
+        DiagnosticMessage(
+            (
+                f"output file name {output.name!r} must match 'pylock.toml' or "
+                "'pylock.<name>.toml' per PEP 751 (note the dot separator, not a "
+                "hyphen)"
+            ),
+            suggestions=(Suggestion(f"use {suggestion!r}."),),
+        )
     )
     sys.exit(1)

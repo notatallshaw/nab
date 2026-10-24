@@ -37,9 +37,8 @@ Wrote req-3.12-extra-cpu.txt (12 packages, tuple py312-linux_x86_64-extra-cpu)
 Wrote req-3.12-extra-gpu.txt (14 packages, tuple py312-linux_x86_64-extra-gpu)
 ```
 
-A template that maps two targets onto one path is rejected. The error names variables that can
-separate them. If no variable names the differing axis, such as libc or implementation, use pylock
-output instead.
+nab rejects a template when two targets would write to the same path. The error lists any template
+variables that distinguish them. If the templates cannot distinguish the targets, use pylock output.
 
 ## Universal output
 
@@ -58,4 +57,4 @@ Universal mode (`[tool.nab].mode = "universal"`) is supported for all three form
 If any target fails, nab writes no lock or requirements output. The report goes to stderr and the
 command exits `1`; see [Resolution failures](diagnostics.md).
 
-[pep 751]: https://peps.python.org/pep-0751/
+[pep 751]: https://packaging.python.org/en/latest/specifications/pylock-toml/

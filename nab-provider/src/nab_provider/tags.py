@@ -21,10 +21,11 @@ interpreter and abi, which is what pip's ``--python-version`` does.
 
 from __future__ import annotations
 
+__lazy_modules__ = ("nab_provider._vendor.packaging.version",)
+
 import enum
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
 from functools import cache, cached_property, lru_cache
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeVar
@@ -32,7 +33,7 @@ from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeVar
 from nab_provider._vendor.packaging import tags as ptags
 from nab_provider._vendor.packaging.version import Version
 
-from ._value import SlottedValue
+from .value import HashableRecord, SlottedValue
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -48,6 +49,7 @@ __all__ = [
     "PlatformSpec",
     "TagSet",
     "TagsSource",
+    "parse_wheel_tag_set",
     "platform_kind",
     "python_axis_accepts",
     "supports_free_threading",
@@ -132,9 +134,7 @@ _X86_GLIBC2_MINOR_FLOOR = 5
 _OTHER_GLIBC2_MINOR_FLOOR = 17
 
 
-# PlatformSpec is a cache key and needs frozen fields and copy/pickle support.
-@dataclass(frozen=True)
-class PlatformSpec:
+class PlatformSpec(HashableRecord):
     """Concrete tag knobs for one matrix platform_id.
 
     ``libc`` names the C library the Linux target runs; a machine links one,
@@ -158,14 +158,48 @@ class PlatformSpec:
     ``abi3``) of a CPython 3.13+ free-threaded build.
     """
 
-    platform_id: str
-    libc: Libc = DEFAULT_LIBC
-    runs_on_libc: tuple[int, int] | None = None  # any libc version
-    runs_on_macos: tuple[int, int] | None = None  # any macOS version
-    platform_release: str = ""
-    platform_version: str = ""
-    free_threaded: bool = False
-    pypy_abi: str | None = None
+    __match_args__ = (
+        "platform_id",
+        "libc",
+        "runs_on_libc",
+        "runs_on_macos",
+        "platform_release",
+        "platform_version",
+        "free_threaded",
+        "pypy_abi",
+    )
+
+    platform_id: Final[str]
+    libc: Final[Libc]
+    runs_on_libc: Final[tuple[int, int] | None]  # any libc version
+    runs_on_macos: Final[tuple[int, int] | None]  # any macOS version
+    platform_release: Final[str]
+    platform_version: Final[str]
+    free_threaded: Final[bool]
+    pypy_abi: Final[str | None]
+
+    def __init__(
+        self,
+        platform_id: str,
+        *,
+        libc: Libc = DEFAULT_LIBC,
+        runs_on_libc: tuple[int, int] | None = None,
+        runs_on_macos: tuple[int, int] | None = None,
+        platform_release: str = "",
+        platform_version: str = "",
+        free_threaded: bool = False,
+        pypy_abi: str | None = None,
+    ) -> None:
+        """Declare one platform's wheel compatibility settings."""
+        self.platform_id = platform_id
+        self.libc = libc
+        self.runs_on_libc = runs_on_libc
+        self.runs_on_macos = runs_on_macos
+        self.platform_release = platform_release
+        self.platform_version = platform_version
+        self.free_threaded = free_threaded
+        self.pypy_abi = pypy_abi
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         """Reject a knob the declared platform cannot carry.
@@ -484,8 +518,7 @@ def _parse_tag_str(tag_str: str) -> frozenset[Tag] | None:
     return frozenset(_intern_tag(t) for t in raw)
 
 
-@lru_cache(maxsize=65536)
-def wheel_tag_set(filename: str) -> frozenset[Tag] | None:
+def parse_wheel_tag_set(filename: str) -> frozenset[Tag] | None:
     """Parse a wheel filename into the set of tags it advertises.
 
     Per PEP 427 the filename's last three dash-separated segments
@@ -493,10 +526,8 @@ def wheel_tag_set(filename: str) -> frozenset[Tag] | None:
     dot-separated compressed set.  Returns ``None`` for a non-wheel
     filename or one with too few segments.
 
-    The tag set is a pure function of the filename, so the whole
-    result is memoized on it, and a repeated filename skips the split.
-    The parse and Tag interning are shared further across distinct
-    filenames by :func:`_parse_tag_str`, keyed on the tag suffix.
+    ``wheel_tag_set`` memoizes filenames. ``parse_wheel_tag_set`` reuses
+    only the tag-suffix cache.
     """
     if not filename.endswith(".whl"):
         return None
@@ -506,6 +537,12 @@ def wheel_tag_set(filename: str) -> frozenset[Tag] | None:
         return None
 
     return _parse_tag_str(filename[len(head) + 1 : -4])
+
+
+wheel_tag_set = lru_cache(maxsize=65536)(parse_wheel_tag_set)
+# Keep the cached entry point's import name for pickling.
+wheel_tag_set.__name__ = "wheel_tag_set"
+wheel_tag_set.__qualname__ = "wheel_tag_set"
 
 
 def _build_tag_sort_key(filename: str) -> tuple[int, str]:
@@ -608,13 +645,14 @@ class _AxisIndex(SlottedValue):
         axis, so no tag is reachable both as a block member and as an entry
         naming its own platform.
         """
+        offset = self.platforms.get(tag.platform)
+        if offset is None:
+            return self.fixed.get(tag)
         base = self.multiplied.get((tag.interpreter, tag.abi))
         if base is None and _is_pypy_native(tag):
             base = self.multiplied.get((tag.interpreter, None))
         if base is not None:
-            offset = self.platforms.get(tag.platform)
-            if offset is not None:
-                return base + offset
+            return base + offset
         return self.fixed.get(tag)
 
 
@@ -718,6 +756,13 @@ class TagSet(SlottedValue):
         wheel_tags = wheel_tag_set(wheel_filename)
         if wheel_tags is None:
             return False
+        rank_index = self._placed.get(wheel_tags, _UNPLACED)
+        if rank_index is _UNPLACED:
+            rank_index = self._place(wheel_tags)
+        return rank_index is not None
+
+    def accepts_tags(self, wheel_tags: frozenset[Tag]) -> bool:
+        """Whether an already-parsed wheel tag group matches this target."""
         rank_index = self._placed.get(wheel_tags, _UNPLACED)
         if rank_index is _UNPLACED:
             rank_index = self._place(wheel_tags)

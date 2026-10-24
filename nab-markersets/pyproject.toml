@@ -9,6 +9,7 @@ authors = [
     { name = "Damian Shaw", email = "damian.peter.shaw@gmail.com" },
 ]
 requires-python = ">=3.10"
+dependencies = ["nab-resolver==0.0.23.dev0"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",

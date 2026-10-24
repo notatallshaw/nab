@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections",
+    "nab_provider._vendor.packaging.ranges",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.extra_keys",
+    "nab_provider.yank_candidates",
+    "nab_resolver.ranges",
+)
+
 from collections import deque
-from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from nab_resolver.errors import (
     ResolutionError,
@@ -19,6 +27,7 @@ from nab_resolver.resolver import BaseProvider, Resolver, ResolverStats
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.utils import canonicalize_name
 from .extra_keys import split_extra
+from .value import HashableRecord
 from .yank_candidates import Candidate, UnavailableMetadataError
 
 if TYPE_CHECKING:
@@ -32,13 +41,25 @@ if TYPE_CHECKING:
     from .yank_candidates import YankCandidates
 
 
-@dataclass(frozen=True, slots=True)
-class PreferenceScope:
+class PreferenceScope(HashableRecord):
     """Keep selected ancestors fixed and selected non-yanked packages non-yanked."""
 
-    fixed: frozenset[Candidate] = frozenset()
-    live: frozenset[str] = frozenset()
-    target: str = ""
+    __slots__ = __match_args__ = ("fixed", "live", "target")
+
+    fixed: Final[frozenset[Candidate]]
+    live: Final[frozenset[str]]
+    target: Final[str]
+
+    def __init__(
+        self,
+        fixed: frozenset[Candidate] = frozenset(),
+        live: frozenset[str] = frozenset(),
+        target: str = "",
+    ) -> None:
+        """Fix selected ancestors and preserve live non-yanked choices."""
+        self.fixed = fixed
+        self.live = live
+        self.target = target
 
 
 class PreparationStatus(Enum):
@@ -58,12 +79,17 @@ class _NeedLiveProofError(Exception):
         self.scope = scope
 
 
-@dataclass(frozen=True, slots=True)
-class _Context:
+class _Context(HashableRecord):
     """A selected assignment whose known metadata may already establish failure."""
 
-    scope: PreferenceScope
-    selected: frozenset[Candidate]
+    __slots__ = __match_args__ = ("scope", "selected")
+
+    scope: Final[PreferenceScope]
+    selected: Final[frozenset[Candidate]]
+
+    def __init__(self, scope: PreferenceScope, selected: frozenset[Candidate]) -> None:
+        self.scope = scope
+        self.selected = selected
 
 
 class _NeedContextProofError(Exception):
@@ -443,6 +469,8 @@ class _KnownFacts(BaseProvider[str, int]):
         )
         base, extra = split_extra(package)
         if extra is not None:
-            underlying = Candidate(base, candidate.version, candidate.withdrawn)
+            underlying = Candidate(
+                base, candidate.version, withdrawn=candidate.withdrawn
+            )
             result[base] = Range.singleton(self.identify(underlying))
         return result

@@ -12,6 +12,16 @@ everything else is imported from the module that defines it.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab._resolve",
+    "nab._run",
+    "nab.flagtypes",
+    "nab.output",
+    "nab_project.download",
+    "nab_project.resolve",
+    "sys",
+)
+
 import sys
 from pathlib import Path
 
@@ -68,6 +78,8 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     project_requires_python: str | None = None,
     project_uploaded_prior_to: str | None = None,
     project_dist_policy: DistPolicyFlag | None = None,
+    project_assume_universal_deps: bool | None = None,
+    project_allow_zip_sdists: bool | None = None,
     project_build_policy: BuildPolicyFlag | None = None,
     project_build_requires_depth: int | None = None,
     project_decision_order: DecisionOrderFlag | None = None,
@@ -123,6 +135,8 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
         cli_requires_python=project_requires_python,
         cli_uploaded_prior_to=project_uploaded_prior_to,
         cli_dist_policy=project_dist_policy,
+        cli_assume_universal_deps=project_assume_universal_deps,
+        cli_allow_zip_sdists=project_allow_zip_sdists,
         cli_build_policy=project_build_policy,
         cli_build_requires_depth=project_build_requires_depth,
         cli_decision_order=project_decision_order,
@@ -142,16 +156,20 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     )
     project_overrides = project_config_overrides(overrides)
     _project_cli_overrides_or_exit(project_overrides)
+
     ladder = read_config_ladder(path, overrides)
     _reject_python_flag_in_universal(ladder, python)
+
     config = _load_config(
         path,
         discover_workspace=workspace_discovery,
         cli_overrides=project_overrides,
     )
+
     settings = _layered_run_settings_or_exit(ladder, produces_lock=False)
     effective_cache_dir = _resolve_effective_cache_dir(settings.cache_dir, cache=cache)
     _check_targets_or_exit(config)
+
     transport = _make_transport(settings.http_backend)
     result = _resolve(
         path,
@@ -167,6 +185,7 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
         progress=ProgressReporter(printer()),
         max_concurrency=settings.max_concurrency,
     )
+
     lock_input = build_lock_input(
         result,
         inputs=config.resolve_inputs(),
@@ -184,7 +203,7 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
             offline=settings.offline,
         )
     except DownloadError as e:
-        printer().error(f"download failed: {e}")
+        printer().error(e, prefix="download failed: ")
         sys.exit(1)
     except OSError as e:
         printer().error(f"cannot write to output directory {output}: {e}")

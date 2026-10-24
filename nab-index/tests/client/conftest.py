@@ -15,14 +15,15 @@ def wheel_entry() -> dict[str, object]:
     }
 
 
-@pytest.fixture(params=["wheel", "sdist"])
+@pytest.fixture(params=["wheel", "sdist", "zip-sdist"])
 def file_entry(
     wheel_entry: dict[str, object], request: pytest.FixtureRequest
 ) -> dict[str, object]:
     """Exercise record construction for each supported distribution format."""
-    if request.param == "sdist":
+    if request.param in {"sdist", "zip-sdist"}:
+        suffix = "tar.gz" if request.param == "sdist" else "zip"
         return wheel_entry | {
-            "filename": "foo-1.0.tar.gz",
-            "url": "https://example.com/foo/foo-1.0.tar.gz",
+            "filename": f"foo-1.0.{suffix}",
+            "url": f"https://example.com/foo/foo-1.0.{suffix}",
         }
     return wheel_entry

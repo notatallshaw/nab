@@ -6,17 +6,26 @@ partway leaves any existing file untouched.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "base64",
+    "errno",
+    "stat",
+    "sys",
+)
+
 import contextlib
+import errno
 import os
-import shutil
-import tempfile
+import stat
+import sys
 import threading
+from base64 import urlsafe_b64encode
 from contextlib import contextmanager
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+    from pathlib import Path
 
 
 __all__ = [
@@ -25,6 +34,20 @@ __all__ = [
 ]
 
 _umask_lock = threading.Lock()
+
+# Six bytes encode to eight filename characters without padding.
+_TEMP_NAME_BYTES = 6
+# Use Python 3.15 tempfile's bounded retry budget.
+_TEMP_NAME_ATTEMPTS = 20
+
+# These descriptor flags are not available on every supported OS.
+_STAGING_OPEN_FLAGS = (
+    os.O_RDWR
+    | os.O_CREAT
+    | os.O_EXCL
+    | getattr(os, "O_BINARY", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+)
 
 
 def _default_mode() -> int:
@@ -40,23 +63,44 @@ def _default_mode() -> int:
     return 0o666 & ~umask
 
 
+def _temporary_file(path: Path) -> tuple[int, Path]:
+    """Open a staging file exclusively beside the destination."""
+    directory = path.parent.absolute()
+    for attempt in range(_TEMP_NAME_ATTEMPTS):
+        token = urlsafe_b64encode(os.urandom(_TEMP_NAME_BYTES)).decode("ascii")
+        temporary = directory / f"{path.name}.{token}.tmp"
+        sys.audit("tempfile.mkstemp", os.fspath(temporary))
+
+        try:
+            fd = os.open(temporary, _STAGING_OPEN_FLAGS, 0o600)
+        except FileExistsError:
+            continue
+        except PermissionError:
+            if (
+                sys.platform == "win32"
+                and directory.is_dir()
+                and attempt + 1 < _TEMP_NAME_ATTEMPTS
+            ):
+                continue
+            raise
+        return fd, temporary
+
+    raise FileExistsError(errno.EEXIST, "No usable temporary file name found")
+
+
 @contextmanager
 def _staged(path: Path) -> Generator[int, None, None]:
-    """Yield a file descriptor for a temp file beside ``path``.
+    """Yield a staging descriptor beside ``path``; replace it on a clean exit.
 
-    On a clean exit the temp file is renamed over ``path``; on any exception it
-    is removed and ``path`` is left as it was. Staging in the destination
-    directory keeps the rename on one filesystem.
+    Cleanup OSErrors do not replace the original failure.
     """
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
-    tmp_path = Path(tmp)
+    fd, tmp_path = _temporary_file(path)
     try:
         yield fd
 
-        # The rename carries the temp file's own mode across, and mkstemp
-        # creates at 0600.
+        # The rename carries the staging file's mode across.
         if path.exists():
-            shutil.copymode(path, tmp_path)
+            tmp_path.chmod(stat.S_IMODE(path.stat().st_mode))
         else:
             tmp_path.chmod(_default_mode())
 

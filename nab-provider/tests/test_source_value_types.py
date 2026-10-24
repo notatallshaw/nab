@@ -19,7 +19,6 @@ from typing import Any, NamedTuple
 
 import pytest
 
-from nab_provider._value import SlottedValue
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.archive import ArchiveRequest
@@ -34,6 +33,7 @@ from nab_provider.policy import (
     SourceRequest,
     VcsSource,
 )
+from nab_provider.value import SlottedValue
 from nab_provider.vcs_request import VcsClone, VcsRequest
 
 SHA = "0" * 40
@@ -144,7 +144,9 @@ CASES = [
             SELECTOR.specifier.to_range(),
             DistPolicy.WHEEL_ONLY,
             False,
+            False,
             BuildPolicy.NEVER,
+            False,
             CUTOFF,
             False,
             "private",
@@ -160,7 +162,9 @@ CASES = [
             OTHER_SELECTOR.specifier.to_range(),
             DistPolicy.SDIST_ONLY,
             True,
+            True,
             BuildPolicy.BUILD_REMOTE,
+            True,
             LATER_CUTOFF,
             True,
             "public",
@@ -173,7 +177,9 @@ CASES = [
         {
             "dist_policy": None,
             "dist_trust_unverified_deps": None,
+            "assume_universal_deps": None,
             "build_policy": None,
+            "allow_zip_sdists": None,
             "uploaded_prior_to": None,
             "uploaded_prior_to_disabled": False,
             "index": None,
@@ -192,7 +198,9 @@ CASES = [
         (
             DistPolicy.WHEEL_ONLY,
             False,
+            False,
             BuildPolicy.NEVER,
+            False,
             CUTOFF,
             False,
             3600,
@@ -200,7 +208,9 @@ CASES = [
         (
             DistPolicy.SDIST_ONLY,
             True,
+            True,
             BuildPolicy.BUILD_REMOTE,
+            True,
             LATER_CUTOFF,
             True,
             60,
@@ -208,7 +218,9 @@ CASES = [
         {
             "dist_policy": None,
             "dist_trust_unverified_deps": None,
+            "assume_universal_deps": None,
             "build_policy": None,
+            "allow_zip_sdists": None,
             "uploaded_prior_to": None,
             "uploaded_prior_to_disabled": False,
             "assume_fresh_seconds": None,

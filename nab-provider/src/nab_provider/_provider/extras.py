@@ -9,6 +9,17 @@ dependency lookup, and the missing-extra fallback.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_provider._provider.listing_diagnosis",
+    "nab_provider._provider.lookahead",
+    "nab_provider._provider.metadata_resolver",
+    "nab_provider._vendor.packaging.ranges",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.errors",
+    "nab_provider.extra_keys",
+    "nab_provider.policy",
+)
+
 import logging
 from typing import TYPE_CHECKING
 
@@ -176,14 +187,16 @@ def _pick_in_mode(
     backtrack = provider.extras_mode == ExtrasMode.BACKTRACK
     unreadable: list[MetadataBlock] = []
     for version in candidates:
-        cached = provider.invalid_metadata_reason(normalized, version)
+        cached = provider.invalid_metadata_message(normalized, version)
         if cached is not None:
-            unreadable.append(MetadataBlock(cached))
+            unreadable.append(
+                MetadataBlock(cached.message, suggestions=cached.suggestions)
+            )
             continue
         try:
             provider.get_dependencies(base, version)
         except MetadataError as exc:
-            unreadable.append(MetadataBlock(str(exc), exc.filtered_sdist_version))
+            unreadable.append(MetadataBlock.from_error(exc))
             continue
         if is_user or not backtrack:
             return version, unreadable

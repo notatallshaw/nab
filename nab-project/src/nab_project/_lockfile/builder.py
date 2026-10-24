@@ -9,7 +9,30 @@ be read directly without a second fetch.  This module also owns the
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_resolver.diagnostics",
+    "collections",
+    "datetime",
+    "nab_project",
+    "nab_project._lockfile.groups",
+    "nab_project._toml",
+    "nab_project.paths",
+    "nab_provider._vendor.packaging.pylock",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.digest",
+    "nab_provider.extra_keys",
+    "nab_provider.iso8601",
+    "nab_provider.metadata",
+    "nab_provider.policy",
+    "nab_provider.records",
+    "pathlib",
+    "tomli",
+    "urllib.parse",
+)
+
 import logging
+import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +50,7 @@ from nab_provider.iso8601 import parse_iso_datetime
 from nab_provider.metadata import validate_specifier_versions
 from nab_provider.policy import DistPolicy
 from nab_provider.records import SdistFile, WheelFile
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .. import toml_io
 from .._toml import tool_nab_section
@@ -326,18 +350,18 @@ def build_target_lock(
 
     if artifacts is None:
         artifacts = ArtifactMemo()
-    if base_roots is None:
-        if selector_roots:
-            msg = (
-                "selector_roots need base_roots:"
-                " without them every package looks selector-only"
-            )
-            raise ValueError(msg)
-        base_roots = ()
+
+    if base_roots is None and selector_roots:
+        msg = (
+            "selector_roots need base_roots:"
+            " without them every package looks selector-only"
+        )
+        raise ValueError(msg)
 
     lock_pins: dict[str, PinShape] = {}
+    normalized_names: dict[str, NormalizedName] = {}
     for raw_name, version in pins.items():
-        canonical = canonicalize_name(raw_name)
+        canonical = _lock_name(raw_name, normalized_names)
         pruned = provider.tag_excluded_wheel_count(canonical, version)
         if pruned:
             logger.debug(
@@ -346,6 +370,7 @@ def build_target_lock(
                 version,
                 pruned,
             )
+
         local_source = provider.local_source_for(canonical)
         if local_source is not None:
             lock_pins[canonical] = LocalPin(
@@ -356,6 +381,7 @@ def build_target_lock(
                 subdirectory=local_source.subdirectory,
             )
             continue
+
         vcs_source = provider.vcs_source_for(canonical)
         if vcs_source is not None:
             lock_pins[canonical] = _vcs_pin_from_source(
@@ -365,30 +391,37 @@ def build_target_lock(
                 resolved_sha=provider.vcs_pin_for(canonical),
             )
             continue
+
         archive_source = provider.archive_source_for(canonical)
         if archive_source is not None:
             lock_pins[canonical] = _archive_pin_from_source(
                 canonical, version, archive_source
             )
             continue
+
         lock_pins[canonical] = _index_pin_from_listing(
             provider, canonical, version, indexes, artifacts
         )
 
     dependencies, base_dependencies = _forward_dependency_graph(
-        provider, pins, resolved_keys
+        provider, pins, resolved_keys, normalized_names=normalized_names
     )
+
+    package_gates: dict[str, tuple[tuple[str, str], ...]] = {}
+    if base_roots is not None:
+        package_gates = _membership_gates(
+            provider,
+            pins,
+            base_roots=base_roots,
+            selector_roots=selector_roots or {},
+        )
+
     return TargetLock(
         target=target,
         pins=lock_pins,
         dependencies=dependencies,
         base_dependencies=base_dependencies,
-        package_gates=_membership_gates(
-            provider,
-            pins,
-            base_roots=base_roots,
-            selector_roots=selector_roots or {},
-        ),
+        package_gates=package_gates,
     )
 
 
@@ -511,10 +544,27 @@ def _reachable_names(
     return reached
 
 
+def _lock_name(
+    name: str, normalized_names: dict[str, NormalizedName]
+) -> NormalizedName:
+    """Reuse a native string's normalized name within one target lock."""
+    # Subclasses can customize dictionary key hashing and equality.
+    if type(name) is not str:
+        return canonicalize_name(name)
+
+    normalized = normalized_names.get(name)
+    if normalized is None:
+        normalized = canonicalize_name(name)
+        normalized_names[name] = normalized
+    return normalized
+
+
 def _forward_dependency_graph(
     provider: LockInputProvider,
     pins: Mapping[str, Version],
     resolved_keys: Iterable[str],
+    *,
+    normalized_names: dict[str, NormalizedName],
 ) -> tuple[dict[str, tuple[str, ...]], dict[str, tuple[str, ...]]]:
     """Build the forward dependency graph among the locked packages.
 
@@ -532,17 +582,17 @@ def _forward_dependency_graph(
     for key in resolved_keys:
         base, extra = split_extra(key)
         if extra is not None:
-            activated_extras[canonicalize_name(base)].add(extra)
+            activated_extras[_lock_name(base, normalized_names)].add(extra)
 
-    pinned = {canonicalize_name(name) for name in pins}
+    pinned = {_lock_name(name, normalized_names) for name in pins}
     graph: dict[str, tuple[str, ...]] = {}
     base_graph: dict[str, tuple[str, ...]] = {}
     extra_deps_map = provider.extra_deps_map
     for raw_name, version in pins.items():
-        canonical = canonicalize_name(raw_name)
+        canonical = _lock_name(raw_name, normalized_names)
         cache_key = (canonical, version)
         base_deps = {
-            canonicalize_name(split_extra(dep)[0])
+            _lock_name(split_extra(dep)[0], normalized_names)
             for dep in provider.deps_cache.get(cache_key, {})
         }
         all_deps = set(base_deps)
@@ -554,7 +604,7 @@ def _forward_dependency_graph(
             extra_map = extra_deps_map.get(cache_key, {})
             for extra in activated:
                 all_deps.update(
-                    canonicalize_name(split_extra(dep)[0])
+                    _lock_name(split_extra(dep)[0], normalized_names)
                     for dep in extra_map.get(extra, {})
                 )
 
@@ -609,12 +659,19 @@ def _index_pin_from_listing(
     ):
         files = [f for f in files if not isinstance(f, WheelFile)]
         if not any(isinstance(f, SdistFile) for f in files):
-            msg = (
-                f"{canonical}=={version} has no sdist, but its dist-policy is "
-                f"'sdist-install'; pick a version that publishes an sdist or "
-                f"change dist-policy for {canonical}"
+            report = DiagnosticMessage(
+                (
+                    f"{canonical}=={version} has no sdist, but its dist-policy is "
+                    "'sdist-install'"
+                ),
+                suggestions=(
+                    Suggestion(
+                        "pick a version that publishes an sdist or change "
+                        f"dist-policy for {canonical}"
+                    ),
+                ),
             )
-            raise MissingSdistError(msg)
+            raise MissingSdistError(report)
 
     wheels = tuple(
         _build_artifact(f, WheelArtifact, artifacts.wheels)
@@ -755,16 +812,30 @@ def _common_requires_python(files: Iterable[WheelFile | SdistFile]) -> str | Non
     not read.
     """
     seen: set[str] = set()
+    previous: tuple[str, int, int] | None = None
     for f in files:
+        # Preserve property reads on record subclasses.
         if f.requires_python is None:
             return None
-        try:
-            validate_specifier_versions(SpecifierSet(f.requires_python))
-        except ValueError:
-            return None
+        requires_python = f.requires_python
+
+        # An iterator can change parsing limits between records.
+        context = (
+            (requires_python, sys.get_int_max_str_digits(), sys.getrecursionlimit())
+            if type(requires_python) is str and sys.version_info >= (3, 11)
+            else None
+        )
+        if context is None or context != previous:
+            try:
+                validate_specifier_versions(SpecifierSet(requires_python))
+            except ValueError:
+                return None
+            previous = context
         seen.add(f.requires_python)
+
     if len(seen) == 1:
         return next(iter(seen))
+
     return None
 
 

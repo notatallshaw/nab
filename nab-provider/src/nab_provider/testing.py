@@ -18,12 +18,22 @@ keywords cannot express, and read the calls back with
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.errors",
+    "nab_provider.overrides",
+    "nab_provider.pep508",
+    "nab_provider.records",
+    "nab_provider.store",
+)
+
 import threading
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar
 
 from ._compat import override
 from ._vendor.packaging.utils import canonicalize_name
 from .errors import IndexAccessError
+from .fetch_port import PrefetchSettings
 from .overrides import PackageOverride
 from .pep508 import parse_requirement
 from .records import (
@@ -186,7 +196,9 @@ class _OverrideBody(TypedDict, total=False):
 
     dist_policy: DistPolicy | None
     dist_trust_unverified_deps: bool | None
+    assume_universal_deps: bool | None
     build_policy: BuildPolicy | None
+    allow_zip_sdists: bool | None
     uploaded_prior_to: datetime | None
     uploaded_prior_to_disabled: bool
     index: str | None
@@ -350,6 +362,7 @@ class FakeFetchPort:
         self.indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
         self.offline = offline
         self.build_config = build_config
+        self.prefetch_settings = PrefetchSettings()
 
         self._serve_metadata = serve_metadata
         self._serve_sdist = serve_sdist

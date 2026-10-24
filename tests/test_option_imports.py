@@ -39,18 +39,28 @@ def test_a_command_invocation_imports_no_option_module() -> None:
 
 
 def test_a_run_reads_the_registry_and_never_the_declaration() -> None:
-    """A run loads ``nab._cli.definition.model`` and no other option module."""
+    """Reading option rows loads the model without the declarations."""
     loaded = _probe(
         "import sys\n"
         "import nab._lock\n"
+        "from nab.config.registry import OPTIONS\n"
+        "assert OPTIONS\n"
         "print(sorted(n for n in sys.modules if n.startswith('nab._cli.definition.')))\n"
     )
+
     assert loaded == ["['nab._cli.definition.model']"]
 
 
 def test_the_command_signatures_reach_their_aliases_through_a_leaf() -> None:
     """A command module needs the aliases, and the leaf is how it gets them."""
-    assert _after_importing("nab._lock")[1] == "True"
+    loaded = _probe(
+        "import sys\n"
+        "from nab._lock import ModeFlag\n"
+        "assert ModeFlag == __import__('typing').Literal['specific', 'universal']\n"
+        f"{_REPORT}"
+    )
+
+    assert loaded[1] == "True"
 
 
 def test_the_alias_leaf_pulls_in_nothing_of_nabs() -> None:

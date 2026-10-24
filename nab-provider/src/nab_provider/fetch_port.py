@@ -33,8 +33,31 @@ if TYPE_CHECKING:
 
 __all__ = [
     "FetchPort",
+    "PrefetchSettings",
     "Waitable",
 ]
+
+
+class PrefetchSettings:
+    """Version windows to prefetch; None leaves the caller's default in place."""
+
+    __slots__ = ("lookahead_versions", "metadata_versions")
+
+    def __init__(
+        self,
+        *,
+        metadata_versions: int | None = None,
+        lookahead_versions: int | None = None,
+    ) -> None:
+        """Set listing and initial lookahead windows; zero disables that prefetch."""
+        if metadata_versions is not None and metadata_versions < 0:
+            msg = "metadata_versions must be non-negative"
+            raise ValueError(msg)
+        if lookahead_versions is not None and lookahead_versions < 0:
+            msg = "lookahead_versions must be non-negative"
+            raise ValueError(msg)
+        self.metadata_versions = metadata_versions
+        self.lookahead_versions = lookahead_versions
 
 
 @runtime_checkable

@@ -2,6 +2,17 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections.abc",
+    "nab_provider._vendor.packaging.errors",
+    "nab_provider._vendor.packaging.markers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.marker_holds",
+    "nab_provider.pep508",
+    "nab_provider.project_requirements",
+    "nab_provider.resolver_inputs",
+)
+
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 

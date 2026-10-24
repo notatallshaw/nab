@@ -57,14 +57,14 @@ _PARSED = _parse_files(json.loads(_LISTING_BYTES), _INDEX_NORM, "pkg")
 _OVER_NESTED = b"[[[]]]"
 
 # A page of only formats nab does not read, so it parses to zero files.
-_ZIP_ONLY_BYTES = json.dumps(
+_INSTALLER_ONLY_BYTES = json.dumps(
     {
         "meta": {"api-version": "1.0"},
         "name": "pkg",
         "files": [
             {
-                "filename": "pkg-1.0.zip",
-                "url": "https://files.example.com/pkg-1.0.zip",
+                "filename": "pkg-1.0.win32.exe",
+                "url": "https://files.example.com/pkg-1.0.win32.exe",
                 "hashes": {"sha256": "deadbeef"},
             }
         ],
@@ -241,7 +241,8 @@ class TestReadFreshParsedListing:
         # A page of formats nab does not read parses to zero files; the blob
         # cannot say so, so the helper declines and the async path reclassifies.
         cache = _cache(tmp_path)
-        files, _ = _warm_bound(cache, body=_ZIP_ONLY_BYTES)
+        files, _ = _warm_bound(cache, body=_INSTALLER_ONLY_BYTES)
+
         assert files == []
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
 
@@ -312,9 +313,12 @@ class TestIdenticalByConstruction:
         self, tmp_path: Path
     ) -> None:
         cache = _cache(tmp_path)
-        _warm_bound(cache, body=_ZIP_ONLY_BYTES)
+        _warm_bound(cache, body=_INSTALLER_ONLY_BYTES)
+
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
+
         client = CachedAsyncSimpleClient(_FakeTransport([]), cache, _INDEX)
+
         assert _run(client.get_files("pkg")) == []
         assert client.served_unreadable_only("pkg")
 

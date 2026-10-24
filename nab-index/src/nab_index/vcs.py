@@ -21,6 +21,17 @@ discarded and refetched.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "hashlib",
+    "nab_provider.vcs_request",
+    "os",
+    "pathlib",
+    "shutil",
+    "subprocess",
+    "tempfile",
+    "urllib.parse",
+)
+
 import hashlib
 import logging
 import os

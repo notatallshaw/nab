@@ -8,6 +8,33 @@ names it by, so one wording serves every rung of the ladder: a bad
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_resolver.diagnostics",
+    "collections",
+    "datetime",
+    "itertools",
+    "nab_index.file_urls",
+    "nab_markersets.python_versions",
+    "nab_project.paths",
+    "nab_project.workspace",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider._vendor.packaging.version",
+    "nab_provider.archive",
+    "nab_provider.iso8601",
+    "nab_provider.overrides",
+    "nab_provider.pep508",
+    "nab_provider.policy",
+    "nab_provider.records",
+    "nab_provider.serialization",
+    "nab_provider.subdir",
+    "nab_provider.tags",
+    "nab_provider.target",
+    "nab_provider.vcs_admission",
+    "pathlib",
+    "urllib.parse",
+)
+
 import itertools
 import re
 from collections import defaultdict
@@ -58,6 +85,7 @@ from nab_provider.tags import (
 )
 from nab_provider.target import PLATFORM_MARKERS, ImplementationOverride, Matrix
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 if TYPE_CHECKING:
     import enum
@@ -140,7 +168,7 @@ _VERSION_MARKER_VARIABLES = frozenset({"python_version", "python_full_version"})
 
 
 class MatrixConfig(ValueType):
-    """User-declared matrix axes for universal resolution."""
+    """User-declared Python, platform and interpreter targets."""
 
     __slots__ = __match_args__ = (
         "python",
@@ -760,6 +788,8 @@ def _check_index_name_uniqueness(indexes: Sequence[IndexConfig]) -> None:
 _PACKAGE_OVERRIDE_BODY_KEYS = frozenset(
     {
         "dist-policy",
+        "assume-universal-deps",
+        "allow-zip-sdists",
         "build-policy",
         "uploaded-prior-to",
         "index",
@@ -772,7 +802,14 @@ _PACKAGE_OVERRIDE_BODY_KEYS = frozenset(
 # A [[tool.nab.package-rules]] entry carries a ``match`` selector plus body keys.
 _PACKAGE_RULE_KEYS = frozenset({"match"}) | _PACKAGE_OVERRIDE_BODY_KEYS
 _INDEX_OVERRIDE_KEYS = frozenset(
-    {"dist-policy", "build-policy", "uploaded-prior-to", "assume-fresh-seconds"}
+    {
+        "dist-policy",
+        "assume-universal-deps",
+        "allow-zip-sdists",
+        "build-policy",
+        "uploaded-prior-to",
+        "assume-fresh-seconds",
+    }
 )
 # Override-body keys not supported yet; rejected so nothing inert ships.
 # ``metadata`` is the nested-table form the flat body keys replace.
@@ -786,6 +823,8 @@ _OVERRIDE_DEFERRED_KEYS = frozenset(
 _PACKAGE_POLICY_FIELDS = (
     ("dist-policy", "dist_policy"),
     ("dist-policy.trust-unverified-deps", "dist_trust_unverified_deps"),
+    ("assume-universal-deps", "assume_universal_deps"),
+    ("allow-zip-sdists", "allow_zip_sdists"),
     ("build-policy", "build_policy"),
     ("uploaded-prior-to", "uploaded_prior_to"),
     ("index", "index"),
@@ -809,12 +848,16 @@ def parse_packages_sugar(
     sugar form has no inner selector key.
     """
     if isinstance(value, list):
-        msg = (
-            f"{where} is the name-keyed table form ([tool.nab.packages.<name>]);"
-            " for one body across several requirements use"
-            " [[tool.nab.package-rules]] with match = [...]"
+        report = DiagnosticMessage(
+            (f"{where} is the name-keyed table form ([tool.nab.packages.<name>])"),
+            suggestions=(
+                Suggestion(
+                    "for one body across several requirements use "
+                    "[[tool.nab.package-rules]] with match = [...]"
+                ),
+            ),
         )
-        raise SourceConfigError(msg)
+        raise SourceConfigError(report)
     if not isinstance(value, dict):
         msg = (
             f"{where} must be a table keyed by package name, got {type(value).__name__}"
@@ -861,12 +904,16 @@ def parse_package_rules(
     index).
     """
     if not isinstance(value, list):
-        msg = (
-            f"{where} must be an array of tables ([[tool.nab.package-rules]]);"
-            " for per-package policy keyed by name use"
-            f" [tool.nab.packages.<name>].  Got {type(value).__name__}"
+        report = DiagnosticMessage(
+            (f"{where} must be an array of tables ([[tool.nab.package-rules]])"),
+            suggestions=(
+                Suggestion(
+                    "for per-package policy keyed by name use "
+                    f"[tool.nab.packages.<name>].  Got {type(value).__name__}"
+                ),
+            ),
         )
-        raise SourceConfigError(msg)
+        raise SourceConfigError(report)
     out: list[PackageOverride] = []
     for i, entry in enumerate(value):
         out.extend(_parse_package_rule_entry(entry, where, i, anchor=anchor))
@@ -913,6 +960,23 @@ def _build_package_overrides(
 ) -> list[PackageOverride]:
     """Turn a validated selector and body into one override per requirement."""
     dist_policy, dist_trust = _parse_override_dist(body.get("dist-policy"), where)
+    assume_universal_deps = (
+        _parse_bool(
+            f"{where}.assume-universal-deps",
+            body["assume-universal-deps"],
+            default=False,
+        )
+        if "assume-universal-deps" in body
+        else None
+    )
+    allow_zip_sdists = (
+        _parse_bool(
+            f"{where}.allow-zip-sdists", body["allow-zip-sdists"], default=False
+        )
+        if "allow-zip-sdists" in body
+        else None
+    )
+
     build_policy = (
         parse_enum(
             body["build-policy"],
@@ -923,21 +987,26 @@ def _build_package_overrides(
         if "build-policy" in body
         else None
     )
+
     uploaded_prior_to, uploaded_disabled = _parse_override_uploaded_prior_to(
         body.get("uploaded-prior-to"),
         where,
         anchor=anchor,
         present="uploaded-prior-to" in body,
     )
+
     route = _parse_override_index(body, where)
     dependencies = _parse_override_dependencies(body.get("dependencies"), where)
     requires_python = _parse_override_requires_python(
         body.get("requires-python"), where
     )
     provides_extra = _parse_override_provides_extra(body.get("provides-extra"), where)
+
     has_body = (
         dist_policy is not None
         or dist_trust is not None
+        or assume_universal_deps is not None
+        or allow_zip_sdists is not None
         or build_policy is not None
         or uploaded_prior_to is not None
         or uploaded_disabled
@@ -952,6 +1021,7 @@ def _build_package_overrides(
             f" {sorted(_PACKAGE_OVERRIDE_BODY_KEYS)!r}"
         )
         raise SourceConfigError(msg)
+
     if route is not None:
         for requirement in requirements:
             if str(requirement.specifier):
@@ -970,6 +1040,8 @@ def _build_package_overrides(
             version_range=requirement.specifier.to_range(),
             dist_policy=dist_policy,
             dist_trust_unverified_deps=dist_trust,
+            assume_universal_deps=assume_universal_deps,
+            allow_zip_sdists=allow_zip_sdists,
             build_policy=build_policy,
             uploaded_prior_to=uploaded_prior_to,
             uploaded_prior_to_disabled=uploaded_disabled,
@@ -1063,9 +1135,16 @@ def _reject_deferred(
     if deferred:
         msg = f"{where}: key(s) {deferred!r} are not supported"
         if flat_metadata_advice and "metadata" in deferred:
-            msg += (
-                "; set metadata as the flat body keys 'dependencies',"
-                " 'requires-python', and 'provides-extra' instead"
+            raise SourceConfigError(
+                DiagnosticMessage(
+                    msg,
+                    suggestions=(
+                        Suggestion(
+                            "set metadata as the flat body keys 'dependencies', "
+                            "'requires-python', and 'provides-extra' instead"
+                        ),
+                    ),
+                )
             )
         raise SourceConfigError(msg)
 
@@ -1098,6 +1177,7 @@ def _parse_index_override_body(
     if not isinstance(body, dict):
         msg = f"{where} must be a table, got {type(body).__name__}"
         raise SourceConfigError(msg)
+
     _reject_deferred(body, where, flat_metadata_advice=False)
     unknown = sorted(set(body) - _INDEX_OVERRIDE_KEYS)
     if unknown:
@@ -1107,7 +1187,25 @@ def _parse_index_override_body(
             " routing and no version scope)"
         )
         raise SourceConfigError(msg)
+
     dist_policy, dist_trust = _parse_override_dist(body.get("dist-policy"), where)
+    assume_universal_deps = (
+        _parse_bool(
+            f"{where}.assume-universal-deps",
+            body["assume-universal-deps"],
+            default=False,
+        )
+        if "assume-universal-deps" in body
+        else None
+    )
+    allow_zip_sdists = (
+        _parse_bool(
+            f"{where}.allow-zip-sdists", body["allow-zip-sdists"], default=False
+        )
+        if "allow-zip-sdists" in body
+        else None
+    )
+
     build_policy = (
         parse_enum(
             body["build-policy"],
@@ -1118,6 +1216,7 @@ def _parse_index_override_body(
         if "build-policy" in body
         else None
     )
+
     uploaded_prior_to, uploaded_disabled = _parse_override_uploaded_prior_to(
         body.get("uploaded-prior-to"),
         where,
@@ -1127,9 +1226,12 @@ def _parse_index_override_body(
     assume_fresh_seconds = _parse_index_assume_fresh(
         body.get("assume-fresh-seconds"), where
     )
+
     has_body = (
         dist_policy is not None
         or dist_trust is not None
+        or assume_universal_deps is not None
+        or allow_zip_sdists is not None
         or build_policy is not None
         or uploaded_prior_to is not None
         or uploaded_disabled
@@ -1141,9 +1243,12 @@ def _parse_index_override_body(
             f" {sorted(_INDEX_OVERRIDE_KEYS)!r}"
         )
         raise SourceConfigError(msg)
+
     return IndexOverride(
         dist_policy=dist_policy,
         dist_trust_unverified_deps=dist_trust,
+        assume_universal_deps=assume_universal_deps,
+        allow_zip_sdists=allow_zip_sdists,
         build_policy=build_policy,
         uploaded_prior_to=uploaded_prior_to,
         uploaded_prior_to_disabled=uploaded_disabled,
@@ -1219,12 +1324,16 @@ def _parse_override_uploaded_prior_to(
     if value is False:
         return (None, True)
     if value is True:
-        msg = (
-            f"{where}.uploaded-prior-to: ``true`` is not a valid value; use"
-            " ``false`` to disable the cutoff or a datetime / 'PnD' duration"
-            " to set a window"
+        report = DiagnosticMessage(
+            (f"{where}.uploaded-prior-to: ``true`` is not a valid value"),
+            suggestions=(
+                Suggestion(
+                    "use ``false`` to disable the cutoff or a datetime / 'PnD' "
+                    "duration to set a window"
+                ),
+            ),
         )
-        raise SourceConfigError(msg)
+        raise SourceConfigError(report)
     cutoff = parse_uploaded_prior_to(value, f"{where}.uploaded-prior-to", anchor=anchor)
     return (cutoff, False)
 
@@ -1537,11 +1646,15 @@ def _validate_archive_url(where: str, index: int, url: str) -> None:
         raise SourceConfigError(msg) from exc
 
     if not request.has_usable_hash:
-        msg = (
-            f"{where}[{index}] url {url!r} has no hash; add a"
-            " '#sha256=<hex>' fragment (PEP 751 requires an archive hash)"
+        report = DiagnosticMessage(
+            (f"{where}[{index}] url {url!r} has no hash"),
+            suggestions=(
+                Suggestion(
+                    "add a '#sha256=<hex>' fragment (PEP 751 requires an archive hash)"
+                ),
+            ),
         )
-        raise SourceConfigError(msg)
+        raise SourceConfigError(report)
 
     try:
         path = urlsplit(request.url).path

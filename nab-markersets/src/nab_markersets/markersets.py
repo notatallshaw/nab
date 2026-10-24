@@ -12,8 +12,17 @@ with the decision procedures.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "functools",
+    "nab_resolver.diagnostics",
+    "nab_markersets.errors",
+    "nab_markersets.python_versions",
+)
+
 from functools import wraps
 from typing import TYPE_CHECKING, ParamSpec, TypeVar
+
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from . import _markersets
 from ._compat import override
@@ -127,10 +136,14 @@ class MarkerSet:
     # access as Never.
     def __new__(cls, *_args: object, **_kwargs: object) -> MarkerSet:  # noqa: PYI034
         """Refuse direct construction, naming the three factories instead."""
-        msg = (
-            "cannot create 'MarkerSet' instances directly; use "
-            "MarkerSet.from_marker(), MarkerSet.full(), or "
-            "MarkerSet.empty() instead"
+        msg = DiagnosticMessage(
+            "cannot create 'MarkerSet' instances directly",
+            suggestions=(
+                Suggestion(
+                    "use MarkerSet.from_marker(), MarkerSet.full(), or "
+                    "MarkerSet.empty()"
+                ),
+            ),
         )
         raise TypeError(msg)
 

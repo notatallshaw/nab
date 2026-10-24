@@ -5,6 +5,11 @@ Generic metadata appears after construction, so the builder reads it.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "enum",
+    "typing",
+)
+
 import enum
 from pathlib import Path
 from typing import Any, Literal, get_args, get_origin

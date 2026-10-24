@@ -9,6 +9,8 @@ substituted error points at the start.
 
 from __future__ import annotations
 
+__lazy_modules__ = ("tomli",)
+
 from typing import TYPE_CHECKING, Any
 
 import tomli

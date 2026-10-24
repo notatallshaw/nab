@@ -6,7 +6,6 @@ remaining codec branches, including stale and foreign blobs.
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import sys
 from collections.abc import Callable
@@ -27,6 +26,7 @@ from nab_index.parsed_listing import (
     encode,
 )
 from nab_provider.records import defer_hashes, defer_sidecar_hash
+from nab_provider.value import replace
 
 DIGEST = "a" * 64
 
@@ -161,7 +161,7 @@ def test_lone_surrogate_in_field_round_trips() -> None:
     ``json.loads`` accepts an unpaired ``\\udXXX`` escape, so a listing can put
     one in ``requires-python``, which ``_parse_files`` keeps verbatim.
     """
-    record = dataclasses.replace(SDIST_FULL, requires_python=f"{RP}\ud800")
+    record = replace(SDIST_FULL, requires_python=f"{RP}\ud800")
 
     assert _roundtrip([record]) == [record]
 

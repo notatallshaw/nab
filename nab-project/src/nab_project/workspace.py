@@ -19,14 +19,25 @@ message.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_resolver.diagnostics",
+    "nab_project",
+    "nab_project._toml",
+    "nab_project.paths",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.policy",
+    "tomli",
+)
+
 import logging
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 import tomli
 
 from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
 from nab_provider.policy import LocalSource
+from nab_provider.value import HashableRecord
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from . import toml_io
 from ._toml import tool_nab_section
@@ -93,8 +104,7 @@ def _workspace_declaration(data: dict[str, Any], project_file: Path) -> tuple[An
     return nab.get("workspace"), label
 
 
-@dataclass(frozen=True, slots=True)
-class WorkspaceConfig:
+class WorkspaceConfig(HashableRecord):
     """Parsed workspace table.
 
     ``members`` is the literal list of paths declared at the workspace
@@ -102,7 +112,13 @@ class WorkspaceConfig:
     :func:`workspace_local_sources`.
     """
 
-    members: tuple[str, ...]
+    __slots__ = __match_args__ = ("members",)
+
+    members: Final[tuple[str, ...]]
+
+    def __init__(self, members: tuple[str, ...]) -> None:
+        """Retain literal member paths without expanding or resolving them."""
+        self.members = members
 
 
 def discover_workspace_root(member_pyproject: Path) -> Path | None:
@@ -160,12 +176,13 @@ def workspace_local_sources(
 
     for entry in members:
         if any(ch in entry for ch in "*?["):
-            msg = (
-                f"{declared_in}: globs in workspace members are not supported"
-                f" in nab; list members literally."
-                f"  Offending entry: {entry!r}"
+            report = DiagnosticMessage(
+                (f"{declared_in}: globs in workspace members are not supported in nab"),
+                suggestions=(
+                    Suggestion(f"list members literally.  Offending entry: {entry!r}"),
+                ),
             )
-            raise WorkspaceDiscoveryError(msg)
+            raise WorkspaceDiscoveryError(report)
 
         member_dir = resolve_path(root_dir, entry)
         if member_dir is None:

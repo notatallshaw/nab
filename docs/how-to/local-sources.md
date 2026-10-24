@@ -15,8 +15,10 @@ path = "../my-fork"
 Relative `path` entries resolve against the directory holding `pyproject.toml`, not the process's
 current working directory. Absolute paths are recorded as-is.
 
-The target project's name must canonicalise to the declared `name`. A `path` that lands on a
-different project fails the resolve.
+The checkout's project name must match the declared `name` after name normalization. nab fails the
+resolve if `path` points to a different project.
+
+### Version and source selection
 
 The directory is read once. nab reads the version from `[project].version` in the local
 pyproject.toml. A `version` listed in `[project].dynamic` comes from the build backend instead, one
@@ -39,14 +41,14 @@ name = "my-fork"
 path = "../my-fork"
 ```
 
-See [build policy](../reference/build-policy.md) for the full ladder.
+See [build policy](../reference/build-policy.md) for each policy's permissions.
 
 ## Dynamic metadata
 
-When the static read of the checkout's pyproject.toml comes up empty, nab builds the project
-instead. That needs `build-policy = "build-local"` (the default) or `"build-remote"`. Empty means a
-missing or malformed `[project]`, or a `dynamic` list covering `version`, `requires-python`,
-`dependencies`, or `optional-dependencies`.
+If the checkout lacks usable static metadata, nab invokes its build backend under
+`build-policy = "build-local"` (the default) or `"build-remote"`. This happens when `[project]` is
+missing or malformed, or its `dynamic` list includes `version`, `requires-python`, `dependencies` or
+`optional-dependencies`.
 
 nab spins up an isolated venv, installs the declared build requirements, and asks the PEP 517
 backend for the wheel `METADATA`, building the wheel when the backend does not supply that metadata
@@ -55,12 +57,11 @@ on its own.
 Setting `"never"` instead ends the resolve. nab reads the source while listing its one version, so
 there is no candidate to reject. The error names the source and the policy that forbade the build.
 
-## Lockfile shape
+## What nab records in the lock
 
-Local pins land in the lockfile as `LocalPin` records. The path is written with POSIX separators,
-relative to the lockfile's own directory, so a committed lockfile keeps working on another machine
-as long as the checkout moves with it. The records carry no `sha256` (the contents are not under
-nab's control), so `nab download` skips them.
+The lock records the checkout's path with POSIX separators, relative to the lockfile's own
+directory, so a committed lockfile keeps working on another machine as long as the checkout moves
+with it. nab records no artifact hash for the directory and skips it during `nab download`.
 
 See [Portable paths](../reference/lockfile.md) for the two cases where the path is not relative to
 the lockfile.

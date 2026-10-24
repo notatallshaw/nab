@@ -709,7 +709,9 @@ def test_a_deeply_nested_extra_table_falls_through_out_of_date(
     _run_locked(pyproject, out, mock, status=1)
     err = capsys.readouterr().err
     remedy = _remedy(str(pyproject), "--output", str(out))
-    assert f"is out of date; re-run `{remedy}` to update it" in err
+
+    assert f"is out of date\n    try: re-run `{remedy}` to update it" in err
+
     mock.assert_called_once()
 
 
@@ -730,7 +732,9 @@ def test_a_stale_build_lock_names_the_build_command(
     _run_locked(pyproject, out, mock, "--build-requirements", status=1)
     err = capsys.readouterr().err
     remedy = _remedy(str(pyproject), "--output", str(out), "--build-requirements")
-    assert f"is out of date; re-run `{remedy}` to update it" in err
+
+    assert f"is out of date\n    try: re-run `{remedy}` to update it" in err
+
     mock.assert_called_once()
 
 
@@ -1346,7 +1350,8 @@ def test_remedy_names_a_custom_output_path(
 
     err = capsys.readouterr().err
     remedy = _remedy("--output", str(out))
-    assert f"no lockfile at {out} to check; run `{remedy}` first." in err
+
+    assert f"no lockfile at {out} to check\n    try: run `{remedy}` first." in err
 
 
 def test_remedy_puts_an_option_shaped_project_path_after_the_separator(
@@ -1366,8 +1371,9 @@ def test_remedy_puts_an_option_shaped_project_path_after_the_separator(
 
     refresh = ["--offline", "True", "--", "-weird.toml"]
     remedy = _remedy(*refresh)
+
     assert (
-        f"no lockfile at pylock.toml to check; run `{remedy}` first."
+        f"no lockfile at pylock.toml to check\n    try: run `{remedy}` first."
         in capsys.readouterr().err
     )
 
@@ -1393,8 +1399,9 @@ def test_remedy_attaches_an_option_shaped_output_path(
 
     refresh = [f"--output={out}", "--offline", "True"]
     remedy = _remedy(*refresh)
+
     assert (
-        f"no lockfile at {out} to check; run `{remedy}` first."
+        f"no lockfile at {out} to check\n    try: run `{remedy}` first."
         in capsys.readouterr().err
     )
 
@@ -1428,14 +1435,16 @@ def test_remedy_attaches_an_option_shaped_group_and_override(
     _lock_cli(*refresh, "--locked", status=1)
 
     remedy = _remedy(*refresh)
+
     assert (
-        f"no lockfile at pylock.toml to check; run `{remedy}` first."
+        f"no lockfile at pylock.toml to check\n    try: run `{remedy}` first."
         in capsys.readouterr().err
     )
 
     _lock_cli("--no-cache", *refresh)
 
     written = tomli.loads((tmp_path / "pylock.toml").read_text(encoding="utf-8"))
+
     assert written["dependency-groups"] == ["-dev", "test"]
     assert written["default-groups"] == ["-dev"]
 
@@ -1463,14 +1472,16 @@ def test_remedy_names_all_groups_and_all_extras_not_what_they_selected(
     _lock_cli(*refresh, "--locked", status=1)
 
     remedy = _remedy(*refresh)
+
     assert (
-        f"no lockfile at pylock.toml to check; run `{remedy}` first."
+        f"no lockfile at pylock.toml to check\n    try: run `{remedy}` first."
         in capsys.readouterr().err
     )
 
     _lock_cli("--no-cache", *refresh)
 
     written = tomli.loads((tmp_path / "pylock.toml").read_text(encoding="utf-8"))
+
     assert written["dependency-groups"] == ["-dev", "test"]
     assert written["extras"] == ["gpu"]
 
@@ -1492,8 +1503,9 @@ def test_remedy_for_an_option_shaped_extra_fails_on_the_name_not_the_parse(
     _lock_cli(*refresh, "--locked", status=1)
 
     remedy = _remedy(*refresh)
+
     assert (
-        f"no lockfile at pylock.toml to check; run `{remedy}` first."
+        f"no lockfile at pylock.toml to check\n    try: run `{remedy}` first."
         in capsys.readouterr().err
     )
 
@@ -1541,7 +1553,11 @@ def test_remedy_carries_every_run_shaping_flag(
     _lock_cli(*refresh, "--locked", status=1)
 
     err = capsys.readouterr().err
-    assert f"no lockfile at {out} to check; run `{_remedy(*refresh)}` first." in err
+
+    assert (
+        f"no lockfile at {out} to check\n    try: run `{_remedy(*refresh)}` first."
+        in err
+    )
 
 
 def test_remedy_for_a_default_run_stays_bare(
@@ -1554,7 +1570,8 @@ def test_remedy_for_a_default_run_stays_bare(
     _lock_cli("--locked", status=1)
 
     err = capsys.readouterr().err
-    assert "no lockfile at pylock.toml to check; run `nab lock` first." in err
+
+    assert "no lockfile at pylock.toml to check\n    try: run `nab lock` first." in err
 
 
 def test_following_the_remedy_makes_the_check_pass(

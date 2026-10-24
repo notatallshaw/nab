@@ -6,6 +6,8 @@ have to spell its key the same way.
 
 from __future__ import annotations
 
+__lazy_modules__ = ("nab_provider._vendor.packaging.utils",)
+
 import re
 
 from nab_provider._vendor.packaging.utils import canonicalize_name

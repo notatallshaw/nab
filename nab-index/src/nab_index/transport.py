@@ -7,11 +7,20 @@ wrapped in to_thread, etc.).
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "gzip",
+    "nab_index.retry_limits",
+    "nab_provider.errors",
+    "nab_provider.fetch_port",
+    "zlib",
+)
+
 import gzip
 import zlib
-from typing import TYPE_CHECKING, Any, Final, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol, runtime_checkable
 
 from nab_provider.errors import HttpError, UnserveableUrlError
+from nab_provider.fetch_port import PrefetchSettings
 
 from ._version import __version__
 from .retry_limits import RETRY_STATUSES
@@ -27,9 +36,12 @@ __all__ = [
     "ContentDecodingError",
     "HttpError",
     "HttpResponse",
+    "IdleClosableTransport",
+    "TunedHttpTransport",
     "UnserveableUrlError",
     "accepts_gzip",
     "decode_body",
+    "prefetch_settings_for_backend",
     "raise_for_error_status",
     "raise_unless_ok",
 ]
@@ -182,6 +194,37 @@ class AsyncHttpTransport(Protocol):
     async def aclose(self) -> None:
         """Release resources."""
         ...
+
+
+@runtime_checkable
+class IdleClosableTransport(AsyncHttpTransport, Protocol):
+    """A transport that can close before creating asynchronous resources."""
+
+    def close_without_loop(self) -> bool:
+        """Close synchronously, or return False without changing active resources."""
+        ...
+
+
+@runtime_checkable
+class TunedHttpTransport(AsyncHttpTransport, Protocol):
+    """An HTTP transport that recommends speculative metadata windows."""
+
+    @property
+    def prefetch_settings(self) -> PrefetchSettings:
+        """The recommended windows, below explicit caller overrides."""
+        ...
+
+
+def prefetch_settings_for_backend(backend: str) -> PrefetchSettings:
+    """Return a fresh set of recommendations for a built-in HTTP backend."""
+    if backend == "httpx2":
+        return PrefetchSettings(lookahead_versions=0)
+    if backend == "httpx":
+        return PrefetchSettings(lookahead_versions=32)
+    if backend == "urllib3":
+        return PrefetchSettings(lookahead_versions=16)
+    msg = f"Unknown HTTP backend: {backend}"
+    raise ValueError(msg)
 
 
 def raise_for_error_status(status: int, url: str) -> None:

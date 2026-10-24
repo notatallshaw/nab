@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = ("nab_markersets._packaging",)
+
 from typing import TYPE_CHECKING
 
 from ._packaging import InvalidVersion, Version

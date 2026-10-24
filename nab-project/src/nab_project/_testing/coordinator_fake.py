@@ -10,6 +10,15 @@ TOML text and hands the fake the parsed table.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_index.local_index",
+    "nab_project._build_remote",
+    "nab_project._sources",
+    "nab_project._toml",
+    "nab_provider.errors",
+    "nab_provider.testing",
+)
+
 from typing import TYPE_CHECKING, Any
 
 from nab_index.local_index import read_wheel_metadata

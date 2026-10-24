@@ -20,6 +20,15 @@ the ``powerset(extras) x powerset(groups)`` grid.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections",
+    "itertools",
+    "nab_markersets.errors",
+    "nab_markersets.markersets",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.conflict_kind",
+)
+
 import itertools
 from collections import defaultdict
 from typing import TYPE_CHECKING
@@ -32,10 +41,24 @@ from nab_provider.conflict_kind import KIND_EXTRA, KIND_GROUP, MARKER_VARIABLE_F
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from collections.abc import Set as AbstractSet
+    from typing import Protocol
 
     from nab_markersets.conversions import PreparedMarkerSets
     from nab_provider._vendor.packaging.markers import Marker
-    from nab_provider._vendor.packaging.pylock import Package
+    from nab_provider._vendor.packaging.utils import NormalizedName
+    from nab_provider._vendor.packaging.version import Version
+
+    class PackageIdentity(Protocol):
+        """The package fields needed to prove marker disjointness."""
+
+        @property
+        def name(self) -> NormalizedName: ...
+
+        @property
+        def version(self) -> Version | None: ...
+
+        @property
+        def marker(self) -> Marker | None: ...
 
 
 __all__ = [
@@ -68,7 +91,7 @@ class DisjointnessError(ValueError):
 
 
 def validate_marker_disjointness(
-    packages: Sequence[Package],
+    packages: Sequence[PackageIdentity],
     *,
     environments: Mapping[str, Mapping[str, str]],
     extras: Sequence[str],
@@ -116,7 +139,7 @@ def validate_marker_disjointness(
     if not environments:
         return
 
-    by_name: defaultdict[str, list[Package]] = defaultdict(list)
+    by_name: defaultdict[str, list[PackageIdentity]] = defaultdict(list)
     for pkg in packages:
         by_name[str(pkg.name)].append(pkg)
     same_name_entries = [entries for entries in by_name.values() if len(entries) > 1]
@@ -333,7 +356,7 @@ def _membership_selection(
 
 
 def _raise_collision(
-    entries: Sequence[Package],
+    entries: Sequence[PackageIdentity],
     marker_sets: Sequence[MarkerSet],
     label: str,
     env: Mapping[str, str],

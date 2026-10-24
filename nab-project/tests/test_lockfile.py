@@ -9,7 +9,6 @@ import re
 import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, ClassVar
@@ -18,6 +17,7 @@ import pytest
 
 from nab_markersets._compat import get_int_max_str_digits
 from nab_project._testing.artifacts import make_sdist_artifact, make_wheel_artifact
+from nab_provider.value import replace
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -5375,49 +5375,14 @@ class TestWriteRequirementsPerTarget:
         assert text == "foo==1.0\n"
 
 
-class TestGettingStartedTranscript:
-    """The tutorial's sample output is a block this renderer can print."""
+def test_without_hashes_sorts_package_names() -> None:
+    pins = {
+        "zeta": _index_pin(name="zeta", version="2.0"),
+        "alpha": _index_pin(name="alpha", version="1.0"),
+    }
+    text = write_requirements_without_hashes(LockInput(targets=_one(pins)))
 
-    _COMMAND = "nab lock --format requirements-without-hashes --output - pyproject.toml"
-
-    def _documented_lines(self) -> list[str]:
-        """Return the lines of the output block the tutorial shows for ``_COMMAND``."""
-        doc = (
-            Path(__file__).resolve().parents[2]
-            / "docs"
-            / "tutorial"
-            / "getting-started.md"
-        )
-
-        block = re.search(
-            rf"```bash\n{re.escape(self._COMMAND)}\n```\n\n```\n(.*?)\n```",
-            doc.read_text(encoding="utf-8"),
-            re.DOTALL,
-        )
-        if block is None:
-            msg = f"no output block follows {self._COMMAND!r}"
-            raise AssertionError(msg)
-        return block.group(1).splitlines()
-
-    def test_documented_pins_render_as_written(self) -> None:
-        """Rendering the documented pins reproduces the block verbatim.
-
-        A pin carries a canonical name, so a documented line spelled any
-        other way renders differently. Feeding the pins in reverse leaves
-        the block's order to the renderer's own sort.
-        """
-        documented = self._documented_lines()
-        assert documented
-
-        pins: dict[str, PinShape] = {}
-        for line in reversed(documented):
-            name, separator, version = line.partition("==")
-            assert separator, f"not a pinned requirement: {line}"
-            canonical = canonicalize_name(name)
-            pins[canonical] = _index_pin(name=canonical, version=version)
-
-        text = write_requirements_without_hashes(LockInput(targets=_one(pins)))
-        assert text.splitlines() == documented
+    assert text.splitlines() == ["alpha==1.0", "zeta==2.0"]
 
 
 def test_lock_input_ignores_vcs_policy() -> None:

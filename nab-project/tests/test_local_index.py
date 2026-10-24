@@ -565,11 +565,14 @@ class TestFlatWheelhouse:
         assert isinstance(files[0], SdistFile)
         assert files[0].version == "1.0"
 
-    def test_ignores_sdist_zip(self, tmp_path: Path) -> None:
+    def test_finds_sdist_zip(self, tmp_path: Path) -> None:
         (tmp_path / "foo-1.0.zip").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
-        assert run(client.get_files("foo")) == []
-        assert client.served_unreadable_only("foo")
+        files = run(client.get_files("foo"))
+
+        assert [file.filename for file in files] == ["foo-1.0.zip"]
+        assert isinstance(files[0], SdistFile)
+        assert not client.served_unreadable_only("foo")
 
     @pytest.mark.parametrize(
         "filename",
@@ -604,15 +607,17 @@ class TestFlatWheelhouse:
         (tmp_path / "foo-1.0.zip").write_bytes(b"")
         (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
-        assert len(run(client.get_files("foo"))) == 1
+
+        assert len(run(client.get_files("foo"))) == 2
         assert not client.served_unreadable_only("foo")
 
     def test_zip_beside_readable_wheel_names_its_release(self, tmp_path: Path) -> None:
-        """The listing is not empty, so only the version set records the ``.zip``."""
+        """The version set records ZIP releases beside other formats."""
         (tmp_path / "foo-1.0.zip").write_bytes(b"")
         (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
         run(client.get_files("foo"))
+
         assert client.served_zip_sdists("foo") == frozenset({"1.0"})
 
     def test_zip_of_another_package_names_no_release(self, tmp_path: Path) -> None:
@@ -1037,12 +1042,15 @@ class TestPep503Directory:
         v2 = next(r for r in result if r.version == "2.0")
         assert v2.requires_python is None
 
-    def test_page_of_zip_sdists_is_an_unreadable_listing(self, tmp_path: Path) -> None:
+    def test_page_of_zip_sdists_lists_both_releases(self, tmp_path: Path) -> None:
         body = '<a href="foo-1.0.zip">foo-1.0</a><a href="foo-2.0.zip">foo-2.0</a>'
         self._make_index(tmp_path, body)
         client = LocalIndexClient(tmp_path.as_uri())
-        assert run(client.get_files("foo")) == []
-        assert client.served_unreadable_only("foo")
+        files = run(client.get_files("foo"))
+
+        assert [file.filename for file in files] == ["foo-1.0.zip", "foo-2.0.zip"]
+        assert all(isinstance(file, SdistFile) for file in files)
+        assert not client.served_unreadable_only("foo")
 
     def test_page_zip_beside_a_wheel_names_its_release(self, tmp_path: Path) -> None:
         """A page keeping one readable file still records the ``.zip``'s release."""
@@ -1053,7 +1061,8 @@ class TestPep503Directory:
         package_dir = self._make_index(tmp_path, body)
         (package_dir / "foo-2.0-py3-none-any.whl").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
-        assert len(run(client.get_files("foo"))) == 1
+
+        assert len(run(client.get_files("foo"))) == 2
         assert not client.served_unreadable_only("foo")
         assert client.served_zip_sdists("foo") == frozenset({"1.0"})
 
@@ -1648,15 +1657,16 @@ class TestPep503Directory:
         assert len(result) == 1
         assert result[0].hashes == (("sha256", digest),)
 
-    def test_pep503_zip_sdist_dropped(self, tmp_path: Path) -> None:
+    def test_pep503_zip_sdist_alongside_tar_gz(self, tmp_path: Path) -> None:
         body = '<a href="foo-1.0.zip">foo-zip</a><a href="foo-1.0.tar.gz">foo-sdist</a>'
         package_dir = self._make_index(tmp_path, body)
         (package_dir / "foo-1.0.zip").write_bytes(b"")
         (package_dir / "foo-1.0.tar.gz").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
         result = run(client.get_files("foo"))
-        assert [r.filename for r in result] == ["foo-1.0.tar.gz"]
-        assert isinstance(result[0], SdistFile)
+
+        assert [r.filename for r in result] == ["foo-1.0.zip", "foo-1.0.tar.gz"]
+        assert all(isinstance(record, SdistFile) for record in result)
 
     def test_pep503_yanked_link_retained(self, tmp_path: Path) -> None:
         body = (

@@ -3327,10 +3327,11 @@ class TestBuildResolverInputs:
             )
 
         (record,) = caplog.records
+
         assert record.message.startswith(
             "Root requirement 'foo<2.0; extra == \"fast\"'"
         )
-        assert "pkg[extra] (extras-of-package)" in record.message
+        assert "try: use pkg[extra] to select an extra" in record.message
 
     def test_warning_cause_holds_when_the_extra_was_selected(
         self, caplog: pytest.LogCaptureFixture
@@ -3519,7 +3520,9 @@ class TestBuildConstraints:
         message = self._drop_warning(caplog)
 
         assert "pkg[extra]" not in message
-        assert "A constraint cannot carry extras" in message
+        assert (
+            "try: drop the membership test from the marker and keep the rest" in message
+        )
 
     def test_dropped_group_constraint_warning_omits_the_extras_rule(
         self, caplog: pytest.LogCaptureFixture
@@ -3528,19 +3531,23 @@ class TestBuildConstraints:
         message = self._drop_warning(caplog, 'foo<2.0 ; "docs" in dependency_groups')
 
         assert "cannot carry extras" not in message
-        assert "Drop the membership test from the marker and keep the rest." in message
+        assert (
+            "try: drop the membership test from the marker and keep the rest" in message
+        )
 
     def test_dropped_constraint_repair_still_bounds_the_package(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """The repair the warning asks for parses and still bounds foo."""
         message = self._drop_warning(caplog)
+
         assert message.endswith(
-            "so drop the membership test from the marker and keep the rest."
+            "try: drop the membership test from the marker and keep the rest"
         )
 
         inputs = ResolveInputs(constraints=("foo<2.0",))
         out = _build_constraints(inputs, environment={})
+
         assert V("1.0") in out["foo"]
         assert V("5.0") not in out["foo"]
 
@@ -3560,15 +3567,17 @@ class TestBuildConstraints:
         )
 
         assert message.endswith(
-            "so drop the membership test from the marker and keep the rest."
+            "try: drop the membership test from the marker and keep the rest"
         )
 
         inputs = ResolveInputs(constraints=("foo<2.0 ; python_version < '3.10'",))
         out = _build_constraints(inputs, environment=on_39)
+
         assert V("1.0") in out["foo"]
         assert V("5.0") not in out["foo"]
 
         on_311 = {"python_version": "3.11", "python_full_version": "3.11.2"}
+
         assert "foo" not in _build_constraints(inputs, environment=on_311)
 
 
@@ -4762,13 +4771,8 @@ class TestAugmentResolutionError:
         assert unreadable.value.verbose_message is not None
         assert "no readable PKG-INFO" in unreadable.value.verbose_message
 
-    def test_zip_sdist_is_not_reported_as_never_published(self, tmp_path: Path) -> None:
-        """The diagnostics name the format, rather than reporting no sdist.
-
-        ``foo`` 1.0 publishes a sidecar-less wheel beside a ``.zip`` sdist,
-        which the listing parse drops.  Reading the report as no sdist would
-        send the user looking for a release that has one.
-        """
+    def test_filtered_zip_sdist_suggests_admission(self, tmp_path: Path) -> None:
+        """A wheel without metadata can use its ZIP sibling after admission."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             '[project]\nname = "proj"\ndependencies = ["foo"]\n',
@@ -4783,8 +4787,15 @@ class TestAugmentResolutionError:
             has_metadata=False,
             upload_time=None,
         )
+        sdist = SdistFile(
+            filename="foo-1.0.zip",
+            url="https://example.com/foo-1.0.zip",
+            version="1.0",
+            requires_python=None,
+            upload_time=None,
+        )
         coordinator = make_coordinator()
-        coordinator.index.store_listing("foo", [wheel], zip_sdists=frozenset({"1.0"}))
+        coordinator.index.store_listing("foo", [wheel, sdist])
 
         with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
@@ -4793,11 +4804,14 @@ class TestAugmentResolutionError:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         diagnostics = _diagnostics(info.value)
-        assert "foo: every version in range was rejected on its metadata" in diagnostics
+
         assert (
-            "No metadata for foo==1.0: no PEP 658 metadata and the sdist is a"
-            " .zip, a format nab drops" in diagnostics
+            "foo: allow-zip-sdists excluded the sdist nab needed for metadata"
+            in diagnostics
         )
+        assert "allow-zip-sdists = false excluded foo-1.0.zip" in diagnostics
+        assert 'packages."foo".allow-zip-sdists = true' in str(info.value)
+        assert coordinator.calls_to("request_sdist") == []
 
     def test_a_resolve_that_survives_the_ladder_never_walks_the_listing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -7906,6 +7920,8 @@ class TestFetchWidth:
                 _resolved(path, **kwargs)
             except RuntimeError:
                 pass
+
+        assert mock_coord_cls.call_args.kwargs["start_on_demand"] is True
 
         return mock_coord_cls.call_args.kwargs["max_concurrency"]
 

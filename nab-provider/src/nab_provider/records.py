@@ -4,23 +4,28 @@ None of them fetches anything or is typed against a version or requirement
 class, so the fetching side and the resolving side can both name them.
 """
 
+# ruff: noqa: SLF001 - Construction and deferred parsing share this module's slots.
+
 from __future__ import annotations
+
+__lazy_modules__ = (
+    "nab_provider.digest",
+    "sys",
+    "urllib.parse",
+)
 
 import enum
 import sys
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 from urllib.parse import urlsplit, urlunsplit
 
 from ._compat import override
 from .digest import is_hex_digest
 from .serialization import SimpleSerialization
+from .value import HashableRecord, Record
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-    from dataclasses import field
     from pathlib import Path
-    from types import MemberDescriptorType
 
 __all__ = [
     "ACCEPTED_HASH_ALGORITHMS",
@@ -178,7 +183,7 @@ class _DeferredIntegrity:
             raise AttributeError(name)
 
         value = parse_hash_table(_expand_table(self._raw_hashes))
-        object.__setattr__(self, "hashes", value)
+        setattr(self, name, value)
         return value
 
     def raw_hashes(self) -> object:
@@ -190,10 +195,7 @@ class _DeferredIntegrity:
 
 
 class _WheelIntegrity(_DeferredIntegrity):
-    """Hold raw tables and the metadata URL memo outside dataclass fields.
-
-    ``@dataclass(slots=True)`` rejects ``__slots__`` in the dataclass body.
-    """
+    """Keep raw integrity tables and the metadata URL memo outside value fields."""
 
     __slots__ = ("_metadata_url", "_raw_metadata")
 
@@ -206,7 +208,7 @@ class _WheelIntegrity(_DeferredIntegrity):
             return super().__getattr__(name)
 
         value = sidecar_hash(_expand_table(self._raw_metadata))
-        object.__setattr__(self, "metadata_hash", value)
+        setattr(self, name, value)
         return value
 
     def raw_sidecar(self) -> object:
@@ -225,8 +227,8 @@ def defer_hashes(record: WheelFile | SdistFile, table: object) -> None:
     """
     if not isinstance(table, dict):
         return
-    object.__delattr__(record, "hashes")
-    object.__setattr__(record, "_raw_hashes", _compact_table(table))
+    del record.hashes
+    record._raw_hashes = _compact_table(table)
 
 
 def defer_sidecar_hash(wheel: WheelFile, table: object) -> None:
@@ -237,28 +239,15 @@ def defer_sidecar_hash(wheel: WheelFile, table: object) -> None:
     """
     if not isinstance(table, dict):
         return
-    object.__delattr__(wheel, "metadata_hash")
-    object.__setattr__(wheel, "_raw_metadata", _compact_table(table))
+    del wheel.metadata_hash
+    wheel._raw_metadata = _compact_table(table)
 
 
-def _slot_writer(cls: type, name: str) -> Callable[[object, object], None]:
-    """Return the setter for one of ``cls``'s slots.
-
-    A frozen dataclass refuses ``self.field = value``, so its generated
-    ``__init__`` writes every field through ``object.__setattr__``. A record
-    fills its slots through these instead, leaving ``__setattr__`` frozen for
-    callers.
-    """
-    slot: MemberDescriptorType = cls.__dict__[name]
-    return slot.__set__
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class WheelFile(_WheelIntegrity):
+class WheelFile(_WheelIntegrity, HashableRecord):
     """Wheel file record returned by the Simple-API client.
 
     ``hashes`` is a tuple of ``(algorithm, hex_digest)`` pairs in the
-    order PEP 691 declared them (tuple form keeps the dataclass
+    order PEP 691 declared them (tuple form keeps the record
     hashable).  ``has_metadata`` says whether the index advertised a
     PEP 658/714 sidecar.
 
@@ -275,47 +264,57 @@ class WheelFile(_WheelIntegrity):
     :func:`rehydrated_wheel`).
     """
 
+    __slots__ = __match_args__ = (
+        "filename",
+        "url",
+        "version",
+        "requires_python",
+        "has_metadata",
+        "upload_time",
+        "hashes",
+        "size",
+        "local_path",
+        "metadata_hash",
+    )
+
     filename: str
     url: str
     version: str
     requires_python: str | None
     has_metadata: bool
     upload_time: str | None
-    hashes: tuple[tuple[str, str], ...] = ()
-    size: int | None = None
-    local_path: Path | None = None
-    metadata_hash: tuple[str, str] | None = None
+    hashes: tuple[tuple[str, str], ...]
+    size: int | None
+    local_path: Path | None
+    metadata_hash: tuple[str, str] | None
 
-    # Ordinary frozen records share the flag instead of allocating a slot.
-    if TYPE_CHECKING:
-        yanked: bool | str = field(init=False)
-    else:
-        yanked = False
+    yanked: bool | str = False
 
-    def __init__(  # noqa: PLR0913, PLR0917 - the dataclass's own fields, in its own order
+    def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
         filename: str,
+        *,
         url: str,
         version: str,
         requires_python: str | None,
-        has_metadata: bool,  # noqa: FBT001 - a field, not a flag
+        has_metadata: bool,
         upload_time: str | None,
         hashes: tuple[tuple[str, str], ...] = (),
         size: int | None = None,
         local_path: Path | None = None,
         metadata_hash: tuple[str, str] | None = None,
     ) -> None:
-        """Write each field's slot directly, not through the frozen ``__setattr__``."""
-        _set_wheel_filename(self, filename)
-        _set_wheel_url(self, url)
-        _set_wheel_version(self, version)
-        _set_wheel_requires_python(self, requires_python)
-        _set_wheel_has_metadata(self, has_metadata)
-        _set_wheel_upload_time(self, upload_time)
-        _set_wheel_hashes(self, hashes)
-        _set_wheel_size(self, size)
-        _set_wheel_local_path(self, local_path)
-        _set_wheel_metadata_hash(self, metadata_hash)
+        """Retain the distribution fields in their slots."""
+        self.filename = filename
+        self.url = url
+        self.version = version
+        self.requires_python = requires_python
+        self.has_metadata = has_metadata
+        self.upload_time = upload_time
+        self.hashes = hashes
+        self.size = size
+        self.local_path = local_path
+        self.metadata_hash = metadata_hash
 
     @property
     def metadata_url(self) -> str | None:
@@ -325,31 +324,17 @@ class WheelFile(_WheelIntegrity):
         An empty URL answers ``None``: no listing entry carries one, so it
         marks a record :func:`release_wheel_payload` has reached.
         """
-        if not self.has_metadata or not self.url:
+        url = self.url
+        if not self.has_metadata or not url:
             return None
 
         try:
             return self._metadata_url
         except AttributeError:
-            parts = urlsplit(self.url)
+            parts = urlsplit(url)
             url = urlunsplit(parts._replace(path=parts.path + ".metadata", fragment=""))
-            object.__setattr__(self, "_metadata_url", url)
+            self._metadata_url = url
             return url
-
-
-_set_wheel_filename = _slot_writer(WheelFile, "filename")
-_set_wheel_url = _slot_writer(WheelFile, "url")
-_set_wheel_version = _slot_writer(WheelFile, "version")
-_set_wheel_requires_python = _slot_writer(WheelFile, "requires_python")
-_set_wheel_has_metadata = _slot_writer(WheelFile, "has_metadata")
-_set_wheel_upload_time = _slot_writer(WheelFile, "upload_time")
-_set_wheel_hashes = _slot_writer(WheelFile, "hashes")
-_set_wheel_size = _slot_writer(WheelFile, "size")
-_set_wheel_local_path = _slot_writer(WheelFile, "local_path")
-_set_wheel_metadata_hash = _slot_writer(WheelFile, "metadata_hash")
-
-_set_raw_hashes = _slot_writer(_DeferredIntegrity, "_raw_hashes")
-_set_wheel_raw_metadata = _slot_writer(_WheelIntegrity, "_raw_metadata")
 
 
 def release_wheel_payload(wheel: WheelFile) -> None:
@@ -366,12 +351,12 @@ def release_wheel_payload(wheel: WheelFile) -> None:
     answer ``None``, so a reader that takes a hash and then a URL that is
     still there took the hash before the release began.
     """
-    _set_wheel_url(wheel, "")
-    _set_wheel_has_metadata(wheel, False)  # noqa: FBT003 - the slot's __set__ is positional-only
+    wheel.url = ""
+    wheel.has_metadata = False
 
     # A deferred slot holding ``None`` reads back as one holding nothing.
-    _set_raw_hashes(wheel, None)
-    _set_wheel_raw_metadata(wheel, None)
+    wheel._raw_hashes = None
+    wheel._raw_metadata = None
 
 
 def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its own order
@@ -379,7 +364,7 @@ def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its ow
     url: str,
     version: str,
     requires_python: str | None,
-    has_metadata: bool,  # noqa: FBT001 - a field, not a flag
+    has_metadata: bool,  # noqa: FBT001 - Serialized record field, not a behavior flag.
     upload_time: str | None,
     hashes: tuple[tuple[str, str], ...] | dict[Any, Any],
     size: int | None,
@@ -395,50 +380,56 @@ def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its ow
     ``local_path`` is ``None``: a cached listing row carries none.
     """
     wheel = WheelFile.__new__(WheelFile)
-    _set_wheel_filename(wheel, filename)
-    _set_wheel_url(wheel, url)
-    _set_wheel_version(wheel, version)
-    _set_wheel_requires_python(wheel, requires_python)
-    _set_wheel_has_metadata(wheel, has_metadata)
-    _set_wheel_upload_time(wheel, upload_time)
-    _set_wheel_size(wheel, size)
-    _set_wheel_local_path(wheel, None)
+    wheel.filename = filename
+    wheel.url = url
+    wheel.version = version
+    wheel.requires_python = requires_python
+    wheel.has_metadata = has_metadata
+    wheel.upload_time = upload_time
+    wheel.size = size
+    wheel.local_path = None
 
     if isinstance(hashes, dict):
-        _set_raw_hashes(wheel, _compact_shared_table(hashes))
+        wheel._raw_hashes = _compact_shared_table(hashes)
     else:
-        _set_wheel_hashes(wheel, hashes)
+        wheel.hashes = hashes
 
     if isinstance(metadata_hash, dict):
-        _set_wheel_raw_metadata(wheel, _compact_shared_table(metadata_hash))
+        wheel._raw_metadata = _compact_shared_table(metadata_hash)
     else:
-        _set_wheel_metadata_hash(wheel, metadata_hash)
+        wheel.metadata_hash = metadata_hash
 
     return wheel
 
 
-@dataclass(frozen=True, slots=True, init=False)
-class SdistFile(_DeferredIntegrity):
+class SdistFile(_DeferredIntegrity, HashableRecord):
     """A source distribution from the Simple API.
 
     See :class:`WheelFile` for the meaning of ``hashes``, ``size`` and
     ``local_path``.
     """
 
+    __slots__ = __match_args__ = (
+        "filename",
+        "url",
+        "version",
+        "requires_python",
+        "upload_time",
+        "hashes",
+        "size",
+        "local_path",
+    )
+
     filename: str
     url: str
     version: str
     requires_python: str | None
     upload_time: str | None
-    hashes: tuple[tuple[str, str], ...] = ()
-    size: int | None = None
-    local_path: Path | None = None
+    hashes: tuple[tuple[str, str], ...]
+    size: int | None
+    local_path: Path | None
 
-    # Ordinary frozen records share the flag instead of allocating a slot.
-    if TYPE_CHECKING:
-        yanked: bool | str = field(init=False)
-    else:
-        yanked = False
+    yanked: bool | str = False
 
     def __init__(
         self,
@@ -451,25 +442,15 @@ class SdistFile(_DeferredIntegrity):
         size: int | None = None,
         local_path: Path | None = None,
     ) -> None:
-        """Write each field's slot directly, not through the frozen ``__setattr__``."""
-        _set_sdist_filename(self, filename)
-        _set_sdist_url(self, url)
-        _set_sdist_version(self, version)
-        _set_sdist_requires_python(self, requires_python)
-        _set_sdist_upload_time(self, upload_time)
-        _set_sdist_hashes(self, hashes)
-        _set_sdist_size(self, size)
-        _set_sdist_local_path(self, local_path)
-
-
-_set_sdist_filename = _slot_writer(SdistFile, "filename")
-_set_sdist_url = _slot_writer(SdistFile, "url")
-_set_sdist_version = _slot_writer(SdistFile, "version")
-_set_sdist_requires_python = _slot_writer(SdistFile, "requires_python")
-_set_sdist_upload_time = _slot_writer(SdistFile, "upload_time")
-_set_sdist_hashes = _slot_writer(SdistFile, "hashes")
-_set_sdist_size = _slot_writer(SdistFile, "size")
-_set_sdist_local_path = _slot_writer(SdistFile, "local_path")
+        """Retain the distribution fields in their slots."""
+        self.filename = filename
+        self.url = url
+        self.version = version
+        self.requires_python = requires_python
+        self.upload_time = upload_time
+        self.hashes = hashes
+        self.size = size
+        self.local_path = local_path
 
 
 def rehydrated_sdist(
@@ -487,18 +468,18 @@ def rehydrated_sdist(
     to defer.
     """
     sdist = SdistFile.__new__(SdistFile)
-    _set_sdist_filename(sdist, filename)
-    _set_sdist_url(sdist, url)
-    _set_sdist_version(sdist, version)
-    _set_sdist_requires_python(sdist, requires_python)
-    _set_sdist_upload_time(sdist, upload_time)
-    _set_sdist_size(sdist, size)
-    _set_sdist_local_path(sdist, None)
+    sdist.filename = filename
+    sdist.url = url
+    sdist.version = version
+    sdist.requires_python = requires_python
+    sdist.upload_time = upload_time
+    sdist.size = size
+    sdist.local_path = None
 
     if isinstance(hashes, dict):
-        _set_raw_hashes(sdist, _compact_shared_table(hashes))
+        sdist._raw_hashes = _compact_shared_table(hashes)
     else:
-        _set_sdist_hashes(sdist, hashes)
+        sdist.hashes = hashes
 
     return sdist
 
@@ -507,8 +488,7 @@ def rehydrated_sdist(
 DistFile = WheelFile | SdistFile
 
 
-@dataclass(frozen=True, slots=True)
-class IndexConfig:
+class IndexConfig(HashableRecord):
     """Declares one index in the ordered list of indexes.
 
     ``name`` is the index identifier used by overrides and lockfile
@@ -518,9 +498,22 @@ class IndexConfig:
     Simple-API serialization this index is asked for and read as.
     """
 
-    name: str
-    url: str
-    serialization: SimpleSerialization = SimpleSerialization.NEGOTIATE
+    __slots__ = __match_args__ = ("name", "url", "serialization")
+
+    name: Final[str]
+    url: Final[str]
+    serialization: Final[SimpleSerialization]
+
+    def __init__(
+        self,
+        name: str,
+        url: str,
+        serialization: SimpleSerialization = SimpleSerialization.NEGOTIATE,
+    ) -> None:
+        """Name an index and select its Simple API representation."""
+        self.name = name
+        self.url = url
+        self.serialization = serialization
 
 
 # The index a run uses when nothing declares one.
@@ -537,9 +530,15 @@ class RangeOutcome(enum.Enum):
     MISSING = "missing"
 
 
-@dataclass(frozen=True, slots=True)
-class RangeMetadataResult:
+class RangeMetadataResult(Record):
     """The recovered METADATA text and the outcome that produced it."""
+
+    __slots__ = __match_args__ = ("text", "outcome")
 
     text: str | None
     outcome: RangeOutcome
+
+    def __init__(self, text: str | None, outcome: RangeOutcome) -> None:
+        """Pair recovered metadata with its acquisition outcome."""
+        self.text = text
+        self.outcome = outcome

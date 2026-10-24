@@ -25,7 +25,6 @@ Plus the miss semantics: a body-digest mismatch, a header field mismatch
 
 from __future__ import annotations
 
-import dataclasses
 import hashlib
 import json
 from pathlib import Path
@@ -43,6 +42,7 @@ from nab_index.client import (
     _parse_files,
 )
 from nab_index.parsed_listing import decode, encode
+from nab_provider.value import field_names
 
 from .strategies import PROPERTY_SETTINGS
 
@@ -175,13 +175,15 @@ def _assert_record_equal(got: object, want: object) -> None:
     assert type(got) is type(want)
     assert isinstance(got, (WheelFile, SdistFile))
     assert isinstance(want, (WheelFile, SdistFile))
-    for field in dataclasses.fields(got):
-        g = getattr(got, field.name)
-        w = getattr(want, field.name)
-        assert g == w, field.name
-        assert type(g) is type(w), field.name
+    for field in field_names(got):
+        g = getattr(got, field)
+        w = getattr(want, field)
+        assert g == w, field
+        assert type(g) is type(w), field
+
     # local_path is never carried through the parsed form.
     assert got.local_path is None
+
     # requires_python is interned on both paths, so identity must hold.
     if want.requires_python is not None:
         assert got.requires_python is want.requires_python

@@ -6,11 +6,11 @@ import copy
 import inspect
 import pickle
 from collections.abc import Callable
-from dataclasses import MISSING, fields
 
 import pytest
 
 from nab_provider.records import SdistFile, WheelFile
+from nab_provider.value import field_names
 
 WHEEL_URL = "https://pypi.example/pkg-1.0-py3-none-any.whl"
 
@@ -59,8 +59,9 @@ def test_metadata_url_reuses_first_result() -> None:
 
 
 def test_memo_leaves_equality_and_hashing_alone() -> None:
-    """The memo writes past the frozen guard; the fields still decide both."""
+    """Only the declared fields determine equality and hashing."""
     read, unread = make_wheel(), make_wheel()
+
     assert read.metadata_url is not None
 
     assert read == unread
@@ -98,25 +99,28 @@ def test_init_takes_the_fields_in_order(record: type[WheelFile | SdistFile]) -> 
     parameters = list(inspect.signature(record.__init__).parameters)
 
     assert parameters[0] == "self"
-    assert parameters[1:] == [field.name for field in fields(record)]
+    assert parameters[1:] == list(field_names(record))
 
 
 @pytest.mark.parametrize("record", HAND_WRITTEN_INIT_RECORDS)
-def test_init_defaults_match_the_fields(record: type[WheelFile | SdistFile]) -> None:
-    """Each field's default is declared twice, and both have to say the same thing."""
-    field_defaults = {
-        field.name: (
-            inspect.Parameter.empty if field.default is MISSING else field.default
-        )
-        for field in fields(record)
+def test_minimal_constructor_uses_expected_defaults(
+    record: type[WheelFile | SdistFile],
+) -> None:
+    """Omitted optional fields retain the record defaults."""
+    required = {
+        "filename": "pkg-1.0-py3-none-any.whl",
+        "url": WHEEL_URL,
+        "version": "1.0",
+        "requires_python": None,
+        "upload_time": None,
     }
-    parameter_defaults = {
-        name: parameter.default
-        for name, parameter in inspect.signature(record.__init__).parameters.items()
-        if name != "self"
-    }
+    expected = {"hashes": (), "size": None, "local_path": None}
+    if record is WheelFile:
+        required["has_metadata"] = False
+        expected["metadata_hash"] = None
+    value = record(**required)
 
-    assert parameter_defaults == field_defaults
+    assert {name: getattr(value, name) for name in expected} == expected
 
 
 def test_withdrawn_wheel_releases_the_original_record_slots() -> None:

@@ -19,4 +19,4 @@ It provides:
 Use `nab-index` if you need a typed PyPI Simple-API client with an on-disk cache. Most users want
 [`nab`](https://pypi.org/project/nab/) instead.
 
-The API is currently under rapid experimentation, if you use it pin to an exact version.
+The API is experimental. Pin an exact version when embedding it.

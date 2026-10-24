@@ -6,6 +6,11 @@ dependency-group set may be selected.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "itertools",
+    "nab_provider._vendor.packaging.utils",
+)
+
 import enum
 import itertools
 from typing import TYPE_CHECKING

@@ -11,7 +11,7 @@ The phase functions live in :mod:`nab_resolver.propagate`,
 holds shared state and delegates to those modules.  State attributes are
 named without leading underscores so the phase modules can read and mutate
 them directly; the supported public API is ``__init__``, ``resolve``,
-``solve``, and ``stats``.
+``solve``, ``try_resolve_preferred``, and ``stats``.
 
 Specification: https://github.com/dart-lang/pub/blob/master/doc/solver.md
 Original blog post: https://nex3.medium.com/pubgrub-2fb6470504f
@@ -19,6 +19,17 @@ Rust implementation: https://github.com/pubgrub-rs/pubgrub
 """
 
 from __future__ import annotations
+
+__lazy_modules__ = (
+    "collections",
+    "collections.abc",
+    "nab_resolver",
+    "nab_resolver.decision_queue",
+    "nab_resolver.errors",
+    "nab_resolver.partial_solution",
+    "nab_resolver.result",
+    "nab_resolver.root",
+)
 
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
@@ -602,6 +613,19 @@ class _RecordedDependencies:
         self.refinement_causes = refinement_causes
 
 
+class _PreferredModel(Generic[PackageType, VersionType]):
+    """One trial's incoming requirements and queued version assignments."""
+
+    __slots__ = ("chosen_ranges", "pending", "pins", "queued", "required")
+
+    def __init__(self) -> None:
+        self.required: dict[PackageType, RangeProtocol[VersionType]] = {}
+        self.pending: list[PackageType] = []
+        self.queued: set[PackageType] = set()
+        self.pins: dict[PackageType, VersionType] = {}
+        self.chosen_ranges: dict[PackageType, RangeProtocol[VersionType]] = {}
+
+
 class Resolver(Generic[PackageType, VersionType]):
     """PubGrub dependency resolver.
 
@@ -648,6 +672,7 @@ class Resolver(Generic[PackageType, VersionType]):
         is a debug representation needs its own.
         """
         self.provider = provider
+        self.preferred_trial_consumed = False
 
         # Recording the provider rather than a flag keeps the answer tied to
         # the object it was asked about, so a provider swapped into
@@ -792,6 +817,12 @@ class Resolver(Generic[PackageType, VersionType]):
 
         Raises ``ResolutionError`` if no solution exists.
         """
+        if self.preferred_trial_consumed:
+            message = (
+                "A preferred-model trial consumes its resolver and provider; "
+                "create fresh ones"
+            )
+            raise RuntimeError(message)
         self._reset(constraints)
         self._add_root_requirements(_as_root_requirements(requirements))
 
@@ -830,6 +861,197 @@ class Resolver(Generic[PackageType, VersionType]):
 
         exceeded_message = f"Resolution exceeded {self.max_iterations} iterations"
         raise ResolutionLimitError(exceeded_message)
+
+    def try_resolve_preferred(
+        self,
+        requirements: Mapping[PackageType, RangeProtocol[VersionType]]
+        | Sequence[RootRequirement[PackageType, VersionType]],
+        preferred: Mapping[PackageType, VersionType],
+        constraints: Mapping[PackageType, RangeProtocol[VersionType]] | None = None,
+    ) -> dict[PackageType, VersionType] | None:
+        """Check preferences and forced changes on a disposable solver and provider.
+
+        A refusal returns None; discard both objects before ordinary resolution.
+        An incoming requirement or constraint may force a different provider choice.
+        Successful trials emit decision callbacks after the complete model is checked.
+        """
+        if self.preferred_trial_consumed or self.stats.decisions:
+            message = (
+                "Preferred-model validation requires a fresh resolver and provider"
+            )
+            raise RuntimeError(message)
+
+        self.preferred_trial_consumed = True
+
+        # Delay decision callbacks until the complete preferred model is proved.
+        observer = self.observer
+        self.observer = ResolverObserver()
+
+        try:
+            self._reset(constraints)
+            roots = _as_root_requirements(requirements)
+            self._add_root_requirements(roots)
+            if propagate.unit_propagation(self, ROOT) is not None:
+                return None
+            result = self._grow_preferred_model(roots, preferred)
+        finally:
+            self.observer = observer
+
+        if result is not None:
+            for level, (package, version) in enumerate(result.items(), start=2):
+                observer.on_decision(package, version, level)
+
+        return result
+
+    def _grow_preferred_model(
+        self,
+        roots: Sequence[RootRequirement[PackageType, VersionType]],
+        preferred: Mapping[PackageType, VersionType],
+    ) -> dict[PackageType, VersionType] | None:
+        """Check the dependency closure and every emitted clause."""
+        model: _PreferredModel[PackageType, VersionType] = _PreferredModel()
+
+        for root in roots:
+            constraint = self.as_term_range(root.constraint)
+            previous = model.required.get(root.package)
+            model.required[root.package] = (
+                constraint if previous is None else previous & constraint
+            )
+            if root.package not in model.queued:
+                model.pending.append(root.package)
+                model.queued.add(root.package)
+
+        # The queue grows as accepted packages introduce dependencies.
+        for package in model.pending:
+            if not self._accept_preferred_choice(model, package, preferred):
+                return None
+
+        if not self._recheck_preferred_ranges(model):
+            return None
+
+        self.stats.rounds += 1
+        if self.stats.rounds > self.max_iterations:
+            return None
+
+        contradicted = IncompatibilityState.CONTRADICTED
+        if any(
+            propagate.evaluate_incompatibility(self, clause) is not contradicted
+            for clause in self.incompatibilities
+        ):
+            return None
+
+        return model.pins
+
+    def _accept_preferred_choice(
+        self,
+        model: _PreferredModel[PackageType, VersionType],
+        package: PackageType,
+        preferred: Mapping[PackageType, VersionType],
+    ) -> bool:
+        """Accept one actual provider choice and its declared dependencies."""
+        self.stats.rounds += 1
+        if self.stats.rounds >= self.max_iterations or package not in preferred:
+            return False
+
+        chosen = decide.choose_version(self, package)
+        if chosen is None:
+            return False
+
+        # A different choice is allowed only when current constraints force it.
+        expected = preferred[package]
+        if chosen != expected:
+            required = model.required[package]
+            constraint = self.constraints.get(package)
+            if constraint is not None:
+                required = required & constraint
+            if expected in required:
+                return False
+
+        if list(self.provider.consume_force_backtrack_targets()):
+            return False
+
+        decide.absorb_pending_clauses(self)
+        exact = self.solution.decide(package, chosen)
+        self.stats.decisions += 1
+        model.pins[package] = chosen
+        model.chosen_ranges[package] = model.required[package]
+
+        dependencies = self.provider.get_dependencies(package, chosen)
+
+        if list(self.provider.consume_force_backtrack_targets()):
+            return False
+
+        decide.absorb_pending_clauses(self)
+        return self._add_preferred_dependencies(
+            model, package, chosen, exact, dependencies
+        )
+
+    def _add_preferred_dependencies(
+        self,
+        model: _PreferredModel[PackageType, VersionType],
+        package: PackageType,
+        version: VersionType,
+        exact: RangeProtocol[VersionType],
+        dependencies: Mapping[PackageType, RangeProtocol[VersionType]],
+    ) -> bool:
+        """Derive actual dependency requirements without a search round."""
+        for dependency, supplied in dependencies.items():
+            dependency_range = self.as_term_range(supplied)
+            previous = model.required.get(dependency)
+            model.required[dependency] = (
+                dependency_range if previous is None else previous & dependency_range
+            )
+
+            if dependency == package:
+                if version not in dependency_range:
+                    return False
+                continue
+
+            clause = Incompatibility(
+                [
+                    Term(package, exact, positive=True),
+                    Term(dependency, dependency_range, positive=False),
+                ],
+                cause=IncompatibilityCause.DEPENDENCY,
+            )
+            incompat_index.add_incompatibility(self, clause)
+            narrowed = self.solution.derive(
+                dependency, dependency_range, positive=True, cause=clause
+            )
+            if narrowed.is_empty:
+                return False
+
+            if dependency not in model.queued:
+                model.pending.append(dependency)
+                model.queued.add(dependency)
+
+        return True
+
+    def _recheck_preferred_ranges(
+        self, model: _PreferredModel[PackageType, VersionType]
+    ) -> bool:
+        """Check policy refinements introduced after a package was chosen."""
+        for package, chosen in model.pins.items():
+            final_range = model.required[package]
+            if final_range == model.chosen_ranges[package]:
+                continue
+
+            constraint = self.constraints.get(package)
+            if constraint is not None:
+                final_range = final_range & constraint
+
+            if self.provider is not self._hint_ignoring_provider:
+                self.provider.receive_partial_solution_hint(
+                    self.solution.positive_ranges(), self.solution.decisions()
+                )
+
+            if self.provider.choose_version(package, final_range) != chosen:
+                return False
+            if list(self.provider.consume_force_backtrack_targets()):
+                return False
+            decide.absorb_pending_clauses(self)
+
+        return True
 
     def _handle_conflict(
         self,

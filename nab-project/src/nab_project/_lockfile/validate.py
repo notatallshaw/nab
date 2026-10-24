@@ -31,8 +31,20 @@ lock and runs both stages, so a caller never handles a parsed lock itself.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+__lazy_modules__ = (
+    "nab_project",
+    "nab_provider._vendor.packaging.markers",
+    "nab_provider._vendor.packaging.pylock",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.marker_holds",
+    "nab_provider.metadata",
+    "nab_provider.pep508",
+    "nab_provider.target",
+    "tomli",
+)
+
+from typing import TYPE_CHECKING, Final
 
 import tomli
 
@@ -48,6 +60,7 @@ from nab_provider.marker_holds import (
 from nab_provider.metadata import validate_specifier_versions
 from nab_provider.pep508 import parse_requirement
 from nab_provider.target import NonIntervalMarkerError, micro_boundary_points
+from nab_provider.value import HashableRecord
 
 from .. import toml_io
 
@@ -71,26 +84,35 @@ class InvalidLockfileError(Exception):
     """A committed lockfile that parses as TOML but not as PEP 751."""
 
 
-@dataclass(frozen=True, slots=True)
-class LockDisqualification:
+class LockDisqualification(HashableRecord):
     """A proven reason the committed lock is out of date.
 
     ``reason`` is a plain-language clause naming the disqualifier.
     """
 
-    reason: str
+    __slots__ = __match_args__ = ("reason",)
+
+    reason: Final[str]
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
 
 
-@dataclass(frozen=True, slots=True)
-class RootRequirement:
+class RootRequirement(HashableRecord):
     """One active direct requirement plus the pyproject clause it came from.
 
     ``source`` is the plain-language origin named in a disqualification
     reason, for example ``[project].dependencies`` or a selected extra or group.
     """
 
-    requirement: Requirement
-    source: str
+    __slots__ = __match_args__ = ("requirement", "source")
+
+    requirement: Final[Requirement]
+    source: Final[str]
+
+    def __init__(self, requirement: Requirement, source: str) -> None:
+        self.requirement = requirement
+        self.source = source
 
 
 def check_envelope(

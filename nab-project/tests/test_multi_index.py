@@ -469,3 +469,20 @@ class TestValidation:
                 ["a"],
                 {"foo": "no-such-index"},
             )
+
+
+def test_zip_only_first_index_owns_package(tmp_path: Path) -> None:
+    """Artifact admission policy does not change first-index ownership."""
+    (tmp_path / "foo-1.0.zip").write_bytes(b"")
+    first = LocalIndexClient(tmp_path.as_uri())
+    second = FakeClient({"foo": [make_wheel(package="foo")]})
+    client = MultiIndexClient(
+        {"first": first, "second": second}, ["first", "second"], {}
+    )
+
+    files = run(client.get_files("foo"))
+
+    assert [file.filename for file in files] == ["foo-1.0.zip"]
+    assert isinstance(files[0], SdistFile)
+    assert second.get_files_calls == []
+    assert client.served_zip_sdists("foo") == frozenset({"1.0"})

@@ -7,7 +7,20 @@ already-cached metadata where possible.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+__lazy_modules__ = (
+    "functools",
+    "nab_provider._provider.metadata_resolver",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.version",
+    "nab_provider.errors",
+    "nab_provider.iso8601",
+    "nab_provider.metadata",
+    "nab_provider.policy",
+    "nab_provider.records",
+    "nab_provider.tags",
+    "nab_provider.vcs_admission",
+)
+
 from functools import partial
 from typing import TYPE_CHECKING, Final, TypeGuard
 
@@ -23,6 +36,8 @@ from ..errors import (
 from ..iso8601 import fast_iso_parser, parse_iso_datetime
 from ..metadata import intern_version as _intern_version
 from ..policy import DistPolicy
+from ..tags import TagSet
+from ..value import HashableRecord
 from ..vcs_admission import UnsupportedVcsError
 from .metadata_resolver import pick_dist_for_metadata, version_dists
 
@@ -37,7 +52,6 @@ if TYPE_CHECKING:
     from ..fetch_port import Waitable
     from ..policy import ArchiveSource, LocalSource, VcsSource
     from ..provider import DistFile, Provider, ProviderStats
-    from ..tags import TagSet
 
     _PreparedListing = tuple[
         list[tuple[Version, DistFile]],
@@ -53,6 +67,7 @@ if TYPE_CHECKING:
         "upload-time-naive",
         "upload-time-after-cutoff",
         "dist-policy",
+        "zip-sdist",
         "sdist-install-no-sdist",
         "requires-python",
         "wheel-tags",
@@ -78,14 +93,10 @@ PREFETCH_BATCH = 8
 class DropCause:
     """Why the listing filter refused one file, or one whole version.
 
-    A namespace of constants rather than an :class:`enum.Enum`, which is
-    the most expensive way to declare a handful of names and is paid on
-    every nab invocation, since every one imports this module.
-
     :data:`REPORT_ORDER` is the order the clauses print in, which is not
     the order the filter applies.  A file is refused at the first rung that
     objects, and the rungs run in this order: ``INVALID_VERSION``,
-    ``DIST_POLICY``, ``REQUIRES_PYTHON``, the four ``UPLOAD_TIME_*``,
+    ``DIST_POLICY``, ``REQUIRES_PYTHON``, the four ``UPLOAD_TIME_*``, ``ZIP_SDIST``,
     ``SDIST_INSTALL_NO_SDIST``, ``WHEEL_TAGS``.
     """
 
@@ -94,6 +105,7 @@ class DropCause:
     UPLOAD_TIME_NAIVE: Final = "upload-time-naive"
     UPLOAD_TIME_AFTER_CUTOFF: Final = "upload-time-after-cutoff"
     DIST_POLICY: Final = "dist-policy"
+    ZIP_SDIST: Final = "zip-sdist"
     SDIST_INSTALL_NO_SDIST: Final = "sdist-install-no-sdist"
     REQUIRES_PYTHON: Final = "requires-python"
     WHEEL_TAGS: Final = "wheel-tags"
@@ -105,6 +117,7 @@ class DropCause:
         UPLOAD_TIME_NAIVE,
         UPLOAD_TIME_AFTER_CUTOFF,
         DIST_POLICY,
+        ZIP_SDIST,
         SDIST_INSTALL_NO_SDIST,
         REQUIRES_PYTHON,
         WHEEL_TAGS,
@@ -236,10 +249,17 @@ def prefetch_root_batch(
     )
 
     items: list[tuple[str, str, str, tuple[str, str] | None]] = []
+    previous_version: Version | None = None
+    in_root_range = False
     for version, dist in ordered:
         if len(items) >= PREFETCH_BATCH:
             break
-        if version not in root_range:
+
+        # Equal versions can retain different text for literal matching.
+        if previous_version is None or version is not previous_version:
+            previous_version = version
+            in_root_range = version in root_range
+        if not in_root_range:
             continue
         if (normalized, version) in provider.deps_cache:
             continue
@@ -251,6 +271,7 @@ def prefetch_root_batch(
             and (url := dist.metadata_url) is not None
         ):
             items.append((normalized, dist.version, url, dist.metadata_hash))
+
     if items:
         provider.coordinator.request_metadata_batch(items)
 
@@ -359,8 +380,7 @@ def base_distributions(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class ListingPolicy:
+class ListingPolicy(HashableRecord):
     """The policy config one listing's files are judged under.
 
     ``overridden`` is true when a per-package or per-index override can
@@ -370,13 +390,46 @@ class ListingPolicy:
     ``default_dist_policy``'s artifact-kind verdict, taken once.
     """
 
-    index_name: str | None
-    overridden: bool
-    default_dist_policy: DistPolicy
-    default_cutoff: datetime | None
-    time_filter_active: bool
-    default_drops_wheels: bool
-    default_drops_sdists: bool
+    __slots__ = __match_args__ = (
+        "index_name",
+        "overridden",
+        "default_dist_policy",
+        "default_cutoff",
+        "time_filter_active",
+        "default_drops_wheels",
+        "default_drops_sdists",
+        "default_allow_zip_sdists",
+    )
+
+    index_name: Final[str | None]
+    overridden: Final[bool]
+    default_dist_policy: Final[DistPolicy]
+    default_cutoff: Final[datetime | None]
+    time_filter_active: Final[bool]
+    default_drops_wheels: Final[bool]
+    default_drops_sdists: Final[bool]
+    default_allow_zip_sdists: Final[bool]
+
+    def __init__(
+        self,
+        *,
+        index_name: str | None,
+        overridden: bool,
+        default_dist_policy: DistPolicy,
+        default_cutoff: datetime | None,
+        time_filter_active: bool,
+        default_drops_wheels: bool,
+        default_drops_sdists: bool,
+        default_allow_zip_sdists: bool,
+    ) -> None:
+        self.index_name = index_name
+        self.overridden = overridden
+        self.default_dist_policy = default_dist_policy
+        self.default_cutoff = default_cutoff
+        self.time_filter_active = time_filter_active
+        self.default_drops_wheels = default_drops_wheels
+        self.default_drops_sdists = default_drops_sdists
+        self.default_allow_zip_sdists = default_allow_zip_sdists
 
 
 def listing_policy(provider: Provider, normalized: str) -> ListingPolicy:
@@ -392,6 +445,7 @@ def listing_policy(provider: Provider, normalized: str) -> ListingPolicy:
         ),
         default_drops_wheels=default_dist_policy == DistPolicy.SDIST_ONLY,
         default_drops_sdists=default_dist_policy == DistPolicy.WHEEL_ONLY,
+        default_allow_zip_sdists=provider.allow_zip_sdists,
     )
 
 
@@ -438,14 +492,29 @@ def _filter_base(
 
     result = _drop_sdist_install_wheel_only(result, sdist_install_versions)
 
-    if sort_with_wheel_first:
+    _sort_listing(
+        result,
+        wheel_first=sort_with_wheel_first,
+        zip_policy_active=provider.allow_zip_sdists or policy.overridden,
+    )
+    return _canonicalize_equal_versions(result)
+
+
+def _sort_listing(
+    result: list[tuple[Version, DistFile]],
+    *,
+    wheel_first: bool,
+    zip_policy_active: bool,
+) -> None:
+    """Order candidates newest first, preferring gzip-tar to legacy ZIP ties."""
+    if zip_policy_active:
+        result.sort(key=lambda pair: pair[1].filename.endswith(".zip"))
+    if wheel_first:
         result.sort(
-            key=lambda pair: (pair[0], isinstance(pair[1], WheelFile)),
-            reverse=True,
+            key=lambda pair: (pair[0], isinstance(pair[1], WheelFile)), reverse=True
         )
     else:
         result.sort(key=lambda pair: pair[0], reverse=True)
-    return _canonicalize_equal_versions(result)
 
 
 def _count_files_seen(stats: ProviderStats, wheels: int, sdists: int) -> None:
@@ -501,6 +570,7 @@ def _apply_target_drops(
             pair
             for pair in parsed
             if not python_or_time_cause(provider, normalized, pair[0], pair[1], policy)
+            and not zip_sdist_cause(provider, normalized, pair[0], pair[1], policy)
         ]
 
     return [
@@ -509,6 +579,7 @@ def _apply_target_drops(
         if not _python_or_shared_time_cause(
             provider, normalized, pair[0], pair[1], policy, time_causes, index
         )
+        and not zip_sdist_cause(provider, normalized, pair[0], pair[1], policy)
     ]
 
 
@@ -573,8 +644,9 @@ def _prepare_listing(
             elif effective_dist_policy is DistPolicy.PREFER_WHEEL:
                 sort_with_wheel_first = True
 
-            if target_drops and python_or_time_cause(
-                provider, normalized, version, dist, policy
+            if target_drops and (
+                python_or_time_cause(provider, normalized, version, dist, policy)
+                or zip_sdist_cause(provider, normalized, version, dist, policy)
             ):
                 continue
 
@@ -657,9 +729,10 @@ def _prepare_listing_defaults(
             if excluded:
                 continue
 
-            if time_filter_active and _excluded_by_upload_time(
-                provider, normalized, dist, cutoff
-            ):
+            if (
+                time_filter_active
+                and _excluded_by_upload_time(provider, normalized, dist, cutoff)
+            ) or zip_sdist_cause(provider, normalized, version, dist, policy):
                 continue
 
             result.append((version, dist))
@@ -669,6 +742,49 @@ def _prepare_listing_defaults(
     return result, sdist_install_versions, sort_with_wheel_first
 
 
+def _prepared_tag_result(
+    provider: Provider, normalized: str, tags: TagSet
+) -> list[tuple[Version, DistFile]] | None:
+    """Replay a shared projection only for unmodified native filter contracts."""
+    cache = provider.listing_filter_cache
+    if (
+        cache is not None
+        and provider.prepare_candidate_views
+        and not provider.release_refused_wheels
+        and type(tags) is TagSet
+    ):
+        prepared = cache.tagged(normalized, provider.python_version, tags)
+        provider.prepared_listings[normalized] = prepared
+        for version, count in prepared.tag_exclusions:
+            _tally_tag_exclusions(provider, normalized, version, count)
+
+        provider.stats.excluded_versions_no_compatible_wheel += prepared.empty_versions
+        return list(prepared.distributions)
+
+    return None
+
+
+def zip_sdist_cause(
+    provider: Provider,
+    normalized: str,
+    version: Version,
+    dist: DistFile,
+    policy: ListingPolicy,
+) -> Cause | None:
+    """Refuse a legacy ZIP sdist unless its effective policy permits it."""
+    if not isinstance(dist, SdistFile) or not dist.filename.endswith(".zip"):
+        return None
+    allowed = (
+        provider.effective_allow_zip_sdists(normalized, version, policy.index_name)
+        if policy.overridden
+        else policy.default_allow_zip_sdists
+    )
+    if allowed:
+        return None
+    provider.stats.excluded_zip_sdists += 1
+    return DropCause.ZIP_SDIST
+
+
 def _apply_wheel_tags(
     provider: Provider,
     normalized: str,
@@ -676,16 +792,19 @@ def _apply_wheel_tags(
 ) -> list[tuple[Version, DistFile]]:
     """Drop the wheels this target cannot install, and the versions they leave empty.
 
-    Runs per target: the tags are the one axis of the filter the targets
-    of a matrix do not share.
+    Equal tag-admission answers may share a prepared view; wheel ranking and
+    metadata validation remain target-specific.
 
-    Where the provider's caller allows it, a refused wheel is released as
-    it is dropped, since nothing fetches it again
-    (:func:`~nab_provider.records.release_wheel_payload`).
+    Where the provider's caller allows it, a refused wheel is released unless
+    ``assume-universal-deps`` retains it as a dependency-metadata source.
     """
     tags = provider.wheel_tags
     if tags is None:
         return base
+
+    prepared = _prepared_tag_result(provider, normalized, tags)
+    if prepared is not None:
+        return prepared
 
     accepts = tags.accepts
     release_refused = provider.release_refused_wheels
@@ -703,7 +822,9 @@ def _apply_wheel_tags(
             result.append(pair)
             continue
 
-        if release_refused:
+        if release_refused and not provider.effective_assume_universal_deps(
+            normalized, version, provider.serving_index(normalized)
+        ):
             release_wheel_payload(dist)
 
         # ``base`` is sorted by version, so a version's rejected wheels arrive

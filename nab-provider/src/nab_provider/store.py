@@ -5,6 +5,11 @@ No network, no filesystem, no import of the index client at runtime.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "hashlib",
+    "nab_provider.metadata",
+)
+
 import threading
 from contextlib import contextmanager
 from hashlib import sha256

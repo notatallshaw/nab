@@ -1,116 +1,122 @@
-# Getting started
+# Your first universal lock
 
-This tutorial resolves a project against PyPI, writes a lock, and installs the locked dependencies.
+Create one lock for Python 3.12, 3.13, 3.14 and 3.15 on Linux x86-64 and Apple Silicon macOS, then
+install its dependencies on a matching machine. You only need one of those environments to follow
+the tutorial.
 
-## Install
+nab and its multi-target lockfile format are experimental.
+[What nab locks](../explanation/locking.md) explains requirements, targets and the installer's role.
+
+## Install nab
 
 ```bash
-uv tool install nab
+pipx install nab
 nab --version
 ```
 
-For other install paths (extras, pipx, a checkout) see [Install nab](../how-to/install.md).
+Or install with uv:
 
-## A minimal `pyproject.toml`
+```bash
+uv tool install nab
+```
 
-Create a new directory and save the following as `pyproject.toml`, or use an existing project's
-dependency declarations. Run the commands below from that directory.
+nab runs on CPython 3.10 and newer. See [Install nab](../how-to/install.md) for other installation
+methods.
+
+## Declare the project and its targets
+
+Create an empty directory and save this as `pyproject.toml`:
 
 ```toml
 [project]
 name = "example"
 version = "0.1.0"
-dependencies = [
-    "starlette<=0.36.0",
-    "fastapi<=0.115.2",
-]
+requires-python = ">=3.12,<3.16"
+dependencies = ["requests>=2,<3"]
+
+[tool.nab.matrix]
+python = ">=3.12,<3.16"
+platforms = ["linux_x86_64", "macos_arm64"]
 ```
 
-## First resolve
+`requires-python` declares the project's supported Python range. The matrix chooses four Python
+minors on each platform: eight targets. nab infers universal mode from these multiple targets and
+resolves them together into one file.
+
+With `implementations` omitted, nab selects CPython. It does not add Windows, PyPy, musl Linux or
+free-threaded CPython unless you configure them. A matrix with one target defaults to specific mode
+and resolves that declared target. With no target settings, nab resolves for the Python and platform
+running it.
+
+Change the range and platform IDs to match your deployments when using your own project. See
+[Target matrix](../reference/target-matrix.md) for Windows, other architectures and PyPy, and
+[Platform tags](../reference/platform-tags.md) for minimum operating-system versions.
+
+## Generate the lock
+
+Run from the project directory:
 
 ```bash
 nab lock pyproject.toml
 ```
 
-This writes `pylock.toml` next to your project without installing its dependencies. Open it to see
-exact package versions, the files and hashes selected for them, and the environment the lock covers.
-It includes dependencies of the packages you requested, such as FastAPI's dependency on Pydantic.
-
-By default, the target is the interpreter and platform running nab, which may differ from your
-application's virtual environment. To target Python 3.12 on the same platform, use
-`nab lock --python 3.12 pyproject.toml`. See
-{ref}`the resolve environment <the-resolve-environment>` for other targets.
-
-To inspect a short list of versions on stdout, run:
+Or run on demand with uvx:
 
 ```bash
-nab lock --format requirements-without-hashes --output - pyproject.toml
+uvx nab lock pyproject.toml
 ```
 
-```
-annotated-types==0.8.0
-anyio==4.14.2
-fastapi==0.109.1
-idna==3.18
-pydantic==2.13.4
-pydantic-core==2.46.4
-starlette==0.35.1
-typing-extensions==4.16.0
-typing-inspection==0.4.4
-```
+This reads PyPI metadata and writes `pylock.toml` beside your project. It does not install anything.
+You do not need all eight target interpreters or machines to generate it.
 
-`fastapi` resolves to 0.109.1 rather than its `<=0.115.2` cap because every later release requires a
-starlette that `<=0.36.0` excludes.
+Open the file and inspect:
 
-This command resolves again; it does not export the existing lock. nab prefers the newest releases
-that satisfy the constraints. This block came from CPython 3.12 on Linux, so another target or a
-later resolve can differ.
+- `environments`: the Python and platform combinations covered by the lock.
+- `packages`: Requests and its transitive dependencies, with selected versions and artifact hashes.
+- Package `marker` fields, when present: conditions selecting an entry for particular environments.
 
-Names use their PEP 503 canonical form, so `typing_extensions` appears as `typing-extensions`.
+Compatible targets can share package entries. When targets need different versions, the lock can
+carry both with markers. If one target fails, nab reports the failure and does not write a new lock.
 
 (install-the-locked-dependencies)=
 
 ## Install the locked dependencies
 
-Use a virtual environment whose Python and platform match the lock. If you do not have one, create
-it with your application's Python and activate it:
+Use Python 3.12, 3.13, 3.14 or 3.15 on one of the two declared platforms. Check your Python, create
+a virtual environment and activate it:
 
 ```bash
+python --version
 python -m venv .venv
 source .venv/bin/activate
 ```
 
-On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1` instead. Check `python --version`
-against the Python you resolved for.
+On Windows, declare a Windows platform in the matrix and regenerate the lock first; activate the
+environment in PowerShell with `.venv\Scripts\Activate.ps1`.
 
-pip 26.1 and newer can read the default lock. Upgrade pip in this environment, then install:
+Install with pip 26.1 or newer:
 
 ```bash
 python -m pip install --upgrade 'pip>=26.1'
 python -m pip install -r pylock.toml
+python -c "import requests; print(requests.__version__)"
 ```
 
-pip selects the current environment, the lock's default dependency groups, and no extras. Its
-`pylock.toml` support is experimental.
+This installs the locked dependencies; installing your own project is a separate step.
 
-This installs the dependencies, not your own project. For this example, confirm FastAPI is available
-with `python -c "import fastapi; print(fastapi.__version__)"`.
+## Share and update the lock
 
-See [Use a lock](../how-to/use-the-lock.md) for hashed requirements, an offline wheelhouse, and the
-limits of each path.
+Commit `pyproject.toml` and `pylock.toml` together. Copy the same lock to another covered
+environment and run the pip installation command there. An environment outside the declared targets
+needs a new lock that includes it.
 
-## Keep or refresh the result
+After changing dependencies or targets, run `nab lock pyproject.toml` again and review the diff.
+Existing pins do not seed the new resolve. `--locked` currently checks single-environment locks
+only; it cannot check this universal lock.
 
-Commit `pyproject.toml` and `pylock.toml` together. Another matching environment can install from
-the same lock without asking nab to select versions again.
+## Continue with your project
 
-When you change dependencies or want a fresh selection, run `nab lock pyproject.toml` and review the
-lock's diff before installing. Existing pins are not preferences for the next resolve. For automated
-checks, follow {ref}`Check a committed lock in CI <check-a-committed-lock-in-ci>`.
-
-## Where to next
-
-- [Configuration](../reference/configuration.md): configure the resolve.
-- [Resolution failures](../reference/diagnostics.md): read an error and its recovery hints.
-- [Universal resolution](../explanation/universal.md): lock for several Python and platform targets.
-- [CLI](../reference/cli.md): look up commands and flags.
+- [Lock for multiple environments](../how-to/lock-multiple-environments.md): change targets from the
+  CLI and inspect per-target requirements.
+- [Use a lock](../how-to/use-the-lock.md): installation formats, offline use and selection limits.
+- [Resolution failures](../reference/diagnostics.md): recover when a target cannot resolve.

@@ -1,7 +1,9 @@
 # Yanked releases
 
 Yanked files have been withdrawn by their publisher. nab normally skips them, but an exact pin can
-allow them.
+allow them. The
+[file-yanking specification](https://packaging.python.org/en/latest/specifications/file-yanking/)
+defines the index signal; the rules below describe Nab's selection.
 
 Suppose `lib==1.2` is yanked and `lib==1.1` is not:
 
@@ -16,6 +18,13 @@ The pin can come from your requirements, a selected dependency, or a constraint 
 package. Pins for inactive extras or other environments do not apply.
 
 ## Dependencies and alternatives
+
+For example, a project can request a yanked release explicitly:
+
+```toml
+[project]
+dependencies = ["lib==1.2"]
+```
 
 If `app==2` requires yanked `lib==2`, nab can keep that combination even when older `app==1` would
 use non-yanked `lib==1`. You do not need to repeat the dependency's pin yourself.

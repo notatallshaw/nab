@@ -268,6 +268,6 @@ class TestHooksReadWhatTheWalkStores:
 
             build_cli_layer({row.name: value})
 
-    def test_the_settable_keys_are_the_sixteen_flagged_rows(self) -> None:
+    def test_the_settable_keys_are_the_eighteen_flagged_rows(self) -> None:
         """A derivation that emptied would leave the case above with no rows."""
-        assert len(_SETTABLE) == 16
+        assert len(_SETTABLE) == 18

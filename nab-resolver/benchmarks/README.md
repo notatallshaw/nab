@@ -50,6 +50,5 @@ Every membership test comes from `GraphProvider` scanning its own release lists.
 indexed or cached its candidates would show almost none. These scenarios compare `Range`
 implementations on a fixed workload; they do not size `Range`'s share of a real resolve.
 
-Versions here are `int`, so a comparison inside `Range` costs a C-level int compare. A consumer
-holding packaging `Version` objects pays a Python-level `__lt__`. A change that spends allocations
-to save comparisons is worth at least what it measures here, and more to that consumer.
+These scenarios use `int` versions. Consumers using packaging `Version` objects have different
+comparison costs, so measure those workloads separately.

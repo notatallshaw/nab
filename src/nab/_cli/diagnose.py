@@ -6,9 +6,16 @@ import :mod:`typing` on this error-only path.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_resolver.diagnostics",
+    "difflib",
+    "nab._cli.parse",
+)
+
 import difflib
 
 from nab._cli.parse import UsageError  # noqa: TC001 - see the module docstring
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion, error_message
 
 __all__ = ["diagnose", "suggest"]
 
@@ -65,15 +72,18 @@ def diagnose(error: UsageError, *, color: bool = False) -> str:
     the caller's decision for the output stream.
     """
     opener = _paint(f"{error.prog}:", _RED, color=color)
-    lines = [f"{opener} {error.message}"]
-
+    message = error_message(error)
+    suggestions = list(message.suggestions)
     named = suggest(error.token, error.candidates) if error.token else ()
     if named:
-        lines.append(_suggestion(named, color=color))
-
-    lines.append(f"Try '{error.prog} --help' for more information.")
-
-    return "\n".join(lines) + "\n"
+        suggestions.append(Suggestion(_suggestion(named, color=color)))
+    suggestions.append(Suggestion(f"run '{error.prog} --help' for more information"))
+    return (
+        DiagnosticMessage(
+            (f"{opener} {message.message}"), suggestions=tuple(suggestions)
+        ).render()
+        + "\n"
+    )
 
 
 def _suggestion(named: tuple[str, ...], *, color: bool) -> str:
@@ -84,5 +94,5 @@ def _suggestion(named: tuple[str, ...], *, color: bool) -> str:
     """
     quoted = ", ".join(f"'{_paint(name, _CYAN, color=color)}'" for name in named)
     if len(named) == 1:
-        return f"did you mean {quoted}?"
-    return f"did you mean one of {quoted}?"
+        return f"use {quoted}"
+    return f"use one of {quoted}"

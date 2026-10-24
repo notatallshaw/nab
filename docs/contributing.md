@@ -62,6 +62,8 @@ coordinator = make_coordinator(
 )
 ```
 
+### Fixture and case design
+
 Use `pending_listings` when a provider test needs a listing to arrive only after its request event
 is waited on. This shares the event behavior between provider and engine tests while keeping request
 assertions in the test.
@@ -76,6 +78,8 @@ test. Shared coverage or an identical function body alone does not establish dup
 rejection cases, include a valid neighboring entry to prove the parser keeps usable data. When
 consolidating tests, use targeted mutations to confirm the retained assertions detect the faults
 they claim to cover.
+
+### Run the suite
 
 The default suite covers every module under `nab_resolver`, `nab_markersets`, `nab_provider`,
 `nab_project`, `nab_index`, and `nab`:
@@ -93,6 +97,8 @@ before reporting:
 .venv/bin/python -m coverage combine
 .venv/bin/python -m coverage report       # fails below 100 percent
 ```
+
+### Check one workspace
 
 CI checks each workspace's coverage from its own tests through nox (see `noxfile.py`). Reproduce a
 single workspace, or all of them, with:
@@ -153,6 +159,45 @@ commands and CI; ty receives explicit filenames so its directory exclusions cann
 | Cross-checker casts                                   | Pyrefly can narrow checked `Literal` conversions that Mypy and ty still require. Zuban's recursive marker-alias narrowing has one documented line exception.                                                                                      |
 | Test annotation completeness                          | Pyright keeps checking resolver tests while allowing unannotated fixtures and generic strategy annotations. Production definitions retain completeness checks.                                                                                    |
 
+## Diagnostic suggestions
+
+Keep corrective actions separate from the cause of an error:
+
+```python
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
+
+raise ValueError(
+    DiagnosticMessage(
+        "the required artifact is unavailable",
+        suggestions=(Suggestion("select a release that publishes the artifact"),),
+    )
+)
+```
+
+Raise or log the structured value. The command renderer supplies `try:` lines, verbosity and
+deduplication. Use `error_message(error).prefixed(...)` when adding context to an existing error;
+formatting it into another string would discard its structure. Include any condition or package,
+version or index scope in the action, so a different correction is kept distinct.
+
+Retain candidate-rejection suggestions until final failure. Tests should cover a successful
+fallback, an unrelated failure, repeated failures across targets and a fresh command. Do not add
+per-file bookkeeping solely to improve a failure message.
+
+## Code readability
+
+Before opening or updating a pull request, read each changed function in full after formatting.
+Separate validation, setup, cache access, state changes and output with blank lines where they are
+independent steps. Keep a cohesive call, literal or sequence of field assignments together. Tests
+need the same separation between setup, the operation and assertion groups.
+
+Add a short comment when novel code relies on a non-obvious cache, ownership or concurrency rule.
+Explain why the step is needed; avoid repeating what the statement says. A function docstring and a
+formatter cannot replace this review of the body.
+
+Review each stacked pull request against its own parent. Put readability fixes on the pull request
+that introduces or changes the function, then rebase its descendants. Keep behavior, failure order,
+public interfaces and measurement boundaries unchanged.
+
 ## Markdown source
 
 Use `hatch run lint:fmt` to format Markdown and Python, or `hatch run lint:fmt-check` to check both.
@@ -200,6 +245,8 @@ to packages that still support the floor.
 The `pyproject.toml` `[tool.coverage.report] fail_under = 100` setting requires 100 percent branch
 coverage on every workspace package: `nab_resolver`, `nab_markersets`, `nab_provider`,
 `nab_project`, `nab_index`, and `nab`.
+
+### Workspace coverage
 
 The full local suite under `coverage run -m pytest` checks all six together. Nox splits them per
 workspace in CI and runs each suite once, appending to one coverage data file. Its result includes

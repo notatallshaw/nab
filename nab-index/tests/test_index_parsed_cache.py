@@ -1224,18 +1224,18 @@ class TestParsedCacheStats:
         ]
 
 
-_ZIP_ONLY_LISTING = {
+_INSTALLER_ONLY_LISTING = {
     "meta": {"api-version": "1.0"},
     "name": "pkg",
     "files": [
         {
-            "filename": "pkg-1.0.zip",
-            "url": "https://files.example.com/pkg-1.0.zip",
+            "filename": "pkg-1.0.win32.exe",
+            "url": "https://files.example.com/pkg-1.0.win32.exe",
             "hashes": {"sha256": "deadbeef"},
         }
     ],
 }
-_ZIP_ONLY_BYTES = json.dumps(_ZIP_ONLY_LISTING).encode()
+_INSTALLER_ONLY_BYTES = json.dumps(_INSTALLER_ONLY_LISTING).encode()
 
 
 class TestReadPathEmptyListing:
@@ -1251,7 +1251,7 @@ class TestReadPathEmptyListing:
         self, tmp_path: Path
     ) -> None:
         cache = _cache(tmp_path)
-        _warm_bound(cache, body=_ZIP_ONLY_BYTES)
+        _warm_bound(cache, body=_INSTALLER_ONLY_BYTES)
         transport = _FakeTransport([])
         client = CachedAsyncSimpleClient(transport, cache, _INDEX)
 
@@ -1263,7 +1263,7 @@ class TestReadPathEmptyListing:
 
     def test_empty_blob_counts_a_rebuild(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
-        _warm_bound(cache, body=_ZIP_ONLY_BYTES)
+        _warm_bound(cache, body=_INSTALLER_ONLY_BYTES)
         stats = ParsedCacheStats()
         client = CachedAsyncSimpleClient(
             _FakeTransport([]), cache, _INDEX, parsed_stats=stats
@@ -1277,7 +1277,7 @@ class TestReadPathEmptyListing:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         cache = _cache(tmp_path)
-        _warm_bound(cache, body=_ZIP_ONLY_BYTES)
+        _warm_bound(cache, body=_INSTALLER_ONLY_BYTES)
         client = CachedAsyncSimpleClient(_FakeTransport([]), cache, _INDEX)
 
         with caplog.at_level(logging.WARNING):

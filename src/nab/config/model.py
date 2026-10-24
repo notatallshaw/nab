@@ -8,6 +8,25 @@ module owns the project side.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_resolver.diagnostics",
+    "datetime",
+    "nab.config.hooks",
+    "nab.config.ladder",
+    "nab.config.values",
+    "nab_project",
+    "nab_project.build_policy",
+    "nab_project.conflicts",
+    "nab_project.inputs",
+    "nab_project.paths",
+    "nab_project.workspace",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider._vendor.packaging.version",
+    "nab_provider.errors",
+    "tomli",
+)
+
 import logging
 from datetime import datetime, timezone
 from types import MappingProxyType
@@ -58,6 +77,7 @@ from nab_provider.target import (
     python_axis_environment,
 )
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .hooks import resolve_anchor
 from .ladder import (
@@ -150,9 +170,11 @@ class NabProjectConfig(ValueType):
         "requires_python_source",
         "uploaded_prior_to",
         "dist_policy",
+        "allow_zip_sdists",
         "build_policy",
         "build_requires_depth",
         "trust_unverified_sdist_deps",
+        "assume_universal_deps",
         "environment",
         "indexes",
         "vcs",
@@ -183,11 +205,13 @@ class NabProjectConfig(ValueType):
     requires_python_source: str
     uploaded_prior_to: datetime | None
     dist_policy: DistPolicy
+    allow_zip_sdists: bool
     build_policy: BuildPolicy
     # How many build environments may be opened beneath the first one, to
     # build a build requirement that publishes no wheel this host installs.
     build_requires_depth: int
     trust_unverified_sdist_deps: bool
+    assume_universal_deps: bool
     # The declared resolve environment from ``[tool.nab.environment]``, or
     # ``None`` for the host.  Mutually exclusive with ``matrix``.
     environment: EnvironmentConfig | None
@@ -230,9 +254,11 @@ class NabProjectConfig(ValueType):
         requires_python_source: str = _TOOL_NAB_REQUIRES_PYTHON,
         uploaded_prior_to: datetime | None = None,
         dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST,
+        allow_zip_sdists: bool = False,
         build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL,
         build_requires_depth: int = 0,
         trust_unverified_sdist_deps: bool = False,
+        assume_universal_deps: bool = False,
         environment: EnvironmentConfig | None = None,
         indexes: tuple[IndexConfig, ...] = _DEFAULT_INDEXES,
         vcs: VcsConfig = _DEFAULT_VCS,
@@ -258,9 +284,11 @@ class NabProjectConfig(ValueType):
         self.requires_python_source = requires_python_source
         self.uploaded_prior_to = uploaded_prior_to
         self.dist_policy = dist_policy
+        self.allow_zip_sdists = allow_zip_sdists
         self.build_policy = build_policy
         self.build_requires_depth = build_requires_depth
         self.trust_unverified_sdist_deps = trust_unverified_sdist_deps
+        self.assume_universal_deps = assume_universal_deps
         self.environment = environment
         self.indexes = indexes
         self.vcs = vcs
@@ -373,12 +401,17 @@ def _config_from_effective(
     matrix: MatrixConfig | None = matrix_value.value
     if mode is ResolveMode.UNIVERSAL and matrix is None:
         if mode_value.origin.kind is SourceKind.CLI:
-            msg = (
-                "--project-mode universal needs a matrix: pass"
-                " --project-matrix-python and --project-matrix-platforms, add"
-                " [tool.nab.matrix] to the project's pyproject.toml, or a"
-                " top-level [matrix] table to the project's nab.toml, or drop"
-                " --project-mode universal."
+            report = DiagnosticMessage(
+                "--project-mode universal needs a matrix",
+                suggestions=(
+                    Suggestion(
+                        "pass --project-matrix-python and "
+                        "--project-matrix-platforms, add [tool.nab.matrix] to the "
+                        "project's pyproject.toml, or a top-level [matrix] table "
+                        "to the project's nab.toml, or drop --project-mode "
+                        "universal."
+                    ),
+                ),
             )
         else:
             # PROJECT_TOML is the project-dir nab.toml, whose keys are top-level.
@@ -390,13 +423,14 @@ def _config_from_effective(
             msg = (
                 f"mode = 'universal' requires a {table} declaring python and platforms"
             )
-        raise ConfigError(msg)
+            raise ConfigError(msg)
+        raise ConfigError(report)
+
     if mode is ResolveMode.SPECIFIC and matrix is not None:
-        if not mode_value.origin.outranks(matrix_value.origin):
+        if mode_value.origin.outranks(matrix_value.origin):
+            matrix = None
+        elif len(matrix_from_config(matrix).expand()) > 1:
             raise ConfigError(_specific_mode_message(matrix_value))
-        # A higher-precedence source (--project-mode) selected a
-        # single-environment resolve, so the matrix it shadows does not apply.
-        matrix = None
 
     dist_policy, trust_unverified = effective["dist-policy"].value
     indexes: tuple[IndexConfig, ...] = effective["indexes"].value
@@ -421,6 +455,7 @@ def _config_from_effective(
     targets = _plan_targets(matrix, environment)
     build_policy = enforce_build_policy_for_targets(
         targets=targets,
+        assume_universal_deps=effective["assume-universal-deps"].value,
         build_policy=effective["build-policy"].value,
         build_policy_set=effective["build-policy"].origin.kind
         is not SourceKind.DEFAULT,
@@ -462,9 +497,11 @@ def _config_from_effective(
         requires_python_source=requires_python_source,
         uploaded_prior_to=effective["uploaded-prior-to"].value,
         dist_policy=dist_policy,
+        allow_zip_sdists=effective["allow-zip-sdists"].value,
         build_policy=build_policy,
         build_requires_depth=effective["build-requires-depth"].value,
         trust_unverified_sdist_deps=trust_unverified,
+        assume_universal_deps=effective["assume-universal-deps"].value,
         environment=environment,
         indexes=indexes,
         vcs=vcs_config,
@@ -493,31 +530,42 @@ def _declares(flags: tuple[str, ...]) -> str:
     return "declare" if len(flags) > 1 else "declares"
 
 
-def _specific_mode_message(matrix_value: EffectiveValue) -> str:
-    """Say why a declared matrix is refused while mode is 'specific'."""
+def _specific_mode_message(matrix_value: EffectiveValue) -> DiagnosticMessage:
+    """Explain why a multi-target matrix conflicts with explicit specific mode."""
     flags = _declared_by(matrix_value)
     if flags:
         named = " and ".join(flags)
-        return (
-            f"{named} {_declares(flags)} a matrix but mode is 'specific';"
-            " pass --project-mode universal as well, or drop the matrix flags."
+        return DiagnosticMessage(
+            (
+                f"{named} {_declares(flags)} a matrix with multiple targets but mode "
+                "is 'specific'"
+            ),
+            suggestions=(
+                Suggestion(
+                    "pass --project-mode universal as well, or drop the matrix flags."
+                ),
+            ),
         )
     declared = (
         "[matrix] in nab.toml"
         if matrix_value.origin.kind is SourceKind.PROJECT_TOML
         else "[tool.nab.matrix] in pyproject.toml"
     )
-    return (
-        f"{declared} is set but mode is 'specific'; set mode = 'universal' to"
-        " resolve for every target the matrix declares, or remove the table."
-        " The multi-target lockfile format universal mode produces is"
-        " experimental."
+    return DiagnosticMessage(
+        (f"{declared} declares multiple targets but mode is 'specific'"),
+        suggestions=(
+            Suggestion(
+                "set mode = 'universal' to resolve for every target the matrix "
+                "declares, or remove the table. The multi-target lockfile format "
+                "universal mode produces is experimental."
+            ),
+        ),
     )
 
 
 def _matrix_environment_message(
     matrix_value: EffectiveValue, environment_value: EffectiveValue
-) -> str:
+) -> DiagnosticMessage:
     """Explain why matrix and environment declarations conflict."""
     matrix_flags = _declared_by(matrix_value)
     environment_flags = _declared_by(environment_value)
@@ -526,16 +574,21 @@ def _matrix_environment_message(
         " and ".join(environment_flags) or f"[{_declared_table(environment_value)}]"
     )
     if not matrix_flags and not environment_flags:
-        return (
-            f"{matrix} and {environment} cannot both be set:"
-            " the matrix declares one environment per tuple, so a single"
-            " declared environment would contradict it.  Drop one."
+        return DiagnosticMessage(
+            (
+                f"{matrix} and {environment} cannot both be set: the matrix declares "
+                "one environment per tuple, so a single declared environment would "
+                "contradict it"
+            ),
+            suggestions=(Suggestion("drop one."),),
         )
-    return (
-        f"{matrix} {_declares(matrix_flags)} a matrix and"
-        f" {environment} {_declares(environment_flags)} one environment;"
-        " the matrix declares one environment per tuple, so the two"
-        " contradict.  Drop one."
+    return DiagnosticMessage(
+        (
+            f"{matrix} {_declares(matrix_flags)} a matrix and {environment} "
+            f"{_declares(environment_flags)} one environment; the matrix declares one "
+            "environment per tuple, so the two contradict"
+        ),
+        suggestions=(Suggestion("drop one."),),
     )
 
 
@@ -791,8 +844,10 @@ def _check_requires_python_admits_target(
     """
     if requires_python is None:
         return
+
     if target.admits_requires_python(SpecifierSet(requires_python)):
         return
+
     excludes = (
         f"{source} = {requires_python!r} excludes the resolve target"
         f" Python {target.python_version} ({target.label})."
@@ -804,17 +859,30 @@ def _check_requires_python_admits_target(
             if override is not None and override.python is not None
             else "matrix.python"
         )
-        msg = (
-            f"{excludes}  {key} selects this target: change {key}"
-            " to drop the version, or widen requires-python."
+        report = DiagnosticMessage(
+            (f"{excludes}  {key} selects this target"),
+            suggestions=(
+                Suggestion(
+                    f"change {key} to drop the version, or widen requires-python."
+                ),
+            ),
         )
     else:
-        msg = (
-            f"{excludes}  nab resolves for the host interpreter unless told"
-            " otherwise; pass --python with a version the declaration admits, set"
-            " [tool.nab.environment] python to one, or widen requires-python."
+        report = DiagnosticMessage(
+            (
+                f"{excludes}  nab resolves for the host interpreter unless told "
+                "otherwise"
+            ),
+            suggestions=(
+                Suggestion(
+                    "pass --python with a version the declaration admits, set "
+                    "[tool.nab.environment] python to one, or widen "
+                    "requires-python."
+                ),
+            ),
         )
-    raise ConfigError(msg)
+
+    raise ConfigError(report)
 
 
 def _option_label(value: EffectiveValue) -> str:
@@ -895,13 +963,20 @@ def _validate_build_group_has_a_base_group(
     if build_group.value is None or base_group.value is not None:
         return
 
-    msg = (
-        f"{_option_label(build_group)} is {build_group.value!r}, but base-group"
-        " is unset, so the project's own dependencies carry no marker and"
-        " install alongside every group; set base-group to name them, or drop"
-        " build-group and use nab lock --build-requirements for a separate lock"
+    report = DiagnosticMessage(
+        (
+            f"{_option_label(build_group)} is {build_group.value!r}, but base-group is "
+            "unset, so the project's own dependencies carry no marker and install "
+            "alongside every group"
+        ),
+        suggestions=(
+            Suggestion(
+                "set base-group to name them, or drop build-group and use nab lock "
+                "--build-requirements for a separate lock"
+            ),
+        ),
     )
-    raise ConfigError(msg)
+    raise ConfigError(report)
 
 
 def _validate_build_group_is_free(
@@ -1102,23 +1177,29 @@ def _environment_from_effective(
         if file_origin is not None:
             environment_table = project_key_path("environment", file_origin.kind)
             marker_table = _declared_table(effective["marker-environment"])
-            msg = (
-                f"[{environment_table}] and the deprecated [{marker_table}]"
-                " are both set; drop the marker-environment table."
+            report = DiagnosticMessage(
+                (
+                    f"[{environment_table}] and the deprecated [{marker_table}] are "
+                    "both set"
+                ),
+                suggestions=(Suggestion("drop the marker-environment table"),),
             )
-            raise ConfigError(msg)
+            raise ConfigError(report)
         declared = {
             **_environment_from_marker_environment(marker_environment),
             **declared,
         }
+
     if not declared:
         return None
+
     platform = declared.get("platform")
     environment = EnvironmentConfig(
         python=declared.get("python"),
         platform=None if platform is None else environment_platform_spec(platform),
         implementation=declared.get("implementation"),
     )
+
     if environment.implementation is not None and environment.platform is None:
         # The message asks for environment.platform, so name that table even
         # when the deprecated overlay is what declared it.
@@ -1128,12 +1209,15 @@ def _environment_from_effective(
         table = project_key_path("environment", origin.kind)
 
         valid = sorted(PLATFORM_MARKERS)
-        msg = (
-            f"[{table}].implementation needs a platform: an interpreter is"
-            " modelled on a declared machine, not on the host's."
-            f"  Add platform = one of {valid!r}."
+        report = DiagnosticMessage(
+            (
+                f"[{table}].implementation needs a platform: an interpreter is "
+                "modelled on a declared machine, not on the host's"
+            ),
+            suggestions=(Suggestion(f"add platform = one of {valid!r}."),),
         )
-        raise ConfigError(msg)
+        raise ConfigError(report)
+
     return environment
 
 
@@ -1231,15 +1315,20 @@ def _reject_vcs_sources_under_block(
     sources_table = project_key_path("vcs-sources", vcs_sources.origin.kind)
     vcs_table = project_key_path("vcs", policy_kind)
 
-    msg = (
-        f"[[{sources_table}]] is declared but [{vcs_table}].policy is"
-        f" {config.policy.value!r}, which refuses every clone; remove"
-        f' the sources, or set [{vcs_table}].policy = "allow" and'
-        " configure the remaining VCS filters (vcs.allowed-schemes and"
-        " vcs.allowed-repos are"
-        " empty by default and each denies every URL)"
+    report = DiagnosticMessage(
+        (
+            f"[[{sources_table}]] is declared but [{vcs_table}].policy is "
+            f"{config.policy.value!r}, which refuses every clone"
+        ),
+        suggestions=(
+            Suggestion(
+                f'remove the sources, or set [{vcs_table}].policy = "allow" and '
+                "configure the remaining VCS filters (vcs.allowed-schemes and "
+                "vcs.allowed-repos are empty by default and each denies every URL)"
+            ),
+        ),
     )
-    raise ConfigError(msg)
+    raise ConfigError(report)
 
 
 def _validate_default_groups_against_conflicts(

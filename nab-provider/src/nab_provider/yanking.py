@@ -2,32 +2,136 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from pathlib import Path
 
 from .records import SdistFile, WheelFile, defer_hashes, defer_sidecar_hash
 
 
 # Explicit slots avoid Python 3.10 duplicating inherited record fields.
-@dataclass(frozen=True, kw_only=True)
 class YankedWheelFile(WheelFile):
     """A withdrawn wheel and its optional reason."""
 
+    __record_fields__: ClassVar[tuple[str, ...] | None] = (
+        "filename",
+        "url",
+        "version",
+        "requires_python",
+        "has_metadata",
+        "upload_time",
+        "hashes",
+        "size",
+        "local_path",
+        "metadata_hash",
+        "yanked",
+    )
+
+    __match_args__ = (
+        "filename",
+        "url",
+        "version",
+        "requires_python",
+        "has_metadata",
+        "upload_time",
+        "hashes",
+        "size",
+        "local_path",
+        "metadata_hash",
+    )
+
     __slots__ = ("yanked",)
 
     yanked: bool | str
 
+    def __init__(  # noqa: PLR0913 - One argument per record field.
+        self,
+        filename: str,
+        *,
+        url: str,
+        version: str,
+        requires_python: str | None,
+        has_metadata: bool,
+        upload_time: str | None,
+        hashes: tuple[tuple[str, str], ...] = (),
+        size: int | None = None,
+        local_path: Path | None = None,
+        metadata_hash: tuple[str, str] | None = None,
+        yanked: bool | str,
+    ) -> None:
+        """Initialize the wheel and retain its withdrawal reason."""
+        super().__init__(
+            filename,
+            url=url,
+            version=version,
+            requires_python=requires_python,
+            has_metadata=has_metadata,
+            upload_time=upload_time,
+            hashes=hashes,
+            size=size,
+            local_path=local_path,
+            metadata_hash=metadata_hash,
+        )
+        self.yanked = yanked
 
-@dataclass(frozen=True, kw_only=True)
+
 class YankedSdistFile(SdistFile):
     """A withdrawn source distribution and its optional reason."""
 
+    __record_fields__: ClassVar[tuple[str, ...] | None] = (
+        "filename",
+        "url",
+        "version",
+        "requires_python",
+        "upload_time",
+        "hashes",
+        "size",
+        "local_path",
+        "yanked",
+    )
+
+    __match_args__ = (
+        "filename",
+        "url",
+        "version",
+        "requires_python",
+        "upload_time",
+        "hashes",
+        "size",
+        "local_path",
+    )
+
     __slots__ = ("yanked",)
 
     yanked: bool | str
+
+    def __init__(  # noqa: PLR0913 - One argument per record field.
+        self,
+        filename: str,
+        *,
+        url: str,
+        version: str,
+        requires_python: str | None,
+        upload_time: str | None,
+        hashes: tuple[tuple[str, str], ...] = (),
+        size: int | None = None,
+        local_path: Path | None = None,
+        yanked: bool | str,
+    ) -> None:
+        """Initialize the source distribution and its withdrawal reason."""
+        super().__init__(
+            filename,
+            url,
+            version,
+            requires_python,
+            upload_time,
+            hashes,
+            size,
+            local_path,
+        )
+        self.yanked = yanked
 
 
 class YankedListing(list[WheelFile | SdistFile]):

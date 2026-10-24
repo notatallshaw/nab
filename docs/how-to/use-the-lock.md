@@ -1,14 +1,7 @@
 # Use a lock
 
-nab resolves and records dependencies; an installer consumes the result. Choose the path that
-matches the output you need.
-
-| Starting point                                   | Next step                                                             |
-| ------------------------------------------------ | --------------------------------------------------------------------- |
-| A committed `pylock.toml`                        | Install from it with pip 26.1 or newer.                               |
-| An index-only project needing `requirements.txt` | Resolve to hashed requirements, then install with `--require-hashes`. |
-| Hashed requirements for an offline machine       | Download compatible wheels before disconnecting.                      |
-| A committed lock to check in CI                  | Re-resolve with `--locked` under the same target and settings.        |
+`nab lock` writes `pylock.toml` by default, or requirements files with `--format requirements`. An
+installer reads those files to install the selected dependencies.
 
 Run installation commands in the project's virtual environment, using a Python and platform covered
 by the lock. See {ref}`Getting started <install-the-locked-dependencies>` for environment setup.
@@ -21,8 +14,8 @@ pip 26.1 and newer can install the dependencies selected from a PEP 751 lock:
 python -m pip install -r pylock.toml
 ```
 
-pip's `pylock.toml` support is experimental. It selects packages for the current interpreter and
-platform, uses the lock's default dependency groups, and selects no extras.
+pip selects packages for the current interpreter and platform, uses the lock's default dependency
+groups, and selects no extras.
 
 The command installs the locked dependencies, not the project that produced the lock. See
 [Selecting what to lock](../reference/selection.md) before using extras, non-default groups, or
@@ -43,6 +36,8 @@ The first command performs a fresh resolve; it does not convert `pylock.toml`. K
 
 The file records hashes, not the index that supplied each package. Configure pip to select each
 package from the same index nab used.
+
+### Hash-checking limits
 
 Use this path only when every requirement is hash-checkable. nab refuses the format if a recorded
 index file lacks an accepted hash; archive pins carry their digest in the URL. Local and VCS pins
@@ -82,8 +77,8 @@ directly rather than selecting a wheel from `wheelhouse`.
 
 ## Check a committed lock in CI
 
-Use this check for a single-environment `pylock.toml`. It fails if the file is missing or a fresh
-resolve would change it.
+`nab lock --locked` works in `specific` mode, including a singleton matrix. It fails if the file is
+missing or a fresh resolve would change it. Universal mode does not support this check.
 
 Set a stable search order before generating the lock you will commit:
 

@@ -2,8 +2,8 @@
 
 A dependency marker is a condition such as `python_version < "3.11"` that controls when a
 requirement applies. This package compares PEP 508 markers as sets of environments. `packaging`
-answers "does this marker hold here"; this answers "can these two ever both hold", "does one imply
-the other", and "is this a contradiction".
+evaluates a marker against one environment. `nab-markersets` checks whether markers overlap, whether
+one implies another, and whether a marker is contradictory.
 
 **Experimental.** The API can change in any release, so pin an exact version.
 
@@ -15,9 +15,9 @@ the other", and "is this a contradiction".
 True
 ```
 
-`MarkerSet` represents an absent marker as full, a contradiction as empty, and complements the
-marker grammar cannot serialize. `witness` returns a point in the set, which separates two markers
-that look like one constraint.
+`MarkerSet` represents an absent marker as all supported environments and a contradiction as no
+environments. It can also represent complements that PEP 508 cannot serialize. `witness` returns an
+environment satisfying the set; the example below finds one where two markers differ.
 
 ```pycon
 >>> minor = MarkerSet.from_marker('python_version >= "3.11"')

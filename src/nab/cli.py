@@ -14,6 +14,15 @@ needs them, and the command module itself is
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab._cli",
+    "nab._cli.parse",
+    "nab._version",
+    "os",
+    "sys",
+    "types",
+)
+
 import io
 import os
 import sys

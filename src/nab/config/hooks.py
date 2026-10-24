@@ -6,6 +6,13 @@ parser hooks.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "datetime",
+    "nab.config",
+    "nab.config.values",
+    "nab_provider.serialization",
+)
+
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone

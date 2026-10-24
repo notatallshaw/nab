@@ -5,6 +5,11 @@ The caller supplies the colour decision. Only terminal width comes from the envi
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab._cli.parse",
+    "os",
+)
+
 import os
 
 from nab._cli.parse import Row, Spec, Table, build

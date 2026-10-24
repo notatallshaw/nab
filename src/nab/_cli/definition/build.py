@@ -5,6 +5,13 @@ Checks that need both the row declaration and inferred value shape live here.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "enum",
+    "nab._cli.definition.tables",
+    "pathlib",
+    "typing",
+)
+
 import enum
 from pathlib import Path
 from typing import Any

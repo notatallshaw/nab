@@ -20,6 +20,15 @@ later in the resolve undoes it, so its versions are banned outright.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections",
+    "nab_provider._provider.listing_diagnosis",
+    "nab_provider._vendor.packaging.ranges",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.errors",
+    "nab_resolver.types",
+)
+
 from collections import defaultdict
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -97,7 +106,7 @@ def look_ahead_ok(
             provider.get_dependencies(package, version)
         except MetadataError as exc:
             provider.pending_metadata_blocks[canonicalize_name(package)].setdefault(
-                version, MetadataBlock(str(exc), exc.filtered_sdist_version)
+                version, MetadataBlock.from_error(exc)
             )
             return False
 

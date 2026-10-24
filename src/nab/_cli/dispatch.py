@@ -6,6 +6,12 @@ deferred until after parsing.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab",
+    "os.path",
+    "pathlib",
+)
+
 from os.path import basename
 from pathlib import Path
 from typing import TYPE_CHECKING, cast

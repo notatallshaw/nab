@@ -45,39 +45,41 @@ _PAGES = (
     ("no-progress", "reference/cli.md"),
     ("version", "reference/cli.md"),
     ("help", "reference/cli.md"),
-    ("resolution", "reference/configuration.md"),
-    ("decision-order", "reference/configuration.md"),
-    ("mode", "explanation/universal.md"),
-    ("constraints", "reference/configuration.md"),
+    ("resolution", "reference/resolution-settings.md"),
+    ("decision-order", "reference/resolution-settings.md"),
+    ("mode", "reference/target-matrix.md"),
+    ("constraints", "reference/resolution-settings.md"),
     ("default-groups", "reference/selection.md"),
     ("base-group", "reference/selection.md"),
     ("build-group", "reference/selection.md"),
-    ("requires-python", "reference/configuration.md"),
-    ("uploaded-prior-to", "reference/configuration.md"),
-    ("dist-policy", "reference/configuration.md"),
+    ("requires-python", "reference/resolution-settings.md"),
+    ("uploaded-prior-to", "reference/resolution-settings.md"),
+    ("dist-policy", "reference/distribution-policy.md"),
+    ("assume-universal-deps", "reference/build-policy.md"),
+    ("allow-zip-sdists", "reference/distribution-policy.md"),
     ("build-policy", "reference/build-policy.md"),
     ("build-requires-depth", "reference/build-policy.md"),
-    ("environment", "reference/configuration.md"),
-    ("marker-environment", "reference/configuration.md"),
+    ("environment", "reference/target-environment.md"),
+    ("marker-environment", "reference/target-environment.md"),
     ("vcs", "how-to/vcs.md"),
     ("workspace", "how-to/workspaces.md"),
     ("indexes", "how-to/multi-index.md"),
     ("local-sources", "how-to/local-sources.md"),
     ("vcs-sources", "how-to/vcs.md"),
-    ("archive-sources", "reference/configuration.md"),
-    ("packages", "reference/configuration.md"),
-    ("package-rules", "reference/configuration.md"),
+    ("archive-sources", "reference/dependency-sources.md"),
+    ("packages", "reference/package-policy.md"),
+    ("package-rules", "reference/package-policy.md"),
     ("index", "how-to/multi-index.md"),
     ("conflicts", "explanation/conflicts.md"),
-    ("matrix", "explanation/universal.md"),
-    ("python", "explanation/universal.md"),
-    ("platforms", "explanation/universal.md"),
-    ("implementations", "explanation/universal.md"),
-    ("python-order", "explanation/universal.md"),
-    ("python-patches", "explanation/universal.md"),
-    ("python", "reference/configuration.md"),
-    ("platform", "reference/configuration.md"),
-    ("implementation", "reference/configuration.md"),
+    ("matrix", "reference/target-matrix.md"),
+    ("python", "reference/target-matrix.md"),
+    ("platforms", "reference/target-matrix.md"),
+    ("implementations", "reference/target-matrix.md"),
+    ("python-order", "reference/target-matrix.md"),
+    ("python-patches", "reference/target-matrix.md"),
+    ("python", "reference/target-environment.md"),
+    ("platform", "reference/target-environment.md"),
+    ("implementation", "reference/target-environment.md"),
     ("offline", "reference/cli.md"),
     ("cache-dir", "reference/cache.md"),
     ("http-backend", "reference/cli.md"),
@@ -179,12 +181,13 @@ class TestTheDeclaredTable:
         command = [row for row in ALL if row.commands and not row.is_global]
         file_only = [row for row in ALL if not row.commands]
 
-        assert (len(root), len(command), len(file_only)) == (7, 44, 13)
-        assert len(root) + len(command) + len(file_only) == len(ALL) == 64
+        assert (len(root), len(command), len(file_only)) == (7, 46, 13)
+        assert len(root) + len(command) + len(file_only) == len(ALL) == 66
 
         keyed = [row for row in ALL if row.key]
-        assert len(keyed) == 29
-        assert sum(1 for row in keyed if row.cli_flag) == 16
+
+        assert len(keyed) == 31
+        assert sum(1 for row in keyed if row.cli_flag) == 18
         assert sum(1 for row in keyed if not row.commands) == 13
 
     def test_the_sub_rows_spell_the_two_tables(self) -> None:
@@ -211,7 +214,7 @@ class TestTheDeclaredTable:
     def test_the_layered_rows_split_by_scope_as_the_registry_does(self) -> None:
         keyed = [row for row in ALL if row.key]
 
-        assert sum(row.scope is Scope.PROJECT for row in keyed) == 25
+        assert sum(row.scope is Scope.PROJECT for row in keyed) == 27
         assert sum(row.scope is Scope.USER for row in keyed) == 4
 
     def test_the_environment_names_are_the_four_user_keys(self) -> None:
@@ -243,7 +246,7 @@ class TestTheDeclaredTable:
         resolution = next(row for row in ALL if row.name == "resolution")
 
         assert docs_url(resolution) == (
-            "https://nab.readthedocs.io/en/stable/reference/configuration.html"
+            "https://nab.readthedocs.io/en/stable/reference/resolution-settings.html"
         )
 
         for row in ALL:
@@ -284,7 +287,8 @@ class TestTheDeclaredTable:
         """
         negatable = [row for row in ALL if row.kind in _BOOL_KINDS]
 
-        assert len(negatable) == 12
+        assert len(negatable) == 14
+
         for row in negatable:
             assert row.negatable is not row.name.startswith("no-"), row.name
 

@@ -11,12 +11,35 @@ schedules puts on the loop with ``call_soon_threadsafe``.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_resolver.diagnostics",
+    "asyncio",
+    "nab_index.cache",
+    "nab_index.cached_client",
+    "nab_index.lazy_wheel",
+    "nab_index.local_index",
+    "nab_index.multi_index",
+    "nab_index.transport",
+    "nab_project._build_remote",
+    "nab_project._sources",
+    "nab_project._toml",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.metadata",
+    "nab_provider.fetch_port",
+    "nab_provider.policy",
+    "nab_provider.records",
+    "nab_provider.serialization",
+    "nab_provider.store",
+    "packaging.utils",
+    "threading",
+    "urllib.parse",
+)
+
 import asyncio
 import enum
 import logging
 import threading
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 from urllib.parse import urlsplit
 
 from packaging.utils import canonicalize_name as canonicalize_name_boundary
@@ -31,8 +54,14 @@ from nab_index.cached_client import (
 from nab_index.lazy_wheel import RangeCapabilityMemo
 from nab_index.local_index import LocalIndexClient, is_file_url, parse_file_url
 from nab_index.multi_index import MultiIndexClient
-from nab_index.transport import IDENTITY_HEADERS, raise_unless_ok
+from nab_index.transport import (
+    IDENTITY_HEADERS,
+    IdleClosableTransport,
+    TunedHttpTransport,
+    raise_unless_ok,
+)
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider.fetch_port import PrefetchSettings
 from nab_provider.metadata import static_project_from_table
 from nab_provider.policy import BuildPolicy
 from nab_provider.records import (
@@ -49,6 +78,8 @@ from nab_provider.store import (
     range_pending_key,
     sdist_artifact_key,
 )
+from nab_provider.value import HashableRecord, Record
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from ._build_remote import build_remote_sdist
 from ._sources import materialize_source
@@ -101,6 +132,25 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _resolve_prefetch_settings(
+    transport: AsyncHttpTransport, override: PrefetchSettings | None
+) -> PrefetchSettings:
+    """Snapshot backend recommendations below explicit operation settings."""
+    backend = (
+        transport.prefetch_settings
+        if isinstance(transport, TunedHttpTransport)
+        else PrefetchSettings()
+    )
+    metadata = backend.metadata_versions
+    lookahead = backend.lookahead_versions
+    if override is not None:
+        if override.metadata_versions is not None:
+            metadata = override.metadata_versions
+        if override.lookahead_versions is not None:
+            lookahead = override.lookahead_versions
+    return PrefetchSettings(metadata_versions=metadata, lookahead_versions=lookahead)
+
+
 def _done_event() -> threading.Event:
     """Return an already-set event, for a request answered without waiting."""
     event = threading.Event()
@@ -119,8 +169,7 @@ class FetchKind(enum.Enum):
     DIRECT_ARCHIVE = "direct-archive"
 
 
-@dataclass(frozen=True, slots=True)
-class IndexRoute:
+class IndexRoute(Record):
     """Per-package index routing rule (a strict pin to one index).
 
     ``name`` is the package name (canonicalised internally).  ``index``
@@ -131,8 +180,15 @@ class IndexRoute:
     route per package.
     """
 
+    __slots__ = __match_args__ = ("name", "index")
+
     name: str
     index: str
+
+    def __init__(self, name: str, index: str) -> None:
+        """Bind a package name to its declared index."""
+        self.name = name
+        self.index = index
 
 
 def _resolve_routes(routes: list[IndexRoute]) -> dict[str, str]:
@@ -187,21 +243,48 @@ def _builds_remote_sdists(inputs: ResolveInputs | None) -> bool:
     return any(o.build_policy is BuildPolicy.BUILD_REMOTE for o in overrides)
 
 
-@dataclass(frozen=True, slots=True)
-class FetchRequest:
+class FetchRequest(HashableRecord):
     """A single fetch request, carried across the sync->async boundary."""
 
-    kind: FetchKind
-    package: str
-    version: str | None = None
-    url: str | None = None
-    metadata_hash: tuple[str, str] | None = None
-    sdist_hashes: tuple[tuple[str, str], ...] = ()
-    wheel_hashes: tuple[tuple[str, str], ...] = ()
+    __slots__ = __match_args__ = (
+        "kind",
+        "package",
+        "version",
+        "url",
+        "metadata_hash",
+        "sdist_hashes",
+        "wheel_hashes",
+    )
+
+    kind: Final[FetchKind]
+    package: Final[str]
+    version: Final[str | None]
+    url: Final[str | None]
+    metadata_hash: Final[tuple[str, str] | None]
+    sdist_hashes: Final[tuple[tuple[str, str], ...]]
+    wheel_hashes: Final[tuple[tuple[str, str], ...]]
+
+    def __init__(
+        self,
+        kind: FetchKind,
+        package: str,
+        version: str | None = None,
+        url: str | None = None,
+        metadata_hash: tuple[str, str] | None = None,
+        sdist_hashes: tuple[tuple[str, str], ...] = (),
+        wheel_hashes: tuple[tuple[str, str], ...] = (),
+    ) -> None:
+        """Describe an artifact request and its expected integrity."""
+        self.kind = kind
+        self.package = package
+        self.version = version
+        self.url = url
+        self.metadata_hash = metadata_hash
+        self.sdist_hashes = sdist_hashes
+        self.wheel_hashes = wheel_hashes
 
 
-@dataclass
-class WarmSyncStats:
+class WarmSyncStats(Record):
     """Counters for the synchronous warm-hit listing path.
 
     A sync hit bumps ``listing_hits``; a decline bumps ``listing_declines`` and
@@ -209,19 +292,88 @@ class WarmSyncStats:
     resolver thread, so the counters need no lock.
     """
 
-    listing_hits: int = 0
-    listing_declines: int = 0
-    declined_ineligible: int = 0
-    declined_no_policy: int = 0
-    declined_stale_online: int = 0
+    __match_args__ = (
+        "listing_hits",
+        "listing_declines",
+        "declined_ineligible",
+        "declined_no_policy",
+        "declined_stale_online",
+        "declined_no_blob",
+        "declined_small_blob",
+    )
+
+    listing_hits: int
+    listing_declines: int
+    declined_ineligible: int
+    declined_no_policy: int
+    declined_stale_online: int
     # No blob, or one the read helper would not serve: a foreign build, a
     # non-binding digest, corruption, or a blob holding no records.
-    declined_no_blob: int = 0
-    declined_small_blob: int = 0
+    declined_no_blob: int
+    declined_small_blob: int
+
+    def __init__(
+        self,
+        listing_hits: int = 0,
+        listing_declines: int = 0,
+        declined_ineligible: int = 0,
+        declined_no_policy: int = 0,
+        declined_stale_online: int = 0,
+        declined_no_blob: int = 0,
+        declined_small_blob: int = 0,
+    ) -> None:
+        """Initialize the outcomes of synchronous listing lookups."""
+        self.listing_hits = listing_hits
+        self.listing_declines = listing_declines
+        self.declined_ineligible = declined_ineligible
+        self.declined_no_policy = declined_no_policy
+        self.declined_stale_online = declined_stale_online
+        self.declined_no_blob = declined_no_blob
+        self.declined_small_blob = declined_small_blob
 
 
 # Queue items: single request, batch of requests, or None (shutdown).
 _QueueItem = FetchRequest | list[FetchRequest] | None
+
+
+def _coordinator_cache(
+    indexes: Sequence[IndexConfig],
+    *,
+    cache_backend: CacheBackend | None,
+    cache_dir: Path | None,
+) -> CacheBackend:
+    """Validate an explicit backend or build the first index's cache."""
+    if cache_backend is not None and len(indexes) > 1:
+        report = DiagnosticMessage(
+            "explicit cache_backend is incompatible with more than one index",
+            suggestions=(
+                Suggestion("pass cache_dir so each index gets its own cache."),
+            ),
+        )
+        raise ValueError(report)
+
+    if cache_backend is not None and any(
+        idx.serialization is not SimpleSerialization.NEGOTIATE for idx in indexes
+    ):
+        report = DiagnosticMessage(
+            ("explicit cache_backend is incompatible with a pinned serialization"),
+            suggestions=(
+                Suggestion(
+                    "pass cache_dir so the pinned index gets a cache of its own."
+                ),
+            ),
+        )
+        raise ValueError(report)
+
+    if cache_backend is not None:
+        return cache_backend
+
+    if cache_dir is not None:
+        return OnDiskCache(
+            cache_dir, indexes[0].url, serialization=indexes[0].serialization
+        )
+
+    return NullCache()
 
 
 class FetchCoordinator:
@@ -246,9 +398,11 @@ class FetchCoordinator:
         *,
         indexes: list[IndexConfig] | None = None,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+        prefetch_settings: PrefetchSettings | None = None,
         cache_dir: Path | None = None,
         cache_backend: CacheBackend | None = None,
         offline: bool = False,
+        start_on_demand: bool = False,
         index_routes: list[IndexRoute] | None = None,
         index_cache_floors: Mapping[str, int] | None = None,
         on_fetch: Callable[[], None] | None = None,
@@ -273,83 +427,74 @@ class FetchCoordinator:
         An explicit backend cannot partition several indexes or a pinned
         serialization.
 
+        ``start_on_demand`` defers the worker for coherent disk-cache reads when
+        the transport supports closing without an event loop. A miss starts it.
+
         ``build_config`` is the settings a :pep:`517` build runs under;
         a caller that resolves without building leaves it ``None``.
         """
         if indexes is None:
             indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
+
         if not indexes:
             msg = "indexes must contain at least one IndexConfig"
             raise ValueError(msg)
+
         names = [idx.name for idx in indexes]
         if len(names) != len(set(names)):
             duplicates = sorted({n for n in names if names.count(n) > 1})
             msg = f"duplicate index names: {duplicates}"
             raise ValueError(msg)
+
         self.indexes = list(indexes)
         self._transport = transport
         self._max_concurrency = max_concurrency
+        self.prefetch_settings = _resolve_prefetch_settings(
+            transport, prefetch_settings
+        )
         self._offline = offline
-        if cache_backend is not None and len(indexes) > 1:
-            msg = (
-                "explicit cache_backend is incompatible with more than one"
-                " index: pass cache_dir so each index gets its own cache."
-            )
-            raise ValueError(msg)
-        if cache_backend is not None and any(
-            idx.serialization is not SimpleSerialization.NEGOTIATE for idx in indexes
-        ):
-            msg = (
-                "explicit cache_backend is incompatible with a pinned"
-                " serialization: pass cache_dir so the pinned index gets a"
-                " cache of its own."
-            )
-            raise ValueError(msg)
-        if cache_backend is not None:
-            self._cache: CacheBackend = cache_backend
-        elif cache_dir is not None:
-            # Serialization-partitioned like the per-index backend
-            # _build_index_client builds, so the warm-sync probe reads the same
-            # directory the fetcher's client writes.
-            self._cache = OnDiskCache(
-                cache_dir, indexes[0].url, serialization=indexes[0].serialization
-            )
-        else:
-            self._cache = NullCache()
+        self._start_on_demand = start_on_demand
+
+        self._cache = _coordinator_cache(
+            indexes, cache_backend=cache_backend, cache_dir=cache_dir
+        )
+
         self._cache_dir = cache_dir
         self._build_config = build_config
         self._build_transport_factory = build_transport_factory
         self._index_routes = list(index_routes or [])
         self._index_cache_floors = dict(index_cache_floors or {})
-        # The sync warm-hit path serves one shape only: a single non-file index
-        # over an OnDiskCache, unrouted, so the serving index is always
-        # indexes[0] and the probe reads the same backend the fetcher's client
-        # reads. Everything else declines to the async path.
+
+        # Inline listing reads require one unrouted remote index.
         self._sync_listing_enabled = (
             len(self.indexes) == 1
             and not self._index_routes
             and not is_file_url(self.indexes[0].url)
             and isinstance(self._cache, OnDiskCache)
         )
-        # Progress hook: fired once per successful listing fetch, from the
-        # fetcher thread.  ``None`` when nothing is watching (the common case).
+        self._sync_metadata_enabled = (
+            self._sync_listing_enabled
+            and type(self._cache) is OnDiskCache
+            and not (cache_backend is not None and cache_dir is not None)
+        )
+
         self._on_fetch = on_fetch
         self.index = InMemoryIndex()
-        # Shared per-run range-capability memo.  Rebuilt fresh on the fetcher
-        # loop in _async_fetcher so each run starts with empty per-netloc state;
-        # built here too so the attribute is always a real memo for typing.
+
+        # Share range capability decisions and cache counters across index clients.
         self._range_memo = RangeCapabilityMemo()
-        # Shared per-run parsed-listing cache counters, injected into every
-        # index client the same way; rebuilt on the fetcher loop so each run
-        # starts at zero.
         self._parsed_cache_stats = ParsedCacheStats()
-        # Only a resolve that can build a remote sdist holds archives, so
-        # nothing else pays the memory.
+
+        # Only remote builds need retained source archives.
         self._holds_sdist_archives = _builds_remote_sdists(build_config)
         self._sdist_archive_hold: SdistArchiveHold | None = None
+
         self._warm_sync_stats = WarmSyncStats()
         self._warm_sync_min_blob_bytes = _WARM_SYNC_MIN_BLOB_BYTES
+
+        self._start_lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._idle_transport: IdleClosableTransport | None = None
         self._started = False
         self._crashed = False
         self._crash_error: BaseException | None = None
@@ -363,8 +508,22 @@ class FetchCoordinator:
         return self._offline
 
     def __enter__(self) -> Self:
-        """Start the fetcher thread and return self."""
-        self.start()
+        """Start the worker, or defer it for supported coherent cache reads."""
+        transport = self._transport
+
+        if (
+            self._start_on_demand
+            and self._sync_metadata_enabled
+            and not self._started
+            and self._idle_transport is None
+            and isinstance(transport, IdleClosableTransport)
+        ):
+            self._idle_transport = transport
+            self._warm_sync_stats = WarmSyncStats()
+            self._parsed_cache_stats = ParsedCacheStats()
+        else:
+            self.start()
+
         return self
 
     def __exit__(self, *args: object) -> None:
@@ -383,36 +542,68 @@ class FetchCoordinator:
 
     @property
     def warm_sync_stats(self) -> WarmSyncStats:
-        """Synchronous warm-hit listing counters, reset at each ``start()``."""
+        """Synchronous warm-hit listing counters for this run."""
         return self._warm_sync_stats
 
     def start(self) -> None:
         """Start the fetcher thread (idempotent)."""
-        if self._started:
-            return
+        with self._start_lock:
+            if self._started:
+                return
+
+            # On-demand startup retains cache hits already counted in this run.
+            if self._idle_transport is None:
+                self._warm_sync_stats = WarmSyncStats()
+            self._start_worker()
+
+    def _start_worker(self) -> None:
+        """Start and await one worker while the caller holds the startup lock."""
         self._started = True
-        self._warm_sync_stats = WarmSyncStats()
+        self._queue_ready = threading.Event()
         self._thread = threading.Thread(
             target=self._run_loop,
             daemon=True,
             name="nab-fetcher",
         )
-        self._thread.start()
+
+        try:
+            self._thread.start()
+        except BaseException:
+            self._thread = None
+            self._started = False
+            raise
+
+        # Worker startup failure also wakes this waiter.
         self._queue_ready.wait()
 
     def shutdown(self) -> None:
         """Signal the fetcher thread to exit and join it."""
-        if self._thread is None:
-            return
-        self._submit(None)
-        self._thread.join(timeout=_COORDINATOR_JOIN_TIMEOUT_SECONDS)
-        self._thread = None
-        self._started = False
-        # Drop the dead loop so a later start() waits for the fresh one
-        # instead of submitting to a closed loop.
-        self._loop = None
-        self._async_q = None
-        self._queue_ready.clear()
+        with self._start_lock:
+            idle = self._idle_transport
+            self._idle_transport = None
+            if idle is not None and not self._started:
+                if idle.close_without_loop():
+                    return
+
+                # The idle transport may still need an event loop to close.
+                self._start_worker()
+
+            thread = self._thread
+            if thread is None:
+                return
+            self._submit(None)
+
+        thread.join(timeout=_COORDINATOR_JOIN_TIMEOUT_SECONDS)
+
+        with self._start_lock:
+            # Another caller may have replaced the worker while the join waited.
+            if self._thread is thread:
+                self._thread = None
+                self._started = False
+                # A later start must wait for its own worker.
+                self._loop = None
+                self._async_q = None
+                self._queue_ready.clear()
 
     def _submit(self, item: _QueueItem) -> None:
         """Schedule ``item`` on the fetcher loop's queue from any thread.
@@ -420,11 +611,21 @@ class FetchCoordinator:
         Requests the loop cannot take are recorded as failures so their
         waiters unblock instead of hanging.
         """
+        # Start a deferred worker before trying to queue the request.
+        if item is not None and self._idle_transport is not None:
+            try:
+                self.start()
+                self._check_alive()
+            except BaseException:
+                self._refuse(item)
+                raise
+
         loop = self._loop
         queue = self._async_q
         if loop is None or queue is None:
             self._refuse(item)
             return
+
         try:
             loop.call_soon_threadsafe(queue.put_nowait, item)
         except RuntimeError:
@@ -523,6 +724,8 @@ class FetchCoordinator:
         path. A blob whose size cannot be stat'd, or a run where the sync path is
         disabled, is admitted and left to ``_try_listing_sync`` to classify.
         """
+        if self._idle_transport is not None and not self._started:
+            return True
         if not self._sync_listing_enabled:
             return True
         size = self._cache.get_simple_parsed_size(package)
@@ -541,27 +744,31 @@ class FetchCoordinator:
         served inline, and every other outcome declines to the async fetch, which
         owns every cache write and self-heal.
 
-        ``speculative`` callers skip the sync probe and dispatch async, so their
-        read work overlaps resolver CPU on the fetcher thread; only blocking
-        critical-path callers serve inline.
+        Once the worker is running, ``speculative`` callers dispatch async to
+        overlap their reads with resolver CPU. Before on-demand startup, all
+        callers try the coherent cache inline.
         """
         self._check_alive()
+        if self._idle_transport is not None and not self._started:
+            speculative = False
+
         if self.index.get_listing(package) is not None:
             done = threading.Event()
             done.set()
             return done
+
         key = f"listing:{package}"
         event, existed = self.index.get_or_create_pending(key)
         if existed:
             return event
+
+        # Only the pending request owner may fulfill a synchronous cache hit.
         if not speculative:
             if self._overlap_gate_admits(package):
                 parsed = self._try_listing_sync(package)
                 if parsed is not None:
                     records = parsed.files
-                    # Store the serving index before store_listing fires the
-                    # pending, matching the async path's ordering. The tail runs
-                    # on the fetcher loop, or inline when the loop is gone.
+                    # Publish the serving index before waking waiters.
                     self.index.store_listing_index(package, self.indexes[0].name)
                     self.index.store_listing(
                         package,
@@ -578,8 +785,21 @@ class FetchCoordinator:
             else:
                 self._warm_sync_stats.declined_small_blob += 1
             self._warm_sync_stats.listing_declines += 1
+
         self._submit(FetchRequest(kind=FetchKind.LISTING, package=package))
         return event
+
+    def _try_metadata_sync(self, package: str, version: str, url: str) -> bool:
+        """Fulfill a claimed metadata request from the owned immutable cache."""
+        if not self._sync_metadata_enabled:
+            return False
+
+        text = self._cache.get_metadata(package, url)
+        if text is None:
+            return False
+
+        self.index.store_metadata(package, version, text, metadata_url=url)
+        return True
 
     def request_metadata(
         self,
@@ -594,9 +814,10 @@ class FetchCoordinator:
             done = threading.Event()
             done.set()
             return done
+
         key = metadata_pending_key(package, version, url)
         event, existed = self.index.get_or_create_pending(key)
-        if not existed:
+        if not existed and not self._try_metadata_sync(package, version, url):
             self._submit(
                 FetchRequest(
                     kind=FetchKind.METADATA,
@@ -606,6 +827,7 @@ class FetchCoordinator:
                     metadata_hash=metadata_hash,
                 )
             )
+
         return event
 
     def request_range_metadata(
@@ -786,13 +1008,15 @@ class FetchCoordinator:
         self._check_alive()
         results: list[tuple[str, str, threading.Event]] = []
         batch: list[FetchRequest] = []
+
         for package, version, url, metadata_hash in items:
             if self.index.has_metadata(package, version, url):
                 results.append((package, version, _done_event()))
                 continue
+
             key = metadata_pending_key(package, version, url)
             event, existed = self.index.get_or_create_pending(key)
-            if not existed:
+            if not existed and not self._try_metadata_sync(package, version, url):
                 batch.append(
                     FetchRequest(
                         kind=FetchKind.METADATA,
@@ -802,12 +1026,17 @@ class FetchCoordinator:
                         metadata_hash=metadata_hash,
                     )
                 )
+
             results.append((package, version, event))
+
         if batch:
             self._submit(batch)
+
         return results
 
     def _run_loop(self) -> None:
+        # A later run may replace the coordinator's readiness event.
+        ready = self._queue_ready
         try:
             asyncio.run(self._async_fetcher())
         except BaseException as exc:
@@ -816,6 +1045,8 @@ class FetchCoordinator:
             # A KeyboardInterrupt or a SystemExit still ends the thread.
             if not isinstance(exc, Exception):
                 raise
+        finally:
+            ready.set()
 
     def _build_client(
         self,
@@ -1138,7 +1369,9 @@ class FetchCoordinator:
         runs, so a wheel it releases mid-walk answers no metadata URL and
         is skipped (:func:`~nab_provider.records.release_wheel_payload`).
         """
-        wanted = self.PREFETCH_METADATA_COUNT
+        wanted = self.prefetch_settings.metadata_versions
+        if wanted is None:
+            wanted = self.PREFETCH_METADATA_COUNT
         newest: dict[str, WheelFile] = {}
         for f in reversed(files):
             if not (isinstance(f, WheelFile) and f.has_metadata) or f.yanked:

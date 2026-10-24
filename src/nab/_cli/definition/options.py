@@ -111,9 +111,9 @@ class Root(Table, on=GLOBAL, docs="reference/cli.md"):
 
 
 class ProjectKeys(
-    Table, on=_LAYERED, scope=Scope.PROJECT, docs="reference/configuration.md"
+    Table, on=_LAYERED, scope=Scope.PROJECT, docs="reference/resolution-settings.md"
 ):
-    """The project's own settings: twelve carry a flag, thirteen are file-only."""
+    """The project's settings and their command-line overrides."""
 
     resolution = Value[ResolutionFlag | None](
         mirrors=ResolutionStrategy,
@@ -143,7 +143,7 @@ class ProjectKeys(
             render=hooks.render_enum_value,
         ),
         help="resolve for this environment or across a matrix",
-        docs="explanation/universal.md",
+        docs="reference/target-matrix.md",
     )
 
     constraints = Many[Requirement](
@@ -218,6 +218,23 @@ class ProjectKeys(
             render=hooks.render_dist_policy,
         ),
         help="which distribution kinds the resolve may pin",
+        docs="reference/distribution-policy.md",
+    )
+
+    assume_universal_deps = Tri(
+        key=Layer[bool](
+            rdefault=False, parse=values.parse_bool, render=hooks.render_bool
+        ),
+        help="assume dependency metadata applies across targets",
+        docs="reference/build-policy.md",
+    )
+
+    allow_zip_sdists = Tri(
+        key=Layer[bool](
+            rdefault=False, parse=values.parse_bool, render=hooks.render_bool
+        ),
+        help="allow legacy .zip source distributions",
+        docs="reference/distribution-policy.md",
     )
 
     build_policy = Value[BuildPolicyFlag | None](
@@ -250,6 +267,7 @@ class ProjectKeys(
             label="table(python,platform[,knobs],implementation)",
         ),
         help="the target whose markers and wheel tags the resolve uses",
+        docs="reference/target-environment.md",
     )
 
     marker_environment = Key(
@@ -261,6 +279,7 @@ class ProjectKeys(
         ),
         deprecated=True,
         help="PEP 508 marker variables, set one at a time",
+        docs="reference/target-environment.md",
     )
 
     vcs = Key(
@@ -326,6 +345,7 @@ class ProjectKeys(
             label="array-of-tables(name,url)",
         ),
         help="a hashed .tar.gz URL a named package is pinned to",
+        docs="reference/dependency-sources.md",
     )
 
     packages = Key(
@@ -336,6 +356,7 @@ class ProjectKeys(
             label="table(package-override)",
         ),
         help="policy and metadata overrides keyed by package name",
+        docs="reference/package-policy.md",
     )
 
     package_rules = Key(
@@ -346,6 +367,7 @@ class ProjectKeys(
             label="array-of-tables(match,policy)",
         ),
         help="policy and metadata overrides selected by a list of requirements",
+        docs="reference/package-policy.md",
     )
 
     index = Key(
@@ -378,7 +400,7 @@ class ProjectKeys(
             label="table(python,platforms)",
         ),
         help="the Python and platform axes a universal resolve covers",
-        docs="explanation/universal.md",
+        docs="reference/target-matrix.md",
     )
 
 
@@ -388,7 +410,7 @@ class MatrixKeys(
     scope=Scope.PROJECT,
     under="matrix",
     needs=("python", "platforms"),
-    docs="explanation/universal.md",
+    docs="reference/target-matrix.md",
 ):
     """Shared matrix axes, as the flags that set them.
 
@@ -426,7 +448,7 @@ class EnvironmentKeys(
     on=_LAYERED,
     scope=Scope.PROJECT,
     under="environment",
-    docs="reference/configuration.md",
+    docs="reference/target-environment.md",
 ):
     """``[tool.nab.environment]``'s three axes, as the flags that set them.
 

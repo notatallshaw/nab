@@ -11,6 +11,11 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#result
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections",
+    "nab_resolver.types",
+)
+
 from collections import deque
 from typing import TYPE_CHECKING, Any
 

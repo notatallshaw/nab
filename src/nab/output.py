@@ -7,13 +7,20 @@ per run.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab.env",
+    "sys",
+    "threading",
+)
+
 import enum
 import logging
 import sys
 import threading
 import time
-from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING
+
+from nab_provider.value import Record
 
 from ._compat import override
 from .env import (
@@ -25,6 +32,8 @@ from .env import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
+
+    from nab_resolver.diagnostics import DiagnosticMessage
 
 __all__ = [
     "ColorChoice",
@@ -174,6 +183,7 @@ class Printer:
         )
         self._err_lock = threading.Lock()
         self._progress_drawn = False
+        self._seen_suggestions: set[str] | None = None
 
     def _paint(self, token: str, name: str) -> str:
         """Wrap ``token`` in the ``name`` SGR code when colour is on."""
@@ -196,13 +206,38 @@ class Printer:
         self.clear_progress()
         self._out.write(text)
 
-    def error(self, message: str) -> None:
-        """Report an error on stderr; shown at every level."""
-        self._emit("error:", "red", message, Verbosity.SILENT)
+    def format_message(self, message: str | DiagnosticMessage | BaseException) -> str:
+        """Render suggestions once within this printer's command lifetime."""
+        if isinstance(message, str):
+            return message
+        # Plain output never needs the optional diagnostic renderer.
+        from nab_resolver.diagnostics import error_message  # noqa: PLC0415
 
-    def warning(self, message: str) -> None:
+        structured = (
+            error_message(message) if isinstance(message, BaseException) else message
+        )
+        with self._err_lock:
+            if self._seen_suggestions is None:
+                self._seen_suggestions = set()
+            return structured.render(
+                verbose=self.verbosity >= Verbosity.VERBOSE,
+                seen=self._seen_suggestions,
+            )
+
+    def error(
+        self, message: str | DiagnosticMessage | BaseException, *, prefix: str = ""
+    ) -> None:
+        """Report an error on stderr; shown at every level."""
+        self._emit(
+            "error:", "red", prefix + self.format_message(message), Verbosity.SILENT
+        )
+
+    def warning(self, message: str | DiagnosticMessage) -> None:
         """Report a warning on stderr; suppressed only by ``-qq``."""
-        self._emit("warning:", "yellow", message, Verbosity.QUIET)
+        if self.verbosity >= Verbosity.QUIET:
+            self._emit(
+                "warning:", "yellow", self.format_message(message), Verbosity.QUIET
+            )
 
     def note(self, message: str) -> None:
         """Print a normal-level note on stderr."""
@@ -328,14 +363,50 @@ class _LevelFormatter(logging.Formatter):
     ``LEVEL logger: message``, which is what verbose output is for.
     """
 
-    def __init__(self, *, verbose: bool, color_enabled: bool) -> None:
+    def __init__(
+        self,
+        *,
+        verbose: bool,
+        color_enabled: bool,
+        format_message: Callable[[DiagnosticMessage], str] | None = None,
+    ) -> None:
         super().__init__()
         self._verbose = verbose
         self._color = color_enabled
+        self._format_message = format_message
+        self._seen_suggestions: set[str] | None = None
+
+    def _message_value(self, value: object) -> object:
+        """Render structured values at logging's dynamic formatting boundary."""
+        if isinstance(value, str):
+            return value
+        from nab_resolver.diagnostics import DiagnosticMessage  # noqa: PLC0415 - optional structured logging values
+
+        if not isinstance(value, DiagnosticMessage):
+            return value
+        if self._format_message is not None:
+            return self._format_message(value)
+        if self._seen_suggestions is None:
+            self._seen_suggestions = set()
+        return value.render(verbose=self._verbose, seen=self._seen_suggestions)
+
+    def _record_message(self, record: logging.LogRecord) -> str:
+        """Keep normal logging interpolation while retaining structured suggestions."""
+        message = str(self._message_value(record.msg))
+        if not record.args:
+            return message
+        if isinstance(record.args, tuple):
+            arguments = tuple(self._message_value(value) for value in record.args)
+        else:
+            mapping = {
+                key: self._message_value(value) for key, value in record.args.items()
+            }
+            return message % mapping
+        return message % arguments
 
     @override
     def format(self, record: logging.LogRecord) -> str:
-        message = record.getMessage()
+        message = self._record_message(record)
         if self._verbose:
             return f"{record.levelname} {record.name}: {message}"
         token = _LEVEL_TOKENS.get(record.levelno)
@@ -368,6 +439,7 @@ def install_log_handler(printer: Printer) -> None:
         _LevelFormatter(
             verbose=printer.verbosity >= Verbosity.VERBOSE,
             color_enabled=printer.color_enabled,
+            format_message=printer.format_message,
         )
     )
     for name in _NAB_LOGGERS:
@@ -466,13 +538,26 @@ class OutputOptionError(ValueError):
     """A malformed ``--color`` value or ``NAB_VERBOSITY``."""
 
 
-@dataclass(frozen=True, slots=True)
-class OutputOptions:
+class OutputOptions(Record):
     """The output knobs parsed from the global flags, before the subcommand."""
+
+    __slots__ = __match_args__ = ("verbosity", "color", "progress")
 
     verbosity: Verbosity
     color: ColorChoice
     progress: bool
+
+    def __init__(
+        self,
+        *,
+        verbosity: Verbosity,
+        color: ColorChoice,
+        progress: bool,
+    ) -> None:
+        """Select stream presentation and progress behavior."""
+        self.verbosity = verbosity
+        self.color = color
+        self.progress = progress
 
 
 _VERBOSITY_NAMES: dict[str, Verbosity] = {v.name.lower(): v for v in Verbosity}

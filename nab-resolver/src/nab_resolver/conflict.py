@@ -9,6 +9,15 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#conflict-r
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_resolver.errors",
+    "nab_resolver.incompat_index",
+    "nab_resolver.partial_solution",
+    "nab_resolver.report",
+    "nab_resolver.root",
+    "nab_resolver.types",
+)
+
 from typing import TYPE_CHECKING, Any
 
 from .errors import ResolutionError, ResolutionStalledError

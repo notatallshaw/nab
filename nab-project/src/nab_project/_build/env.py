@@ -22,6 +22,44 @@ from ``build.env.IsolatedEnv``.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "asyncio",
+    "concurrent.futures",
+    "email",
+    "glob",
+    "installer",
+    "installer.sources",
+    "installer.utils",
+    "json",
+    "nab_index.client",
+    "nab_index.local_index",
+    "nab_index.urllib3_async_transport",
+    "nab_project._build.errors",
+    "nab_project.download",
+    "nab_project.inputs",
+    "nab_project.lockfile",
+    "nab_provider._vendor.packaging.requirements",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider._vendor.packaging.version",
+    "nab_provider.errors",
+    "nab_provider.marker_holds",
+    "nab_provider.metadata",
+    "nab_provider.pep508",
+    "nab_provider.policy",
+    "nab_provider.requirements_file",
+    "nab_provider.tags",
+    "nab_provider.target",
+    "nab_provider.vcs_admission",
+    "os",
+    "pathlib",
+    "subprocess",
+    "sys",
+    "tempfile",
+    "tomli_w",
+    "venv",
+)
+
 import asyncio
 import glob
 import json
@@ -33,7 +71,6 @@ import tempfile
 import venv
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass, field, replace
 from email import message_from_string
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -68,6 +105,7 @@ from nab_provider.policy import BuildPolicy, DistPolicy
 from nab_provider.requirements_file import InvalidProjectRequirementError
 from nab_provider.tags import TagSet
 from nab_provider.target import ResolveTarget, host_environment
+from nab_provider.value import Record, replace
 from nab_provider.vcs_admission import UnsupportedVcsError
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 
@@ -78,7 +116,7 @@ from ..lockfile import IndexPin, strip_userinfo
 from .errors import BuildBackendError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterable, Mapping
+    from collections.abc import Callable, Collection, Generator, Iterable, Mapping
     from typing import overload
 
     from installer.records import RecordEntry
@@ -96,7 +134,6 @@ __all__ = [
 ]
 
 
-@dataclass
 class _FastSchemeDictionaryDestination(SchemeDictionaryDestination):
     """``SchemeDictionaryDestination`` that skips bytecode-compile work.
 
@@ -111,9 +148,29 @@ class _FastSchemeDictionaryDestination(SchemeDictionaryDestination):
     file the install writes, so a later install can remove them.
     """
 
-    written: list[tuple[Path, Path]] = field(
-        default_factory=list, init=False, repr=False
-    )
+    written: list[tuple[Path, Path]]
+
+    def __init__(
+        self,
+        scheme_dict: dict[str, str],
+        interpreter: str,
+        script_kind: LauncherKind,
+        hash_algorithm: str = "sha256",
+        bytecode_optimization_levels: Collection[int] = (),
+        destdir: str | None = None,
+        *,
+        overwrite_existing: bool = False,
+    ) -> None:
+        super().__init__(
+            scheme_dict,
+            interpreter,
+            script_kind,
+            hash_algorithm,
+            bytecode_optimization_levels,
+            destdir,
+            overwrite_existing,
+        )
+        self.written: list[tuple[Path, Path]] = []
 
     @override
     def _compile_bytecode(self, scheme: Scheme, record: RecordEntry) -> None:
@@ -247,13 +304,19 @@ def chain_label(name: str, version: str) -> str:
     return f"{canonicalize_name(name)} {version}"
 
 
-@dataclass(frozen=True, slots=True)
-class _PendingBuild:
+class _PendingBuild(Record):
     """A build requirement this env has to build before it can install it."""
+
+    __slots__ = __match_args__ = ("name", "version", "sdist")
 
     name: str
     version: str
     sdist: SdistArtifact
+
+    def __init__(self, *, name: str, version: str, sdist: SdistArtifact) -> None:
+        self.name = name
+        self.version = version
+        self.sdist = sdist
 
     @property
     def label(self) -> str:
@@ -884,6 +947,7 @@ def _inner_resolve_inputs(inputs: ResolveInputs) -> ResolveInputs:
     resolve reads, and a lock reproduces only if this search does too.
     """
     return ResolveInputs(
+        allow_zip_sdists=inputs.allow_zip_sdists,
         indexes=inputs.indexes,
         package_overrides=tuple(
             _without_build_permission(override) for override in inputs.package_overrides

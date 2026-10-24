@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "pathlib",
+    "sys",
+    "urllib.parse",
+)
+
 import sys
 from pathlib import Path
 from urllib.parse import ParseResult, unquote, urlparse, urlsplit

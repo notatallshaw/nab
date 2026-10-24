@@ -10,20 +10,35 @@ PKG-INFO are treated as immutable (cached forever; never revalidated).
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "asyncio",
+    "datetime",
+    "hashlib",
+    "nab_index._json_decode",
+    "nab_index.cache",
+    "nab_index.lazy_wheel",
+    "nab_index.parsed_listing",
+    "nab_index.transport",
+    "nab_provider.records",
+    "nab_provider.store",
+    "packaging.utils",
+    "time",
+)
+
 import asyncio
 import hashlib
 import logging
 import re
 import time
-from dataclasses import dataclass, replace
 from datetime import timezone
 from typing import TYPE_CHECKING
 
 from packaging.utils import canonicalize_name
 
-from nab_provider.records import select_artifact_hash
+from nab_provider.records import ACCEPTED_HASH_ALGORITHMS, select_artifact_hash
 from nab_provider.serialization import SimpleSerialization, simple_accept_header
 from nab_provider.store import sdist_artifact_key
+from nab_provider.value import Record, replace
 
 from ._json_decode import decode_json
 from .cache import (
@@ -86,8 +101,7 @@ logger = logging.getLogger(__name__)
 _MAX_POLICY_WRITES = 4
 
 
-@dataclass(slots=True)
-class ParsedCacheStats:
+class ParsedCacheStats(Record):
     """Mutable counters for parsed-listing cache outcomes on the fetcher thread.
 
     One instance is shared across every per-index client in a run and read once
@@ -105,9 +119,17 @@ class ParsedCacheStats:
     304 the fallback reparses the raw body and leaves the blob in place.
     """
 
-    hit: int = 0
-    miss: int = 0
-    rebuild: int = 0
+    __slots__ = __match_args__ = ("hit", "miss", "rebuild")
+
+    hit: int
+    miss: int
+    rebuild: int
+
+    def __init__(self, hit: int = 0, miss: int = 0, rebuild: int = 0) -> None:
+        """Initialize the listing-cache outcome counters."""
+        self.hit = hit
+        self.miss = miss
+        self.rebuild = rebuild
 
 
 _DEFAULT_MAX_AGE = 600
@@ -334,6 +356,30 @@ class SdistArchiveHold:
         self._held.clear()
 
 
+def _reusable_metadata_hash(
+    metadata_hash: tuple[str, str] | None,
+) -> tuple[str, str] | None:
+    """Return an advertised digest only when its algorithm admits sidecar reuse."""
+    if metadata_hash is None:
+        return None
+
+    algorithm, _ = metadata_hash
+    if algorithm not in ACCEPTED_HASH_ALGORITHMS:
+        return None
+
+    return metadata_hash
+
+
+class _VersionSidecars:
+    """Verified sidecars for one package version, owned by the client lifetime."""
+
+    __slots__ = ("texts", "version")
+
+    def __init__(self, version: str) -> None:
+        self.version = version
+        self.texts: dict[tuple[str, str], str] = {}
+
+
 class CachedAsyncSimpleClient:
     """Async PyPI Simple API client with on-disk caching.
 
@@ -399,10 +445,15 @@ class CachedAsyncSimpleClient:
         self._sdist_archive_hold = sdist_archive_hold
         self._policy_writes: set[asyncio.Task[None]] = set()
 
+        # Replace old versions so backtracking cannot accumulate sidecar histories.
+        self._verified_sidecars: dict[str, _VersionSidecars] = {}
+
     async def aclose(self) -> None:
         """Wait for policy writes, then close the underlying transport."""
         if self._policy_writes:
             await asyncio.gather(*self._policy_writes, return_exceptions=True)
+
+        self._verified_sidecars.clear()
         await self._transport.aclose()
 
     async def __aenter__(self) -> Self:
@@ -853,11 +904,22 @@ class CachedAsyncSimpleClient:
             msg = f"No cached metadata for {package}=={version} (offline mode)"
             raise OfflineError(msg)
 
+        # Share only metadata verified for the same package version.
+        reusable_hash = _reusable_metadata_hash(metadata_hash)
+        if reusable_hash is not None:
+            shared = self._verified_sidecars.get(package)
+            if shared is not None and shared.version == version:
+                text = shared.texts.get(reusable_hash)
+                if text is not None:
+                    self._cache.put_metadata(package, metadata_url, text)
+                    return text
+
         response = await self._transport.get(metadata_url)
         raise_unless_ok(response, metadata_url)
         content = response.content
         if metadata_hash is not None:
             _verify_metadata_hash(content, metadata_hash)
+
         try:
             text = content.decode("utf-8")
         except UnicodeDecodeError as exc:
@@ -866,7 +928,15 @@ class CachedAsyncSimpleClient:
                 f"for {package}=={version}: body is not valid UTF-8"
             )
             raise MalformedSimpleResponseError(msg) from exc
+
         self._cache.put_metadata(package, metadata_url, text)
+        if reusable_hash is not None:
+            current = self._verified_sidecars.get(package)
+            if current is None or current.version != version:
+                current = _VersionSidecars(version)
+                self._verified_sidecars[package] = current
+            current.texts[reusable_hash] = text
+
         return text
 
     async def get_range_metadata(

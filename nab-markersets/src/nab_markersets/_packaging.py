@@ -9,7 +9,7 @@ builds ``Marker`` objects from. With nothing new enough, importing this module
 raises rather than leaving it half bound.
 
 The floor is read here as well as declared, because an install that names no
-extra declares no dependency at all, and an older copy answers differently
+extra declares no packaging dependency, and an older copy answers differently
 rather than failing. There is no ceiling: the private names below can move in
 any release, and one that moves them fails loudly on its own, where a refusal
 written here could not be waived.
@@ -17,8 +17,12 @@ written here could not be waived.
 
 from __future__ import annotations
 
+__lazy_modules__ = ("importlib", "nab_resolver.diagnostics")
+
 from importlib import import_module
 from typing import TYPE_CHECKING
+
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -55,13 +59,17 @@ def _clears_floor(name: str, version: str) -> bool:
         return False
 
 
-def _no_backend(rejected: Sequence[str]) -> str:
+def _no_backend(rejected: Sequence[str]) -> DiagnosticMessage:
     """Return the message for an import that found no packaging new enough."""
     found = f", found {', '.join(rejected)}" if rejected else ""
-    return (
-        f"nab-markersets needs packaging>={MINIMUM}{found}: install"
-        " nab-markersets[packaging] for the released one, or"
-        " nab-markersets[nab-vendored-packaging] for the fork nab vendors"
+    return DiagnosticMessage(
+        f"nab-markersets needs packaging>={MINIMUM}{found}",
+        suggestions=(
+            Suggestion(
+                "install nab-markersets[packaging] for released packaging, or "
+                "nab-markersets[nab-vendored-packaging] for the fork nab vendors"
+            ),
+        ),
     )
 
 

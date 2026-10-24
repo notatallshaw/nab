@@ -4,6 +4,8 @@ The supported API is the module paths below.  They will not move without a
 major version bump.  Everything else in the package is internal and may be
 renamed or relocated in any release.
 
+    nab_resolver.diagnostics DiagnosticMessage, Suggestion, error_message,
+                             suggestion_lines
     nab_resolver.errors     ResolutionError, ResolutionInvariantError,
                             ResolutionLimitError,
                             ResolutionStalledError, ResolutionTerminatedError

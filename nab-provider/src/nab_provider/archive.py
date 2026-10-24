@@ -11,10 +11,16 @@ own scheme; which archives are permitted is a policy decision in
 
 from __future__ import annotations
 
-from ._value import SlottedValue
+__lazy_modules__ = (
+    "nab_provider.digest",
+    "nab_provider.records",
+    "nab_provider.subdir",
+)
+
 from .digest import is_hex_digest
 from .records import ACCEPTED_HASH_ALGORITHMS
 from .subdir import subdirectory_escapes
+from .value import SlottedValue
 
 __all__ = [
     "ArchiveRequest",

@@ -23,6 +23,35 @@ covered by skipping the prepare step for that combination; see
 
 from __future__ import annotations
 
+from nab_resolver.diagnostics import error_message
+
+__lazy_modules__ = (
+    "nab_resolver.diagnostics",
+    "build",
+    "email",
+    "lzma",
+    "nab_index.local_index",
+    "nab_project",
+    "nab_project._build.env",
+    "nab_project._build.errors",
+    "nab_project.paths",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider._vendor.packaging.version",
+    "nab_provider.errors",
+    "nab_provider.metadata",
+    "nab_provider.pep508",
+    "nab_provider.requirements_file",
+    "nab_resolver.errors",
+    "os",
+    "pathlib",
+    "pyproject_hooks",
+    "tempfile",
+    "tomli",
+    "zipfile",
+    "zlib",
+)
+
 import logging
 import lzma
 import os
@@ -222,8 +251,10 @@ def _prepared_project(
         msg = f"build backend {backend!r} failed: {exc}"
         raise BuildBackendError(msg) from exc
     except (BuildEnvError, ResolutionError) as exc:
-        msg = f"build env setup for {backend!r} failed: {exc}"
-        raise BuildBackendError(msg) from exc
+        report = error_message(exc).prefixed(
+            f"build env setup for {backend!r} failed: "
+        )
+        raise BuildBackendError(report) from exc
 
 
 def _install_extra_requires(

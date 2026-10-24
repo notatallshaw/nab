@@ -1,16 +1,50 @@
 # Selecting what to lock
 
-Which dependency groups and extras a `nab lock` or `nab download` run covers, and what a workspace
-adds to it. `--build-requirements` and `--no-emit-workspace` are `nab lock` only.
+`nab lock` and `nab download` resolve regular project dependencies plus the extras and groups you
+select. With no selection settings or flags, nab selects no project extras or dependency groups.
+Workspace discovery can also supply local packages. `--build-requirements` and `--no-emit-workspace`
+apply only to `nab lock`.
 
 The commands themselves are on the [CLI](cli.md) page.
+
+For examples of version requirements, environment markers, dependency extras and group includes, see
+[Choose dependencies and conditions](../how-to/choose-dependencies.md).
+[Package policy selectors](package-policy.md) select candidates for overrides separately.
+
+## Project selection settings
+
+Set these keys in `[tool.nab]` or the project-directory `nab.toml`:
+
+| Key              | Default | Effect                                                                                                                             |
+| ---------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `default-groups` | `[]`    | Select these groups on every resolve, unioned with CLI group selection. The names are also recorded as lockfile defaults.          |
+| `base-group`     | unset   | Give the project's regular dependencies a lockfile group name so an installer can select other groups separately.                  |
+| `build-group`    | unset   | Resolve the static `[build-system].requires` list alongside runtime dependencies under this lockfile group. Requires `base-group`. |
+
+For a project declaring a `dev` group and build requirements:
+
+```toml
+[tool.nab]
+default-groups = ["runtime", "dev"]
+base-group = "runtime"
+build-group = "build"
+```
+
+The synthetic `base-group` and `build-group` names must differ from each other and from declared
+dependency groups. They are accepted in `default-groups`, but not by `--groups`. An explicit
+`default-groups` replaces the implicit base-group default; include the base or build name if it
+should install by default. See [Lockfile extras and groups](lockfile-groups.md) for the emitted
+markers.
+
+Two members of an at-most-one or exactly-one conflict set cannot both be defaults. Adding a
+conflicting selection on the CLI can fork the resolve; see [Conflicts](../explanation/conflicts.md).
 
 ## Dependency-group selection (PEP 735)
 
 - `--groups foo bar` folds the named groups from the project's `[dependency-groups]` table into the
   resolve. The selected group names land in the lockfile's top-level `dependency-groups` array. The
-  separate `default-groups` array records the `[tool.nab].default-groups` project setting, not this
-  run's selection, plus the group named by `[tool.nab].base-group` when it is set.
+  separate `default-groups` array records the project's default selection, not this run's selection.
+  Without an explicit `default-groups`, a configured `base-group` supplies that default.
 - `--all-groups` selects every group defined in the project.
 
 ## Extras selection
@@ -26,8 +60,8 @@ The commands themselves are on the [CLI](cli.md) page.
 `base-group`, or `build-group`. An engaged set forks the run once per allowed member combination;
 see [Conflicting extras and groups](../explanation/conflicts.md).
 
-A package that only a selected extra or group reaches is emitted with a `'X' in extras` or
-`'X' in dependency_groups` marker, so an installer given neither leaves it out; see
+nab adds a `'X' in extras` or `'X' in dependency_groups` marker to a package needed only by a
+selected extra or group. An installer omits that package when the selection is inactive; see
 [Lockfiles](lockfile.md).
 
 (build-requirements)=

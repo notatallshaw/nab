@@ -16,8 +16,8 @@ A provider answers eleven methods. `BaseProvider` supplies six of them, which le
 : Pick a version of a package inside a range, or return `None` when none fits.
 
 `has_satisfying_version`
-: Answer whether `choose_version` would pick a version in the range you are handed. It attributes
-  failures, so restore decision-affecting state; diagnostic-only evidence may remain.
+: Return whether `choose_version` could select a version in the given range, without changing
+  subsequent version choices. The method may retain diagnostic information.
 
 `get_dependencies`
 : Report what a version depends on, as a range per dependency.
@@ -27,9 +27,9 @@ A provider answers eleven methods. `BaseProvider` supplies six of them, which le
 
 `widen_decision`
 : Return a range that may replace a decided version in clauses, or `None` for the version alone.
-  `Range.full()` is unsound when two versions differ: it assigns one version's dependencies to every
-  version and can make a solvable graph fail. A widening provider also overrides
-  `narrow_for_display`; otherwise reports name widened ranges.
+  `Range.full()` is unsound when versions have different dependencies: it assigns one version's
+  dependencies to every version and can make a solvable graph fail. A widening provider also
+  overrides `narrow_for_display`; otherwise reports name widened ranges.
 
 `ResolverProvider` in `nab_resolver.resolver` documents all eleven, and its docstrings are the full
 contract. Subclassing is optional: the resolver accepts any object satisfying that protocol.

@@ -5,9 +5,8 @@
 accept the same filenames. Its oracle is nab-provider's vendored packaging,
 whose ``parse_tag`` ranks the wheel afterwards.
 
-``_parse_sdist_filename`` calls the ambient
-:func:`packaging.utils.parse_sdist_filename` and adds a ``.zip`` rejection,
-so the ambient copy is its oracle.
+``_parse_sdist_filename`` accepts gzip-tar and ZIP sdists. Its oracle is the
+ambient :func:`packaging.utils.parse_sdist_filename`.
 
 A draw reaches any one filename shape only sometimes, so the rules are pinned
 by the corpus in ``nab-index/tests/client/test_filenames.py``.
@@ -122,9 +121,7 @@ def oracle_wheel(filename: str) -> tuple[str, str] | None:
 
 
 def oracle_sdist(filename: str) -> tuple[str, str] | None:
-    """Parse via the ambient packaging; ``None`` for rejects and ``.zip``."""
-    if filename.endswith(".zip"):
-        return None
+    """Parse via the ambient packaging; ``None`` when it rejects."""
     try:
         name, version = parse_sdist_filename(filename)
     except InvalidSdistFilename:
@@ -169,6 +166,7 @@ def sdistish_filenames(draw: st.DrawFn) -> str:
     return f"{name}{sep}{version}{ext}"
 
 
+@example(filename="jieba3k-0.35.1.zip")
 @given(filename=sdistish_filenames())
 @DEEP_SETTINGS
 def test_sdist_parse_matches_upstream_structured(filename: str) -> None:

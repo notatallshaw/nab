@@ -7,14 +7,37 @@
 A specific resolve pins one version per package for one marker environment. A universal resolve
 produces a single artifact valid for a set of marker environments.
 
-nab's universal-resolution model is user-driven: the user declares their target Python range and
-platform list in `[tool.nab.matrix]`, and the resolver only ever considers what they declared.
+Declare the supported targets in a [target matrix](../reference/target-matrix.md).
+[Lock for multiple environments](../how-to/lock-multiple-environments.md) gives the commands and
+output formats.
+
+nab builds targets from the matrix's Python range, platform list and selected implementations
+(CPython by default). Dependency markers do not add targets. See
+{ref}`how nab chooses coverage <explicit-is-better-than-implicit>`.
 
 ## How it works
 
 A matrix expands into a list of resolve targets, one target per `(python, platform, implementation)`
 point it names. nab resolves the targets one at a time, each on the same engine and the same
 single-environment resolve a project without a matrix runs once for the host.
+
+```text
+declared matrix
+      |
+      v
+Python x platform x implementation targets
+      |
+      v
+resolve each target, sharing fetches
+      |
+      v
+merge pins and environment markers
+      |
+      v
+pylock.toml
+```
+
+### Shared fetches
 
 The targets share one fetcher, so a package's listing is read once for the whole matrix rather than
 once per target. Metadata is shared per wheel rather than per package, so a release publishing one
@@ -23,13 +46,15 @@ version's metadata comes from below).
 
 An sdist's `PKG-INFO` stands for the whole version, so one read serves every target that picks it.
 
+### Pin preferences
+
 After a target resolves, its pins flow forward as preferences for the next, giving best-effort
 alignment across targets.
 
-The lock a matrix produces is the lock a single environment produces, with more environments in it:
-the same shape, the same [environment declarations](../reference/lockfile.md), and the same
-dependency edges. A target whose minor a marker splits contributes one declaration per slice (see
-Patch-release markers below).
+nab merges the resolved targets into one lock. It records
+[environment declarations](../reference/lockfile-environments.md) and dependency edges for those
+targets. When a marker splits a Python minor, nab records one declaration per slice; see
+Patch-release markers below.
 
 ## Where a version's metadata comes from
 
@@ -42,105 +67,9 @@ When a version's wheels tie for a target and the siblings already fetched declar
 dependencies, nab reports an error rather than pick one by guessing. It compares only the siblings
 in hand, so it does not promise to catch every such case.
 
-## Declaring the matrix
-
-```toml
-[project]
-name = "example-lib"
-version = "0.1.0"
-requires-python = ">=3.11,<3.14"
-dependencies = [
-    "numpy",
-    "fastapi",
-]
-
-[tool.nab]
-mode = "universal"
-
-[tool.nab.matrix]
-python = ">=3.11,<3.14"
-platforms = ["linux_x86_64", "macos_arm64"]
-python-order = "asc"
-```
-
-`mode` selects the resolve. It defaults to `"specific"`, one version per package for a single
-environment. `"universal"` resolves every target the matrix declares, and a project file setting one
-without the other is a config error.
-
-`python` is a PEP 440 specifier expanded into one target per minor version. `platforms` is a list of
-platform ids (`linux_x86_64`, `linux_aarch64`, `linux_i686`, `linux_armv7l`, `macos_x86_64`,
-`macos_arm64`, `windows_amd64`, `windows_arm64`).
-
-Each platform may be a table declaring its wheel-tag knobs: libc family, minimum libc or macOS, and
-free-threaded builds. See [Configuration](../reference/configuration.md).
-
-`python-order` selects the resolution direction:
-
-- `"asc"` (default): oldest Python first. Pins propagate forward as preferences; the lowest common
-  version usually wins. Mirrors uv's `fork-strategy=fewest`.
-- `"desc"`: newest Python first. Pins propagate backward; older Pythons diverge only when the new
-  pin is incompatible. Mirrors uv's `fork-strategy=requires-python`.
-
-### On the command line
-
-The same matrix, on a project that declares none:
-
-```bash
-nab lock --project-mode universal \
-  --project-matrix-python '>=3.11,<3.14' \
-  --project-matrix-platforms linux_x86_64 macos_arm64
-```
-
-Without a file matrix, the Python and platform flags are required. Omitted keys use their defaults,
-and `--project-mode universal` selects matrix mode.
-
-A project that declares a matrix can replace one key:
-
-```bash
-nab lock --project-matrix-platforms macos_arm64
-```
-
-## Run
-
-```bash
-nab lock pyproject.toml
-```
-
-Writes a single PEP 751 `pylock.toml` covering the whole matrix. Packages whose pinned version
-differs across targets appear as multiple `Package` entries with PEP 508 markers; packages that
-agree across every target appear once with no marker.
-
-### Install from the lock
-
-See [Use a lock](../how-to/use-the-lock.md) to install a selected environment, or
-[Output formats](../reference/formats.md) to write one requirements file per target.
-
-## Inspect the per-target pins
-
-```bash
-nab lock --format requirements-without-hashes --output - pyproject.toml
-```
-
-```
-warning: the multi-target ('universal') lockfile format is experimental and may change without notice
-# py311-linux_x86_64
-fastapi==0.115.2
-numpy==2.0.2
-...
-# py311-macos_arm64
-fastapi==0.115.2
-numpy==2.0.2
-...
-# py312-linux_x86_64
-fastapi==0.115.2
-numpy==2.1.3
-...
-```
-
-One block per target. pip cannot install a single requirements.txt across multiple targets in
-hash-checking mode, so the per-target block format is for inspection or for tools that consume one
-block at a time. If any target fails, no blocks are written: the run reports every target on stderr
-and exits 1. See [Resolution failures](../reference/diagnostics.md).
+For a dynamic sdist without a static metadata fallback, an explicit
+{ref}`assume-universal-deps <assuming-dependencies-are-universal>` override permits reusing a
+same-version wheel's dependency declarations across targets.
 
 ## Patch-release markers
 
@@ -152,6 +81,8 @@ That holds until a dependency marker changes inside the minor. For example,
 
 nab splits the 3.11 target at 3.11.4 and resolves each side. Each slice gets its own pins and
 `environments` row.
+
+### Split a minor at a marker boundary
 
 Take a project that targets just 3.11 on one platform:
 
@@ -194,11 +125,15 @@ version = "1.2.0"
 marker = 'python_full_version < "3.11.4"'
 ```
 
+### Prerelease boundaries
+
 The slices meet at `3.11.4.dev0`, not `3.11.4`. A plain `>= "3.11.4"` upper edge would leave
 prereleases such as `3.11.4rc1` in neither slice: PEP 440 also excludes them from `< "3.11.4"`.
 
 Starting the upper slice at `3.11.4.dev0` closes that gap and gives a 3.11.4 prerelease the pins
 intended for 3.11.4.
+
+### Repeated splits and unsupported markers
 
 A split can pull in a dependency the whole minor did not, and that dependency's marker can name a
 fresh boundary, so nab re-splits a target until a pass finds no new one.
@@ -209,6 +144,8 @@ and the ones naming a region (`==`, `!=`, `~=`, `== V.*`).
 A `python_full_version` marker nab cannot turn into an interval is a loud error rather than a silent
 guess: a membership test (`in`, `not in`), a verbatim `===`, a non-version comparison, a comparison
 against another marker variable, or certain pre- or post-release literals strictly inside the minor.
+
+### Pin one patch release
 
 To resolve a minor as one real release rather than split it, set the patch you deploy on:
 
@@ -233,8 +170,8 @@ platforms = ["linux_x86_64"]
 implementations = ["cpython", "pypy"]
 ```
 
-By default, each implementation uses the whole Python range. To target CPython 3.10 through 3.15 and
-only PyPy 3.11 on the same platforms, narrow PyPy's range:
+By default, each implementation uses the whole Python range. To target CPython 3.10, 3.11, 3.12,
+3.13, 3.14 and 3.15 and only PyPy 3.11 on the same platforms, narrow PyPy's range:
 
 ```toml
 [tool.nab.matrix]
@@ -245,6 +182,8 @@ implementations = ["cpython", "pypy"]
 [tool.nab.matrix.overrides.implementations.pypy]
 python = "==3.11"
 ```
+
+### Per-implementation overrides
 
 This declares 14 targets: six CPython minors and one PyPy minor on each platform. The keyed
 `overrides.implementations` table replaces `python` or `platforms` for one interpreter; omitted
@@ -257,13 +196,15 @@ minors together. Declare implementation overrides in the project file; the share
 change only inherited values. `--project-matrix-implementations cpython` selects only CPython for
 one run, leaving the PyPy override inactive.
 
+### PyPy markers and wheel tags
+
 A PyPy target sets `platform_python_implementation = "PyPy"` / `implementation_name = "pypy"` for
 marker evaluation and accepts `ppXY-pypyXY_ppNN` wheel tags instead of `cpXY`. Labels use the `pp`
 interpreter prefix (`pp311-linux_x86_64`).
 
-A CPython-only matrix leaves `implementation_name` open. A matrix with PyPy, or with more than one
-implementation, writes the name into every target marker and `environments` entry. This keeps
-CPython and PyPy entries disjoint, and a PyPy-only lock refuses CPython.
+A matrix containing PyPy records `implementation_name` in its target environment declarations. A
+CPython-only matrix also records it when a consulted marker names it. Package markers distinguish
+implementations when their selections differ; a PyPy-only lock refuses CPython.
 
 PyPy's `implementation_version` is modelled as its Python level rather than its own release. A
 marker comparing that value with a PyPy release can misevaluate during resolution. The lock leaves
@@ -276,6 +217,10 @@ The `[tool.nab.matrix]` keys drive two decisions per target: how each PEP 508 ma
 which wheels the target can install.
 
 ### Marker variables
+
+The
+[dependency specifiers specification](https://packaging.python.org/en/latest/specifications/dependency-specifiers/#environment-markers)
+defines these variables. The table below maps them to Nab's target settings.
 
 Every PEP 508 environment variable gets a value in every target, so no marker ever evaluates against
 a missing key. The table shows each target's effective axes, including any
@@ -317,21 +262,21 @@ One axis usually sets several variables at once, so an impossible combination ca
 The matrix also decides which wheels a tuple can install, computed from the python version,
 platform, and implementation without a live interpreter. A version whose only wheels are
 tag-incompatible with a tuple is dropped for that tuple; a version that also ships a `.tar.gz` sdist
-stays, subject to the build policy. Each tuple accepts three wheel-tag dimensions:
+stays, subject to the build policy. Legacy `.zip` sdists require `allow-zip-sdists = true` and
+follow the same metadata rules. Each tuple accepts three wheel-tag dimensions:
 
 - interpreter: `cpXY` for CPython, `ppXY` for PyPy, plus the interpreter-agnostic `py3` tags.
 - abi: `cpXY` and `abi3` for CPython, `cpXYt` and `abi3t` on a free-threaded target, `pypyXY_ppNN`
   for PyPy, and `none`.
 - platform: manylinux or musllinux for the declared libc family, macosx, and win.
 
-The tag knobs live on the platform, written as a table in `platforms` rather than a bare id. The
-"Platform tag knobs" table in [Configuration](../reference/configuration.md) lists each with its
-default and the rules it carries.
+Wheel compatibility settings go in a platform table within `platforms`, alongside its `id`.
+[Platform tags](../reference/platform-tags.md) lists the defaults and constraints.
 
 ### What the axes do not cover
 
-The matrix keys and platform tag knobs cover every supported axis. Platform IDs and implementations
-are fixed enumerations, so unknown names are configuration errors.
+The matrix and platform settings define the supported targets. Platform IDs and implementations are
+fixed enumerations, so unknown names are configuration errors.
 
 `python` accepts a specifier over known minor versions. A range can extend beyond those versions;
 only a range matching none of them is an error.

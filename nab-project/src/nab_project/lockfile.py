@@ -12,14 +12,34 @@ the marker when every target agrees.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "datetime",
+    "nab_project._lockfile.builder",
+    "nab_project._lockfile.disjointness",
+    "nab_project._lockfile.groups",
+    "nab_project._lockfile.pylock",
+    "nab_project._lockfile.requirements",
+    "nab_project._lockfile.validate",
+    "nab_provider._vendor.packaging.pylock",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider._vendor.packaging.version",
+)
+
 import logging
-from dataclasses import dataclass, field, replace
 from datetime import timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar, Final
 
 from nab_provider._vendor.packaging.pylock import is_valid_pylock_path
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.value import (
+    FACTORY,
+    FactoryDefault,
+    HashableRecord,
+    Record,
+    factory_value,
+    replace,
+)
 
 from ._lockfile.builder import (
     ArtifactMemo,
@@ -280,7 +300,7 @@ class IndexPin(ValueType):
         self.requires_python = requires_python
 
     def replace(self, **changes: object) -> IndexPin:
-        """Return a copy with ``changes`` applied, as ``dataclasses.replace`` would."""
+        """Return a copy with the requested changes."""
         kept: dict[str, Any] = {
             name: getattr(self, name) for name in self.__match_args__
         }
@@ -563,8 +583,7 @@ def package_metadata_override_records(
     return tuple(records)
 
 
-@dataclass(frozen=True, slots=True)
-class TargetLock:
+class TargetLock(HashableRecord):
     """What one target contributed to the lock.
 
     ``pins`` is keyed by canonical package name; each value is the pin
@@ -599,21 +618,59 @@ class TargetLock:
     it unconditional.
     """
 
-    target: ResolveTarget
-    pins: Mapping[str, PinShape]
-    dependencies: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
-    base_dependencies: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
-    package_gates: Mapping[str, tuple[tuple[str, str], ...]] = field(
-        default_factory=dict
+    __record_fields__: ClassVar[tuple[str, ...] | None]
+
+    __slots__ = __record_fields__ = (
+        "target",
+        "pins",
+        "dependencies",
+        "base_dependencies",
+        "package_gates",
+        "dependency_requirements",
     )
 
-    dependency_requirements: (
+    __match_args__ = (
+        "target",
+        "pins",
+        "dependencies",
+        "base_dependencies",
+        "package_gates",
+    )
+
+    target: Final[ResolveTarget]
+    pins: Final[Mapping[str, PinShape]]
+    dependencies: Final[Mapping[str, tuple[str, ...]]]
+    base_dependencies: Final[Mapping[str, tuple[str, ...]]]
+    package_gates: Final[Mapping[str, tuple[tuple[str, str], ...]]]
+
+    dependency_requirements: Final[
         Mapping[str, Mapping[str, tuple[DependencyDeclaration, ...]]] | None
-    ) = field(default=None, kw_only=True)
+    ]
+
+    def __init__(
+        self,
+        target: ResolveTarget,
+        pins: Mapping[str, PinShape],
+        dependencies: Mapping[str, tuple[str, ...]] | FactoryDefault = FACTORY,
+        base_dependencies: Mapping[str, tuple[str, ...]] | FactoryDefault = FACTORY,
+        package_gates: Mapping[str, tuple[tuple[str, str], ...]]
+        | FactoryDefault = FACTORY,
+        *,
+        dependency_requirements: Mapping[
+            str, Mapping[str, tuple[DependencyDeclaration, ...]]
+        ]
+        | None = None,
+    ) -> None:
+        """Retain a target's pins and normalize its package conditions."""
+        self.target = target
+        self.pins = pins
+        self.dependencies = factory_value(dependencies, dict)
+        self.base_dependencies = factory_value(base_dependencies, dict)
+        self.package_gates = factory_value(package_gates, dict)
+        self.dependency_requirements = dependency_requirements
 
 
-@dataclass
-class LockInput:
+class LockInput(Record):
     """Everything the writer needs to produce a Pylock.
 
     ``targets`` maps a target's label to what that target contributed.
@@ -649,25 +706,70 @@ class LockInput:
     block of the emitted ``pylock.toml``.
     """
 
-    targets: Mapping[str, TargetLock] = field(default_factory=dict)
-    env_base_names: Mapping[tuple[tuple[str, str], ...], frozenset[str]] = field(
-        default_factory=dict
+    __match_args__ = (
+        "targets",
+        "env_base_names",
+        "environments",
+        "requires_python",
+        "created_by",
+        "extras",
+        "dependency_groups",
+        "default_groups",
+        "provenance",
+        "conflicts",
+        "base_group",
+        "build_group",
     )
-    environments: list[Marker] = field(default_factory=list)
-    requires_python: str | None = None
-    created_by: str = "nab"
-    extras: tuple[str, ...] = ()
-    dependency_groups: tuple[str, ...] = ()
-    default_groups: tuple[str, ...] = ()
-    provenance: Provenance | None = None
-    conflicts: tuple[ConflictSet, ...] = ()
+
+    targets: Mapping[str, TargetLock]
+    env_base_names: Mapping[tuple[tuple[str, str], ...], frozenset[str]]
+    environments: list[Marker]
+    requires_python: str | None
+    created_by: str
+    extras: tuple[str, ...]
+    dependency_groups: tuple[str, ...]
+    default_groups: tuple[str, ...]
+    provenance: Provenance | None
+    conflicts: tuple[ConflictSet, ...]
     """Declared ``[tool.nab].conflicts``.  Prunes the disjointness
     validator's install-context universe so a per-fork lock (one entry
     per mutually-exclusive extra/group) validates."""
-    base_group: str | None = None
+    base_group: str | None
     """``[tool.nab].base-group``: the group name the lock gives
     the project's own dependencies, or ``None`` to leave them unconditional."""
-    build_group: str | None = None
+    build_group: str | None
+
+    def __init__(  # noqa: PLR0913 - One argument per record field.
+        self,
+        *,
+        targets: Mapping[str, TargetLock] | FactoryDefault = FACTORY,
+        env_base_names: Mapping[tuple[tuple[str, str], ...], frozenset[str]]
+        | FactoryDefault = FACTORY,
+        environments: list[Marker] | FactoryDefault = FACTORY,
+        requires_python: str | None = None,
+        created_by: str = "nab",
+        extras: tuple[str, ...] = (),
+        dependency_groups: tuple[str, ...] = (),
+        default_groups: tuple[str, ...] = (),
+        provenance: Provenance | None = None,
+        conflicts: tuple[ConflictSet, ...] = (),
+        base_group: str | None = None,
+        build_group: str | None = None,
+    ) -> None:
+        """Collect the resolved targets and lockfile metadata."""
+        self.targets = factory_value(targets, dict)
+        self.env_base_names = factory_value(env_base_names, dict)
+        self.environments = factory_value(environments, list)
+        self.requires_python = requires_python
+        self.created_by = created_by
+        self.extras = extras
+        self.dependency_groups = dependency_groups
+        self.default_groups = default_groups
+        self.provenance = provenance
+        self.conflicts = conflicts
+        self.base_group = base_group
+        self.build_group = build_group
+
     """``[tool.nab].build-group``: the group name the lock gives
     ``[build-system].requires``, or ``None`` to leave them out of the lock."""
 

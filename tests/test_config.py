@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import errno
 import re
-from dataclasses import fields, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -86,6 +85,7 @@ from nab_provider.target import (
     host_environment,
 )
 from nab_provider.testing import pkg_override
+from nab_provider.value import field_names, replace
 from nab_provider.vcs_admission import admit_vcs_url
 
 requires_int_limit = pytest.mark.skipif(
@@ -139,9 +139,7 @@ def write(tmp_path: Path, body: str) -> Path:
     return p
 
 
-DOCS_CONFIGURATION = (
-    Path(__file__).resolve().parents[1] / "docs" / "reference" / "configuration.md"
-)
+DOCS_REFERENCE = Path(__file__).resolve().parents[1] / "docs" / "reference"
 
 DOCS_CONFLICTS = (
     Path(__file__).resolve().parents[1] / "docs" / "explanation" / "conflicts.md"
@@ -164,29 +162,19 @@ def conflicts_doc_examples() -> list[str]:
 
 def first_tool_nab_example() -> str:
     """Return the first ``[tool.nab]`` fenced TOML block in the config reference."""
-    text = DOCS_CONFIGURATION.read_text()
+    text = (DOCS_REFERENCE / "resolution-settings.md").read_text(encoding="utf-8")
     for block in re.findall(r"```toml\n(.*?)```", text, re.DOTALL):
         if block.lstrip().startswith("[tool.nab]"):
             return block
-    raise AssertionError("no [tool.nab] example block in configuration.md")
+    raise AssertionError("no [tool.nab] example block in resolution-settings.md")
 
 
-def section_doc_example(heading: str) -> str:
-    """Return the first TOML example under ``## <heading>`` in the config reference.
-
-    ``first_tool_nab_example`` only returns blocks that open with ``[tool.nab]``.
-    """
-    text = DOCS_CONFIGURATION.read_text()
-    section = re.search(
-        rf"^## {re.escape(heading)}\n.*?(?=^## )", text, flags=re.DOTALL | re.MULTILINE
-    )
-    if section is None:
-        msg = f"no {heading} section in configuration.md"
-        raise AssertionError(msg)
-
-    blocks = re.findall(r"```toml\n(.*?)```", section.group(0), re.DOTALL)
+def section_doc_example(page: str) -> str:
+    """Return the first runnable TOML example on a reference page."""
+    text = (DOCS_REFERENCE / page).read_text(encoding="utf-8")
+    blocks = re.findall(r"```toml\n(.*?)```", text, re.DOTALL)
     if not blocks:
-        msg = f"no TOML example in configuration.md's {heading} section"
+        msg = f"no TOML example in {page}"
         raise AssertionError(msg)
     return blocks[0]
 
@@ -390,25 +378,22 @@ class TestMode:
     def test_a_cli_matrix_under_specific_mode_names_the_flags(
         self, tmp_path: Path
     ) -> None:
-        """A CLI matrix is refused by the flags that set it, not by a file table.
-
-        Mode left at rung 0 and ``--project-mode specific`` beside the
-        matrix reach the same refusal: neither outranks the CLI matrix.
-        """
+        """An explicit specific mode refuses a multi-target CLI matrix."""
         path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
-        matrix = _cli_matrix(python="==3.11", platforms=("linux_x86_64",))
+        matrix = _cli_matrix(python=">=3.11,<3.13", platforms=("linux_x86_64",))
 
-        for overrides in ({"matrix": matrix}, {"matrix": matrix, "mode": "specific"}):
-            with pytest.raises(ConfigError) as excinfo:
-                read_pyproject_config(
-                    path, discover_workspace=False, cli_overrides=overrides
-                )
-
-            assert str(excinfo.value) == (
-                "--project-matrix-python and --project-matrix-platforms declare"
-                " a matrix but mode is 'specific'; pass --project-mode universal"
-                " as well, or drop the matrix flags."
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(
+                path,
+                discover_workspace=False,
+                cli_overrides={"matrix": matrix, "mode": "specific"},
             )
+
+        assert str(excinfo.value) == (
+            "--project-matrix-python and --project-matrix-platforms declare"
+            " a matrix with multiple targets but mode is 'specific'\n    try: pass --project-mode universal"
+            " as well, or drop the matrix flags."
+        )
 
     def test_a_cli_matrix_over_a_file_environment_names_the_flags_written(
         self, tmp_path: Path
@@ -422,7 +407,7 @@ class TestMode:
         )
         tail = (
             " declares one environment; the matrix declares one environment"
-            " per tuple, so the two contradict.  Drop one."
+            " per tuple, so the two contradict\n    try: drop one."
         )
 
         for written, flags in (
@@ -480,7 +465,7 @@ class TestMode:
             "[tool.nab.matrix] declares a matrix and"
             " --project-environment-platform declares one environment; the"
             " matrix declares one environment per tuple, so the two"
-            " contradict.  Drop one."
+            " contradict\n    try: drop one."
         )
 
     def test_both_tables_from_the_cli_still_contradict(self, tmp_path: Path) -> None:
@@ -516,7 +501,7 @@ class TestMode:
             assert str(excinfo.value) == (
                 "--project-matrix-python and --project-matrix-platforms declare"
                 f" a matrix and {named} environment; the matrix declares one"
-                " environment per tuple, so the two contradict.  Drop one."
+                " environment per tuple, so the two contradict\n    try: drop one."
             )
 
     def test_the_specific_mode_message_names_the_flags_written(
@@ -526,7 +511,7 @@ class TestMode:
         path = write(
             tmp_path,
             '[tool.nab]\nmode = "universal"\n'
-            '[tool.nab.matrix]\npython = ">=3.12,<3.13"\n'
+            '[tool.nab.matrix]\npython = ">=3.12,<3.14"\n'
             'platforms = ["linux_x86_64", "macos_arm64"]\n',
         )
 
@@ -541,8 +526,8 @@ class TestMode:
             )
 
         assert str(excinfo.value) == (
-            "--project-matrix-platforms declares a matrix but mode is"
-            " 'specific'; pass --project-mode universal as well, or drop the"
+            "--project-matrix-platforms declares a matrix with multiple targets but mode is"
+            " 'specific'\n    try: pass --project-mode universal as well, or drop the"
             " matrix flags."
         )
 
@@ -572,35 +557,33 @@ class TestMode:
         assert str(excinfo.value) == (
             "[tool.nab.matrix] and [tool.nab.environment] cannot both be set:"
             " the matrix declares one environment per tuple, so a single"
-            " declared environment would contradict it.  Drop one."
+            " declared environment would contradict it\n    try: drop one."
         )
 
-    def test_matrix_without_universal_mode_rejected(self, tmp_path: Path) -> None:
+    def test_matrix_without_mode_infers_universal(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
             '[tool.nab.matrix]\npython = ">=3.11"\nplatforms = ["linux_x86_64"]\n',
         )
-        with pytest.raises(ConfigError) as excinfo:
-            read_pyproject_config(path)
-        message = str(excinfo.value)
-        assert "[tool.nab.matrix] in pyproject.toml is set" in message
-        assert "set mode = 'universal'" in message
-        assert "resolve for every target the matrix declares" in message
-        assert "matrix-based resolver" not in message
+        config = read_pyproject_config(path)
 
-    def test_nab_toml_matrix_without_universal_mode_names_its_own_table(
+        assert config.mode is ResolveMode.UNIVERSAL
+        assert len(plan_targets(config)) > 1
+
+    def test_nab_toml_explicit_specific_mode_names_its_matrix_table(
         self, tmp_path: Path
     ) -> None:
         """A matrix declared in nab.toml is named as the [matrix] table there."""
         path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
         (tmp_path / "nab.toml").write_text(
-            '[matrix]\npython = ">=3.11"\nplatforms = ["linux_x86_64"]\n',
+            'mode = "specific"\n[matrix]\npython = ">=3.11"\nplatforms = ["linux_x86_64"]\n',
             encoding="utf-8",
         )
         with pytest.raises(ConfigError) as excinfo:
             read_pyproject_config(path, discover_workspace=False)
         message = str(excinfo.value)
-        assert "[matrix] in nab.toml is set" in message
+
+        assert "[matrix] in nab.toml declares multiple targets" in message
         assert "[tool.nab.matrix]" not in message
 
     def test_matrix_with_specific_mode_in_same_file_rejected(
@@ -1515,7 +1498,7 @@ class TestRequiresPython:
         with pytest.raises(
             ConfigError,
             match=r"\[tool\.nab\] requires-python = '==3\.9\.\*' excludes the"
-            r" resolve target Python 3\.12.*--python",
+            r" resolve target Python 3\.12[\s\S]*--python",
         ):
             plan_targets(config)
 
@@ -1920,6 +1903,28 @@ class TestUploadedPriorTo:
 
 
 class TestPolicies:
+    @pytest.mark.parametrize("enabled", [False, True])
+    def test_allow_zip_sdists_reaches_resolve_inputs(
+        self, tmp_path: Path, enabled: bool
+    ) -> None:
+        path = write(
+            tmp_path,
+            f"[tool.nab]\nallow-zip-sdists = {str(enabled).lower()}\n",
+        )
+        config = read_pyproject_config(path)
+
+        assert config.allow_zip_sdists is enabled
+        assert config.resolve_inputs().allow_zip_sdists is enabled
+        assert config.build_policy is BuildPolicy.BUILD_LOCAL
+        assert config.trust_unverified_sdist_deps is False
+
+    def test_allow_zip_sdists_defaults_false(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\n")
+        config = read_pyproject_config(path)
+
+        assert config.allow_zip_sdists is False
+        assert config.resolve_inputs().allow_zip_sdists is False
+
     def test_sdist_and_build_round_trip(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
@@ -2059,7 +2064,9 @@ class TestUniversalBuildPolicy:
             '[tool.nab]\nmode = "universal"\nbuild-policy = "build-local"\n'
             + _UNIVERSAL_MATRIX,
         )
-        with pytest.raises(ConfigError, match="declared target.*build-policy.*never"):
+        with pytest.raises(
+            ConfigError, match=r"declared target[\s\S]*build-policy[\s\S]*never"
+        ):
             read_pyproject_config(path)
 
     def test_explicit_build_remote_rejected(self, tmp_path: Path) -> None:
@@ -2068,7 +2075,9 @@ class TestUniversalBuildPolicy:
             '[tool.nab]\nmode = "universal"\nbuild-policy = "build-remote"\n'
             + _UNIVERSAL_MATRIX,
         )
-        with pytest.raises(ConfigError, match="declared target.*build-policy.*never"):
+        with pytest.raises(
+            ConfigError, match=r"declared target[\s\S]*build-policy[\s\S]*never"
+        ):
             read_pyproject_config(path)
 
     def test_package_override_build_policy_rejected(self, tmp_path: Path) -> None:
@@ -3281,8 +3290,9 @@ class TestIndexSerialization:
         assert positional.serialization is SimpleSerialization.NEGOTIATE
 
     def test_reference_example_parses(self, tmp_path: Path) -> None:
-        path = write(tmp_path, section_doc_example("Indexes"))
+        path = write(tmp_path, section_doc_example("indexes.md"))
         pins = {i.name: i.serialization for i in read_pyproject_config(path).indexes}
+
         assert pins["pypi"] is SimpleSerialization.NEGOTIATE
         assert pins["internal"] is SimpleSerialization.HTML
 
@@ -3366,15 +3376,17 @@ class TestVcsDocExample:
 
     def test_example_shows_every_key(self) -> None:
         """The example names each key ``[tool.nab.vcs]`` accepts."""
-        example = tomli.loads(section_doc_example("VCS policy"))
+        example = tomli.loads(section_doc_example("dependency-sources.md"))
         shown = set(example["tool"]["nab"]["vcs"])
-        assert shown == {f.name.replace("_", "-") for f in fields(VcsConfig)}
+
+        assert shown == {name.replace("_", "-") for name in field_names(VcsConfig)}
 
     def test_allowlists_admit_the_repo_they_name(self, tmp_path: Path) -> None:
         """Opened to ``allow``, the example admits a pinned URL to its own repo."""
-        path = write(tmp_path, section_doc_example("VCS policy"))
+        path = write(tmp_path, section_doc_example("dependency-sources.md"))
         opened = replace(read_pyproject_config(path).vcs, policy=VcsPolicy.ALLOW)
         pinned = f"git+https://github.com/me/x@{'a' * 40}"
+
         assert admit_vcs_url(pinned, opened) == "git+https"
 
 
@@ -3869,6 +3881,45 @@ class TestPackageSugar:
         config = read_pyproject_config(path)
         assert config.package_overrides == ()
         assert config.index_overrides == {}
+
+    @pytest.mark.parametrize("enabled", [False, True])
+    @pytest.mark.parametrize(
+        "selector",
+        [
+            '[tool.nab.packages."foo < 2"]',
+            '[[tool.nab.package-rules]]\nmatch = ["foo < 2"]',
+        ],
+    )
+    def test_allow_zip_sdists_keeps_false_and_version_scope(
+        self, tmp_path: Path, enabled: bool, selector: str
+    ) -> None:
+        path = write(
+            tmp_path,
+            f"{selector}\nallow-zip-sdists = {str(enabled).lower()}\n",
+        )
+        (override,) = read_pyproject_config(path).package_overrides
+
+        assert override.allow_zip_sdists is enabled
+        assert Version("1") in override.version_range
+        assert Version("2") not in override.version_range
+
+    def test_overlapping_allow_zip_sdists_is_an_error(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."foo < 2"]\nallow-zip-sdists = true\n'
+            '[[tool.nab.package-rules]]\nmatch = ["foo >= 1"]\n'
+            "allow-zip-sdists = false\n",
+        )
+        with pytest.raises(ConfigError, match="allow-zip-sdists.*overlap"):
+            read_pyproject_config(path)
+
+    @pytest.mark.parametrize("value", ['"yes"', "1", "[]"])
+    def test_allow_zip_sdists_rejects_non_boolean(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        path = write(tmp_path, f"[tool.nab.packages.foo]\nallow-zip-sdists = {value}\n")
+        with pytest.raises(ConfigError, match="allow-zip-sdists must be a boolean"):
+            read_pyproject_config(path)
 
     def test_dist_policy_string(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab.packages.lxml]\ndist-policy = "sdist-only"\n')
@@ -4799,6 +4850,24 @@ class TestIndexOverrides:
             'name = "internal"\n'
             'url = "https://pkgs.example.com/simple/"\n'
         )
+
+    @pytest.mark.parametrize("enabled", [False, True])
+    def test_allow_zip_sdists_keeps_false(self, tmp_path: Path, enabled: bool) -> None:
+        path = write(
+            tmp_path,
+            f"[tool.nab.index.pypi]\nallow-zip-sdists = {str(enabled).lower()}\n",
+        )
+        override = read_pyproject_config(path).index_overrides["pypi"]
+
+        assert override.allow_zip_sdists is enabled
+
+    @pytest.mark.parametrize("value", ['"yes"', "1", "[]"])
+    def test_allow_zip_sdists_rejects_non_boolean(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        path = write(tmp_path, f"[tool.nab.index.pypi]\nallow-zip-sdists = {value}\n")
+        with pytest.raises(ConfigError, match="allow-zip-sdists must be a boolean"):
+            read_pyproject_config(path)
 
     def test_dist_policy(self, tmp_path: Path) -> None:
         path = write(
@@ -6535,6 +6604,7 @@ def _config_off_every_slot_default(tmp_path: Path) -> NabProjectConfig:
         requires_python=">=3.11",
         resolution=ResolutionStrategy.LOWEST,
         trust_unverified_sdist_deps=True,
+        assume_universal_deps=True,
         uploaded_prior_to=_SEAM_CUTOFF,
         vcs=VcsConfig(policy=VcsPolicy.ALLOW),
         vcs_sources=(VcsSource("tool", "git+https://example.invalid/tool.git@v1"),),
@@ -6571,6 +6641,101 @@ class TestSeamPartition:
         assert {name: getattr(bare, name) for name in ResolveInputs.__slots__} == {
             name: getattr(default, name) for name in ResolveInputs.__slots__
         }
+
+
+class TestAssumeUniversalDeps:
+    """The assertion follows the global and scoped configuration rules."""
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_global_value_reaches_resolve_inputs(
+        self, tmp_path: Path, enabled: bool
+    ) -> None:
+        path = write(
+            tmp_path,
+            f"[tool.nab]\nassume-universal-deps = {str(enabled).lower()}\n",
+        )
+
+        config = read_pyproject_config(path)
+
+        assert config.assume_universal_deps is enabled
+        assert config.resolve_inputs().assume_universal_deps is enabled
+
+    @pytest.mark.parametrize(
+        "surface",
+        [
+            '[tool.nab.packages."widget < 2"]\n',
+            '[[tool.nab.package-rules]]\nmatch = ["widget < 2"]\n',
+            "[tool.nab.index.pypi]\n",
+        ],
+    )
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_scoped_value_preserves_explicit_false(
+        self, tmp_path: Path, surface: str, enabled: bool
+    ) -> None:
+        path = write(
+            tmp_path,
+            surface + f"assume-universal-deps = {str(enabled).lower()}\n",
+        )
+
+        config = read_pyproject_config(path)
+        overrides = (
+            tuple(config.index_overrides.values())
+            if config.index_overrides
+            else config.package_overrides
+        )
+
+        assert len(overrides) == 1
+        assert overrides[0].assume_universal_deps is enabled
+        assert config.assume_universal_deps is False
+
+    @pytest.mark.parametrize(
+        "surface",
+        [
+            "[tool.nab]\n",
+            "[tool.nab.packages.widget]\n",
+            '[[tool.nab.package-rules]]\nmatch = ["widget"]\n',
+            "[tool.nab.index.pypi]\n",
+        ],
+    )
+    def test_non_boolean_is_rejected(self, tmp_path: Path, surface: str) -> None:
+        path = write(tmp_path, surface + "assume-universal-deps = 1\n")
+
+        with pytest.raises(ConfigError, match="assume-universal-deps.*boolean"):
+            read_pyproject_config(path)
+
+    @pytest.mark.parametrize("right", ["true", "false"])
+    def test_overlapping_assertions_are_rejected(
+        self, tmp_path: Path, right: str
+    ) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."widget < 3"]\n'
+            "assume-universal-deps = true\n"
+            '[[tool.nab.package-rules]]\nmatch = ["widget >= 2"]\n'
+            f"assume-universal-deps = {right}\n",
+        )
+
+        with pytest.raises(
+            ConfigError, match="assume-universal-deps.*overlapping versions"
+        ):
+            read_pyproject_config(path)
+
+    def test_disjoint_assertions_are_preserved(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."widget < 2"]\n'
+            "assume-universal-deps = true\n"
+            '[[tool.nab.package-rules]]\nmatch = ["widget >= 2"]\n'
+            "assume-universal-deps = false\n",
+        )
+
+        overrides = read_pyproject_config(path).package_overrides
+
+        assert [str(entry.requirement) for entry in overrides] == [
+            "widget<2",
+            "widget>=2",
+        ]
+        assert [entry.assume_universal_deps for entry in overrides] == [True, False]
 
 
 class TestPyprojectParseCount:

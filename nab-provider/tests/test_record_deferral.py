@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -15,6 +16,7 @@ from nab_provider.records import (
     rehydrated_wheel,
     release_wheel_payload,
 )
+from nab_provider.testing import make_wheel
 
 DIGEST = "a" * 64
 SHA512_DIGEST = "b" * 128
@@ -299,3 +301,35 @@ def test_releasing_a_wheel_leaves_the_rest_of_the_record_readable() -> None:
     assert wheel.version == "1.0"
     assert wheel.upload_time is None
     assert wheel.requires_python is None
+
+
+def test_metadata_url_keeps_a_snapshot_during_payload_release() -> None:
+    """Pause the URL's truth check while the other thread releases its slot."""
+    read_started = threading.Event()
+    release_complete = threading.Event()
+
+    class PausingURL(str):
+        """Expose the scheduling gap between a truth check and URL parsing."""
+
+        __slots__ = ()
+
+        def __bool__(self) -> bool:
+            read_started.set()
+            if not release_complete.wait(_TIMEOUT):
+                raise TimeoutError("payload release did not finish")
+            return len(self) > 0
+
+    url = "https://files.example/pkg-1.0-py3-none-any.whl#sha256=abc"
+    wheel = make_wheel(url=PausingURL(url))
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending = executor.submit(lambda: wheel.metadata_url)
+        try:
+            assert read_started.wait(_TIMEOUT)
+            release_wheel_payload(wheel)
+        finally:
+            release_complete.set()
+        assert pending.result(timeout=_TIMEOUT) == (
+            "https://files.example/pkg-1.0-py3-none-any.whl.metadata"
+        )
+
+    assert wheel.metadata_url is None

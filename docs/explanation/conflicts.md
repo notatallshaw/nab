@@ -1,12 +1,11 @@
 # Conflicting extras and groups
 
 > [!WARNING]
-> The lockfile shape for conflicts may still change.
+> The lockfile format for conflicts may still change.
 
-Some optional dependency sets are mutually exclusive: a CPU build and a GPU build of the same stack,
-or testing variants pinned to different tool versions. nab cannot put two such sets in one
-resolution, and a lock that tried to would fail the emit-time disjointness check. Declaring the
-conflict tells nab to keep them apart.
+nab normally resolves selected extras and groups together. If two selections require incompatible
+versions, such as CPU and GPU variants of a dependency, that joint resolution fails. Declaring a
+conflict makes nab resolve the alternatives separately and record selection markers in one lock.
 
 ## Declaring a conflict
 
@@ -33,17 +32,19 @@ conflicts = [
 ]
 ```
 
-To require a choice rather than merely forbidding co-selection, use the table form and set the
-policy as a value. The three policies mirror Gentoo's `REQUIRED_USE` operators:
+The table form selects a policy: `at-most-one` permits zero or one member, `exactly-one` requires
+one, and `at-least-one` permits one or more:
 
 ```toml
 [tool.nab]
 conflicts = [
-    { members = [{ extra = "cpu" }, { extra = "gpu" }], policy = "at-most-one" },        # ?? (default)
-    { members = [{ extra = "cuda11" }, { extra = "cuda12" }], policy = "exactly-one" },  # ^^
-    { members = [{ group = "a" }, { group = "b" }], policy = "at-least-one" },           # ||
+    { members = [{ extra = "cpu" }, { extra = "gpu" }], policy = "at-most-one" },
+    { members = [{ extra = "cuda11" }, { extra = "cuda12" }], policy = "exactly-one" },
+    { members = [{ group = "a" }, { group = "b" }], policy = "at-least-one" },
 ]
 ```
+
+### Member and name rules
 
 A table without a `policy` key defaults to `at-most-one`, the same as the bare-list form.
 
@@ -85,14 +86,17 @@ Conflicting `build-group` against an ordinary group instead, say
 `[[{ group = "build" }, { group = "dev" }]]`, separates the build requirements from that group but
 not from the project's dependencies, which stay in every fork.
 
-A configured name is active on every run rather than selected, so a set holding only configured
-names engages always: every `nab lock` for that project forks, and `at-most-one` and `exactly-one`
-say the same thing there. An `at-least-one` set that names either of them is refused, since a group
-that is always active means the set can never fail.
+### Always-active groups
+
+`base-group` and `build-group` are active on every run. A conflict set containing only those names
+always forks, with the same result under `at-most-one` and `exactly-one`. nab rejects an
+`at-least-one` set containing either name because its minimum would always be satisfied.
 
 Selecting an extra never deselects the project's own dependencies, so pairing `base-group` with an
 extra is refused when the config is read, under `at-most-one` and `exactly-one` alike. `build-group`
 pairs with an extra fine: the project's own dependencies stay in every fork of that set.
+
+### Separating build, runtime and development groups
 
 A member belongs to at most one set, so putting the build requirements in a set with both the
 project's dependencies and `dev` is one three-member declaration, and it makes all three mutually
@@ -108,9 +112,8 @@ without the project's own dependencies. Declare two sets instead if `dev` should
 them, remembering that `build` can be in only one of them.
 
 > [!NOTE]
-> `base-group` is in the lock's `default-groups`, so an install that selects no group gets the
-> project's own dependencies, and one that selects `build` gets the build side in their place. An
-> installer that cannot select a group from a lock gets the defaults.
+> nab makes `base-group` the lock's default when `default-groups` is omitted. See
+> [Lockfile extras and groups](../reference/lockfile-groups.md) for default and explicit selections.
 
 ## Forking co-selected members
 
@@ -137,6 +140,8 @@ version = "23.12.0"
 marker = "... and \"black23\" in dependency_groups and \"black22\" not in dependency_groups and \"black24\" not in dependency_groups"
 ```
 
+### Requirements output files
+
 The requirements formats name a fork with the `{selection}` variable in an `--output` template
 (`--output 'req-{selection}.txt'` writes `req-extra-cpu.txt` and `req-extra-gpu.txt`), since two
 forks of one target share every other axis and would otherwise collide onto one file.
@@ -144,6 +149,8 @@ forks of one target share every other axis and would otherwise collide onto one 
 When several sets are engaged at once, the forks are the cartesian product across them (one member
 chosen per set), so `black{22,23,24}` crossed with `isort{5,6,7}` is nine forks. Non-conflicting
 selections stay active in every fork.
+
+### Indirect selections
 
 Forking needs one member per fork. If a single selection forces two members of one exclusive set
 together, no fork can separate them, so the resolve is refused before any network work:
@@ -161,6 +168,8 @@ rejected.
 The require-one policies still raise. Declaring `exactly-one` or `at-least-one` and selecting none
 of its members is rejected before the resolve, regardless of mode. Co-selection forks under
 `exactly-one`; `at-least-one` permits it, so its members stay active together in one resolve.
+
+### Default groups
 
 Groups named in `[tool.nab].default-groups` count as part of the selection for every conflict check.
 A project with `default-groups = ["a"]` and a `policy = "exactly-one"` set over groups `a` and `b`
@@ -180,6 +189,8 @@ A default install activates every default group at once. The emit-time disjointn
 context that activates two members of an exclusive set, so that install is never checked against the
 declared conflict. `at-least-one` permits co-selection, so all of its members may be defaults.
 
+### Shared and base dependencies
+
 A dependency required by every member of a set but not by the base keeps its membership marker, so
 it does not install when no member is selected (relevant under `at-most-one`, which permits
 selecting none). A base resolve names the deps that install regardless of the selection, which is
@@ -188,6 +199,8 @@ how the writer tells the two apart.
 When the forks of one environment pin a base dependency at different versions, no single entry can
 serve the no-member context; the writer raises a `DivergentBaseDependencyError` rather than emit a
 lock that silently skips the dependency.
+
+### Combining conflict sets
 
 With two or more sets engaged, each entry names only the sets its package varies over.
 
@@ -198,12 +211,16 @@ two sets is selected by either member alone.
 A package whose version does depend on the combination keeps the conjunction, and so does anything
 that requires it: an entry never fires where one of its own dependencies would not.
 
+### Unselected and shared members
+
 An exclusive set forks only over the members the selection activates. The rest of its declared
 members are absent from the lock's `extras` and `dependency-groups` arrays and from every marker, so
 a set with an unselected member excludes an entry exactly as one without it would.
 
 A dependency a member shares with a selection outside the set names both in its marker
 (`"cpu" in extras or "docs" in extras`), so selecting the member on its own still installs it.
+
+### Installer compatibility
 
 The lockfile stays within PEP 751: the membership markers use the standard `extras` and
 `dependency_groups` variables, and each fork's marker negates the other members it was forked
@@ -220,7 +237,7 @@ raises a `DisjointnessError`, with a hint pointing at the `conflicts` key.
 | ----------------- | ---------------------------------------------------- | ------------------------------------------------------ |
 | Lockfile encoding | Standard PEP 751 `"x" in extras`.                    | Bespoke `extra-<n>-<pkg>-<name>` dialect in `uv.lock`. |
 | Mechanism         | Each member is a separate resolution under a marker. | Synthetic activation variables fork the single solve.  |
-| Cost              | Re-resolves a near-identical universe per fork.      | Shared until a fork diverges.                          |
+| Cost              | Repeats resolution for each allowed selection.       | Shared until a fork diverges.                          |
 
 The cost row reflects how the matrix model works (see [universal resolution](universal.md)): it
 re-resolves per fork. In return the lock stays within PEP 751, with no custom conflict-marker

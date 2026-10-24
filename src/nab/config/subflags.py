@@ -6,7 +6,15 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_resolver.diagnostics",
+    "nab._cli.definition.model",
+    "nab.config.values",
+)
+
 from typing import TYPE_CHECKING, Any
+
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .._cli.definition.model import Opt, Tokens
 from .registry import SUB_ROWS
@@ -217,11 +225,14 @@ def _items(row: Opt, tokens: Sequence[str]) -> list[dict[str, Any]]:
         elif key == row.opened_by:
             items.append({row.opened_by: _scalar(value)})
         elif not items:
-            msg = (
-                f"{row.cli_flag} reads {token!r} as a key on the item before"
-                " it, and no item is open; write the id first"
+            report = DiagnosticMessage(
+                (
+                    f"{row.cli_flag} reads {token!r} as a key on the item before "
+                    "it, and no item is open"
+                ),
+                suggestions=(Suggestion("write the id first"),),
             )
-            raise CliTableError(msg)
+            raise CliTableError(report)
         elif key in items[-1]:
             msg = f"{row.cli_flag} sets {key!r} twice on {items[-1][row.opened_by]!r}"
             raise CliTableError(msg)

@@ -85,9 +85,12 @@ def test_response_and_redirect(connect: Connect) -> None:
             response.raise_for_status()
         finally:
             await transport.aclose()
+
+        assert transport._client is not None
         assert transport._client.is_closed
 
     asyncio.run(run())
+
     assert len(requests) == 2
     assert requests[0].headers["User-Agent"] == USER_AGENT
     assert requests[0].headers["Accept-Encoding"] == "gzip"

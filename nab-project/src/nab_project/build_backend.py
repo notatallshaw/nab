@@ -10,6 +10,19 @@ settings a resolve runs under.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_resolver.diagnostics",
+    "nab_project",
+    "nab_project._build.errors",
+    "nab_project.paths",
+    "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider._vendor.packaging.version",
+    "nab_provider.metadata",
+    "nab_provider.requirements_file",
+    "tomli",
+)
+
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
@@ -28,6 +41,7 @@ from nab_provider.requirements_file import (
     parse_project_requirement,
     require_string_list,
 )
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from . import toml_io
 from ._build.errors import (
@@ -228,13 +242,19 @@ def extract_metadata(
     if static is not None:
         return static
     if config is None:
-        msg = (
-            "dynamic-metadata path requires a ResolveInputs;"
-            f" the static reader returned None for {source_dir}."
-            "  Pass one through ``extract_metadata`` or use a"
-            " build-policy that does not enter the dynamic path."
+        report = DiagnosticMessage(
+            (
+                "dynamic-metadata path requires a ResolveInputs; the static reader "
+                f"returned None for {source_dir}"
+            ),
+            suggestions=(
+                Suggestion(
+                    "pass one through ``extract_metadata`` or use a build-policy "
+                    "that does not enter the dynamic path."
+                ),
+            ),
         )
-        raise BuildBackendError(msg)
+        raise BuildBackendError(report)
     # Late import: ``_build.runner`` pulls in ``build`` and friends,
     # which we should not pay for in static-only callers.
     from ._build.runner import run_build_backend  # noqa: PLC0415

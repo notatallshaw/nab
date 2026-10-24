@@ -11,8 +11,24 @@ resolver.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_resolver.diagnostics",
+    "datetime",
+    "nab",
+    "nab._cli.parse",
+    "nab.config.hooks",
+    "nab.config.subflags",
+    "nab.output",
+    "nab_markersets.python_versions",
+    "nab_project",
+    "nab_project.paths",
+    "nab_provider.policy",
+    "pathlib",
+    "sys",
+    "tomli",
+)
+
 import sys
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
@@ -23,6 +39,8 @@ from nab_markersets.python_versions import validate_python_version
 from nab_project import toml_io
 from nab_project.paths import PathState, path_state
 from nab_provider.policy import ResolveMode
+from nab_provider.value import Record
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from . import env
 from ._cli.parse import option_tokens
@@ -74,8 +92,13 @@ def require_pyproject_file(path: Path) -> None:
 
     if _is_pylock(path):
         printer().error(
-            f"{path} is a PEP 751 lockfile, not a pyproject.  nab resolves"
-            " from project inputs, so pass the pyproject.toml instead."
+            DiagnosticMessage(
+                (
+                    f"{path} is a PEP 751 lockfile, not a pyproject.  nab resolves "
+                    "from project inputs"
+                ),
+                suggestions=(Suggestion("pass the pyproject.toml instead."),),
+            )
         )
         sys.exit(1)
 
@@ -165,9 +188,17 @@ def lock_anchor(ladder: ConfigLadder) -> datetime | None:
     return value if isinstance(value, datetime) else None
 
 
-@dataclass(frozen=True, slots=True)
-class RunSettings:
+class RunSettings(Record):
     """The run knobs a subcommand reads from the layered config for one run."""
+
+    __slots__ = __match_args__ = (
+        "resolution",
+        "offline",
+        "cache_dir",
+        "http_backend",
+        "max_concurrency",
+        "cli_project_overrides",
+    )
 
     resolution: ResolutionStrategy | None
     offline: bool
@@ -177,11 +208,25 @@ class RunSettings:
     # Explicit --project-* overrides as rendered flag/value pairs.
     cli_project_overrides: tuple[tuple[str, str], ...]
 
+    def __init__(
+        self,
+        *,
+        resolution: ResolutionStrategy | None,
+        offline: bool,
+        cache_dir: Path | None,
+        http_backend: str,
+        max_concurrency: int,
+        cli_project_overrides: tuple[tuple[str, str], ...],
+    ) -> None:
+        self.resolution = resolution
+        self.offline = offline
+        self.cache_dir = cache_dir
+        self.http_backend = http_backend
+        self.max_concurrency = max_concurrency
+        self.cli_project_overrides = cli_project_overrides
 
-_BOTH_PYTHON_AXES = (
-    "--python and --project-environment-python both set the python axis;"
-    " pass one of them."
-)
+
+_BOTH_PYTHON_AXES = "--python and --project-environment-python both set the python axis"
 
 
 def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a registry key
@@ -195,6 +240,8 @@ def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a reg
     cli_requires_python: str | None = None,
     cli_uploaded_prior_to: str | None = None,
     cli_dist_policy: str | None = None,
+    cli_assume_universal_deps: bool | None = None,
+    cli_allow_zip_sdists: bool | None = None,
     cli_build_policy: str | None = None,
     cli_build_requires_depth: int | None = None,
     cli_decision_order: str | None = None,
@@ -236,6 +283,8 @@ def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a reg
         "project_requires_python": cli_requires_python,
         "project_uploaded_prior_to": cli_uploaded_prior_to,
         "project_dist_policy": cli_dist_policy,
+        "project_assume_universal_deps": cli_assume_universal_deps,
+        "project_allow_zip_sdists": cli_allow_zip_sdists,
         "project_build_policy": cli_build_policy,
         "project_build_requires_depth": cli_build_requires_depth,
         "project_decision_order": cli_decision_order,
@@ -256,7 +305,13 @@ def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a reg
     flags: dict[str, str] = {}
     if cli_python is not None:
         if cli_environment_python is not None:
-            _fail_cli(SourceConfigError(_BOTH_PYTHON_AXES))
+            _fail_cli(
+                SourceConfigError(
+                    DiagnosticMessage(
+                        _BOTH_PYTHON_AXES, suggestions=(Suggestion("pass one of them"),)
+                    )
+                )
+            )
         _check_python_flag(cli_python)
         values["project_environment_python"] = cli_python
         flags["project_environment_python"] = "--python"
@@ -383,13 +438,13 @@ def _fail_config(exc: SourceConfigError) -> NoReturn:
     """
     if isinstance(exc, CliTableError):
         _fail_cli(exc)
-    printer().error(f"config error: {exc}")
+    printer().error(exc, prefix="config error: ")
     sys.exit(1)
 
 
 def _fail_cli(exc: SourceConfigError) -> NoReturn:
     """Exit 1 on a command-line value, with no ``config error:`` prefix."""
-    printer().error(str(exc))
+    printer().error(exc)
     sys.exit(1)
 
 

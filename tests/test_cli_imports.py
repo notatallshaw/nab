@@ -115,6 +115,10 @@ with redirect_stdout(out), redirect_stderr(err):
     status = nab.cli.run(tuple(sys.argv[2:]))
 
 assert status == 0, (status, out.getvalue(), err.getvalue())
+if 'nab_resolver.resolver' in banned:
+    assert {name for name in sys.modules if name.startswith('nab_resolver.')} <= {
+        'nab_resolver.diagnostics', 'nab_resolver._compat',
+    }
 held = set(sys.modules) | {name.partition(".")[0] for name in sys.modules}
 sys.stderr.write(" ".join(sorted(held & banned)))
 """
@@ -123,7 +127,7 @@ sys.stderr.write(" ".join(sorted(held & banned)))
 # solver, the provider and project halves a resolve goes through, and
 # the writer that emits a lockfile.
 _RESOLVE_STACK = (
-    "nab_resolver",
+    "nab_resolver.resolver",
     "nab_project.lockfile",
     "nab_project.resolve",
     "nab_provider.provider",
@@ -202,17 +206,15 @@ def test_the_output_layer_is_untouched_until_a_command_runs(
     assert "nab.output" not in added
 
 
-# The most a page may cost: the renderer, the module holding the colour
-# rule, and the one import that module makes.  A ``TYPE_CHECKING`` block in
-# ``nab.env`` would be an ``import typing``, and this bound is what says it
-# has none.
-_PAGE_COST = frozenset({"collections.abc", "nab._cli.render", "nab.env"})
+# The parser and version may load on first use under Python 3.15.
+_PARSE_COST = frozenset({"nab._cli", "nab._cli.parse", "nab._cli.spec"})
+_PAGE_COST = _PARSE_COST | {"collections.abc", "nab._cli.render", "nab.env"}
 
 
 @pytest.mark.parametrize(
     ("line", "expected"),
     [
-        (("--version",), frozenset[str]()),
+        (("--version",), _PARSE_COST | {"nab._version"}),
         (("--help",), _PAGE_COST),
         (("lock", "--help"), _PAGE_COST),
     ],
@@ -220,7 +222,7 @@ _PAGE_COST = frozenset({"collections.abc", "nab._cli.render", "nab.env"})
 def test_a_page_or_a_version_adds_only_what_writes_it(
     line: tuple[str, ...], expected: frozenset[str]
 ) -> None:
-    """Probe D bounds ``--help`` imports to renderer and colour support.
+    """Probe D bounds help and version imports to their readers.
 
     A bound rather than a list, because ``collections.abc`` is already
     loaded on some interpreters.  It is a claim about which modules the line
@@ -280,3 +282,19 @@ def test_a_lock_command_holds_no_archive_reader(tmp_path: Path) -> None:
     held = _run(_HELD_PROBE, "tarfile,zipfile", "lock", "--offline", cwd=tmp_path)
 
     assert held == ""
+
+
+def test_plain_output_defers_diagnostic_imports() -> None:
+    assert (
+        _run("""
+import sys
+from nab._cli.parse import UsageError
+assert 'nab_resolver.diagnostics' not in sys.modules
+from nab.output import Printer
+assert Printer().format_message('plain output') == 'plain output'
+assert 'nab_resolver.diagnostics' not in sys.modules
+UsageError('nab', 'refused')
+assert 'nab_resolver.diagnostics' in sys.modules
+""")
+        == ""
+    )

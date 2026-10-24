@@ -19,14 +19,24 @@ than passed over.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_provider._provider",
+    "nab_provider._vendor.packaging.version",
+    "nab_provider.errors",
+    "nab_provider.policy",
+    "nab_provider.records",
+    "re",
+)
+
 import re
 from typing import TYPE_CHECKING, Final
 
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.diagnostics import Diagnostic
 from nab_provider.records import SdistFile, WheelFile
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion, error_message
 
-from ..errors import InvalidUploadTimeError
+from ..errors import InvalidUploadTimeError, MetadataError
 from ..policy import DistPolicy
 from . import listing as _listing
 from .listing import DropCause
@@ -43,7 +53,7 @@ if TYPE_CHECKING:
     from .listing import Cause, ListingPolicy
 
     # The configuration keys a remedy can change.
-    Field: TypeAlias = Literal["uploaded-prior-to", "dist-policy"]
+    Field: TypeAlias = Literal["uploaded-prior-to", "dist-policy", "allow-zip-sdists"]
 
     # The values :class:`OverrideLayer`, :class:`ReasonKind` and
     # :class:`BlockerKind` name.
@@ -86,6 +96,7 @@ FILTER_KEYS: dict[Cause, str] = {
     DropCause.UPLOAD_TIME_NAIVE: "uploaded-prior-to",
     DropCause.UPLOAD_TIME_AFTER_CUTOFF: "uploaded-prior-to",
     DropCause.DIST_POLICY: "dist-policy",
+    DropCause.ZIP_SDIST: "allow-zip-sdists",
     DropCause.SDIST_INSTALL_NO_SDIST: "dist-policy",
     DropCause.REQUIRES_PYTHON: "requires-python",
     # No configuration turns the tag pass on, so this is a description
@@ -326,14 +337,37 @@ class MetadataBlock:
     took that version's sdist.
     """
 
-    __slots__ = ("filtered_sdist_version", "message")
+    __slots__ = ("filtered_sdist_version", "message", "suggestions")
 
     def __init__(
-        self, message: str, filtered_sdist_version: Version | None = None
+        self,
+        message: str,
+        filtered_sdist_version: Version | None = None,
+        *,
+        suggestions: tuple[Suggestion, ...] = (),
     ) -> None:
         """Record ``message`` as this version's failure."""
         self.message = message
         self.filtered_sdist_version = filtered_sdist_version
+        self.suggestions = suggestions
+
+    @classmethod
+    def from_error(cls, error: MetadataError) -> MetadataBlock:
+        """Snapshot a rejection without retaining its exception traceback."""
+        message = error_message(error)
+        return cls(
+            message.message,
+            error.filtered_sdist_version,
+            suggestions=message.suggestions,
+        )
+
+    def as_error(self, error_type: type[MetadataError]) -> MetadataError:
+        """Recreate a cached rejection with its attribution and corrections."""
+        error = error_type(
+            DiagnosticMessage(self.message, suggestions=self.suggestions)
+        )
+        error.filtered_sdist_version = self.filtered_sdist_version
+        return error
 
 
 class NoVersionsReason:
@@ -392,14 +426,16 @@ NO_MATCH = Diagnostic("no version matches the requirement")
 FIXED_DIAGNOSTICS: dict[Kind, Diagnostic] = {
     ReasonKind.OFFLINE_MISS: Diagnostic(
         "offline mode skipped an index with no cached listing",
-        (
-            (
-                "note: --no-offline turns offline mode off for this run"
-                " wherever it was set: a nab.toml, NAB_OFFLINE, or this"
-                " command line"
+        suggestions=(
+            Suggestion(
+                "re-run with --no-offline",
+                detail=(
+                    "--no-offline turns offline mode off for this run wherever "
+                    "it was set: "
+                    "a nab.toml, NAB_OFFLINE, or this command line"
+                ),
             ),
         ),
-        "re-run with --no-offline",
     ),
     ReasonKind.UNREADABLE_ONLY: Diagnostic(
         "no file the index served is one nab can read",
@@ -537,6 +573,10 @@ def _base_pass(
             )
             continue
 
+        if _listing.zip_sdist_cause(provider, normalized, version, dist, policy):
+            dropped.append(DroppedFile(dist, version, DropCause.ZIP_SDIST))
+            continue
+
         survivors.append((version, dist))
 
     return dropped, survivors, sdist_install
@@ -640,6 +680,7 @@ _SHORT_EMPTY: dict[Cause, str] = {
     ),
     DropCause.UPLOAD_TIME_AFTER_CUTOFF: "uploaded-prior-to excluded every file",
     DropCause.DIST_POLICY: "{subject} excluded every file",
+    DropCause.ZIP_SDIST: "legacy ZIP sdists require allow-zip-sdists = true",
     DropCause.SDIST_INSTALL_NO_SDIST: "{subject} excluded every version",
     DropCause.REQUIRES_PYTHON: "no file supports Python {py}",
     DropCause.WHEEL_TAGS: "no wheel matches this platform or Python",
@@ -650,6 +691,7 @@ _SHORT_EMPTY: dict[Cause, str] = {
 # where saying so is not the generic "<subject> excluded every version in
 # range": a line naming the target has to carry the range somewhere else.
 _SHORT_IN_RANGE: dict[Cause, str] = {
+    DropCause.ZIP_SDIST: "legacy ZIP sdists in range require allow-zip-sdists = true",
     DropCause.REQUIRES_PYTHON: "no version in range supports Python {py}",
     DropCause.WHEEL_TAGS: "no wheel in range matches this platform or Python",
 }
@@ -661,10 +703,22 @@ _SHORT_UNNAMED_IN_RANGE = (
 
 
 def empty_listing_diagnostic(
-    provider: Provider, normalized: str, diagnosis: ListingDiagnosis
+    provider: Provider,
+    normalized: str,
+    diagnosis: ListingDiagnosis,
+    version_range: VersionRange | None = None,
 ) -> Diagnostic:
     """Say why nothing on ``normalized``'s listing is usable on this target."""
-    groups = _groups(diagnosis.dropped)
+    dropped = [
+        record
+        for record in diagnosis.dropped
+        if record.cause != DropCause.ZIP_SDIST
+        or version_range is None
+        or _version_of(record) in version_range
+    ]
+    groups = _groups(dropped)
+    if not groups and not diagnosis.unexplained:
+        return NO_MATCH
     clauses = [_clause(cause, records, diagnosis) for cause, records in groups]
     if diagnosis.unexplained:
         clauses.append(_render(None, diagnosis.unexplained))
@@ -677,8 +731,8 @@ def empty_listing_diagnostic(
     remedies = _remedies(provider, normalized, diagnosis, groups)
     return Diagnostic(
         _empty_short(groups, diagnosis),
-        (*clauses, *_note_lines(remedies)),
-        _try_line(remedies),
+        tuple(clauses),
+        suggestions=_suggestions(remedies),
     )
 
 
@@ -719,8 +773,8 @@ def in_range_diagnostic(
     clauses = [_clause(cause, records, diagnosis) for cause, records in groups]
     return Diagnostic(
         _in_range_short(groups, diagnosis),
-        (*clauses, *_note_lines(remedies)),
-        _try_line(remedies),
+        tuple(clauses),
+        suggestions=_suggestions(remedies),
     )
 
 
@@ -847,6 +901,10 @@ def _join_names(names: Sequence[str]) -> str:
 # ``[singular|plural]`` picks the form it takes; ``{v}`` is the version the
 # clause quotes and ``{detail}`` the one value that cause carries.
 _CLAUSE_TEMPLATES: dict[Cause | None, str] = {
+    DropCause.ZIP_SDIST: (
+        "allow-zip-sdists = false excluded {n} legacy ZIP [sdist|sdists]"
+        " ([|newest: ]{v})"
+    ),
     DropCause.UPLOAD_TIME_MISSING: (
         "the uploaded-prior-to cutoff {cutoff} excluded {n} [file that"
         " publishes|files that publish] no upload time ([|newest: ]{v})"
@@ -978,74 +1036,47 @@ def _version_of(record: DroppedFile) -> Version:
     return record.version
 
 
-# A remedy names a setting rather than the table that holds it: the same key
-# is spelled under [tool.nab] in pyproject.toml and at the top level of a
-# nab.toml.  Keyed by the field the entry set and the layer that set it,
-# since the same key on two layers takes two different changes.
-_REMEDIES: dict[tuple[Field, Layer], str] = {
-    ("uploaded-prior-to", OverrideLayer.GLOBAL): (
-        "the project-level uploaded-prior-to set that cutoff; setting"
-        ' packages."{selector}".uploaded-prior-to = false lifts it for this package'
+_REMEDY_CONTEXT: dict[Layer, str] = {
+    OverrideLayer.GLOBAL: "The project-wide {field} setting rejected these files.",
+    OverrideLayer.GLOBAL_SCOPED_ENTRY: (
+        "The project-wide {field} setting applies; {label}{covers} sets it "
+        "over another version range."
     ),
-    ("uploaded-prior-to", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
-        "the project-level uploaded-prior-to set that cutoff; {label}{covers}"
-        " already sets uploaded-prior-to over another version range; add a"
-        ' package-rules entry with match = ["{selector}"] and'
-        " uploaded-prior-to = false,"
-        " or drop the project-level cutoff"
+    OverrideLayer.GLOBAL_BARE_ENTRY: (
+        "The project-wide {field} setting applies; {label} already exists "
+        "for this package."
     ),
-    ("uploaded-prior-to", OverrideLayer.GLOBAL_BARE_ENTRY): (
-        "the project-level uploaded-prior-to set that cutoff; {label} already"
-        " exists, so adding uploaded-prior-to = false there lifts it for this"
-        " package"
+    OverrideLayer.GLOBAL_SCOPED_OVERLAP: (
+        "A wider selector would overlap existing scoped {field} entries."
     ),
-    ("uploaded-prior-to", OverrideLayer.GLOBAL_SCOPED_OVERLAP): (
-        "the project-level uploaded-prior-to set that cutoff; revise the scoped"
-        " entries to allow this version without overlapping uploaded-prior-to"
-        " settings, or drop the project-level cutoff"
-    ),
-    ("uploaded-prior-to", OverrideLayer.PACKAGE): (
-        "the uploaded-prior-to on {label}{covers} set that cutoff; setting it"
-        " to false there lifts it"
-    ),
-    ("uploaded-prior-to", OverrideLayer.INDEX): (
-        "the per-index uploaded-prior-to for index {key} set that cutoff;"
-        " setting it to false there lifts it"
-    ),
-    ("dist-policy", OverrideLayer.GLOBAL): (
-        "the project-level dist-policy set that policy; setting"
-        ' packages."{selector}".dist-policy = "wheel-or-sdist" admits both'
-        " formats for this package"
-    ),
-    ("dist-policy", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
-        "the project-level dist-policy set that policy; {label}{covers} already"
-        " sets dist-policy over another version range; add a package-rules entry"
-        ' with match = ["{selector}"] and dist-policy = "wheel-or-sdist", or drop'
-        " the project-level policy"
-    ),
-    ("dist-policy", OverrideLayer.GLOBAL_BARE_ENTRY): (
-        "the project-level dist-policy set that policy; {label} already exists,"
-        ' so adding dist-policy = "wheel-or-sdist" there admits both formats for'
-        " this package"
-    ),
-    ("dist-policy", OverrideLayer.GLOBAL_SCOPED_OVERLAP): (
-        "the project-level dist-policy set that policy; revise the scoped entries"
-        " to allow this version without overlapping dist-policy settings, or"
-        " drop the project-level policy"
-    ),
-    ("dist-policy", OverrideLayer.PACKAGE): (
-        "the dist-policy on {label}{covers} set that policy; setting it to"
-        ' "wheel-or-sdist" there admits both formats'
-    ),
-    ("dist-policy", OverrideLayer.INDEX): (
-        "the per-index dist-policy for index {key} set that policy; setting it"
-        ' to "wheel-or-sdist" there admits both formats'
-    ),
+    OverrideLayer.PACKAGE: "{label}{covers} sets {field} for these versions.",
+    OverrideLayer.INDEX: "Index {key} sets {field} for these versions.",
 }
+
 
 # Name a setting to change, not a TOML fragment that may duplicate
 # its table. Lifting a filter admits files; it does not promise a resolution.
 _TRY_LINES: dict[tuple[Field, Layer], str] = {
+    ("allow-zip-sdists", OverrideLayer.GLOBAL): (
+        'set packages."{selector}".allow-zip-sdists = true'
+    ),
+    ("allow-zip-sdists", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
+        'add a package-rules entry with match = ["{selector}"] and'
+        " allow-zip-sdists = true"
+    ),
+    ("allow-zip-sdists", OverrideLayer.GLOBAL_BARE_ENTRY): (
+        "add allow-zip-sdists = true to {label}"
+    ),
+    ("allow-zip-sdists", OverrideLayer.GLOBAL_SCOPED_OVERLAP): (
+        "revise the scoped entries to admit this version without overlapping"
+        " allow-zip-sdists settings"
+    ),
+    ("allow-zip-sdists", OverrideLayer.PACKAGE): (
+        "set allow-zip-sdists = true on {label}"
+    ),
+    ("allow-zip-sdists", OverrideLayer.INDEX): (
+        "set index.{key}.allow-zip-sdists = true"
+    ),
     ("uploaded-prior-to", OverrideLayer.GLOBAL): (
         'set packages."{selector}".uploaded-prior-to = false'
     ),
@@ -1093,6 +1124,7 @@ _TRY_LINES: dict[tuple[Field, Layer], str] = {
 # one entry setting it from another: two version-scoped entries can give
 # one listing two cutoffs or two policies, and each is answered separately.
 _REMEDY_FIELDS: dict[Cause, tuple[Field, str]] = {
+    DropCause.ZIP_SDIST: ("allow-zip-sdists", "detail"),
     DropCause.UPLOAD_TIME_MISSING: ("uploaded-prior-to", "cutoff"),
     DropCause.UPLOAD_TIME_UNPARSEABLE: ("uploaded-prior-to", "cutoff"),
     DropCause.UPLOAD_TIME_NAIVE: ("uploaded-prior-to", "cutoff"),
@@ -1142,30 +1174,21 @@ def _by_attribute(
     return list(split.values())
 
 
-def _note_lines(remedies: Sequence[Remedy]) -> tuple[str, ...]:
-    """Return one ``note:`` line per entry, saying what changing it would take."""
+def _suggestions(remedies: Sequence[Remedy]) -> tuple[Suggestion, ...]:
+    """Pair each admitted correction with its policy context."""
     return tuple(
-        "note: " + _fill(_REMEDIES[remedy.field, remedy.layer], remedy)
+        Suggestion(
+            _fill(_TRY_LINES[remedy.field, remedy.layer], remedy),
+            detail=_fill(_REMEDY_CONTEXT[remedy.layer], remedy),
+        )
         for remedy in remedies
     )
-
-
-def _try_line(remedies: Sequence[Remedy]) -> str | None:
-    """Return the instruction the ``try:`` line states, or ``None``.
-
-    Where several rungs fired, the first in report order that has a remedy
-    answers: lifting it is what admits files again, and the report cannot
-    promise that the next rung then keeps them.
-    """
-    if not remedies:
-        return None
-    remedy = remedies[0]
-    return _fill(_TRY_LINES[remedy.field, remedy.layer], remedy)
 
 
 def _fill(template: str, remedy: Remedy) -> str:
     """Fill one remedy template with the entry it is about."""
     return template.format(
+        field=remedy.field,
         label=remedy.label,
         selector=remedy.selector,
         key=_toml_key(remedy.selector),
@@ -1203,6 +1226,7 @@ def _toml_key(name: str) -> str:
 # The single-file clause for a rung that took one named artifact, which the
 # metadata ladder needs: there the file, not the count, is the evidence.
 _FILE_CLAUSES: dict[Cause, str] = {
+    DropCause.ZIP_SDIST: "allow-zip-sdists = false excluded {filename}",
     DropCause.UPLOAD_TIME_MISSING: (
         "the uploaded-prior-to cutoff {cutoff} excluded {filename},"
         " which publishes no upload time"
@@ -1261,9 +1285,8 @@ def filtered_sdist_diagnostic(
                 cutoff="" if record.cutoff is None else record.cutoff.isoformat(),
                 py=diagnosis.target_python,
             ),
-            *_note_lines(remedies),
         ),
-        _try_line(remedies),
+        suggestions=_suggestions(remedies),
     )
 
 
@@ -1323,7 +1346,7 @@ def blockers_diagnostic(
     return Diagnostic(
         _several_blockers_short(blockers, rejected),
         tuple(detail),
-        None if rejected is None else rejected.remedy,
+        suggestions=() if rejected is None else rejected.suggestions,
     )
 
 
@@ -1389,7 +1412,18 @@ def metadata_diagnostic(
             named = provider.filtered_sdist_diagnostic(normalized, version)
             if named is not None:
                 return named
-    return Diagnostic(_METADATA_REJECTED, tuple(block.message for block in blocks))
+    return _rejected_metadata(blocks)
+
+
+def _rejected_metadata(blocks: Sequence[MetadataBlock]) -> Diagnostic:
+    """Retain metadata causes and their corrections for a final failure."""
+    return Diagnostic(
+        _METADATA_REJECTED,
+        tuple(block.message for block in blocks),
+        suggestions=tuple(
+            suggestion for block in blocks for suggestion in block.suggestions
+        ),
+    )
 
 
 def ban_diagnostic(
@@ -1408,7 +1442,7 @@ def ban_diagnostic(
         return Diagnostic(
             _several_bans_short(bans, metadata),
             (*clauses, *rejected.detail),
-            rejected.remedy,
+            suggestions=rejected.suggestions,
         )
     if len(clauses) == 1:
         return Diagnostic(clauses[0])
@@ -1460,7 +1494,7 @@ def extra_diagnostic(
     """
     short = _EXTRA_SHORT[recorded.kind].format(base=base)
     if recorded.kind == ReasonKind.EXTRA_METADATA:
-        return Diagnostic(short, tuple(block.message for block in recorded.metadata))
+        return _rejected_metadata(recorded.metadata)
     if recorded.kind == ReasonKind.EXTRA_NARROWED:
         return Diagnostic(
             short,

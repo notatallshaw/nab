@@ -26,8 +26,8 @@ from nab_provider.testing import make_coordinator
 from nab_resolver.resolver import Resolver
 
 wheel = WheelFile(
-    "demo-1.0-py3-none-any.whl", "https://index.test/demo.whl", "1.0",
-    None, True, None,
+    "demo-1.0-py3-none-any.whl", url="https://index.test/demo.whl", version="1.0",
+    requires_python=None, has_metadata=True, upload_time=None,
 )
 metadata = (
     "Metadata-Version: 2.1\\nName: demo\\nVersion: 1.0\\n"

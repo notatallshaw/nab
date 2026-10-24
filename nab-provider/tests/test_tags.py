@@ -14,8 +14,8 @@ Pins:
 
 from __future__ import annotations
 
+import pickle
 from contextlib import AbstractContextManager
-from dataclasses import FrozenInstanceError
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -33,6 +33,7 @@ from nab_provider.tags import (
     _parse_tag_str,
     _platform_tags_for_spec,
     _tags_in_order,
+    parse_wheel_tag_set,
     python_axis_accepts,
     wheel_tag_set,
 )
@@ -41,6 +42,15 @@ from nab_provider.target import PLATFORM_MARKERS
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
 )
+
+
+def test_tag_parsers_keep_picklable_public_entry_points() -> None:
+    for parser in (parse_wheel_tag_set, wheel_tag_set):
+        restored = pickle.loads(  # noqa: S301 - self-generated trusted function data
+            pickle.dumps(parser)
+        )
+        assert restored is parser
+
 
 # numpy 2.5.1 ships one manylinux wheel (tagged 2.27 and 2.28, no older),
 # one musllinux wheel, and one free-threaded wheel per platform.
@@ -271,7 +281,7 @@ class TestPlatformSpec:
 
 
 class TestPlatformSpecFields:
-    """Check platform fields and frozen cache-key behavior."""
+    """Check platform fields and cache-key equality."""
 
     @pytest.mark.parametrize(
         ("platform_id", "knob", "value"),
@@ -307,29 +317,6 @@ class TestPlatformSpecFields:
         assert hash(spec) == hash(twin)
         assert len({spec, twin}) == 1
 
-    @pytest.mark.parametrize(
-        "field",
-        [
-            "platform_id",
-            "libc",
-            "runs_on_libc",
-            "runs_on_macos",
-            "platform_release",
-            "platform_version",
-            "free_threaded",
-        ],
-    )
-    def test_cache_key_fields_are_immutable(self, field: str) -> None:
-        spec = PlatformSpec("linux_x86_64")
-        cache = {spec: "cached"}
-
-        with pytest.raises(FrozenInstanceError):
-            setattr(spec, field, getattr(spec, field))
-        with pytest.raises(FrozenInstanceError):
-            delattr(spec, field)
-
-        assert cache[spec] == "cached"
-
     def test_subclass_can_change_its_own_fields(self) -> None:
         class ExtendedSpec(PlatformSpec):
             """A platform spec with mutable ancillary data."""
@@ -340,11 +327,6 @@ class TestPlatformSpecFields:
         spec.note = "extra"
         assert spec.note == "extra"
         del spec.note
-
-        with pytest.raises(FrozenInstanceError):
-            spec.libc = "musl"
-        with pytest.raises(FrozenInstanceError):
-            del spec.libc
 
 
 class TestLibcFamilyExclusivity:

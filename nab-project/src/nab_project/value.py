@@ -9,6 +9,8 @@ constructor.
 
 from __future__ import annotations
 
+__lazy_modules__ = ("typing",)
+
 from typing import ClassVar
 
 from ._compat import override

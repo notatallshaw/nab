@@ -11,6 +11,24 @@ Reached only through
 
 from __future__ import annotations
 
+from nab_resolver.diagnostics import error_message
+
+__lazy_modules__ = (
+    "nab_resolver.diagnostics",
+    "nab_index",
+    "nab_index.client",
+    "nab_project.paths",
+    "nab_provider.archive",
+    "nab_provider.errors",
+    "nab_provider.policy",
+    "nab_provider.vcs_request",
+    "os",
+    "pathlib",
+    "shutil",
+    "stat",
+    "tempfile",
+)
+
 import os
 import shutil
 import stat
@@ -198,8 +216,8 @@ def _materialize_vcs(
             offline=port.offline,
         )
     except VcsCloneError as exc:
-        msg = f"vcs source {source.name!r}: {exc}"
-        raise UnsupportedSdistError(msg) from exc
+        report = error_message(exc).prefixed(f"vcs source {source.name!r}: ")
+        raise UnsupportedSdistError(report) from exc
 
     # The cache dir can be relative, and a file URI needs an absolute path.
     root = clone.path.resolve()
@@ -268,8 +286,8 @@ def extract_source_metadata(
     try:
         metadata = extract_static_metadata(path)
     except BuildBackendError as exc:
-        msg = f"{descriptor}: {exc}"
-        raise UnsupportedSdistError(msg) from exc
+        report = error_message(exc).prefixed(f"{descriptor}: ")
+        raise UnsupportedSdistError(report) from exc
 
     if metadata is not None:
         return metadata
@@ -300,8 +318,8 @@ def extract_source_metadata(
                 offline=offline,
             )
     except (BuildBackendError, _SourceCopyError) as exc:
-        msg = f"{descriptor}: {exc}"
-        raise UnsupportedSdistError(msg) from exc
+        report = error_message(exc).prefixed(f"{descriptor}: ")
+        raise UnsupportedSdistError(report) from exc
 
 
 def _fetch_archive_bytes(
@@ -478,7 +496,7 @@ def _extract_archive(
             unpacked.mkdir()
 
             try:
-                root = extract_sdist_archive(data, unpacked)
+                root = extract_sdist_archive(data, unpacked, allow_zip=False)
             except ValueError as exc:
                 msg = f"archive could not be extracted: {exc}"
                 raise UnsupportedSdistError(msg) from exc

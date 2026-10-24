@@ -523,8 +523,8 @@ _REFUSALS: tuple[tuple[str, list[str], str], ...] = (
         "choice-value-must-be-in-the-set",
         ["lock", "--project-resolution", "bogus"],
         (
-            "invalid value 'bogus' for '--project-resolution'; "
-            "choose from highest, lowest, lowest-direct"
+            "invalid value 'bogus' for '--project-resolution'\n    try: choose "
+            "from highest, lowest, lowest-direct"
         ),
     ),
     (
@@ -561,7 +561,7 @@ _REFUSALS: tuple[tuple[str, list[str], str], ...] = (
     (
         "missing-command-lists-the-commands",
         [],
-        "a command is required; choose from cache, config, lock, download",
+        "a command is required\n    try: choose from cache, config, lock, download",
     ),
     ("command-name-must-match-exactly", ["Lock"], "unknown command 'Lock'"),
     ("command-name-must-match-exactly", ["loc"], "unknown command 'loc'"),
@@ -588,7 +588,7 @@ _REFUSALS: tuple[tuple[str, list[str], str], ...] = (
     (
         "required-operand-left-empty-is-refused",
         ["config"],
-        "missing required argument 'action'; choose from list, get, explain",
+        "missing required argument 'action'\n    try: choose from list, get, explain",
     ),
     (
         "each-refusal-has-one-exact-wording",
@@ -604,7 +604,7 @@ def test_a_line_the_walk_refuses_says_what_is_wrong(
 ) -> None:
     error = _refused(argv)
 
-    assert expected in error.message, rule
+    assert expected in str(error), rule
     assert expected in diagnose(error)
 
 
@@ -617,7 +617,7 @@ _SHAPES: tuple[tuple[str, list[str], str], ...] = (
         ["lock", "--output", "--verbose"],
         (
             "option '--output' requires a value, but '--verbose' looks like an "
-            "option; write --output=--verbose to pass it"
+            "option\n    try: write --output=--verbose to pass it"
         ),
     ),
     (
@@ -629,8 +629,8 @@ _SHAPES: tuple[tuple[str, list[str], str], ...] = (
         "bad choice",
         ["lock", "--project-resolution", "bogus"],
         (
-            "invalid value 'bogus' for '--project-resolution'; "
-            "choose from highest, lowest, lowest-direct"
+            "invalid value 'bogus' for '--project-resolution'\n    try: choose "
+            "from highest, lowest, lowest-direct"
         ),
     ),
     (
@@ -642,12 +642,12 @@ _SHAPES: tuple[tuple[str, list[str], str], ...] = (
     (
         "missing command",
         [],
-        "a command is required; choose from cache, config, lock, download",
+        "a command is required\n    try: choose from cache, config, lock, download",
     ),
     (
         "missing required argument",
         ["config"],
-        "missing required argument 'action'; choose from list, get, explain",
+        "missing required argument 'action'\n    try: choose from list, get, explain",
     ),
     (
         "too many operands",
@@ -664,7 +664,7 @@ def test_every_message_is_written_in_its_declared_shape(
     shape: str, argv: list[str], message: str
 ) -> None:
     """One line, lower case after the prefix, no trailing period."""
-    assert _refused(argv).message == message, shape
+    assert str(_refused(argv)) == message, shape
 
 
 def test_a_required_option_the_line_never_gave_is_refused() -> None:
@@ -735,19 +735,17 @@ class TestErrorText:
         assert "--alsonope" not in _refused(["--nope", "--alsonope"]).message
 
     def test_one_candidate_is_offered_on_its_own_line(self) -> None:
-        assert "did you mean '--output'?" in diagnose(
-            _refused(["lock", "--outupt", "x"])
-        )
+        assert "try: use '--output'" in diagnose(_refused(["lock", "--outupt", "x"]))
 
     def test_a_prefix_family_is_offered_together(self) -> None:
         text = diagnose(_refused(["lock", "--index", "u"]))
 
-        assert "did you mean one of " in text
+        assert "try: use one of " in text
         assert "'--index-url'" in text
         assert "'--index-strategy'" in text
 
     def test_a_token_nothing_resembles_draws_no_suggestion(self) -> None:
-        assert "did you mean" not in diagnose(_refused(["lock", "--zzzz"]))
+        assert "try: use " not in diagnose(_refused(["lock", "--zzzz"]))
 
     def test_the_escape_the_message_advises_is_the_one_that_works(self) -> None:
         """A short option attaches with no separator, because a leading ``=`` is part of the value."""
@@ -756,14 +754,14 @@ class TestErrorText:
 
     def test_a_token_that_is_only_dashes_draws_no_suggestion(self) -> None:
         """It prefixes every name, so the first two rows are not an answer."""
-        assert "did you mean" not in diagnose(_refused(["lock", "---"]))
-        assert "did you mean" not in diagnose(_refused(["---"]))
+        assert "try: use " not in diagnose(_refused(["lock", "---"]))
+        assert "try: use " not in diagnose(_refused(["---"]))
 
     def test_a_command_option_before_the_command_offers_the_command(self) -> None:
-        assert "did you mean 'lock'?" in diagnose(_refused(["--lock"]))
+        assert "try: use 'lock'" in diagnose(_refused(["--lock"]))
 
     def test_a_command_name_stops_being_a_candidate_once_it_is_given(self) -> None:
-        assert "did you mean" not in diagnose(_refused(["lock", "--config"]))
+        assert "try: use " not in diagnose(_refused(["lock", "--config"]))
 
     def test_a_token_that_is_not_utf8_is_escaped_rather_than_echoed(self) -> None:
         text = diagnose(_refused(["lock", "--\udcffad"]))
@@ -943,7 +941,7 @@ class TestTheShippedTable:
         with pytest.raises(UsageError) as caught:
             _shipped(["lock", "--no-cach"])
 
-        assert "did you mean one of '--no-cache', '--cache'?" in diagnose(caught.value)
+        assert "try: use one of '--no-cache', '--cache'" in diagnose(caught.value)
 
     def test_a_positive_typo_is_never_offered_the_negation_of_what_it_meant(
         self,
@@ -952,14 +950,15 @@ class TestTheShippedTable:
         with pytest.raises(UsageError) as caught:
             _shipped(["lock", "--upgrad"])
 
-        assert "did you mean '--upgrade'?" in diagnose(caught.value)
+        assert "try: use '--upgrade'" in diagnose(caught.value)
 
     def test_a_half_typed_option_is_offered_two_spellings_at_most(self) -> None:
         with pytest.raises(UsageError) as caught:
             _shipped(["lock", "--cach"])
 
         text = diagnose(caught.value)
-        assert "did you mean one of '--cache-dir', '--cache'?" in text
+
+        assert "try: use one of '--cache-dir', '--cache'" in text
 
     def test_the_star_options_take_every_word_up_to_the_next_option(self) -> None:
         parsed = _shipped(["lock", "--groups", "dev", "docs", "--upgrade"])
@@ -1215,12 +1214,12 @@ class TestPaintedRefusals:
     def test_a_suggested_spelling_is_cyan_inside_plain_quotes(self) -> None:
         text = diagnose(_refused(["lock", "--outupt"]), color=True)
 
-        assert "did you mean '\033[36m--output\033[0m'?" in text
+        assert "try: use '\033[36m--output\033[0m'" in text
 
     def test_the_trailer_is_never_painted(self) -> None:
         text = diagnose(_refused(["lock", "--nope"]), color=True)
 
-        assert text.endswith("\nTry 'nab lock --help' for more information.\n")
+        assert text.endswith("\n    try: run 'nab lock --help' for more information\n")
 
     def test_painting_changes_nothing_but_the_escapes(self) -> None:
         error = _refused(["lock", "--outupt"])
@@ -1497,10 +1496,11 @@ def test_a_refused_line_writes_to_stderr_alone_and_exits_two(
     status = run(tuple(argv))
 
     captured = capsys.readouterr()
+
     assert status == 2, rule
     assert captured.out == "", rule
     assert expected in captured.err, rule
-    assert captured.err.endswith("for more information.\n"), rule
+    assert captured.err.endswith("for more information\n"), rule
 
 
 def test_a_page_goes_to_stdout_and_leaves_stderr_empty(

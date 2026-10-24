@@ -1033,6 +1033,8 @@ class TestReproducibilityNotice:
                 "project_requires_python": None,
                 "project_uploaded_prior_to": None,
                 "project_dist_policy": "sdist-only",
+                "project_assume_universal_deps": None,
+                "project_allow_zip_sdists": None,
                 "project_build_policy": None,
                 "project_build_requires_depth": None,
                 "project_decision_order": None,
@@ -1044,6 +1046,7 @@ class TestReproducibilityNotice:
             },
             flags={},
         )
+
         assert overrides == {
             "resolution": "lowest",
             "cache-dir": Path("/c"),
@@ -1116,7 +1119,7 @@ class TestBuildCliTables:
 
         assert str(caught.value) == (
             "--project-environment-platform reads 'runs-on-macos=14.0' as a"
-            " key on the item before it, and no item is open; write the id"
+            " key on the item before it, and no item is open\n    try: write the id"
             " first"
         )
 
@@ -1229,7 +1232,7 @@ class TestBuildCliTables:
 
         assert str(caught.value) == (
             "--project-matrix-platforms reads 'libc=musl' as a key on the item"
-            " before it, and no item is open; write the id first"
+            " before it, and no item is open\n    try: write the id first"
         )
 
     def test_a_pair_token_needs_an_equals(self) -> None:
@@ -1503,6 +1506,8 @@ class TestParserFoldHelpers:
                 "requires-python",
                 "uploaded-prior-to",
                 "dist-policy",
+                "assume-universal-deps",
+                "allow-zip-sdists",
                 "build-policy",
                 "build-requires-depth",
                 "environment",
@@ -1606,6 +1611,49 @@ class TestScalarProjectOptions:
     surface is the project-dir nab.toml home, the category check, the
     cross-file conflict check, and nab config visibility.
     """
+
+    @pytest.mark.parametrize("enabled", [False, True])
+    def test_allow_zip_sdists_from_project_nab_toml(
+        self, tmp_path: Path, enabled: bool
+    ) -> None:
+        _project(tmp_path)
+        _write(tmp_path / "nab.toml", f"allow-zip-sdists = {str(enabled).lower()}\n")
+        effective = _resolve(SourceRoots(project_dir=tmp_path))["allow-zip-sdists"]
+
+        assert effective.value is enabled
+        assert effective.origin.kind is SourceKind.PROJECT_TOML
+
+    @pytest.mark.parametrize("enabled", [False, True])
+    def test_allow_zip_sdists_cli_overrides_project(
+        self, tmp_path: Path, enabled: bool
+    ) -> None:
+        _project(tmp_path, f"allow-zip-sdists = {str(not enabled).lower()}\n")
+        effective = _resolve(
+            SourceRoots(project_dir=tmp_path), cli={"allow-zip-sdists": enabled}
+        )["allow-zip-sdists"]
+
+        assert effective.value is enabled
+        assert effective.origin.kind is SourceKind.CLI
+
+    def test_allow_zip_sdists_conflicting_project_files(self, tmp_path: Path) -> None:
+        _project(tmp_path, "allow-zip-sdists = true\n")
+        _write(tmp_path / "nab.toml", "allow-zip-sdists = false\n")
+        with pytest.raises(SourceConfigError, match="conflicting values"):
+            _resolve(SourceRoots(project_dir=tmp_path))
+
+    def test_allow_zip_sdists_rejected_in_user_settings(self, tmp_path: Path) -> None:
+        _project(tmp_path)
+        user = _write(tmp_path / "usr" / "nab.toml", "allow-zip-sdists = true\n")
+        with pytest.raises(SourceConfigError, match="project-scope option"):
+            _resolve(SourceRoots(user_toml=user, project_dir=tmp_path))
+
+    @pytest.mark.parametrize("value", ['"yes"', "1", "[]"])
+    def test_allow_zip_sdists_rejects_non_boolean(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        _project(tmp_path, f"allow-zip-sdists = {value}\n")
+        with pytest.raises(SourceConfigError, match="allow-zip-sdists must be"):
+            _resolve(SourceRoots(project_dir=tmp_path))
 
     def test_mode_from_pyproject(self, tmp_path: Path) -> None:
         _project(tmp_path, 'mode = "universal"\n')

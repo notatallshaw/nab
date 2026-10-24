@@ -8,6 +8,16 @@ and takes the marker predicate as an argument.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "collections",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.errors",
+    "nab_provider.extra_keys",
+    "nab_provider.vcs_admission",
+    "nab_resolver.errors",
+    "nab_resolver.types",
+)
+
 import logging
 from collections import defaultdict
 from collections.abc import Mapping
@@ -15,6 +25,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 from nab_resolver.errors import ResolutionError
 from nab_resolver.types import RootRequirement
 
@@ -77,7 +88,7 @@ def raise_for_unsatisfiable(
     raise ResolutionError(msg)
 
 
-def _repair_advice(*, kind: str, tests_extra: bool) -> str:
+def _repair_advice(*, kind: str, tests_extra: bool) -> Suggestion:
     """Return the fix a dropped entry's warning ends with.
 
     A constraint cannot be pointed at ``pkg[extra]``, since the constraint
@@ -85,13 +96,11 @@ def _repair_advice(*, kind: str, tests_extra: bool) -> str:
     marker instead.  Every other kind keeps the extras-of-package advice.
     """
     if kind == "constraint":
-        if tests_extra:
-            return (
-                "A constraint cannot carry extras, so drop the membership test "
-                "from the marker and keep the rest."
-            )
-        return "Drop the membership test from the marker and keep the rest."
-    return "For an extra, use pkg[extra] (extras-of-package)."
+        return Suggestion(
+            "drop the membership test from the marker and keep the rest",
+            detail="A constraint cannot carry extras." if tests_extra else None,
+        )
+    return Suggestion("use pkg[extra] to select an extra")
 
 
 def _warn_dropped_membership_marker(
@@ -117,13 +126,16 @@ def _warn_dropped_membership_marker(
 
     tests_extra = "extra ==" in marker_text or membership_set == _EXTRAS_VARIABLE
     _logger.warning(
-        "%s %r tests an extra or dependency-group membership marker; it is "
-        "dropped because a selected extra or group is folded into the "
-        "requirements rather than the environment, so extra, extras and "
-        "dependency_groups are empty at resolve time. %s",
-        _DROPPED_MARKER_SUBJECT.get(kind, kind.capitalize()),
-        text,
-        _repair_advice(kind=kind, tests_extra=tests_extra),
+        DiagnosticMessage(
+            (
+                f"{_DROPPED_MARKER_SUBJECT.get(kind, kind.capitalize())} {text!r} "
+                "tests an extra or dependency-group membership marker; it is dropped "
+                "because a selected extra or group is folded into the requirements "
+                "rather than the environment, so extra, extras and dependency_groups "
+                "are empty at resolve time."
+            ),
+            suggestions=(_repair_advice(kind=kind, tests_extra=tests_extra),),
+        )
     )
 
 

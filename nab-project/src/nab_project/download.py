@@ -14,19 +14,32 @@ programmatically after :func:`~nab_project.resolve.build_lock_input`.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "asyncio",
+    "hashlib",
+    "nab_index.atomic",
+    "nab_index.client",
+    "nab_index.local_index",
+    "nab_project.lockfile",
+    "nab_provider.errors",
+    "pathlib",
+    "posixpath",
+    "urllib.parse",
+)
+
 import asyncio
 import hashlib
 import logging
 import posixpath
-from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 from urllib.parse import urlsplit
 
 from nab_index.atomic import atomic_write
 from nab_index.client import AsyncSimpleClient
 from nab_index.local_index import parse_file_url
 from nab_provider.errors import HttpError
+from nab_provider.value import HashableRecord, Record
 
 from .lockfile import ArchivePin, IndexPin, LocalPin, LockInput, VcsPin
 
@@ -53,8 +66,7 @@ class DownloadError(Exception):
     """A downloaded artefact failed hash verification or the HTTP fetch."""
 
 
-@dataclass(frozen=True, slots=True)
-class DownloadEntry:
+class DownloadEntry(HashableRecord):
     """One artefact to fetch into the output directory.
 
     ``hash_algo`` is one of ``sha256``, ``sha384``, ``sha512`` and
@@ -68,21 +80,56 @@ class DownloadEntry:
     ``file://``.
     """
 
-    package: str
-    version: str
-    filename: str
-    url: str
-    hash_algo: str
-    digest: str
-    local_path: Path | None = None
+    __slots__ = __match_args__ = (
+        "package",
+        "version",
+        "filename",
+        "url",
+        "hash_algo",
+        "digest",
+        "local_path",
+    )
+
+    package: Final[str]
+    version: Final[str]
+    filename: Final[str]
+    url: Final[str]
+    hash_algo: Final[str]
+    digest: Final[str]
+    local_path: Final[Path | None]
+
+    def __init__(
+        self,
+        package: str,
+        version: str,
+        filename: str,
+        url: str,
+        hash_algo: str,
+        digest: str,
+        local_path: Path | None = None,
+    ) -> None:
+        """Describe a selected artifact and its expected integrity."""
+        self.package = package
+        self.version = version
+        self.filename = filename
+        self.url = url
+        self.hash_algo = hash_algo
+        self.digest = digest
+        self.local_path = local_path
 
 
-@dataclass(frozen=True, slots=True)
-class DownloadResult:
+class DownloadResult(Record):
     """Summary of a download run."""
+
+    __slots__ = __match_args__ = ("written", "skipped")
 
     written: tuple[Path, ...]
     skipped: tuple[Path, ...]
+
+    def __init__(self, written: tuple[Path, ...], skipped: tuple[Path, ...]) -> None:
+        """Separate newly written files from existing verified files."""
+        self.written = written
+        self.skipped = skipped
 
 
 def iter_artifacts(lock_input: LockInput) -> Iterable[DownloadEntry]:

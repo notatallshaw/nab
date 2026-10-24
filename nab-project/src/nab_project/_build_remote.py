@@ -10,6 +10,17 @@ Reached only through
 
 from __future__ import annotations
 
+from nab_resolver.diagnostics import error_message
+
+__lazy_modules__ = (
+    "nab_resolver.diagnostics",
+    "nab_index.client",
+    "nab_provider.errors",
+    "nab_provider.store",
+    "pathlib",
+    "tempfile",
+)
+
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -94,5 +105,7 @@ def build_remote_sdist(
                 offline=port.offline,
             )
         except BuildBackendError as exc:
-            msg = f"{package}=={version} build-remote backend failed: {exc}"
-            raise UnsupportedSdistError(msg) from exc
+            report = error_message(exc).prefixed(
+                f"{package}=={version} build-remote backend failed: "
+            )
+            raise UnsupportedSdistError(report) from exc

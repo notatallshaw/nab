@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import builtins
 import io
 import itertools
 import logging
 import re
+import sys
 from collections.abc import Iterable
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -558,29 +558,20 @@ class TestCliRefusals:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        original_import = builtins.__import__
-        blocked = (
-            f"nab_index.{backend}_async_transport" if missing == "backend" else "h2"
-        )
-
-        def import_without_dependency(
-            name: str, *args: object, **kwargs: object
-        ) -> object:
-            if name == blocked:
-                raise ImportError(name)
-            return original_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", import_without_dependency)
+        blocked = backend if missing == "backend" else "h2"
+        monkeypatch.setitem(sys.modules, blocked, None)
         with pytest.raises(SystemExit) as caught:
             _make_transport(backend)
 
         assert caught.value.code == 1
+
         expected = (
             f"{backend} is not installed"
             if missing == "backend"
             else f"{backend} is installed without HTTP/2 support"
         )
         err = capsys.readouterr().err
+
         assert expected in err
         assert f"pip install nab[{backend}]" in err
         assert "Traceback" not in err

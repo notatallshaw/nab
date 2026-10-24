@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from dataclasses import replace
 from typing import TYPE_CHECKING, TypeVar
 
 import pytest
@@ -30,6 +29,7 @@ from nab_index.client import (
     MetadataHashMismatchError,
     _parse_files,
 )
+from nab_provider.value import replace
 
 from .strategies import PROPERTY_SETTINGS
 

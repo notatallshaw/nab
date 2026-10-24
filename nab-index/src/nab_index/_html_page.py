@@ -5,8 +5,9 @@ Imported only when an HTML project page is parsed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from html.parser import HTMLParser
+
+from nab_provider.value import Record
 
 from ._compat import override
 
@@ -26,8 +27,7 @@ _REPOSITORY_VERSION_META = "pypi:repository-version"
 _HTML_WHITESPACE = "\t\n\f\r "
 
 
-@dataclass(frozen=True, slots=True)
-class Anchor:
+class Anchor(Record):
     """One ``<a>`` link on a project page.
 
     ``metadata`` is the :pep:`714` ``data-core-metadata`` value, falling back
@@ -41,11 +41,34 @@ class Anchor:
     carry.
     """
 
+    __slots__ = __match_args__ = (
+        "href",
+        "requires_python",
+        "metadata",
+        "yanked",
+        "upload_time",
+    )
+
     href: str
     requires_python: str | None
     metadata: str | None
     yanked: bool | str
     upload_time: str | None
+
+    def __init__(
+        self,
+        href: str,
+        *,
+        requires_python: str | None,
+        metadata: str | None,
+        yanked: bool | str,
+        upload_time: str | None,
+    ) -> None:
+        self.href = href
+        self.requires_python = requires_python
+        self.metadata = metadata
+        self.yanked = yanked
+        self.upload_time = upload_time
 
 
 def _anchor(attrs: list[tuple[str, str | None]]) -> Anchor | None:
@@ -65,10 +88,10 @@ def _anchor(attrs: list[tuple[str, str | None]]) -> Anchor | None:
 
     return Anchor(
         href.strip(_HTML_WHITESPACE),
-        fields.get(_REQUIRES_PYTHON_ATTR),
-        metadata,
-        yanked,
-        fields.get(_UPLOAD_TIME_ATTR),
+        requires_python=fields.get(_REQUIRES_PYTHON_ATTR),
+        metadata=metadata,
+        yanked=yanked,
+        upload_time=fields.get(_UPLOAD_TIME_ATTR),
     )
 
 

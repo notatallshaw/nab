@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ._compat import override
-from ._value import SlottedValue
+from .value import SlottedValue
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -57,7 +57,9 @@ class PackageOverride(SlottedValue):
         "version_range",
         "dist_policy",
         "dist_trust_unverified_deps",
+        "assume_universal_deps",
         "build_policy",
+        "allow_zip_sdists",
         "uploaded_prior_to",
         "uploaded_prior_to_disabled",
         "index",
@@ -80,7 +82,9 @@ class PackageOverride(SlottedValue):
         version_range: VersionRange,
         dist_policy: DistPolicy | None = None,
         dist_trust_unverified_deps: bool | None = None,
+        assume_universal_deps: bool | None = None,
         build_policy: BuildPolicy | None = None,
+        allow_zip_sdists: bool | None = None,
         uploaded_prior_to: datetime | None = None,
         uploaded_prior_to_disabled: bool = False,
         index: str | None = None,
@@ -97,7 +101,9 @@ class PackageOverride(SlottedValue):
 
         self.dist_policy = dist_policy
         self.dist_trust_unverified_deps = dist_trust_unverified_deps
+        self.assume_universal_deps = assume_universal_deps
         self.build_policy = build_policy
+        self.allow_zip_sdists = allow_zip_sdists
         self.uploaded_prior_to = uploaded_prior_to
         self.uploaded_prior_to_disabled = uploaded_prior_to_disabled
         self.index = index
@@ -146,7 +152,9 @@ class IndexOverride(SlottedValue):
     __slots__ = __match_args__ = (
         "dist_policy",
         "dist_trust_unverified_deps",
+        "assume_universal_deps",
         "build_policy",
+        "allow_zip_sdists",
         "uploaded_prior_to",
         "uploaded_prior_to_disabled",
         "assume_fresh_seconds",
@@ -157,7 +165,9 @@ class IndexOverride(SlottedValue):
         *,
         dist_policy: DistPolicy | None = None,
         dist_trust_unverified_deps: bool | None = None,
+        assume_universal_deps: bool | None = None,
         build_policy: BuildPolicy | None = None,
+        allow_zip_sdists: bool | None = None,
         uploaded_prior_to: datetime | None = None,
         uploaded_prior_to_disabled: bool = False,
         assume_fresh_seconds: int | None = None,
@@ -165,7 +175,9 @@ class IndexOverride(SlottedValue):
         """Record the policy declared for one index."""
         self.dist_policy = dist_policy
         self.dist_trust_unverified_deps = dist_trust_unverified_deps
+        self.assume_universal_deps = assume_universal_deps
         self.build_policy = build_policy
+        self.allow_zip_sdists = allow_zip_sdists
         self.uploaded_prior_to = uploaded_prior_to
         self.uploaded_prior_to_disabled = uploaded_prior_to_disabled
         self.assume_fresh_seconds = assume_fresh_seconds

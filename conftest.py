@@ -28,6 +28,7 @@ import io
 import json
 import os
 import sys
+import sysconfig
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -255,3 +256,13 @@ def over_nested_marker() -> str:
     """
     depth = sys.getrecursionlimit()
     return "(" * depth + "os_name == 'posix'" + ")" * depth
+
+
+def pytest_sessionfinish() -> None:
+    """Reject free-threaded test runs that silently enabled the GIL."""
+    if (
+        sys.version_info >= (3, 13)
+        and sysconfig.get_config_var("Py_GIL_DISABLED")
+        and sys._is_gil_enabled()  # noqa: SLF001 - documented runtime GIL query
+    ):
+        pytest.exit("Free-threaded tests finished with the GIL enabled", returncode=1)

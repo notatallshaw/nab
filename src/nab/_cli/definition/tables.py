@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = ("nab._cli.definition.rows",)
+
 from typing import TYPE_CHECKING
 
 from ..._compat import override

@@ -20,6 +20,31 @@ input; the search lives in :mod:`nab_project._resolve.engine`.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "asyncio",
+    "collections",
+    "concurrent.futures",
+    "itertools",
+    "nab_project",
+    "nab_project._resolve.engine",
+    "nab_project.conflicts",
+    "nab_project.inputs",
+    "nab_project.lockfile",
+    "nab_provider._vendor.packaging.markers",
+    "nab_provider._vendor.packaging.ranges",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.errors",
+    "nab_provider.marker_holds",
+    "nab_provider.pep508",
+    "nab_provider.provider",
+    "nab_provider.requirements_file",
+    "nab_provider.resolver_inputs",
+    "nab_provider.target",
+    "nab_resolver.errors",
+    "pathlib",
+    "tempfile",
+)
+
 import asyncio
 import itertools
 import logging
@@ -27,9 +52,8 @@ import tempfile
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.ranges import VersionRange
@@ -56,6 +80,13 @@ from nab_provider.target import (
     marker_variables,
     micro_boundary_points,
     slices_from_points,
+)
+from nab_provider.value import (
+    FACTORY,
+    FactoryDefault,
+    HashableRecord,
+    Record,
+    factory_value,
 )
 from nab_resolver.errors import ResolutionError
 
@@ -95,6 +126,7 @@ if TYPE_CHECKING:
     from nab_index.transport import AsyncHttpTransport
     from nab_provider._vendor.packaging.requirements import Requirement
     from nab_provider._vendor.packaging.version import Version
+    from nab_provider.fetch_port import PrefetchSettings
     from nab_provider.provider import ResolutionStrategy
     from nab_provider.resolver_inputs import MarkerHolds
 
@@ -116,8 +148,7 @@ __all__ = [
 _logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class _ConfiguredContext:
+class _ConfiguredContext(Record):
     """An install context ``[tool.nab]`` configures rather than a run selects.
 
     ``name`` is ``None`` for the project's own dependencies when no
@@ -125,8 +156,14 @@ class _ConfiguredContext:
     so every fork carries them.
     """
 
+    __slots__ = __match_args__ = ("name", "requirements")
+
     name: str | None
     requirements: tuple[Requirement, ...]
+
+    def __init__(self, name: str | None, requirements: tuple[Requirement, ...]) -> None:
+        self.name = name
+        self.requirements = requirements
 
 
 def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
@@ -144,6 +181,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     resolution_strategy: ResolutionStrategy | None = None,
     progress: ProgressSink | None = None,
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+    prefetch_settings: PrefetchSettings | None = None,
     build_transport_factory: Callable[[], AsyncHttpTransport] | None = None,
 ) -> ResolveResult:
     """Resolve the project at ``path`` for each of ``targets``.
@@ -152,6 +190,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     ``inputs`` the settings it read out of the project.
     This call owns ``transport`` and closes it even when preparation fails.
     ``cache_dir`` and ``offline`` are runtime overrides from the CLI.
+    ``prefetch_settings`` overrides the transport's recommended metadata windows.
     ``build_transport_factory`` creates fresh clients for build dependencies;
     omitting it selects urllib3 for those fetches.
 
@@ -199,12 +238,14 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
             indexes=list(inputs.indexes),
             cache_dir=cache_dir,
             offline=offline,
+            start_on_demand=True,
             index_routes=index_routes(inputs),
             index_cache_floors=index_cache_floors(inputs),
             on_fetch=progress.on_fetch if progress is not None else None,
             build_config=inputs,
             build_transport_factory=build_transport_factory,
             max_concurrency=max_concurrency,
+            prefetch_settings=prefetch_settings,
         )
     except BaseException:
         # The caller may already be running an event loop on this thread.
@@ -250,8 +291,11 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     marker_holds: MarkerHolds | None = None,
     release_refused_wheels: bool = False,
     include_dependency_requirements: bool = False,
+    lookahead_versions: int | None = None,
 ) -> ResolveResult:
     """Resolve ``targets`` against an already-open coordinator.
+
+    ``lookahead_versions`` overrides its initial candidate-prefetch window.
 
     ``include_dependency_requirements`` retains active declarations on each
     successful target's lock. Roots and constraints remain separate.
@@ -281,6 +325,8 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     nothing else reads them.  A matrix keeps the payload either way: one
     target's refusal is another target's candidate.
     """
+    if lookahead_versions is None:
+        lookahead_versions = coordinator.prefetch_settings.lookahead_versions
     inputs = ResolveInputs() if inputs is None else inputs
     with _source_root(cache_dir, inputs) as source_root:
         settings = _EngineSettings(
@@ -298,8 +344,10 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
             ),
             progress=progress,
             include_dependency_requirements=include_dependency_requirements,
+            lookahead_versions=lookahead_versions,
             listing_filter_cache=ListingFilterCache(
-                len({target.python_full_version for target in targets})
+                len({target.python_full_version for target in targets}),
+                target_count=len(targets),
             ),
             release_refused_wheels=release_refused_wheels and len(targets) == 1,
         )
@@ -463,15 +511,37 @@ def _declared_environments(
     ]
 
 
-@dataclass(frozen=True, slots=True)
-class _ProjectTables:
+class _ProjectTables(Record):
     """The pyproject tables a resolve reads, read once."""
+
+    __slots__ = __match_args__ = (
+        "dependencies",
+        "groups",
+        "optional",
+        "project_name",
+        "build_requires",
+    )
 
     dependencies: list[Requirement]
     groups: Mapping[str, Sequence[str | Mapping[str, str]]]
     optional: Mapping[str, Sequence[str]]
     project_name: str | None
-    build_requires: list[Requirement] = field(default_factory=list)
+    build_requires: list[Requirement]
+
+    def __init__(
+        self,
+        dependencies: list[Requirement],
+        groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+        optional: Mapping[str, Sequence[str]],
+        project_name: str | None,
+        build_requires: list[Requirement] | FactoryDefault = FACTORY,
+    ) -> None:
+        self.dependencies = dependencies
+        self.groups = groups
+        self.optional = optional
+        self.project_name = project_name
+        self.build_requires = factory_value(build_requires, list)
+
     """``[build-system].requires``, read only when ``[tool.nab].build-group``
     names a group for them.  A ``--build-requirements`` resolve carries them
     in ``dependencies`` instead and leaves this empty."""
@@ -964,27 +1034,54 @@ def _group_package_ranges(
     return ranges, sources
 
 
-@dataclass(frozen=True, slots=True)
-class _SelfEmptyGroup:
+class _SelfEmptyGroup(HashableRecord):
     """One group whose own requirements on a package leave no version."""
 
-    group: str
-    package: str
-    reqs: str
+    __slots__ = __match_args__ = ("group", "package", "reqs")
+
+    group: Final[str]
+    package: Final[str]
+    reqs: Final[str]
+
+    def __init__(self, group: str, package: str, reqs: str) -> None:
+        self.group = group
+        self.package = package
+        self.reqs = reqs
 
 
-@dataclass(frozen=True, slots=True)
-class _GroupConflict:
+class _GroupConflict(HashableRecord):
     """One direct group-vs-group conflict on a single package.
 
     Group names are stored sorted so the conflict has a stable identity.
     """
 
-    left_group: str
-    right_group: str
-    package: str
-    left_req: str
-    right_req: str
+    __slots__ = __match_args__ = (
+        "left_group",
+        "right_group",
+        "package",
+        "left_req",
+        "right_req",
+    )
+
+    left_group: Final[str]
+    right_group: Final[str]
+    package: Final[str]
+    left_req: Final[str]
+    right_req: Final[str]
+
+    def __init__(
+        self,
+        left_group: str,
+        right_group: str,
+        package: str,
+        left_req: str,
+        right_req: str,
+    ) -> None:
+        self.left_group = left_group
+        self.right_group = right_group
+        self.package = package
+        self.left_req = left_req
+        self.right_req = right_req
 
 
 def _find_self_empty_groups(

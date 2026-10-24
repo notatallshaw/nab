@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "ntpath",
+    "posixpath",
+)
+
 import ntpath
 import posixpath
 

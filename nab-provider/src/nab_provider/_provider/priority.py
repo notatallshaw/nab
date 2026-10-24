@@ -9,6 +9,11 @@ Retained fatal override conflicts get tier -1.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_provider._vendor.packaging.ranges",
+    "nab_provider.errors",
+)
+
 from typing import TYPE_CHECKING
 
 from nab_provider._vendor.packaging.ranges import VersionRange
@@ -114,19 +119,7 @@ def compute_matching(
         assert isinstance(version_range, VersionRange)
         versions = provider.versions_cache[normalized]
 
-        # Walked one entry per version rather than per record: a version's
-        # records are in the range together or not at all, so each visited
-        # version adds its record count and the walk is as long as the
-        # listing's version list, not its file list.
-        #
-        # prereleases=True counts every in-bounds version; the default policy
-        # would buffer in-bounds pre-releases out of the count.
-        distinct = provider.versions_only(normalized, versions)
-        record_counts = provider.version_record_counts[normalized]
-        matching = sum(
-            record_counts[version]
-            for version in version_range.filter(distinct, prereleases=True)
-        )
+        matching = provider.count_matching_records(normalized, version_range, versions)
     elif has_local_source:
         matching = 1
     else:

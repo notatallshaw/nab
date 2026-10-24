@@ -33,18 +33,47 @@ Diagnostics:
     note: the project-level uploaded-prior-to set that cutoff; setting packages."foo".uploaded-prior-to = false lifts it for this package
 ```
 
-## Worth knowing
+## Interpreting a diagnostic
 
-|                                                                  |                                                                                                                                                                            |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `try:` is an instruction, not a fragment to paste                | The table the key belongs in usually exists already, and a second one is a TOML error. The line names the entry or table to edit.                                          |
-| Lifting a filter admits files, it does not promise a resolve     | A file two filters would both refuse is charged to the first that did, so lifting the named key can uncover a second.                                                      |
-| An entry covering several packages changes all of them           | A `[[tool.nab.package-rules]]` entry matching two names lifts the key for both.                                                                                            |
-| Four or more filters are counted, not named                      | The line reads `4 filters excluded every file`, and `-v` names them one to a clause. Three or fewer are named outright.                                                    |
-| `requires-python` never gets a `try:`                            | The override that lifts it replaces the package's declared metadata, so the line names the target instead: `no file supports Python 3.12`.                                 |
-| An extras line can be about the base package                     | `foo[bar]` has versions only where `foo` does, so a filter that empties `foo`'s listing gives the line and its `try:` under `foo[bar]`, naming `foo` as the entry to edit. |
-| Some lines name no setting                                       | Nothing in the configuration produced them, such as `package not found on any configured index` or `the index lists this package but every file is yanked`.                |
-| A routed package is missing from one index, not from all of them | An `index` entry is a strict pin, so the line names that index: `not found on index 'internal', the only index this package is routed to`.                                 |
+### Edit the existing configuration table
+
+A `try:` line identifies the setting to change. Edit its existing table; repeating a TOML table is
+an error. For the cutoff example above:
+
+```toml
+[tool.nab.packages.foo]
+uploaded-prior-to = false
+```
+
+An entry in `[[tool.nab.package-rules]]` can cover several packages. Changing it affects every
+matching package.
+
+### More than one filter can apply
+
+Lifting a filter admits files but does not guarantee a solution. Nab reports each file under the
+first filter that excludes it; removing that filter may expose another.
+
+Four or more causes are counted, for example `4 filters excluded every file`. Use `-v` to see each
+cause separately.
+
+### Python compatibility
+
+`requires-python` gets no `try:` suggestion because overriding it replaces published metadata. The
+diagnostic names the target instead, for example `no file supports Python 3.12`. Check the
+[target environment](target-environment.md) before changing metadata.
+
+### Extras
+
+A diagnostic for `foo[bar]` can describe a filter on `foo` itself. The extra can only use versions
+of its base package, so its `try:` line identifies the base package's policy entry.
+
+### Package lookup
+
+- `package not found on any configured index` means no consulted index listed the package.
+- `not found on index 'internal', the only index this package is routed to` means a strict package
+  route prevented looking elsewhere.
+- `the index lists this package but every file is yanked` names an index condition, not a
+  configuration setting.
 
 ## Several targets
 

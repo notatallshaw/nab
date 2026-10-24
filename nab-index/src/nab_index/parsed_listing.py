@@ -1,7 +1,7 @@
 """Translate parsed listing records to and from an opaque cache blob.
 
 The UTF-8 JSON wire form is ``[header, rows]``. The header carries format,
-codec, sort-key scheme, source-body digest, dropped zip-sdist versions,
+codec, sort-key scheme, source-body digest, served zip-sdist versions,
 and sparse withdrawal flags.
 An incompatible header or digest is a cache miss.
 
@@ -15,6 +15,13 @@ treats this representation as opaque.
 """
 
 from __future__ import annotations
+
+__lazy_modules__ = (
+    "json",
+    "nab_index._json_decode",
+    "nab_provider.records",
+    "sys",
+)
 
 import json
 import sys
@@ -40,7 +47,7 @@ __all__ = ["ParsedListing", "corruption_reason", "decode", "encode"]
 # blob surfacing under the current bucket. Bump it when the header or row shape
 # changes, or when the same body parses to different records: ``body_digest``
 # pins only the input.
-FORMAT_VERSION = 6
+FORMAT_VERSION = 7
 # Serialization variant that wrote the rows, so a future codec switch
 # self-heals rather than misdecodes.
 CODEC = 1
@@ -67,11 +74,7 @@ class _BadRowError(ValueError):
 
 
 class ParsedListing(NamedTuple):
-    """A decoded blob: a listing's records, and what its parse dropped.
-
-    ``zip_sdists`` names the releases the listing offered as a ``.zip`` sdist,
-    which leaves no record of its own.
-    """
+    """A decoded listing's records and releases offered as ``.zip`` sdists."""
 
     files: list[WheelFile | SdistFile]
     zip_sdists: frozenset[str]
@@ -102,8 +105,8 @@ def encode(
 
     ``body_digest`` is the sha256 hex of the raw body the records were parsed
     from; :func:`decode` rehydrates only when it matches the policy's digest.
-    ``zip_sdists`` names the releases offered as a ``.zip`` sdist, which the
-    parse drops, so no row can carry them. ``local_path`` is not stored (a
+    ``zip_sdists`` names the releases offered as a ``.zip`` sdist, including
+    links that cannot become records. ``local_path`` is not stored (a
     parsed-cache entry always comes from a remote body) and ``metadata_url``
     is a derived property, so neither rides the wire.
     """

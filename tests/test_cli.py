@@ -19,6 +19,7 @@ import runpy
 import stat
 import subprocess
 import sys
+import sysconfig
 import tarfile
 import zipfile
 from collections.abc import Callable, Iterator
@@ -61,7 +62,7 @@ from nab_index.client import AsyncSimpleClient
 from nab_index.httpx2_async_transport import Httpx2AsyncTransport
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
-from nab_index.transport import HttpError
+from nab_index.transport import HttpError, IdleClosableTransport
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_markersets._compat import get_int_max_str_digits
 from nab_project._testing.coordinator_fake import make_coordinator
@@ -1642,12 +1643,13 @@ class TestLockCommandSpecific:
         )
 
         with (
-            patch("nab._resolve._make_transport", return_value=transport),
+            patch("nab._resolve._make_urllib3_transport", return_value=transport),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
 
         err = capsys.readouterr().err
+
         assert "cannot lock" in err
         assert "sha256 mismatch" in err
         assert "0" * 64 in err
@@ -1674,6 +1676,7 @@ class TestLockCommandSpecific:
         # Guards the premise: the pin has to sit outside the prefetch window.
         versions = ("1.0", "2.0", "3.0")
         pinned = versions[0]
+
         assert len(versions) > FetchCoordinator.PREFETCH_METADATA_COUNT
 
         pyproject = _make_pyproject(
@@ -1705,12 +1708,13 @@ class TestLockCommandSpecific:
         transport = _SidecarTransport(bodies)
 
         with (
-            patch("nab._resolve._make_transport", return_value=transport),
+            patch("nab._resolve._make_urllib3_transport", return_value=transport),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
 
         err = capsys.readouterr().err
+
         assert "cannot lock" in err
         assert "sha256 mismatch" in err
         assert "0" * 64 in err
@@ -1752,12 +1756,13 @@ class TestLockCommandSpecific:
         )
 
         with (
-            patch("nab._resolve._make_transport", return_value=transport),
+            patch("nab._resolve._make_urllib3_transport", return_value=transport),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
 
         err = capsys.readouterr().err
+
         assert "cannot lock" in err
         assert "wheel sha256 mismatch" in err
         assert "0" * 64 in err
@@ -1798,12 +1803,13 @@ class TestLockCommandSpecific:
         )
 
         with (
-            patch("nab._resolve._make_transport", return_value=transport),
+            patch("nab._resolve._make_urllib3_transport", return_value=transport),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
 
         err = capsys.readouterr().err
+
         assert "cannot lock" in err
         assert "sdist sha256 mismatch" in err
         assert "0" * 64 in err
@@ -2650,9 +2656,10 @@ class TestPythonFlag:
         assert exc.value.code == 1
         assert (
             "error: --python and --project-environment-python both set the"
-            " python axis; pass one of them." in capsys.readouterr().err
+            " python axis\n    try: pass one of them" in capsys.readouterr().err
         )
         assert not out.exists()
+
         mock_resolve.assert_not_called()
 
     def test_the_python_flag_is_recorded_and_noticed(
@@ -3965,10 +3972,10 @@ class TestLockCommandUniversal:
             '    try: set packages."foo".uploaded-prior-to = false\n'
         )
 
-    def test_the_verbose_level_replaces_the_try_line_with_the_detail(
+    def test_the_verbose_level_keeps_the_action_and_adds_evidence(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """``-v`` keeps the line and prints the clauses and the note under it."""
+        """``-v`` keeps the line and prints the clauses and context under it."""
         with patch("nab.output._printer", Printer(verbosity=Verbosity.VERBOSE)):
             self._lock_against_a_refused_listing(
                 self._cutoff_refused(tmp_path, '"linux_x86_64"')
@@ -3980,9 +3987,8 @@ class TestLockCommandUniversal:
             "    the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded"
             " 1 file uploaded at 2030-01-01T00:00:00Z (1.0)\n"
             "    the files nab read hold no sdist to build from\n"
-            "    note: the project-level uploaded-prior-to set that cutoff;"
-            ' setting packages."foo".uploaded-prior-to = false lifts it for this'
-            " package\n"
+            '    try: set packages."foo".uploaded-prior-to = false\n'
+            "         The project-wide uploaded-prior-to setting rejected these files.\n"
         )
 
     def test_a_diagnostics_line_survives_the_per_tuple_block(
@@ -4014,14 +4020,14 @@ class TestLockCommandUniversal:
             )
 
         err = capsys.readouterr().err
+
         assert (
             "#       the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00"
             " excluded 1 file uploaded at 2030-01-01T00:00:00Z (1.0)"
         ) in err
+        assert ('#       try: set packages."foo".uploaded-prior-to = false') in err
         assert (
-            "#       note: the project-level uploaded-prior-to set that cutoff;"
-            ' setting packages."foo".uploaded-prior-to = false lifts it for this'
-            " package"
+            "#            The project-wide uploaded-prior-to setting rejected these files."
         ) in err
 
     def test_template_writes_one_file_per_tuple(
@@ -4323,9 +4329,10 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, format="requirements-without-hashes", output=out)
         err = capsys.readouterr().err
+
         assert "4 tuples" in err
         assert "tells them apart" in err
-        assert "Emit pylock output instead" in err
+        assert "try: emit pylock output instead" in err
         assert "{python_version}" not in err
         assert not out.exists()
 
@@ -4344,9 +4351,10 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, format="requirements-without-hashes", output=out)
         err = capsys.readouterr().err
+
         assert "both map to" in err
         assert "tells them apart" in err
-        assert "Emit pylock output instead" in err
+        assert "try: emit pylock output instead" in err
         assert "{python_version}" not in err
         assert list(tmp_path.glob("req-*.txt")) == []
 
@@ -6445,7 +6453,7 @@ class TestPaintedEagerOutput:
         _page, refusal = self._eager("lock", "--outupt", status=2)
 
         assert refusal.startswith("\033[31mnab lock:\033[0m ")
-        assert "did you mean '\033[36m--output\033[0m'?" in refusal
+        assert "try: use '\033[36m--output\033[0m'" in refusal
 
     def test_each_stream_is_asked_on_its_own(
         self, monkeypatch: pytest.MonkeyPatch
@@ -6793,14 +6801,13 @@ class TestMain:
         assert enabled_during == [False]
         assert gc.isenabled()
 
+    @pytest.mark.skipif(
+        sysconfig.get_config_var("Py_GIL_DISABLED") == 1,
+        reason="requires generational garbage collection",
+    )
     @pytest.mark.usefixtures("restored_gc_state")
     def test_resolve_promotes_what_it_allocated(self, tmp_path: Path) -> None:
-        """Objects the resolve allocated end in generation 2, not generation 0.
-
-        Reads generations directly, so it needs a build whose
-        ``gc.get_objects(generation=...)`` filters by generation; the
-        free-threaded builds return every tracked object for any of them.
-        """
+        """Objects the resolve allocated end in generation 2, not generation 0."""
         pyproject = _make_pyproject(tmp_path)
         config = read_pyproject_config(pyproject)
         allocated: list[object] = []
@@ -6831,6 +6838,7 @@ class TestMain:
         gc.disable()
 
         graph = allocated[0]
+
         assert not any(obj is graph for obj in gc.get_objects(generation=0))
         assert any(obj is graph for obj in gc.get_objects(generation=2))
 
@@ -7497,6 +7505,20 @@ class TestMakeTransport:
             asyncio.run(transport.aclose())
 
     @pytest.mark.parametrize("backend", ["httpx", "httpx2"])
+    def test_optional_backend_absent_exits_before_initialization(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        backend: str,
+    ) -> None:
+        monkeypatch.setitem(sys.modules, backend, None)
+        with pytest.raises(SystemExit) as info:
+            _make_transport(backend)
+
+        assert info.value.code == 1
+        assert f"{backend} is not installed" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("backend", ["httpx", "httpx2"])
     def test_optional_backend_missing_exits_with_hint(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -7525,18 +7547,14 @@ class TestMakeTransport:
         backend: str,
     ) -> None:
         """An optional backend installed without ``h2`` exits with a hint."""
-        original_import = builtins.__import__
-
-        def fake_import(name: str, *args: object, **kwargs: object) -> object:
-            if name == "h2":
-                raise ImportError(name)
-            return original_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", fake_import)
+        monkeypatch.setitem(sys.modules, "h2", None)
         with pytest.raises(SystemExit) as info:
             _make_transport(backend)
+
         assert info.value.code == 1
+
         err = capsys.readouterr().err
+
         assert f"nab[{backend}]" in err
         assert "HTTP/2" in err
         assert f"{backend} is not installed" not in err
@@ -7561,6 +7579,7 @@ class _RecordingTransport:
 
 _OFFLINE_LOCK_PROBE = """
 import sys
+import sysconfig
 
 from nab.cli import main
 
@@ -7713,20 +7732,39 @@ class TestResolveTransportCleanup:
 class TestResolveTransport:
     """Which transport a resolve is handed, and when it is built."""
 
-    def test_online_resolve_gets_the_transport_up_front(self) -> None:
-        """A resolve that may fetch is handed the real transport."""
-        with patch("nab._resolve._make_transport") as make:
-            transport = _make_resolve_transport("urllib3", offline=False)
+    def test_default_resolve_defers_transport_creation(self) -> None:
+        with patch("nab._resolve._make_urllib3_transport") as make:
+            transport = _make_resolve_transport("urllib3")
+            asyncio.run(transport.aclose())
 
-        assert transport is make.return_value
-        make.assert_called_once_with("urllib3")
+        make.assert_not_called()
+
+    def test_unused_default_transport_closes_without_a_loop(self) -> None:
+        with patch("nab._resolve._make_urllib3_transport") as make:
+            transport = _make_resolve_transport("urllib3")
+            assert isinstance(transport, IdleClosableTransport)
+            assert transport.close_without_loop()
+        make.assert_not_called()
+
+    def test_active_default_transport_needs_async_close(self) -> None:
+        inner = _RecordingTransport()
+        with patch("nab._resolve._make_urllib3_transport", return_value=inner):
+            transport = _make_resolve_transport("urllib3")
+            assert isinstance(transport, IdleClosableTransport)
+            asyncio.run(transport.get("https://example.invalid/"))
+            assert not transport.close_without_loop()
+            assert inner.closes == 0
+            asyncio.run(transport.aclose())
+
+        assert inner.closes == 1
 
     def test_offline_httpx_resolve_gets_it_up_front_too(self) -> None:
         """Only urllib3 defers; httpx is built while the CLI can still exit."""
         with patch("nab._resolve._make_transport") as make:
-            transport = _make_resolve_transport("httpx", offline=True)
+            transport = _make_resolve_transport("httpx")
 
         assert transport is make.return_value
+
         make.assert_called_once_with("httpx")
 
     def test_offline_lock_without_httpx_exits_with_the_hint(
@@ -7773,7 +7811,7 @@ class TestResolveTransport:
         """A deferred transport builds its inner one once, on the first get."""
         inner = _RecordingTransport()
         with patch("nab._resolve._make_urllib3_transport", return_value=inner) as make:
-            transport = _make_resolve_transport("urllib3", offline=True)
+            transport = _make_resolve_transport("urllib3")
             make.assert_not_called()
 
             async def fetch_twice() -> None:
@@ -7785,6 +7823,7 @@ class TestResolveTransport:
             asyncio.run(fetch_twice())
 
         make.assert_called_once_with()
+
         assert inner.requests == [
             ("https://example.invalid/a", None),
             ("https://example.invalid/b", {"Accept": "x"}),
@@ -7794,7 +7833,7 @@ class TestResolveTransport:
         """Closing a deferred transport that fetched closes the inner one."""
         inner = _RecordingTransport()
         with patch("nab._resolve._make_urllib3_transport", return_value=inner):
-            transport = _make_resolve_transport("urllib3", offline=True)
+            transport = _make_resolve_transport("urllib3")
 
             async def fetch_then_close() -> None:
                 await transport.get("https://example.invalid/a")
@@ -7807,7 +7846,7 @@ class TestResolveTransport:
     def test_close_without_a_request_builds_nothing(self) -> None:
         """Closing a deferred transport that never fetched builds nothing."""
         with patch("nab._resolve._make_urllib3_transport") as make:
-            transport = _make_resolve_transport("urllib3", offline=True)
+            transport = _make_resolve_transport("urllib3")
             asyncio.run(transport.aclose())
 
         make.assert_not_called()

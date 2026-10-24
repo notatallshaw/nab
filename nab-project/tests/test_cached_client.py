@@ -15,7 +15,6 @@ import time
 import zipfile
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
-from dataclasses import replace
 from email.utils import formatdate
 from pathlib import Path
 from typing import Any
@@ -28,7 +27,13 @@ from urllib3 import HTTPHeaderDict
 import nab_index.cache as cache_mod
 import nab_index.cached_client as cached_client_mod
 from nab_index._pep503 import json_listing
-from nab_index.cache import CachePolicy, NullCache, OfflineError, OnDiskCache
+from nab_index.cache import (
+    CACHE_VERSION_SIMPLE_PARSED,
+    CachePolicy,
+    NullCache,
+    OfflineError,
+    OnDiskCache,
+)
 from nab_index.cached_client import (
     CachedAsyncSimpleClient,
     ParsedCacheStats,
@@ -61,6 +66,7 @@ from nab_provider.records import (
 )
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.store import sdist_artifact_key
+from nab_provider.value import replace
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
@@ -94,7 +100,7 @@ RELISTING_BYTES = json.dumps(
     }
 ).encode()
 
-# A page whose only file is in a format nab does not read.
+# A page offering only a legacy ZIP sdist.
 ZIP_ONLY_LISTING = {
     "meta": {"api-version": "1.0"},
     "name": "pkg",
@@ -108,8 +114,7 @@ ZIP_ONLY_LISTING = {
 }
 ZIP_ONLY_BYTES = json.dumps(ZIP_ONLY_LISTING).encode()
 
-# A release published as a wheel and a .zip sdist, so the parse keeps one file
-# and drops the other.
+# A release published as both a wheel and a ZIP sdist.
 WHEEL_AND_ZIP_LISTING = {
     "meta": {"api-version": "1.0"},
     "name": "pkg",
@@ -248,6 +253,15 @@ def _build_tarball(members: list[tuple[str, bytes]]) -> bytes:
             info = tarfile.TarInfo(name=name)
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def _build_zip(members: list[tuple[str, bytes]]) -> bytes:
+    """Return a ZIP archive containing the named member payloads."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        for name, data in members:
+            archive.writestr(name, data)
     return buf.getvalue()
 
 
@@ -524,16 +538,16 @@ class TestYankedMetadata:
         assert len(files) == 1
 
 
-class TestZipSdistDropped:
-    """nab admits only .tar.gz sdists; .zip is dropped at parse time."""
+class TestZipSdistListing:
+    """Index listings retain ZIP sdists for provider policy to evaluate."""
 
-    def test_parse_sdist_filename_rejects_zip(self) -> None:
-        assert _parse_sdist_filename("foo-1.0.zip") is None
+    def test_parse_sdist_filename_accepts_zip(self) -> None:
+        assert _parse_sdist_filename("foo-1.0.zip") == ("foo", "1.0")
 
     def test_parse_sdist_filename_accepts_tar_gz(self) -> None:
         assert _parse_sdist_filename("foo-1.0.tar.gz") == ("foo", "1.0")
 
-    def test_zip_alongside_tar_gz_keeps_only_tar_gz(self) -> None:
+    def test_zip_alongside_tar_gz_keeps_both(self) -> None:
         data = {
             "files": [
                 {
@@ -547,10 +561,11 @@ class TestZipSdistDropped:
             ],
         }
         files = _parse_files(data, "https://example.com/", "foo")
-        assert [f.filename for f in files] == ["foo-1.0.tar.gz"]
+
+        assert [f.filename for f in files] == ["foo-1.0.tar.gz", "foo-1.0.zip"]
         assert all(isinstance(f, SdistFile) for f in files)
 
-    def test_zip_only_release_yields_no_sdist(self) -> None:
+    def test_zip_only_release_yields_sdist(self) -> None:
         data = {
             "files": [
                 {
@@ -559,9 +574,12 @@ class TestZipSdistDropped:
                 },
             ],
         }
-        assert _parse_files(data, "https://example.com/", "foo") == []
+        files = _parse_files(data, "https://example.com/", "foo")
 
-    def test_zip_dropped_wheel_kept(self) -> None:
+        assert [file.filename for file in files] == ["foo-1.0.zip"]
+        assert isinstance(files[0], SdistFile)
+
+    def test_zip_and_wheel_kept(self) -> None:
         data = {
             "files": [
                 {
@@ -575,8 +593,94 @@ class TestZipSdistDropped:
             ],
         }
         files = _parse_files(data, "https://example.com/", "foo")
-        assert [f.filename for f in files] == ["foo-1.0-py3-none-any.whl"]
-        assert all(isinstance(f, WheelFile) for f in files)
+
+        assert [f.filename for f in files] == [
+            "foo-1.0-py3-none-any.whl",
+            "foo-1.0.zip",
+        ]
+        assert isinstance(files[0], WheelFile)
+        assert isinstance(files[1], SdistFile)
+
+    @pytest.mark.parametrize(
+        ("body", "content_type"),
+        [
+            pytest.param(
+                ZIP_ONLY_BYTES, "application/vnd.pypi.simple.v1+json", id="json"
+            ),
+            pytest.param(
+                b'<a href="https://files.example.com/pkg-1.0.zip#sha256=deadbeef" data-requires-python="&gt;=3.8">pkg</a>',
+                "text/html",
+                id="html",
+            ),
+        ],
+    )
+    def test_zip_records_survive_fresh_and_warm_listings(
+        self, tmp_path: Path, body: bytes, content_type: str
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [_FakeResponse(body, headers={"content-type": content_type})]
+        )
+        offline_transport = _FakeTransport()
+        stats = ParsedCacheStats()
+
+        async def go() -> None:
+            async with CachedAsyncSimpleClient(transport, cache) as client:
+                fresh = await client.get_files("pkg")
+                assert client.served_zip_sdists("pkg") == frozenset({"1.0"})
+                assert not client.served_unreadable_only("pkg")
+            async with CachedAsyncSimpleClient(
+                offline_transport, cache, offline=True, parsed_stats=stats
+            ) as client:
+                warm = await client.get_files("pkg")
+                assert client.served_zip_sdists("pkg") == frozenset({"1.0"})
+
+            assert warm == fresh
+            assert len(warm) == 1
+            assert isinstance(warm[0], SdistFile)
+            assert warm[0].filename == "pkg-1.0.zip"
+            assert warm[0].hashes == (("sha256", "deadbeef"),)
+
+        asyncio.run(go())
+
+        assert stats.hit == 1
+        assert len(transport.calls) == 1
+        assert offline_transport.calls == []
+
+    @pytest.mark.parametrize(
+        "legacy_bucket", [True, False], ids=["old-bucket", "old-format"]
+    )
+    def test_legacy_parsed_cache_reparses_zip_records(
+        self, tmp_path: Path, legacy_bucket: bool
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        digest = cache.put_simple(
+            "pkg",
+            WHEEL_AND_ZIP_BYTES,
+            CachePolicy(fetched_at=int(time.time()), max_age=600, etag=None),
+        )
+        old_files = _parse_files(LISTING, "https://pypi.org/simple/", "pkg")
+        header, rows = json.loads(encode_parsed(old_files, digest, frozenset({"1.0"})))
+        header[0] = 6
+        bucket_version = "v0" if legacy_bucket else CACHE_VERSION_SIMPLE_PARSED
+        old_path = tmp_path / f"simple-parsed-{bucket_version}" / "pypi" / "pkg.parsed"
+        old_path.parent.mkdir(parents=True, exist_ok=True)
+        old_path.write_bytes(json.dumps([header, rows]).encode())
+        transport = _FakeTransport()
+
+        async def go() -> list[WheelFile | SdistFile]:
+            async with CachedAsyncSimpleClient(
+                transport, cache, offline=True
+            ) as client:
+                return await client.get_files("pkg")
+
+        files = asyncio.run(go())
+
+        assert [file.filename for file in files] == [
+            "pkg-1.0-py3-none-any.whl",
+            "pkg-1.0.zip",
+        ]
+        assert transport.calls == []
 
 
 class TestRelativeUrlResolution:
@@ -1385,10 +1489,10 @@ class TestGetFiles:
         _, policy = cached
         assert policy.etag == "new"
 
-    def test_304_over_a_zip_only_listing_reports_the_format(
+    def test_304_over_a_zip_only_listing_retains_the_sdist(
         self, tmp_path: Path
     ) -> None:
-        """A 304 keeps the cached body, so the format report comes from it."""
+        """A 304 keeps the cached body's ZIP sdist."""
         cache = _make_cache(tmp_path)
         cache.put_simple("pkg", ZIP_ONLY_BYTES, _stale_etag_policy())
         transport = _FakeTransport(
@@ -1397,8 +1501,8 @@ class TestGetFiles:
 
         files, unreadable_only = _get_files_and_report(transport, cache, "pkg")
 
-        assert files == []
-        assert unreadable_only
+        assert [file.filename for file in files] == ["pkg-1.0.zip"]
+        assert not unreadable_only
 
     def test_200_over_a_zip_only_listing_reports_the_fresh_body(
         self, tmp_path: Path
@@ -1428,13 +1532,16 @@ class TestGetFiles:
         assert cache.get_negative("pkg") is not None
 
     def test_zip_sdist_beside_a_wheel_names_its_release(self, tmp_path: Path) -> None:
-        """The wheel survives the parse, so only the version records the ``.zip``."""
+        """Both records survive and the served ZIP set names its release."""
         cache = _make_cache(tmp_path)
         transport = _FakeTransport([_FakeResponse(WHEEL_AND_ZIP_BYTES)])
 
         files, zip_sdists = _get_files_and_zip_sdists(transport, cache, "pkg")
 
-        assert [file.filename for file in files] == ["pkg-1.0-py3-none-any.whl"]
+        assert [file.filename for file in files] == [
+            "pkg-1.0-py3-none-any.whl",
+            "pkg-1.0.zip",
+        ]
         assert zip_sdists == frozenset({"1.0"})
 
     def test_readable_listing_names_no_release(self, tmp_path: Path) -> None:
@@ -1446,11 +1553,7 @@ class TestGetFiles:
         assert zip_sdists == frozenset()
 
     def test_zip_sdist_survives_a_cached_read(self, tmp_path: Path) -> None:
-        """The blob names the dropped release, so a warm read reports it too.
-
-        No record survives the parse to say the release published an sdist, so
-        a blob holding records alone would report it as never published.
-        """
+        """A warm parsed read preserves ZIP records and served releases."""
         cache = _make_cache(tmp_path)
         transport = _FakeTransport([_FakeResponse(WHEEL_AND_ZIP_BYTES)])
         _get_files_and_zip_sdists(transport, cache, "pkg")
@@ -1463,11 +1566,14 @@ class TestGetFiles:
 
         assert offline.calls == []
         assert stats.hit == 1
-        assert [file.filename for file in files] == ["pkg-1.0-py3-none-any.whl"]
+        assert [file.filename for file in files] == [
+            "pkg-1.0-py3-none-any.whl",
+            "pkg-1.0.zip",
+        ]
         assert zip_sdists == frozenset({"1.0"})
 
-    def test_a_seeded_blob_names_the_dropped_release(self, tmp_path: Path) -> None:
-        """A blob already on disk answers the read, dropped releases and all."""
+    def test_a_seeded_blob_names_the_zip_release(self, tmp_path: Path) -> None:
+        """A blob already on disk preserves the served ZIP set."""
         cache = _make_cache(tmp_path)
         policy = CachePolicy(fetched_at=int(time.time()), max_age=99999, etag=None)
         digest = cache.put_simple("pkg", WHEEL_AND_ZIP_BYTES, policy)
@@ -4044,17 +4150,21 @@ class TestGetSdistArchive:
         assert asyncio.run(go()) == body
         assert len(transport.calls) == 1
 
+    @pytest.mark.parametrize("second_suffix", ["tar.gz", "zip"])
     def test_same_version_archives_keep_separate_metadata_and_bytes(
-        self, tmp_path: Path
+        self, tmp_path: Path, second_suffix: str
     ) -> None:
         cache = _make_cache(tmp_path)
-        urls = ("https://x/live/pkg.tar.gz", "https://x/yanked/pkg.tar.gz")
+        cache.put_sdist_files("pkg", "1.0", "stale coordinate-only metadata", None)
+        urls = ("https://x/live/pkg.tar.gz", f"https://x/yanked/pkg.{second_suffix}")
         metadata = tuple(
             f"Name: pkg\nVersion: 1.0\nRequires-Dist: {dependency}\n"
             for dependency in ("live-dependency", "withdrawn-dependency")
         )
-        bodies = tuple(
-            _build_tarball([("pkg-1.0/PKG-INFO", text.encode())]) for text in metadata
+        second_builder = _build_tarball if second_suffix == "tar.gz" else _build_zip
+        bodies = (
+            _build_tarball([("pkg-1.0/PKG-INFO", metadata[0].encode())]),
+            second_builder([("pkg-1.0/PKG-INFO", metadata[1].encode())]),
         )
         transport = _FakeTransport([_FakeResponse(body) for body in bodies])
         hold = SdistArchiveHold()
@@ -4079,7 +4189,24 @@ class TestGetSdistArchive:
                 await client.aclose()
 
         asyncio.run(go())
+
         assert len(transport.calls) == 2
+
+        offline_transport = _FakeTransport()
+
+        async def read_warm() -> None:
+            async with CachedAsyncSimpleClient(
+                offline_transport, cache, offline=True
+            ) as client:
+                for url, text in zip(urls, metadata, strict=True):
+                    assert await client.get_sdist_files("pkg", "1.0", url) == (
+                        text,
+                        None,
+                    )
+
+        asyncio.run(read_warm())
+
+        assert offline_transport.calls == []
 
     def test_a_held_archive_is_verified_against_the_published_hash(
         self, tmp_path: Path

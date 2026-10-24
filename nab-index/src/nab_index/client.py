@@ -8,9 +8,30 @@ implementing the :class:`AsyncHttpTransport` protocol can be used.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_resolver.diagnostics",
+    "hashlib",
+    "io",
+    "nab_index._json_decode",
+    "nab_index._pep503",
+    "nab_index.transport",
+    "nab_provider.errors",
+    "nab_provider.records",
+    "nab_provider.serialization",
+    "packaging.utils",
+    "packaging.version",
+    "shutil",
+    "stat",
+    "sys",
+    "urllib.parse",
+    "zlib",
+)
+
 import hashlib
 import io
 import re
+import shutil
+import stat
 import sys
 import zlib
 from collections.abc import Mapping
@@ -35,6 +56,7 @@ from nab_provider.records import (
     defer_sidecar_hash,
 )
 from nab_provider.serialization import SimpleSerialization, simple_accept_header
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from ._json_decode import decode_json
 from ._pep503 import json_listing
@@ -43,6 +65,7 @@ from .transport import IDENTITY_HEADERS, raise_unless_ok
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+    from zipfile import ZipInfo
 
     from packaging.utils import NormalizedName
     from typing_extensions import Self
@@ -181,13 +204,12 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
 
 
 def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
-    """Parse a ``.tar.gz`` sdist filename to ``(canonical_name, version)``.
+    """Parse a ``.tar.gz`` or ``.zip`` sdist filename to ``(canonical_name, version)``.
 
     Accepts what nab-provider's vendored ``parse_sdist_filename`` accepts,
-    except ``.zip`` sdists, which nab does not support (gzip-tar only, and
-    not part of the PEP 625 standard), and filenames holding a NUL or with no
-    UTF-8 form.  Returns ``None`` for everything else, including a version digit
-    run past CPython's int-from-string limit, and never raises.  The vendored
+    except filenames holding a NUL or with no UTF-8 form. Returns ``None`` for
+    everything else, including a version digit run past CPython's int-from-string
+    limit, and never raises.  The vendored
     copy is the one to match, not the released ``packaging`` this package
     depends on; the two can differ on an empty project name, which releases
     before 26.3 accept.
@@ -197,10 +219,14 @@ def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
     MUST drop files whose canonical name does not match the queried
     package.  See :func:`_parse_files`.
     """
-    if not filename.endswith(".tar.gz") or "\x00" in filename:
+    if "\x00" in filename:
         return None
-
-    stem = filename[: -len(".tar.gz")]
+    if filename.endswith(".tar.gz"):
+        stem = filename[: -len(".tar.gz")]
+    elif filename.endswith(".zip"):
+        stem = filename[: -len(".zip")]
+    else:
+        return None
     name_part, sep, version_part = stem.rpartition("-")
     if not sep or not name_part:
         return None
@@ -220,9 +246,7 @@ def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
 def zip_sdist_version(filename: str, canonical: str) -> str | None:
     """Return the version when ``filename`` is ``canonical``'s ``.zip`` sdist.
 
-    nab reads gzip-tar sdists only, so a ``.zip`` never becomes a file
-    record and nothing else names the release it belongs to.  ``canonical``
-    is the queried package's already-canonicalized name.
+    ``canonical`` is the queried package's already-canonicalized name.
 
     Returns the canonical version string, and ``None`` for any other suffix,
     a stem carrying no version, a version that will not parse (including a
@@ -232,18 +256,11 @@ def zip_sdist_version(filename: str, canonical: str) -> str | None:
     if not filename.endswith(".zip"):
         return None
 
-    stem = filename[: -len(".zip")]
-    name_part, sep, version_part = stem.rpartition("-")
-    if not sep or not name_part:
+    parsed = _parse_sdist_filename(filename)
+    if parsed is None:
         return None
-
-    try:
-        version = _canonical_version(version_part)
-    except ValueError:
-        # InvalidVersion, or int() refusing a digit run past CPython's limit.
-        return None
-
-    return version if _intern_name(name_part) == canonical else None
+    name, version = parsed
+    return version if name == canonical else None
 
 
 def _listed_entries(data: object) -> Iterator[_FileEntry]:
@@ -296,8 +313,8 @@ def holds_unreachable_link(
 def holds_unreadable_format(data: object) -> bool:
     """Whether a Simple-API body offers a file nab cannot read.
 
-    nab reads wheels and ``.tar.gz`` sdists, so a page of ``.zip`` sdists
-    or ``.exe`` installers parses to no files at all.
+    Wheels and ``.tar.gz`` or ``.zip`` sdists are readable; formats such as
+    ``.exe`` installers are not.
     """
     return any(
         not is_readable_filename(filename) for filename in _listed_filenames(data)
@@ -307,8 +324,8 @@ def holds_unreadable_format(data: object) -> bool:
 def zip_sdist_versions(data: object, package: str) -> frozenset[str]:
     """Versions of ``package`` a Simple-API body offers as ``.zip`` sdists.
 
-    :func:`_parse_files` drops a ``.zip``, so these releases reach a caller
-    only through this set.
+    This includes files a listing parser drops for another reason, such as
+    an unreachable URL.
     """
     canonical = canonicalize_name(package)
     return frozenset(
@@ -335,7 +352,7 @@ def holds_only_yanked(data: object) -> bool:
 
 
 def is_readable_filename(filename: str) -> bool:
-    """Whether ``filename`` names a wheel or ``.tar.gz`` sdist that nab can use."""
+    """Whether ``filename`` names a wheel or a supported sdist format."""
     return (
         _parse_wheel_filename(filename) is not None
         or _parse_sdist_filename(filename) is not None
@@ -424,13 +441,19 @@ def _listing_body(
             if is_html
             else ""
         )
-        msg = (
-            f"{index_url} served {package!r} with {served}, but this index is"
-            f" pinned to serialization = {serialization.value!r}."
-            f"  Drop the pin,{instead} or set url to an endpoint that serves"
-            f" {serialization.value}."
+        report = DiagnosticMessage(
+            (
+                f"{index_url} served {package!r} with {served}, but this index is "
+                f"pinned to serialization = {serialization.value!r}."
+            ),
+            suggestions=(
+                Suggestion(
+                    f"drop the pin,{instead} or set url to an endpoint that serves "
+                    f"{serialization.value}."
+                ),
+            ),
         )
-        raise MalformedSimpleResponseError(msg)
+        raise MalformedSimpleResponseError(report)
 
     if not is_html:
         return body
@@ -640,6 +663,31 @@ def _normalized_url(url: str) -> str:
     return urlunsplit(parts)
 
 
+def _normalized_ascii_http_url(url: str) -> bool:
+    """Recognize HTTP URLs whose split round trip cannot change them."""
+    if type(url) is not str or not url.isascii():
+        return False
+
+    if url.startswith("https://"):
+        authority_start = len("https://")
+    elif url.startswith("http://"):
+        authority_start = len("http://")
+    else:
+        return False
+
+    return (
+        len(url) > authority_start
+        and url[authority_start] not in "/?#"
+        and "[" not in url
+        and "]" not in url
+        and "\t" not in url
+        and "\r" not in url
+        and "\n" not in url
+        and not url.endswith(("?", "#"))
+        and "?#" not in url
+    )
+
+
 def _resolve_file_url(raw_url: str, base_url: str) -> str | None:
     """Return the entry's absolute URL, or None when it is not usable.
 
@@ -652,6 +700,8 @@ def _resolve_file_url(raw_url: str, base_url: str) -> str | None:
     ``urlsplit`` deletes a tab, CR or LF anywhere in a URL, so the split
     round trip stores the URL a later parse of the record would yield.
     """
+    if _normalized_ascii_http_url(raw_url):
+        return raw_url
     try:
         # urljoin resolves a same-scheme URL against the base, which would
         # hand ``https:///pkg.whl`` the base's authority.
@@ -782,7 +832,7 @@ def verify_sdist_hash(content: bytes, sdist_hash: tuple[str, str]) -> None:
 
 
 def _extract_sdist_files(data: bytes) -> tuple[str | None, str | None]:
-    """Extract PKG-INFO and pyproject.toml from a .tar.gz sdist archive.
+    """Extract PKG-INFO and pyproject.toml from a tarball or ZIP sdist.
 
     Returns ``(pkg_info, pyproject_toml)``. Either may be ``None`` if
     the archive cannot be read or the file is absent. PEP 643 static
@@ -790,8 +840,6 @@ def _extract_sdist_files(data: bytes) -> tuple[str | None, str | None]:
     field that says which values are not authoritative, and
     pyproject.toml's ``[project].dynamic`` is the static-metadata
     fallback when PKG-INFO marks dependencies dynamic.
-
-    .zip sdists are intentionally unsupported.
     """
     files = _extract_sdist_files_if_readable(data)
     return (None, None) if files is None else files
@@ -809,11 +857,15 @@ def _extract_sdist_files_if_readable(
     """
     # Deferred so importing this module does not load tarfile.
     import tarfile  # noqa: PLC0415
+    import zipfile  # noqa: PLC0415 - optional archive reader
 
     try:
+        if zipfile.is_zipfile(io.BytesIO(data)):
+            return _read_zip_sdist_files(data)
         return _read_tar_sdist_files(data)
     except (
         tarfile.TarError,
+        zipfile.BadZipFile,
         OSError,
         # tarfile converts archive-controlled header text with int(), and a
         # member's bad UTF-8 fails decode(); both surface as ValueError.
@@ -824,6 +876,7 @@ def _extract_sdist_files_if_readable(
         # tarfile resolves a link member by recursing on its target, so a
         # cycle of links only ends at the recursion limit.
         RecursionError,
+        RuntimeError,
     ):
         return None
 
@@ -852,6 +905,35 @@ def _read_tar_sdist_files(data: bytes) -> tuple[str | None, str | None]:
             extracted = tar.extractfile(member)
             if extracted is not None:
                 target[top_dir] = extracted.read().decode("utf-8")
+
+    return _select_sdist_root(pkg_infos, pyprojects)
+
+
+def _read_zip_sdist_files(data: bytes) -> tuple[str | None, str | None]:
+    """Read the metadata pair from one ZIP root, retaining the first duplicate."""
+    import zipfile  # noqa: PLC0415 - optional archive reader
+
+    pkg_infos: dict[str, str] = {}
+    pyprojects: dict[str, str] = {}
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        for member in archive.infolist():
+            depth, top_dir, basename = _sdist_member_top_level(member.filename)
+            if (
+                depth != 1
+                or member.is_dir()
+                or stat.S_IFMT(member.external_attr >> 16) not in (0, stat.S_IFREG)
+            ):
+                continue
+
+            target = (
+                pkg_infos
+                if basename == "PKG-INFO"
+                else pyprojects
+                if basename == "pyproject.toml"
+                else None
+            )
+            if target is not None and top_dir not in target:
+                target[top_dir] = archive.read(member).decode("utf-8")
 
     return _select_sdist_root(pkg_infos, pyprojects)
 
@@ -889,15 +971,31 @@ def _sdist_member_top_level(name: str) -> tuple[int, str, str]:
     return (len(parts) - 1, top_dir, parts[-1])
 
 
+def extract_sdist_archive(
+    data: bytes, target_dir: Path, *, allow_zip: bool = True
+) -> Path:
+    """Extract a tarball or ZIP sdist and return its source root.
+
+    Unreadable archives and escaping paths raise ``ValueError``.
+    ZIP entries must be regular files or directories.
+    Tarballs require the tar data filter (Python 3.10.12+ / 3.11.4+ / 3.12+).
+    """
+    import zipfile  # noqa: PLC0415 - optional archive reader
+
+    if allow_zip and zipfile.is_zipfile(io.BytesIO(data)):
+        return _extract_zip_sdist_archive(data, target_dir)
+    return _extract_tar_sdist_archive(data, target_dir)
+
+
 # The tar data filter (PEP 706) this extraction requires ships in 3.10.12 /
 # 3.11.4 / 3.12. The guard below raises on older patch releases and never
 # extracts, so the CI cell still on 3.10.11 exercises only one side of it and
 # cannot reach the extraction path. Drop the pragma when that cell moves to a
 # build carrying the filter or 3.10 reaches EOL (2026-10).
-def extract_sdist_archive(
+def _extract_tar_sdist_archive(
     data: bytes, target_dir: Path
 ) -> Path:  # pragma: no cover (tar data filter)
-    """Extract a .tar.gz sdist into ``target_dir`` and return the source root.
+    """Extract a tarball and return its source root.
 
     Anything the extractor cannot read raises :class:`ValueError`: a corrupt or
     truncated stream, a tar that will not open, a chain of link members long
@@ -958,3 +1056,66 @@ def extract_sdist_archive(
     if len(entries) == 1 and entries[0].is_dir() and not entries[0].is_symlink():
         return entries[0]
     return target_dir
+
+
+def _extract_zip_sdist_archive(data: bytes, target_dir: Path) -> Path:
+    """Extract regular ZIP entries after checking their destinations."""
+    import zipfile  # noqa: PLC0415 - optional archive reader
+
+    target_dir = target_dir.resolve()
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            # Validate every destination before writing the first archive member.
+            destinations = [
+                (_zip_member_destination(member, target_dir), member)
+                for member in archive.infolist()
+            ]
+
+            for destination, member in destinations:
+                if member.is_dir():
+                    destination.mkdir(parents=True, exist_ok=True)
+                    continue
+
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(member) as source, destination.open("wb") as output:
+                    shutil.copyfileobj(source, output)
+
+                executable = (member.external_attr >> 16) & 0o111
+                if executable:
+                    destination.chmod(destination.stat().st_mode | executable)
+    except (
+        zipfile.BadZipFile,
+        OSError,
+        EOFError,
+        zlib.error,
+        RuntimeError,
+    ) as exc:
+        msg = f"unreadable sdist archive: {exc}"
+        raise ValueError(msg) from exc
+
+    entries = list(target_dir.iterdir())
+    if len(entries) == 1 and entries[0].is_dir() and not entries[0].is_symlink():
+        return entries[0]
+    return target_dir
+
+
+def _zip_member_destination(member: ZipInfo, target_dir: Path) -> Path:
+    """Return a ZIP destination that needs no platform-specific sanitization."""
+    name = member.orig_filename
+    parts = name.split("/")
+    kind = stat.S_IFMT(member.external_attr >> 16)
+    destination = target_dir / name
+    if (
+        "\x00" in name
+        or "\\" in name
+        or name.startswith("/")
+        or ".." in parts
+        or any(character in name for character in ':<>|?*"')
+        or any(part not in ("", ".") and part.endswith((".", " ")) for part in parts)
+        or kind not in (0, stat.S_IFREG, stat.S_IFDIR)
+        or not destination.resolve().is_relative_to(target_dir)
+    ):
+        msg = f"unsafe sdist member: {name!r}"
+        raise ValueError(msg)
+
+    return destination

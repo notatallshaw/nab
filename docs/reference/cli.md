@@ -34,7 +34,7 @@ Write to `PATH`, or stdout with `-`. Single-environment defaults are `pylock.tom
 ### `--locked`
 
 Check that the existing lock is current without writing it. Exit `1` if it is missing or out of
-date. Requires single-environment pylock output to a file. See
+date. Requires `specific` mode, pylock output and a file. See
 {ref}`Checking a lock <checking-the-lock-in-ci>`.
 
 ### `--upgrade`
@@ -62,11 +62,6 @@ with matching hashes are kept; local and VCS packages are skipped.
 
 Download into `DIR`. Default: `wheels/`. Multi-target resolves download every target's artifacts.
 
-### `--max-concurrency N`
-
-Allow up to `N` simultaneous HTTP fetches. Default: `8`; minimum: `1`. Also available to `config`.
-Environment variable: `NAB_MAX_CONCURRENCY`.
-
 ## Selection options
 
 These options apply to `lock` and `download`. See [Selecting what to lock](selection.md) for
@@ -75,7 +70,8 @@ conflicts and workspaces.
 ### `--python VERSION`
 
 Resolve for this Python version instead of the running interpreter. Does not change a configured
-platform. Cannot be combined with universal mode or `--project-environment-python`.
+environment's platform. For a matrix, including a singleton, use `--project-matrix-python` instead.
+Cannot be combined with `--project-environment-python`.
 
 ### `--groups NAME...`, `--all-groups`
 
@@ -93,6 +89,11 @@ Find and use workspace members during resolution. Enabled by default.
 
 `lock`, `download`, and `config` accept these settings; `cache` also accepts `--cache-dir`.
 Configuration files and environment variables can supply their defaults.
+
+### `--max-concurrency N`
+
+Allow up to `N` simultaneous HTTP fetches. Default: `8`; minimum: `1`. Environment variable:
+`NAB_MAX_CONCURRENCY`.
 
 ### `--cache-dir PATH`
 
@@ -122,7 +123,7 @@ named key. See {ref}`Configuration <cli-overrides>` for accepted values and exam
 
 - `--project-resolution`: prefer highest, lowest, or lowest-direct versions.
 - `--project-decision-order`: use arrival or stable decision order.
-- `--project-mode`: resolve one environment (`specific`) or a matrix (`universal`).
+- `--project-mode`: set `specific` or `universal` instead of inferring mode from the matrix.
 - `--project-requires-python`: set the supported Python version range.
 - `--project-uploaded-prior-to`: exclude distributions uploaded after a timestamp or relative
   cutoff.

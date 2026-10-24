@@ -14,6 +14,7 @@ from nab.config.ladder import SourceRoots
 from nab_index.cache import (
     CACHE_VERSION_SDIST,
     CACHE_VERSION_SIMPLE,
+    CACHE_VERSION_SIMPLE_PARSED,
     CachePolicy,
     OnDiskCache,
 )
@@ -21,6 +22,7 @@ from nab_index.parsed_listing import encode as _encode_parsed
 
 # Derived so a bucket-version bump does not need every path updated.
 SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
+PARSED_BUCKET = f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}"
 SDIST_BUCKET = f"sdist-{CACHE_VERSION_SDIST}"
 
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
@@ -309,7 +311,7 @@ class TestCacheVerify:
         """
         root = tmp_path / "cache"
         _populate(root)
-        parsed_path = root / "simple-parsed-v0" / "pypi" / "foo.parsed"
+        parsed_path = root / PARSED_BUCKET / "pypi" / "foo.parsed"
         parsed_path.write_bytes(b"not json data")
 
         _run_cache(["verify", "-qq", "--cache-dir", str(root)], status=1)
@@ -331,7 +333,7 @@ class TestCacheVerify:
     ) -> None:
         root = tmp_path / "cache"
         _populate(root)
-        parsed_path = root / "simple-parsed-v0" / "pypi" / "foo.parsed"
+        parsed_path = root / PARSED_BUCKET / "pypi" / "foo.parsed"
         parsed_path.write_bytes(b"not json data")
         _run_cache(["verify", "--cache-dir", str(root)], status=1)
         out = capsys.readouterr().out
@@ -347,7 +349,7 @@ class TestCacheVerify:
     ) -> None:
         root = tmp_path / "cache"
         _populate(root)
-        parsed_path = root / "simple-parsed-v0" / "pypi" / "foo.parsed"
+        parsed_path = root / PARSED_BUCKET / "pypi" / "foo.parsed"
         parsed_path.write_bytes(_OVER_NESTED)
         with refuse_over_nested(_OVER_NESTED):
             _run_cache(["verify", "--cache-dir", str(root)], status=1)

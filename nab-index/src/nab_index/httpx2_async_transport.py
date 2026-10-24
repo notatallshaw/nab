@@ -2,9 +2,24 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "asyncio",
+    "httpx2",
+    "importlib.util",
+    "json",
+    "nab_index.retry",
+    "nab_index.retry_limits",
+    "nab_index.transport",
+    "ssl",
+    "sys",
+    "truststore",
+)
+
 import asyncio
 import json as _json
 import ssl
+import sys
+from importlib.util import find_spec
 from typing import TYPE_CHECKING, Any
 
 import httpx2
@@ -18,6 +33,7 @@ from .transport import (
     HttpError,
     accepts_gzip,
     decode_body,
+    prefetch_settings_for_backend,
     raise_for_error_status,
 )
 
@@ -72,14 +88,36 @@ class Httpx2AsyncTransport:
     """
 
     def __init__(self, *, http2: bool = True) -> None:
-        """Create a transport."""
-        self._client = httpx2.AsyncClient(
-            http2=http2,
-            # Simple API URLs may redirect to mirrors or a canonical project name.
-            follow_redirects=True,
-            max_redirects=MAX_REDIRECTS,
-            verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
-        )
+        """Check optional package availability and defer the client until a request."""
+        required = ("httpx2", "h2") if http2 else ("httpx2",)
+        for module_name in required:
+            if sys.modules.get(module_name) is None and find_spec(module_name) is None:
+                msg = f"No module named {module_name!r}"
+                raise ModuleNotFoundError(msg, name=module_name)
+
+        self.prefetch_settings = prefetch_settings_for_backend("httpx2")
+        self._http2 = http2
+        self._client: httpx2.AsyncClient | None = None
+        self._closed = False
+
+    def _client_for_request(self) -> httpx2.AsyncClient:
+        """Return the reusable client, refusing requests after close."""
+        if self._closed:
+            msg = "HTTP transport is closed"
+            raise RuntimeError(msg)
+
+        client = self._client
+        if client is None:
+            client = httpx2.AsyncClient(
+                http2=self._http2,
+                # Simple API URLs may redirect to mirrors or a canonical project name.
+                follow_redirects=True,
+                max_redirects=MAX_REDIRECTS,
+                verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
+            )
+            self._client = client
+
+        return client
 
     async def get(
         self, url: str, *, headers: dict[str, str] | None = None
@@ -97,10 +135,12 @@ class Httpx2AsyncTransport:
 
         while True:
             try:
-                async with self._client.stream(
+                client = self._client_for_request()
+                async with client.stream(
                     "GET", url, headers=request_headers
                 ) as response:
                     raw = b"".join([part async for part in response.aiter_raw()])
+
                 content = (
                     decode_body(raw, response.headers.get("Content-Encoding"))
                     if decode
@@ -123,6 +163,7 @@ class Httpx2AsyncTransport:
             else:
                 if response.status_code not in RETRY_STATUSES:
                     return _Httpx2Response(response, content)
+
                 failures += 1
                 # Preserve the final status and body when retries run out.
                 if failures > MAX_RETRIES:
@@ -132,5 +173,16 @@ class Httpx2AsyncTransport:
             await asyncio.sleep(delay)
 
     async def aclose(self) -> None:
-        """Close the underlying client."""
-        await self._client.aclose()
+        """Close an existing client without constructing an unused one."""
+        self._closed = True
+        client = self._client
+        if client is not None:
+            await client.aclose()
+
+    def close_without_loop(self) -> bool:
+        """Close synchronously only when no client has been constructed."""
+        if self._client is not None:
+            return False
+
+        self._closed = True
+        return True

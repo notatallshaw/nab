@@ -10,14 +10,37 @@ resolver and the lockfile readers off ``nab cache`` and ``nab config``.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_resolver.diagnostics",
+    "functools",
+    "gc",
+    "importlib.util",
+    "nab._run",
+    "nab.config.model",
+    "nab.output",
+    "nab_project.lockfile",
+    "nab_project.pyproject_files",
+    "nab_project.resolve",
+    "nab_project.workspace",
+    "nab_provider.errors",
+    "nab_provider.provider",
+    "nab_provider.requirements_file",
+    "nab_provider.target",
+    "nab_resolver.errors",
+    "sys",
+    "tomli",
+)
+
 import gc
 import sys
 from contextlib import contextmanager
 from functools import partial
+from importlib.util import find_spec
 from typing import TYPE_CHECKING
 
 import tomli
 
+from nab_index.transport import prefetch_settings_for_backend
 from nab_project.lockfile import MissingHashError, MissingSdistError
 from nab_project.pyproject_files import (
     read_pyproject_groups,
@@ -48,6 +71,7 @@ from nab_provider.target import (
     NonIntervalMarkerError,
     UnevaluableMarkerError,
 )
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 from nab_resolver.errors import ResolutionError
 
 from ._run import require_pyproject_file
@@ -93,7 +117,7 @@ def _read_selection_table_or_exit(
         printer().error(f"{path} is not valid TOML: {e}")
         sys.exit(1)
     except TypeError as e:
-        printer().error(f"in {path}: {e}")
+        printer().error(e, prefix=f"in {path}: ")
         sys.exit(1)
 
 
@@ -152,6 +176,10 @@ def _make_transport(backend: str) -> AsyncHttpTransport:
     make_transport: Callable[[], AsyncHttpTransport]
     if backend in {"httpx", "httpx2"}:
         try:
+            # Distinguish a missing backend from missing HTTP/2 dependencies.
+            if sys.modules.get(backend) is None and find_spec(backend) is None:
+                msg = f"No module named {backend!r}"
+                raise ModuleNotFoundError(msg, name=backend)
             if backend == "httpx":
                 from nab_index.httpx_async_transport import (  # noqa: PLC0415 - optional dependency
                     HttpxAsyncTransport,
@@ -166,7 +194,10 @@ def _make_transport(backend: str) -> AsyncHttpTransport:
                 make_transport = Httpx2AsyncTransport
         except ImportError:
             printer().error(
-                f"{backend} is not installed; run `pip install nab[{backend}]`"
+                DiagnosticMessage(
+                    (f"{backend} is not installed"),
+                    suggestions=(Suggestion(f"run `pip install nab[{backend}]`"),),
+                )
             )
             sys.exit(1)
 
@@ -174,8 +205,10 @@ def _make_transport(backend: str) -> AsyncHttpTransport:
             return make_transport()
         except ImportError:
             printer().error(
-                f"{backend} is installed without HTTP/2 support; "
-                f"run `pip install nab[{backend}]`"
+                DiagnosticMessage(
+                    (f"{backend} is installed without HTTP/2 support"),
+                    suggestions=(Suggestion(f"run `pip install nab[{backend}]`"),),
+                )
             )
             sys.exit(1)
         except Exception as exc:  # noqa: BLE001 - constructor errors have backend-specific types
@@ -194,6 +227,7 @@ class _DeferredUrllib3Transport:
 
     def __init__(self) -> None:
         self._transport: AsyncHttpTransport | None = None
+        self.prefetch_settings = prefetch_settings_for_backend("urllib3")
 
     async def get(
         self, url: str, *, headers: dict[str, str] | None = None
@@ -206,16 +240,18 @@ class _DeferredUrllib3Transport:
         if self._transport is not None:
             await self._transport.aclose()
 
+    def close_without_loop(self) -> bool:
+        """Close synchronously when the default transport was never needed."""
+        return self._transport is None
 
-def _make_resolve_transport(backend: str, *, offline: bool) -> AsyncHttpTransport:
-    """Return the transport for a resolve on ``backend``.
 
-    An offline resolve is served from the cache and asks for no URL, so the
-    urllib3 transport is built only if something does. Optional backends are built
-    up front: missing dependencies exit the CLI, which must happen on the main
-    thread before the resolve starts.
+def _make_resolve_transport(backend: str) -> AsyncHttpTransport:
+    """Defer the default client; initialize optional backends before resolution.
+
+    Missing optional dependencies exit the CLI, so those clients must be built on
+    the main thread. Cached resolutions need no default HTTP client.
     """
-    if offline and backend == "urllib3":
+    if backend == "urllib3":
         return _DeferredUrllib3Transport()
     return _make_transport(backend)
 
@@ -237,10 +273,10 @@ def _load_config(
             cli_overrides=cli_overrides,
         )
     except ConfigError as exc:
-        printer().error(str(exc))
+        printer().error(exc)
         sys.exit(1)
     except WorkspaceDiscoveryError as exc:
-        printer().error(f"workspace discovery error: {exc}")
+        printer().error(exc, prefix="workspace discovery error: ")
         sys.exit(1)
 
 
@@ -253,7 +289,7 @@ def _check_targets_or_exit(config: NabProjectConfig) -> None:
     try:
         plan_targets(config)
     except ConfigError as exc:
-        printer().error(str(exc))
+        printer().error(exc)
         sys.exit(1)
 
 
@@ -345,22 +381,22 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
         UnevaluableMarkerError,
         IntractableMarkerError,
     ) as e:
-        printer().error(f"{failure_prefix}: {e}")
+        printer().error(e, prefix=f"{failure_prefix}: ")
         sys.exit(1)
     except InvalidUploadTimeError as e:
-        printer().error(str(e))
+        printer().error(e)
         sys.exit(1)
     except KeyError:
         printer().error(f"{path} has no [project].dependencies")
         sys.exit(1)
     except InvalidProjectTableError as e:
-        printer().error(f"in {path}: {e}")
+        printer().error(e, prefix=f"in {path}: ")
         sys.exit(1)
     except InvalidProjectRequirementError as e:
-        printer().error(str(e))
+        printer().error(e)
         sys.exit(1)
     except LookupError as e:
-        printer().error(str(e))
+        printer().error(e)
         sys.exit(1)
     except (
         MissingHashError,
@@ -370,23 +406,25 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
         SdistHashMismatchError,
         WheelHashMismatchError,
     ) as e:
-        printer().error(f"{failure_prefix}: {e}")
+        printer().error(e, prefix=f"{failure_prefix}: ")
         sys.exit(1)
     except NotImplementedError as e:
-        printer().error(f"{failure_prefix}: {e}")
+        printer().error(e, prefix=f"{failure_prefix}: ")
         sys.exit(1)
     except ConfigError as e:
-        printer().error(str(e))
+        printer().error(e)
         sys.exit(1)
     except IndexAccessError as e:
-        printer().error(f"{failure_prefix}: {e}")
+        printer().error(e, prefix=f"{failure_prefix}: ")
         sys.exit(1)
 
     if not result.success:
         _report_failures(result)
         sys.exit(1)
+
     if printer().verbosity >= Verbosity.DEBUG:
         _report_dependency_requirements(result)
+
     return result
 
 
@@ -464,13 +502,11 @@ def _error_lines(error: ResolutionError | None) -> list[str]:
 
 
 def _error_text(error: ResolutionError) -> str:
-    """Return the error at the depth the run's verbosity asks for.
-
-    A resolution failure carries two renderings of its ``Diagnostics:``
-    section: one line per package by default, and each package's clauses
-    and ``note:`` at ``-v``.  An error nothing augmented carries only the
-    one.
-    """
-    if printer().verbosity >= Verbosity.VERBOSE and error.verbose_message is not None:
+    """Render a structured error, retaining legacy hosts' verbose report fallback."""
+    if (
+        printer().verbosity >= Verbosity.VERBOSE
+        and error.verbose_message is not None
+        and isinstance(error.args[0], str)
+    ):
         return error.verbose_message
-    return str(error)
+    return printer().format_message(error)

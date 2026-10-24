@@ -9,11 +9,21 @@ from ``[project].version`` or took from the build backend.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_resolver.diagnostics",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.archive",
+    "nab_provider.errors",
+    "nab_provider.records",
+    "nab_provider.vcs_admission",
+)
+
 from typing import TYPE_CHECKING
 
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.archive import ArchiveRequest
 from nab_provider.records import SdistFile
+from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from ..errors import SourceNameMismatchError
 from ..vcs_admission import VcsPolicy, admit_vcs_url
@@ -102,12 +112,18 @@ def index_vcs_sources(
         return {}
 
     if provider.vcs_config.policy is VcsPolicy.BLOCK:
-        msg = (
-            "vcs_sources require VcsPolicy.ALLOW; current policy is"
-            f" {provider.vcs_config.policy.value}.  Set vcs_config to"
-            " a permissive VcsConfig before declaring sources."
+        report = DiagnosticMessage(
+            (
+                "vcs_sources require VcsPolicy.ALLOW; current policy is "
+                f"{provider.vcs_config.policy.value}"
+            ),
+            suggestions=(
+                Suggestion(
+                    "set vcs_config to a permissive VcsConfig before declaring sources."
+                ),
+            ),
         )
-        raise ValueError(msg)
+        raise ValueError(report)
 
     out: dict[str, VcsSource] = {}
     for src in sources:

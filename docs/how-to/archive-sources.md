@@ -25,8 +25,7 @@ nab lock pyproject.toml
 python -m pip install -r pylock.toml
 ```
 
-The second command needs pip 26.1 or newer, whose `pylock.toml` support is experimental. See
-[Use a lock](use-the-lock.md) for its selection limits and a hashed-requirements alternative.
+Installation needs pip 26.1 or newer. See [Use a lock](use-the-lock.md) for installation options.
 
 The lock records the URL and digest. A mismatch ends the resolve; nab does not fall back to an index
 because the declared archive is the package's only candidate.
@@ -48,4 +47,4 @@ nab reads static `[project]` metadata at every build-policy level. Missing or dy
 
 Under `never` or `build-local`, that dynamic source ends the resolve because no index candidate can
 replace it. See [Build policy](../reference/build-policy.md) for the metadata boundary and
-[Configuration](../reference/configuration.md) for cache and `file://` behavior.
+[Dependency sources](../reference/dependency-sources.md) for cache and `file://` behavior.

@@ -25,7 +25,6 @@ require agreement:
 
 from __future__ import annotations
 
-from dataclasses import replace
 from types import ModuleType
 
 import pytest
@@ -46,6 +45,7 @@ from nab_provider.tags import (
     _platform_tags_for_spec,
     wheel_tag_set,
 )
+from nab_provider.value import replace
 
 from .strategies import PROPERTY_SETTINGS
 

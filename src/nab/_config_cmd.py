@@ -7,6 +7,15 @@ rendering; these commands discover the layers and print the result.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab._run",
+    "nab.config.ladder",
+    "nab.config.values",
+    "nab.flagtypes",
+    "nab.output",
+    "sys",
+)
+
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -54,6 +63,8 @@ def config_command(  # noqa: PLR0913 - one keyword per flag is the public surfac
     project_requires_python: str | None = None,
     project_uploaded_prior_to: str | None = None,
     project_dist_policy: DistPolicyFlag | None = None,
+    project_assume_universal_deps: bool | None = None,
+    project_allow_zip_sdists: bool | None = None,
     project_build_policy: BuildPolicyFlag | None = None,
     project_build_requires_depth: int | None = None,
     project_decision_order: DecisionOrderFlag | None = None,
@@ -100,6 +111,8 @@ def config_command(  # noqa: PLR0913 - one keyword per flag is the public surfac
         cli_requires_python=project_requires_python,
         cli_uploaded_prior_to=project_uploaded_prior_to,
         cli_dist_policy=project_dist_policy,
+        cli_assume_universal_deps=project_assume_universal_deps,
+        cli_allow_zip_sdists=project_allow_zip_sdists,
         cli_build_policy=project_build_policy,
         cli_build_requires_depth=project_build_requires_depth,
         cli_decision_order=project_decision_order,

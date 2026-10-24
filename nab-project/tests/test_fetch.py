@@ -14,10 +14,12 @@ import threading
 import time
 import zipfile
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, NoReturn
 
 import httpx
+import httpx2
 import pytest
 import respx
 
@@ -30,12 +32,14 @@ from nab_index.client import (
     SdistHashMismatchError,
     WheelFile,
 )
+from nab_index.httpx2_async_transport import Httpx2AsyncTransport
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.lazy_wheel import RangeOutcome
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
 from nab_index.parsed_listing import encode as encode_parsed
 from nab_index.transport import AsyncHttpTransport, HttpError, HttpResponse
+from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_project.fetch import (
     _WARM_SYNC_MIN_BLOB_BYTES,
     FetchCoordinator,
@@ -53,7 +57,7 @@ from nab_provider.metadata import WheelMetadata
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import BuildPolicy
 from nab_provider.serialization import SimpleSerialization
-from nab_provider.store import sdist_artifact_key
+from nab_provider.store import metadata_pending_key, sdist_artifact_key
 from nab_provider.testing import make_wheel, pkg_override
 
 
@@ -2227,7 +2231,7 @@ class TestFetchCoordinatorCache:
             offline=True,
         ) as coord:
             event = coord.request_listing("testpkg")
-            event.wait(timeout=5)
+            assert event.wait()
             listing = coord.index.get_listing("testpkg")
             assert listing is not None
             assert len(listing) == 2
@@ -2277,14 +2281,14 @@ class TestFetchCoordinatorCache:
         win_hash = ("sha256", hashlib.sha256(win_body).hexdigest())
 
         with _coord(cache_dir=tmp_path) as coord:
-            coord.request_metadata("foo", "1.0", linux_url, linux_hash).wait(timeout=5)
+            assert coord.request_metadata("foo", "1.0", linux_url, linux_hash).wait()
             linux_text = coord.index.get_metadata("foo", "1.0", linux_url)
             assert linux_text == linux_body.decode()
 
         # A later run over the same cache dir, in an environment whose
         # compatible wheel is the win_amd64 one.
         with _coord(cache_dir=tmp_path) as coord:
-            coord.request_metadata("foo", "1.0", win_url, win_hash).wait(timeout=5)
+            assert coord.request_metadata("foo", "1.0", win_url, win_hash).wait()
             assert coord.index.get_metadata_error("foo", "1.0", win_url) is None
             assert coord.index.get_metadata("foo", "1.0", win_url) == win_body.decode()
 
@@ -2485,7 +2489,7 @@ class TestMultiIndexCoordinator:
             ) as coord,
         ):
             event = coord.request_listing("torch")
-            event.wait(timeout=5)
+            assert event.wait()
             listing = coord.index.get_listing("torch")
             assert listing is not None
             assert len(listing) == 1
@@ -2587,7 +2591,7 @@ class TestMultiIndexCoordinator:
             ) as coord,
         ):
             for pkg in ("numpy", "torch"):
-                coord.request_listing(pkg).wait(timeout=5)
+                assert coord.request_listing(pkg).wait()
             assert coord.index.get_listing_index("numpy") == "pypi"
             assert coord.index.get_listing_index("torch") == "torch-cpu"
 
@@ -2698,11 +2702,7 @@ class TestMultiIndexCoordinator:
             assert coord.index.get_listing_index("foo") == "local"
 
     def test_local_zip_sdist_reaches_the_store(self, tmp_path: Path) -> None:
-        """A ``.zip`` sdist leaves no record, so its release rides beside them.
-
-        The wheel keeps the listing non-empty, which is the case the
-        package-level unreadable-format flag cannot report.
-        """
+        """A ZIP sdist reaches the policy layer alongside the wheel."""
         wheelhouse = tmp_path / "wheelhouse"
         wheelhouse.mkdir()
         (wheelhouse / "foo-1.0-py3-none-any.whl").write_bytes(b"")
@@ -2712,9 +2712,33 @@ class TestMultiIndexCoordinator:
             coord.request_listing("foo").wait(timeout=5)
             listing = coord.index.get_listing("foo")
             assert listing is not None
-            assert [f.filename for f in listing] == ["foo-1.0-py3-none-any.whl"]
+            assert {f.filename for f in listing} == {
+                "foo-1.0-py3-none-any.whl",
+                "foo-1.0.zip",
+            }
             assert not coord.index.is_unreadable_only_listing("foo")
             assert coord.index.zip_sdist_versions("foo") == frozenset({"1.0"})
+
+    @respx.mock
+    def test_zip_with_an_unsupported_url_is_stored_as_unreachable(self) -> None:
+        respx.get("https://pypi.org/simple/foo/").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "files": [
+                        {
+                            "filename": "foo-1.0.zip",
+                            "url": "https://[invalid/foo-1.0.zip",
+                        }
+                    ]
+                },
+            )
+        )
+        with _coord() as coord:
+            coord.request_listing("foo").wait(timeout=5)
+            assert coord.index.get_listing("foo") == []
+            assert coord.index.is_unreachable_only_listing("foo")
+            assert not coord.index.is_unreadable_only_listing("foo")
 
     def test_local_index(self, tmp_path: Path) -> None:
         """A file:// index uses LocalIndexClient."""
@@ -4409,3 +4433,534 @@ class TestSdistArchiveHolding:
 
             for minor in (1, 2, 3):
                 assert hold.take("pkg", f"1.{minor}") == b"archive bytes"
+
+
+class TestSyncMetadata:
+    """An owned disk cache may fulfill the pending before the async queue."""
+
+    @pytest.mark.parametrize("batch", [False, True])
+    @pytest.mark.parametrize("offline", [False, True])
+    def test_warm_hit_sets_its_url_pending(
+        self, tmp_path: Path, batch: bool, offline: bool
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        url = "https://f.com/pkg-1.0.whl.metadata"
+        cache.put_metadata("pkg", url, "cached text")
+        coord = _coord(cache_backend=cache, offline=offline)
+        if batch:
+            event = coord.request_metadata_batch([("pkg", "1.0", url, None)])[0][2]
+        else:
+            event = coord.request_metadata("pkg", "1.0", url)
+
+        assert event.is_set()
+        assert coord.index.get_metadata("pkg", "1.0", url) == "cached text"
+        assert coord.index.get_metadata("pkg", "1.0", url + "other") is None
+
+    @pytest.mark.parametrize("batch", [False, True])
+    def test_existing_pending_joins_without_reading(
+        self, tmp_path: Path, batch: bool
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        url = "https://f.com/pkg-1.0.whl.metadata"
+        cache.put_metadata("pkg", url, "cached text")
+        coord = _coord(cache_backend=cache)
+        pending, existed = coord.index.get_or_create_pending(
+            metadata_pending_key("pkg", "1.0", url)
+        )
+
+        assert not existed
+
+        if batch:
+            event = coord.request_metadata_batch([("pkg", "1.0", url, None)])[0][2]
+        else:
+            event = coord.request_metadata("pkg", "1.0", url)
+
+        assert event is pending
+        assert not pending.is_set()
+        assert coord.index.get_metadata("pkg", "1.0", url) is None
+
+    def test_conflicting_backend_does_not_serve_inline(self, tmp_path: Path) -> None:
+        cache = OnDiskCache(tmp_path / "different", "https://pypi.org/simple/")
+        url = "https://f.com/pkg-1.0.whl.metadata"
+        cache.put_metadata("pkg", url, "wrong cache")
+        coord = _coord(cache_backend=cache, cache_dir=tmp_path / "actual")
+        event = coord.request_metadata("pkg", "1.0", url)
+
+        assert event.is_set()
+        assert coord.index.get_metadata("pkg", "1.0", url) is None
+
+    @pytest.mark.parametrize("batch", [False, True])
+    @respx.mock
+    def test_custom_cache_reads_stay_on_fetcher(
+        self, tmp_path: Path, batch: bool
+    ) -> None:
+        reads: list[str] = []
+
+        class ThreadCache(OnDiskCache):
+            def get_metadata(self, package: str, metadata_url: str) -> str | None:
+                reads.append(threading.current_thread().name)
+                return super().get_metadata(package, metadata_url)
+
+        cache = ThreadCache(tmp_path, "https://pypi.org/simple/")
+        url = "https://f.com/pkg.whl.metadata"
+        cache.put_metadata("pkg", url, "cached text")
+        with _coord(cache_backend=cache) as coord:
+            if batch:
+                event = coord.request_metadata_batch([("pkg", "1.0", url, None)])[0][2]
+            else:
+                event = coord.request_metadata("pkg", "1.0", url)
+            assert event.wait(5)
+            assert coord.index.get_metadata("pkg", "1.0", url) == "cached text"
+
+        assert reads == ["nab-fetcher"]
+
+    @respx.mock
+    def test_mixed_batch_submits_only_misses(self, tmp_path: Path) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        warm_url = "https://f.com/warm.whl.metadata"
+        cold_url = "https://f.com/cold.whl.metadata"
+        cache.put_metadata("pkg", warm_url, "warm text")
+        route = respx.get(cold_url).respond(200, text="cold text")
+        with _coord(cache_backend=cache) as coord:
+            calls = _spy_submit(coord)
+            results = coord.request_metadata_batch(
+                [
+                    ("pkg", "1.0", warm_url, None),
+                    ("pkg", "1.0", cold_url, None),
+                    ("pkg", "1.0", cold_url, None),
+                ]
+            )
+            assert results[0][2].is_set()
+            assert results[1][2] is results[2][2]
+            assert results[1][2].wait(5)
+            assert coord.index.get_metadata("pkg", "1.0", warm_url) == "warm text"
+            assert coord.index.get_metadata("pkg", "1.0", cold_url) == "cold text"
+            assert calls == [[FetchRequest(FetchKind.METADATA, "pkg", "1.0", cold_url)]]
+            assert route.call_count == 1
+
+    @pytest.mark.parametrize("batch", [False, True])
+    @respx.mock
+    def test_corrupt_entry_falls_through_to_fetch(
+        self, tmp_path: Path, batch: bool
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        url = "https://f.com/pkg.whl.metadata"
+        cache.put_metadata("pkg", url, "old text")
+        Path(cache._metadata_file("pkg", url)).write_bytes(b"\xff")
+        route = respx.get(url).respond(200, text="fresh text")
+        with _coord(cache_backend=cache) as coord:
+            if batch:
+                event = coord.request_metadata_batch([("pkg", "1.0", url, None)])[0][2]
+            else:
+                event = coord.request_metadata("pkg", "1.0", url)
+            assert event.wait(5)
+            assert coord.index.get_metadata("pkg", "1.0", url) == "fresh text"
+
+        assert route.call_count == 1
+        assert cache.get_metadata("pkg", url) == "fresh text"
+
+    @pytest.mark.parametrize("batch", [False, True])
+    @respx.mock
+    def test_offline_miss_records_absence(self, tmp_path: Path, batch: bool) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        url = "https://f.com/pkg.whl.metadata"
+        with _coord(cache_backend=cache, offline=True) as coord:
+            if batch:
+                event = coord.request_metadata_batch([("pkg", "1.0", url, None)])[0][2]
+            else:
+                event = coord.request_metadata("pkg", "1.0", url)
+            assert event.wait(5)
+            assert coord.index.get_metadata("pkg", "1.0", url) is None
+            assert coord.index.is_offline_metadata_miss("pkg", "1.0", url)
+            assert coord.index.get_metadata_error("pkg", "1.0", url) is None
+
+    @pytest.mark.parametrize("batch", [False, True])
+    def test_routed_request_does_not_probe_default_index(
+        self, tmp_path: Path, batch: bool
+    ) -> None:
+        first = IndexConfig("first", "https://first.example/simple/")
+        second = IndexConfig("second", "https://second.example/simple/")
+        cache = OnDiskCache(tmp_path, first.url)
+        url = "https://f.com/pkg.whl.metadata"
+        cache.put_metadata("pkg", url, "wrong index")
+        coord = _coord(
+            cache_dir=tmp_path,
+            indexes=[first, second],
+            index_routes=[IndexRoute("pkg", "second")],
+        )
+        if batch:
+            event = coord.request_metadata_batch([("pkg", "1.0", url, None)])[0][2]
+        else:
+            event = coord.request_metadata("pkg", "1.0", url)
+
+        assert event.is_set()
+        assert coord.index.get_metadata("pkg", "1.0", url) is None
+
+
+@pytest.fixture
+def cache_first_network(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Attach real HTTPX2 clients to a recorded Simple API response boundary."""
+    client_type = httpx2.AsyncClient
+    requests: list[str] = []
+
+    def response(request: httpx2.Request) -> httpx2.Response:
+        requests.append(str(request.url))
+        if request.url.path.endswith("/missing/"):
+            status, body, content_type = 404, b"", "text/plain"
+        elif request.url.path.endswith(".metadata"):
+            status = 200
+            body = b"Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\n\n"
+            content_type = "text/plain"
+        else:
+            status = 200
+            body = json.dumps(LISTING_JSON).encode()
+            content_type = "application/vnd.pypi.simple.v1+json"
+        return httpx2.Response(
+            status,
+            stream=httpx2.ByteStream(body),
+            headers={"Cache-Control": "max-age=3600", "Content-Type": content_type},
+        )
+
+    def create(**options: Any) -> httpx2.AsyncClient:
+        return client_type(transport=httpx2.MockTransport(response), **options)
+
+    monkeypatch.setattr(httpx2, "AsyncClient", create)
+    return requests
+
+
+@pytest.fixture
+def fetcher_starts(monkeypatch: pytest.MonkeyPatch) -> list[threading.Thread]:
+    """Count real fetcher-thread starts while preserving thread execution."""
+    original = threading.Thread.start
+    started: list[threading.Thread] = []
+
+    def start(thread: threading.Thread) -> None:
+        if thread.name == "nab-fetcher":
+            started.append(thread)
+        original(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    return started
+
+
+class TestCacheFirst:
+    @pytest.mark.parametrize(("fresh", "offline"), [(True, False), (False, True)])
+    def test_cached_speculation_needs_no_worker(
+        self,
+        tmp_path: Path,
+        cache_first_network: list[str],
+        fetcher_starts: list[threading.Thread],
+        *,
+        fresh: bool,
+        offline: bool,
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        files = [_sync_sdist()]
+        _warm_parsed(cache, "pkg", files, fresh=fresh)
+        transport = Httpx2AsyncTransport()
+        coord = FetchCoordinator(
+            transport, cache_backend=cache, offline=offline, start_on_demand=True
+        )
+        with coord:
+            assert coord.request_listing("pkg", speculative=True).is_set()
+            assert coord.index.get_listing("pkg") == files
+            assert coord.warm_sync_stats.listing_hits == 1
+
+        assert not fetcher_starts
+        assert not cache_first_network
+
+        with pytest.raises(HttpError):
+            asyncio.run(transport.get("https://example.com/closed"))
+
+        assert not cache_first_network
+
+    def test_cached_metadata_and_tail_remain_inline(
+        self,
+        tmp_path: Path,
+        cache_first_network: list[str],
+        fetcher_starts: list[threading.Thread],
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        wheel = _sync_wheel()
+        _warm_parsed(cache, "pkg", [wheel])
+        url = wheel.metadata_url
+        assert url is not None
+        cache.put_metadata("pkg", url, "cached metadata")
+        fetched: list[None] = []
+        coord = FetchCoordinator(
+            Httpx2AsyncTransport(),
+            cache_backend=cache,
+            on_fetch=lambda: fetched.append(None),
+            start_on_demand=True,
+        )
+        with coord:
+            assert coord.request_listing("pkg", speculative=True).is_set()
+            assert coord.request_metadata("pkg", "1.0", url).is_set()
+            assert coord.index.get_metadata("pkg", "1.0", url) == "cached metadata"
+
+        assert len(fetched) == 1
+        assert not fetcher_starts
+        assert not cache_first_network
+
+    @pytest.mark.parametrize("condition", ["missing", "digest", "garbage", "stale"])
+    def test_unusable_cache_starts_the_original_worker(
+        self,
+        tmp_path: Path,
+        cache_first_network: list[str],
+        fetcher_starts: list[threading.Thread],
+        condition: str,
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        _warm_parsed(
+            cache,
+            "pkg",
+            [_sync_sdist()],
+            fresh=condition != "stale",
+            blob=condition != "missing",
+            digest_override="foreign" if condition == "digest" else None,
+        )
+        if condition == "garbage":
+            cache.put_simple_parsed("pkg", b"broken parsed snapshot")
+        coord = FetchCoordinator(
+            Httpx2AsyncTransport(), cache_backend=cache, start_on_demand=True
+        )
+        with coord:
+            assert coord.request_listing("pkg", speculative=True).wait(5)
+            assert coord.index.get_listing("pkg") is not None
+
+        assert len(fetcher_starts) == 1
+        assert bool(cache_first_network) == (condition == "stale")
+
+    def test_later_miss_preserves_earlier_warm_counters(
+        self,
+        tmp_path: Path,
+        cache_first_network: list[str],
+        fetcher_starts: list[threading.Thread],
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        _warm_parsed(cache, "pkg", [_sync_sdist()])
+        coord = FetchCoordinator(
+            Httpx2AsyncTransport(), cache_backend=cache, start_on_demand=True
+        )
+        with coord:
+            assert coord.request_listing("pkg").is_set()
+            assert not fetcher_starts
+            assert coord.request_listing("missing").wait(5)
+            assert coord.warm_sync_stats.listing_hits == 1
+
+        assert len(fetcher_starts) == 1
+        assert cache_first_network
+
+    def test_explicit_start_keeps_its_readiness_contract(
+        self, tmp_path: Path, fetcher_starts: list[threading.Thread]
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        coord = FetchCoordinator(
+            Httpx2AsyncTransport(), cache_backend=cache, start_on_demand=True
+        )
+        with coord:
+            coord.start()
+            coord.start()
+            assert coord._loop is not None
+            assert coord._queue_ready.is_set()
+
+        assert len(fetcher_starts) == 1
+
+    def test_normal_context_still_starts_eagerly(
+        self, tmp_path: Path, fetcher_starts: list[threading.Thread]
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        coord = FetchCoordinator(Httpx2AsyncTransport(), cache_backend=cache)
+        with coord:
+            assert len(fetcher_starts) == 1
+            assert coord._loop is not None
+
+        assert coord._thread is None
+
+    @pytest.mark.parametrize(
+        "make_transport",
+        [HttpxAsyncTransport, Urllib3AsyncTransport, _RaiseOnGetTransport],
+    )
+    def test_other_transports_retain_the_original_lifecycle(
+        self,
+        tmp_path: Path,
+        fetcher_starts: list[threading.Thread],
+        make_transport: Callable[[], AsyncHttpTransport],
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        coord = FetchCoordinator(
+            make_transport(), cache_backend=cache, start_on_demand=True
+        )
+        with coord:
+            assert len(fetcher_starts) == 1
+            assert coord._loop is not None
+
+    def test_preexisting_client_closes_on_a_worker(
+        self,
+        tmp_path: Path,
+        cache_first_network: list[str],
+        fetcher_starts: list[threading.Thread],
+    ) -> None:
+        transport = Httpx2AsyncTransport()
+        asyncio.run(transport.get("https://example.com/simple/pkg/"))
+
+        assert len(cache_first_network) == 1
+
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        coord = FetchCoordinator(transport, cache_backend=cache, start_on_demand=True)
+        with coord:
+            assert not fetcher_starts
+
+        assert len(fetcher_starts) == 1
+
+        with pytest.raises(HttpError):
+            asyncio.run(transport.get("https://example.com/closed"))
+
+    def test_start_failure_releases_the_pending(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fail(_thread: threading.Thread) -> NoReturn:
+            msg = "thread creation failed"
+            raise RuntimeError(msg)
+
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        coord = FetchCoordinator(
+            Httpx2AsyncTransport(), cache_backend=cache, start_on_demand=True
+        )
+        monkeypatch.setattr(threading.Thread, "start", fail)
+        with coord, pytest.raises(RuntimeError):
+            coord.request_listing("missing")
+        event, existed = coord.index.get_or_create_pending("listing:missing")
+
+        assert existed
+        assert event.is_set()
+        assert coord.index.get_listing_error("missing") is not None
+        assert coord._thread is None
+        assert not coord._started
+
+    def test_existing_pending_is_joined_without_cache_publication(
+        self,
+        tmp_path: Path,
+        fetcher_starts: list[threading.Thread],
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        files = [_sync_sdist()]
+        _warm_parsed(cache, "pkg", files)
+        coord = FetchCoordinator(
+            Httpx2AsyncTransport(), cache_backend=cache, start_on_demand=True
+        )
+        pending, _ = coord.index.get_or_create_pending("listing:pkg")
+        with coord:
+            assert coord.request_listing("pkg", speculative=True) is pending
+            assert not pending.is_set()
+            assert coord.warm_sync_stats.listing_hits == 0
+            coord.index.store_listing("pkg", files)
+            assert pending.is_set()
+
+        assert not fetcher_starts
+
+    def test_concurrent_misses_share_one_ready_worker(
+        self, tmp_path: Path, fetcher_starts: list[threading.Thread]
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        coord = FetchCoordinator(
+            Httpx2AsyncTransport(),
+            cache_backend=cache,
+            offline=True,
+            start_on_demand=True,
+        )
+        barrier = threading.Barrier(4)
+
+        def request(package: str) -> threading.Event:
+            barrier.wait(timeout=5)
+            return coord.request_listing(package)
+
+        packages = [f"missing{i}" for i in range(4)]
+        with coord, ThreadPoolExecutor(max_workers=4) as executor:
+            events = list(executor.map(request, packages))
+            assert all(event.wait(5) for event in events)
+            for package in packages:
+                assert coord.index.get_listing(package) == []
+                assert coord.index.is_offline_listing_miss(package)
+
+        assert len(fetcher_starts) == 1
+
+    def test_an_existing_worker_uses_the_ordinary_context(
+        self, tmp_path: Path, fetcher_starts: list[threading.Thread]
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        coord = FetchCoordinator(
+            Httpx2AsyncTransport(), cache_backend=cache, start_on_demand=True
+        )
+        coord.start()
+        with coord:
+            assert coord._queue_ready.is_set()
+            assert len(fetcher_starts) == 1
+
+        assert coord._thread is None
+
+    def test_nested_scope_retains_eager_context_closure(
+        self, tmp_path: Path, fetcher_starts: list[threading.Thread]
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        coord = FetchCoordinator(
+            Httpx2AsyncTransport(), cache_backend=cache, start_on_demand=True
+        )
+        with coord:
+            with coord:
+                assert len(fetcher_starts) == 1
+            assert coord._thread is None
+            assert coord.request_listing("missing").is_set()
+            assert isinstance(coord.index.get_listing_error("missing"), RuntimeError)
+
+        assert len(fetcher_starts) == 1
+
+    def test_a_null_cache_keeps_eager_startup(
+        self, fetcher_starts: list[threading.Thread]
+    ) -> None:
+        coord = FetchCoordinator(
+            Httpx2AsyncTransport(), cache_backend=NullCache(), start_on_demand=True
+        )
+        with coord:
+            assert len(fetcher_starts) == 1
+
+        assert coord._thread is None
+
+    def test_worker_exit_signals_its_own_startup_event(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        coord = FetchCoordinator(Httpx2AsyncTransport(), start_on_demand=True)
+        ready = coord._queue_ready
+        later = threading.Event()
+
+        def failed_run(coroutine: Any) -> NoReturn:
+            coroutine.close()
+            coord._queue_ready = later
+            msg = "event loop creation failed"
+            raise RuntimeError(msg)
+
+        monkeypatch.setattr(asyncio, "run", failed_run)
+        coord._run_loop()
+
+        assert ready.is_set()
+        assert not later.is_set()
+        assert coord._crashed
+
+    def test_completed_join_does_not_clear_a_newer_worker(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        coord = FetchCoordinator(Httpx2AsyncTransport(), start_on_demand=True)
+        previous = threading.Thread()
+        current = threading.Thread()
+        coord._thread = previous
+        coord._started = True
+
+        def joined(_thread: threading.Thread, timeout: float | None = None) -> None:
+            assert timeout is not None
+            coord._thread = current
+
+        monkeypatch.setattr(threading.Thread, "join", joined)
+        coord.shutdown()
+
+        assert coord._thread is current
+        assert coord._started

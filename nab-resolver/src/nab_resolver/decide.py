@@ -8,6 +8,11 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#decision-m
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_resolver.incompat_index",
+    "nab_resolver.types",
+)
+
 from typing import TYPE_CHECKING, Any
 
 from .incompat_index import add_incompatibility

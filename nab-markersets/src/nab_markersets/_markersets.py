@@ -8,6 +8,15 @@ atom is constant and evaluates the tree over their bounded product.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "itertools",
+    "math",
+    "nab_markersets._compat",
+    "nab_markersets._packaging",
+    "nab_markersets.errors",
+    "nab_markersets.python_versions",
+)
+
 import re
 import threading
 import weakref

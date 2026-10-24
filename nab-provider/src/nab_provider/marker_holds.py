@@ -9,6 +9,15 @@ holds the import closure to a named list this module is on.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab_markersets.conversions",
+    "nab_markersets.errors",
+    "nab_markersets.markersets",
+    "nab_provider._vendor.packaging.markers",
+    "nab_provider.conflict_kind",
+    "nab_provider.environment",
+)
+
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 

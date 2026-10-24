@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="350" viewBox="0 0 960 350" role="img" aria-labelledby="title desc">
+<title id="title">Universal lock generation with cold and warm caches</title>
+<desc id="desc">cold cache, Local desktop · 3.15: uv 0.23 s, nab 0.57 s, Poetry 0.98 s, PDM 1.2 s; warm cache, Local desktop · 3.15: uv 11 ms, nab 0.17 s, Poetry 0.72 s, PDM 0.81 s. Complete native lock commands, including startup. Resolver cores: uv Rust; nab, Poetry and PDM Python. Same linear scale; shorter is faster.</desc>
+<g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+<text x="24" y="28" fill="#1f2328" font-size="16" font-weight="600">Universal lock generation</text>
+<text x="122" y="65" fill="#1f2328" font-size="15" font-weight="600">Cold cache</text>
+<text x="122" y="84" fill="#59636e" font-size="12">Local desktop · 3.15</text>
+<path d="M122.000 96V287" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="122.000" y="309" fill="#59636e" font-size="12" text-anchor="middle">0 s</text>
+<path d="M172.000 96V287" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="172.000" y="309" fill="#59636e" font-size="12" text-anchor="middle">0.2 s</text>
+<path d="M222.000 96V287" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="222.000" y="309" fill="#59636e" font-size="12" text-anchor="middle">0.4 s</text>
+<path d="M272.000 96V287" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="272.000" y="309" fill="#59636e" font-size="12" text-anchor="middle">0.6 s</text>
+<path d="M322.000 96V287" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="322.000" y="309" fill="#59636e" font-size="12" text-anchor="middle">0.8 s</text>
+<path d="M372.000 96V287" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="372.000" y="309" fill="#59636e" font-size="12" text-anchor="middle">1 s</text>
+<path d="M422.000 96V287" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="422.000" y="309" fill="#59636e" font-size="12" text-anchor="middle">1.2 s</text>
+<rect id="cold-uv" x="122" y="105" width="57.275" height="25" rx="4" fill="#2563eb"/>
+<text x="189.275" y="123" fill="#1f2328" font-size="15">0.23 s</text>
+<rect id="cold-nab" x="122" y="152" width="142.594" height="25" rx="4" fill="#059669"/>
+<text x="274.594" y="170" fill="#1f2328" font-size="15">0.57 s</text>
+<rect id="cold-poetry" x="122" y="199" width="246.161" height="25" rx="4" fill="#2563eb"/>
+<text x="378.161" y="217" fill="#1f2328" font-size="15">0.98 s</text>
+<rect id="cold-pdm" x="122" y="246" width="289.809" height="25" rx="4" fill="#2563eb"/>
+<text x="421.809" y="264" fill="#1f2328" font-size="15">1.2 s</text>
+<text x="570" y="65" fill="#1f2328" font-size="15" font-weight="600">Warm cache</text>
+<text x="570" y="84" fill="#59636e" font-size="12">Local desktop · 3.15</text>
+<path d="M570.000 96V287" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="570.000" y="309" fill="#59636e" font-size="12" text-anchor="middle">0 s</text>
+<path d="M620.000 96V287" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="620.000" y="309" fill="#59636e" font-size="12" text-anchor="middle">0.2 s</text>
+<path d="M670.000 96V287" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="670.000" y="309" fill="#59636e" font-size="12" text-anchor="middle">0.4 s</text>
+<path d="M720.000 96V287" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="720.000" y="309" fill="#59636e" font-size="12" text-anchor="middle">0.6 s</text>
+<path d="M770.000 96V287" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="770.000" y="309" fill="#59636e" font-size="12" text-anchor="middle">0.8 s</text>
+<path d="M820.000 96V287" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="820.000" y="309" fill="#59636e" font-size="12" text-anchor="middle">1 s</text>
+<path d="M870.000 96V287" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="870.000" y="309" fill="#59636e" font-size="12" text-anchor="middle">1.2 s</text>
+<rect id="warm-uv" x="570" y="105" width="2.730" height="25" rx="4" fill="#2563eb"/>
+<text x="582.730" y="123" fill="#1f2328" font-size="15">11 ms</text>
+<rect id="warm-nab" x="570" y="152" width="43.541" height="25" rx="4" fill="#059669"/>
+<text x="623.541" y="170" fill="#1f2328" font-size="15">0.17 s</text>
+<rect id="warm-poetry" x="570" y="199" width="179.673" height="25" rx="4" fill="#2563eb"/>
+<text x="759.673" y="217" fill="#1f2328" font-size="15">0.72 s</text>
+<rect id="warm-pdm" x="570" y="246" width="203.070" height="25" rx="4" fill="#2563eb"/>
+<text x="783.070" y="264" fill="#1f2328" font-size="15">0.81 s</text>
+<text x="24" y="116" fill="#1f2328" font-size="16" font-weight="400">uv</text>
+<text x="24" y="132" fill="#59636e" font-size="11">Rust core</text>
+<text x="24" y="163" fill="#059669" font-size="16" font-weight="600">nab</text>
+<text x="24" y="179" fill="#59636e" font-size="11">Python core</text>
+<text x="24" y="210" fill="#1f2328" font-size="16" font-weight="400">Poetry</text>
+<text x="24" y="226" fill="#59636e" font-size="11">Python core</text>
+<text x="24" y="257" fill="#1f2328" font-size="16" font-weight="400">PDM</text>
+<text x="24" y="273" fill="#59636e" font-size="11">Python core</text>
+<text x="24" y="340" fill="#59636e" font-size="13">Fresh native lockfiles</text>
+<text x="930" y="340" text-anchor="end" fill="#59636e" font-size="13">lower is faster</text>
+</g>
+</svg>

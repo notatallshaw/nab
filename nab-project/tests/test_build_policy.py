@@ -1,7 +1,7 @@
 """Build policy for host and declared-platform targets.
 
-A declared platform or implementation forbids host builds. Changing only
-Python warns instead.
+A declared platform or implementation needs an explicit universal dependency
+assertion for host builds. Changing only Python warns instead.
 """
 
 from __future__ import annotations
@@ -133,4 +133,79 @@ def test_an_override_with_no_declared_surface_names_its_requirement() -> None:
                 pkg_override("demo>=2", build_policy=BuildPolicy.BUILD_LOCAL),
             ),
             index_overrides={},
+        )
+
+
+@pytest.mark.parametrize(
+    ("global_assumption", "package_assumption", "index_assumption"),
+    [
+        pytest.param(True, None, None, id="global"),
+        pytest.param(False, True, None, id="package"),
+        pytest.param(False, None, True, id="index"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("build_policy_set", "expected"),
+    [
+        pytest.param(False, BuildPolicy.NEVER, id="default-never"),
+        pytest.param(True, BuildPolicy.BUILD_REMOTE, id="explicit-build"),
+    ],
+)
+def test_a_universal_assertion_preserves_only_an_explicit_global_build_policy(
+    *,
+    global_assumption: bool,
+    package_assumption: bool | None,
+    index_assumption: bool | None,
+    build_policy_set: bool,
+    expected: BuildPolicy,
+) -> None:
+    permitted = enforce_build_policy_for_targets(
+        targets=DECLARED,
+        build_policy=BuildPolicy.BUILD_REMOTE,
+        build_policy_set=build_policy_set,
+        package_overrides=(
+            pkg_override("demo", assume_universal_deps=package_assumption),
+        ),
+        index_overrides={
+            "private": IndexOverride(assume_universal_deps=index_assumption)
+        },
+        assume_universal_deps=global_assumption,
+    )
+
+    assert permitted is expected
+
+
+@pytest.mark.parametrize("scope", ["package", "index"])
+def test_a_scoped_build_policy_can_use_a_universal_assertion(scope: str) -> None:
+    package_overrides = (
+        (pkg_override("demo", build_policy=BuildPolicy.BUILD_REMOTE),)
+        if scope == "package"
+        else ()
+    )
+    index_overrides = (
+        {"private": IndexOverride(build_policy=BuildPolicy.BUILD_REMOTE)}
+        if scope == "index"
+        else {}
+    )
+
+    permitted = enforce_build_policy_for_targets(
+        targets=DECLARED,
+        build_policy=BuildPolicy.BUILD_LOCAL,
+        build_policy_set=False,
+        package_overrides=package_overrides,
+        index_overrides=index_overrides,
+        assume_universal_deps=True,
+    )
+
+    assert permitted is BuildPolicy.NEVER
+
+
+def test_false_assertions_do_not_authorize_host_builds() -> None:
+    with pytest.raises(ConfigError, match="assume-universal-deps = true"):
+        enforce_build_policy_for_targets(
+            targets=DECLARED,
+            build_policy=BuildPolicy.BUILD_REMOTE,
+            build_policy_set=True,
+            package_overrides=(pkg_override("demo", assume_universal_deps=False),),
+            index_overrides={"private": IndexOverride(assume_universal_deps=False)},
         )

@@ -12,6 +12,15 @@ files.
 
 from __future__ import annotations
 
+__lazy_modules__ = (
+    "nab._run",
+    "nab.config.values",
+    "nab.output",
+    "nab_index.cache",
+    "pathlib",
+    "sys",
+)
+
 import sys
 from pathlib import Path
 

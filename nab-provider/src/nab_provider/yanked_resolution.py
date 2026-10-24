@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+__lazy_modules__ = (
+    "nab_provider._vendor.packaging.ranges",
+    "nab_provider._vendor.packaging.utils",
+    "nab_provider.extra_keys",
+    "nab_provider.yank_candidates",
+    "nab_resolver.errors",
+    "nab_resolver.ranges",
+    "nab_resolver.types",
+)
+
+from typing import TYPE_CHECKING, Final
 
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 from nab_resolver.ranges import Range
@@ -14,6 +23,7 @@ from ._compat import override
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.utils import canonicalize_name
 from .extra_keys import split_extra
+from .value import HashableRecord
 from .yank_candidates import Candidate, YankCandidates, add_range, is_pin, merge_stats
 from .yank_preference import (
     IncompletePreferenceError,
@@ -36,18 +46,26 @@ _MAX_STEPS = 100_000
 _ROOT_SCOPE = PreferenceScope()
 
 
-@dataclass(frozen=True, slots=True)
-class PermissionProxy:
+class PermissionProxy(HashableRecord):
     """Choose selected parents that permit a yanked candidate."""
 
-    candidate: int
+    __slots__ = __match_args__ = ("candidate",)
+
+    candidate: Final[int]
+
+    def __init__(self, candidate: int) -> None:
+        self.candidate = candidate
 
 
-@dataclass(frozen=True, slots=True)
-class MetadataProxy:
+class MetadataProxy(HashableRecord):
     """Expose a candidate's dependencies after establishing permission."""
 
-    candidate: int
+    __slots__ = __match_args__ = ("candidate",)
+
+    candidate: Final[int]
+
+    def __init__(self, candidate: int) -> None:
+        self.candidate = candidate
 
 
 Package = str | PermissionProxy | MetadataProxy
@@ -308,7 +326,9 @@ class YankProxyProvider(BaseProvider[Package, int]):
                 result[PermissionProxy(version)] = Range.full()
             base, extra = split_extra(package)
             if extra is not None:
-                underlying = Candidate(base, candidate.version, candidate.withdrawn)
+                underlying = Candidate(
+                    base, candidate.version, withdrawn=candidate.withdrawn
+                )
                 result[base] = Range.singleton(self.identify(underlying))
             return result
         if isinstance(package, PermissionProxy):
