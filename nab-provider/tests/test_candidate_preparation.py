@@ -85,10 +85,12 @@ def test_bulk_preparation_keeps_filename_lifetime_inside_the_snapshot() -> None:
     before = wheel_tag_set.cache_info()
     prepared = CandidatePreparation([(Version("1"), wheel)])
     after = wheel_tag_set.cache_info()
+
     assert (after.hits, after.misses) == (before.hits, before.misses)
 
     del prepared, wheel, filename
     gc.collect()
+
     assert reference() is None
 
 
