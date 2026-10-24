@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Final
 
 from ._provider.extras import version_provides_extra
 from ._provider.metadata_resolver import classify_requirement, dists_at_version
@@ -12,7 +12,7 @@ from .extra_keys import split_extra
 from .metadata import intern_version
 from .policy import DistPolicy, ExtrasMode
 from .records import SdistFile, WheelFile
-from .value import Record, field_names
+from .value import HashableRecord, Record, field_names
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from .provider import DistFile, Provider, ProviderStats
 
 
-class Candidate(Record, frozen=True):
+class Candidate(HashableRecord):
     """A package version restricted to its yanked or non-yanked files."""
 
     __record_fields__: ClassVar[tuple[str, ...] | None]
@@ -38,21 +38,17 @@ class Candidate(Record, frozen=True):
 
     __match_args__ = ("package", "version", "withdrawn")
 
-    package: str
-    version: Version
-    withdrawn: bool
-    label: str
+    package: Final[str]
+    version: Final[Version]
+    withdrawn: Final[bool]
+    label: Final[str]
 
     def __init__(self, package: str, version: Version, *, withdrawn: bool) -> None:
         """Select a version's withdrawn or non-withdrawn files."""
-        object.__setattr__(self, "package", package)
-        object.__setattr__(self, "version", version)
-        object.__setattr__(self, "withdrawn", withdrawn)
-        self.__post_init__()
-
-    def __post_init__(self) -> None:
-        """Keep the version text for arbitrary equality comparisons."""
-        object.__setattr__(self, "label", str(self.version))
+        self.package = package
+        self.version = version
+        self.withdrawn = withdrawn
+        self.label = str(version)
 
     @property
     def base(self) -> str:

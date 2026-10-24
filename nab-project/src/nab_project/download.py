@@ -19,14 +19,14 @@ import hashlib
 import logging
 import posixpath
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 from urllib.parse import urlsplit
 
 from nab_index.atomic import atomic_write
 from nab_index.client import AsyncSimpleClient
 from nab_index.local_index import parse_file_url
 from nab_provider.errors import HttpError
-from nab_provider.value import Record
+from nab_provider.value import HashableRecord, Record
 
 from .lockfile import ArchivePin, IndexPin, LocalPin, LockInput, VcsPin
 
@@ -53,7 +53,7 @@ class DownloadError(Exception):
     """A downloaded artefact failed hash verification or the HTTP fetch."""
 
 
-class DownloadEntry(Record, frozen=True):
+class DownloadEntry(HashableRecord):
     """One artefact to fetch into the output directory.
 
     ``hash_algo`` is one of ``sha256``, ``sha384``, ``sha512`` and
@@ -77,13 +77,13 @@ class DownloadEntry(Record, frozen=True):
         "local_path",
     )
 
-    package: str
-    version: str
-    filename: str
-    url: str
-    hash_algo: str
-    digest: str
-    local_path: Path | None
+    package: Final[str]
+    version: Final[str]
+    filename: Final[str]
+    url: Final[str]
+    hash_algo: Final[str]
+    digest: Final[str]
+    local_path: Final[Path | None]
 
     def __init__(
         self,
@@ -96,13 +96,13 @@ class DownloadEntry(Record, frozen=True):
         local_path: Path | None = None,
     ) -> None:
         """Describe a selected artifact and its expected integrity."""
-        object.__setattr__(self, "package", package)
-        object.__setattr__(self, "version", version)
-        object.__setattr__(self, "filename", filename)
-        object.__setattr__(self, "url", url)
-        object.__setattr__(self, "hash_algo", hash_algo)
-        object.__setattr__(self, "digest", digest)
-        object.__setattr__(self, "local_path", local_path)
+        self.package = package
+        self.version = version
+        self.filename = filename
+        self.url = url
+        self.hash_algo = hash_algo
+        self.digest = digest
+        self.local_path = local_path
 
 
 class DownloadResult(Record):

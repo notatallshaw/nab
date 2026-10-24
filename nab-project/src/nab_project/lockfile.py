@@ -14,12 +14,19 @@ from __future__ import annotations
 
 import logging
 from datetime import timezone
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Final
 
 from nab_provider._vendor.packaging.pylock import is_valid_pylock_path
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
-from nab_provider.value import FACTORY, FactoryDefault, Record, factory_value, replace
+from nab_provider.value import (
+    FACTORY,
+    FactoryDefault,
+    HashableRecord,
+    Record,
+    factory_value,
+    replace,
+)
 
 from ._lockfile.builder import (
     ArtifactMemo,
@@ -563,7 +570,7 @@ def package_metadata_override_records(
     return tuple(records)
 
 
-class TargetLock(Record, frozen=True):
+class TargetLock(HashableRecord):
     """What one target contributed to the lock.
 
     ``pins`` is keyed by canonical package name; each value is the pin
@@ -617,15 +624,15 @@ class TargetLock(Record, frozen=True):
         "package_gates",
     )
 
-    target: ResolveTarget
-    pins: Mapping[str, PinShape]
-    dependencies: Mapping[str, tuple[str, ...]]
-    base_dependencies: Mapping[str, tuple[str, ...]]
-    package_gates: Mapping[str, tuple[tuple[str, str], ...]]
+    target: Final[ResolveTarget]
+    pins: Final[Mapping[str, PinShape]]
+    dependencies: Final[Mapping[str, tuple[str, ...]]]
+    base_dependencies: Final[Mapping[str, tuple[str, ...]]]
+    package_gates: Final[Mapping[str, tuple[tuple[str, str], ...]]]
 
-    dependency_requirements: (
+    dependency_requirements: Final[
         Mapping[str, Mapping[str, tuple[DependencyDeclaration, ...]]] | None
-    )
+    ]
 
     def __init__(
         self,
@@ -642,14 +649,12 @@ class TargetLock(Record, frozen=True):
         | None = None,
     ) -> None:
         """Retain a target's pins and normalize its package conditions."""
-        object.__setattr__(self, "target", target)
-        object.__setattr__(self, "pins", pins)
-        object.__setattr__(self, "dependencies", factory_value(dependencies, dict))
-        object.__setattr__(
-            self, "base_dependencies", factory_value(base_dependencies, dict)
-        )
-        object.__setattr__(self, "package_gates", factory_value(package_gates, dict))
-        object.__setattr__(self, "dependency_requirements", dependency_requirements)
+        self.target = target
+        self.pins = pins
+        self.dependencies = factory_value(dependencies, dict)
+        self.base_dependencies = factory_value(base_dependencies, dict)
+        self.package_gates = factory_value(package_gates, dict)
+        self.dependency_requirements = dependency_requirements
 
 
 class LockInput(Record):

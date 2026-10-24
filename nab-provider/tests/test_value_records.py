@@ -1,20 +1,18 @@
-"""Value, copy and refusal contracts shared by explicit record constructors."""
+"""Value and copy contracts shared by explicit record constructors."""
 
 from __future__ import annotations
 
 import copy
-import importlib
 import pickle
-import typing
 from collections.abc import Callable
-from dataclasses import FrozenInstanceError, dataclass, field
+from dataclasses import dataclass, field
 
 import pytest
 
-from nab_provider import _compat
 from nab_provider.value import (
     FACTORY,
     FactoryDefault,
+    HashableRecord,
     Record,
     factory_value,
     field_names,
@@ -34,33 +32,29 @@ class MutableData(Record):
         self.value = value
 
 
-class FrozenData(Record, frozen=True):
-    """A dictionary-backed frozen record."""
+class HashableData(HashableRecord):
+    """A dictionary-backed hashable record."""
 
     __match_args__ = ("value",)
     value: int
 
     def __init__(self, value: int) -> None:
-        """Initialize the frozen field."""
-        object.__setattr__(self, "value", value)
+        """Retain the integer field."""
+        self.value = value
 
 
-class FrozenChild(FrozenData, frozen=True):
-    """A subclass without a new record declaration."""
-
-
-class SlottedData(Record, frozen=True):
-    """A frozen record whose pickle state contains only declared slots."""
+class SlottedData(HashableRecord):
+    """A hashable record backed by a slot."""
 
     __slots__ = __match_args__ = ("value",)
     value: int
 
     def __init__(self, value: int) -> None:
-        """Initialize the frozen slot."""
-        object.__setattr__(self, "value", value)
+        """Retain the integer slot."""
+        self.value = value
 
 
-class SelectedData(Record, frozen=True):
+class SelectedData(HashableRecord):
     """Only the key participates in equality, hashing and repr."""
 
     __slots__ = __record_fields__ = ("key", "payload")
@@ -70,11 +64,11 @@ class SelectedData(Record, frozen=True):
 
     def __init__(self, key: int, payload: object) -> None:
         """Keep the key and an otherwise unrestricted payload."""
-        object.__setattr__(self, "key", key)
-        object.__setattr__(self, "payload", payload)
+        self.key = key
+        self.payload = payload
 
 
-class DerivedData(Record, frozen=True):
+class DerivedData(HashableRecord):
     """A constructor recomputes a derived field when copied."""
 
     __slots__ = __record_fields__ = ("value", "double")
@@ -84,8 +78,8 @@ class DerivedData(Record, frozen=True):
 
     def __init__(self, value: int) -> None:
         """Derive the second slot from the constructor argument."""
-        object.__setattr__(self, "value", value)
-        object.__setattr__(self, "double", value * 2)
+        self.value = value
+        self.double = value * 2
 
 
 class RecursiveData(Record):
@@ -115,7 +109,7 @@ def test_mutable_values_compare_by_exact_type_and_stay_unhashable() -> None:
     left = MutableData(1)
     assert left == MutableData(1)
     assert left != MutableData(2)
-    assert left.__eq__(FrozenData(1)) is NotImplemented
+    assert left.__eq__(HashableData(1)) is NotImplemented
     assert left.__eq__(1) is NotImplemented
     with pytest.raises(TypeError):
         hash(left)
@@ -133,29 +127,7 @@ def test_comparison_and_repr_can_exclude_non_key_payloads() -> None:
     assert field_names(left) == ("key", "payload")
 
 
-@pytest.mark.parametrize(
-    ("constructor", "name"),
-    [(FrozenData, "value"), (FrozenData, "extra"), (FrozenChild, "value")],
-)
-def test_frozen_record_refuses_assignment_and_deletion(
-    constructor: type[FrozenData], name: str
-) -> None:
-    value = constructor(1)
-    with pytest.raises(FrozenInstanceError):
-        setattr(value, name, 2)
-    with pytest.raises(FrozenInstanceError):
-        delattr(value, name)
-
-
-def test_plain_subclass_can_manage_its_extra_attributes() -> None:
-    value = FrozenChild(1)
-    name = "extra"
-    setattr(value, name, 2)
-    assert getattr(value, name) == 2
-    delattr(value, name)
-
-
-def test_slotted_frozen_values_support_copy_and_pickle() -> None:
+def test_slotted_values_support_copy_and_pickle() -> None:
     value = SlottedData(3)
     assert copy.copy(value) == value
     assert copy.deepcopy(value) == value
@@ -229,14 +201,3 @@ def test_factories_call_the_supplied_factory(
     factory: Callable[[], object], expected: object
 ) -> None:
     assert factory_value(FACTORY, factory) == expected
-
-
-def test_typing_decorator_fallback_leaves_runtime_classes_alone(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    with monkeypatch.context() as patch:
-        patch.delattr(typing, "dataclass_transform", raising=False)
-        importlib.reload(_compat)
-        transform = _compat.dataclass_transform(frozen_default=True)
-        assert transform(MutableData) is MutableData
-    importlib.reload(_compat)

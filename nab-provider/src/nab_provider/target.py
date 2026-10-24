@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Final
 
 from nab_markersets.markersets import variable_names
 from nab_markersets.python_versions import validate_python_version
@@ -46,7 +46,7 @@ from .tags import (
     TagSet,
     supports_free_threading,
 )
-from .value import Record, replace
+from .value import HashableRecord, Record, replace
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -825,7 +825,7 @@ def _check_comparable(label: str, name: str, value: str) -> None:
         raise ValueError(msg) from exc
 
 
-class ResolveTarget(Record, frozen=True):
+class ResolveTarget(HashableRecord):
     """One environment a resolve runs against: markers, wheel tags, a name.
 
     ``label`` names the target (``host``, ``py312-linux_x86_64``) and is
@@ -869,25 +869,25 @@ class ResolveTarget(Record, frozen=True):
         "micro_clauses",
     )
 
-    label: str
-    marker_env: Mapping[str, str]
-    tags: TagSet
-    host_faithful: bool
-    selection: tuple[tuple[str, str], ...]
-    platform_spec: PlatformSpec | None
-    multi_implementation: bool
-    tags_faithful: bool
+    label: Final[str]
+    marker_env: Final[Mapping[str, str]]
+    tags: Final[TagSet]
+    host_faithful: Final[bool]
+    selection: Final[tuple[tuple[str, str], ...]]
+    platform_spec: Final[PlatformSpec | None]
+    multi_implementation: Final[bool]
+    tags_faithful: Final[bool]
     # python_full_version was pinned to a concrete micro (a matrix python-patches
     # value or a declared patch level), not synthesized as a bare minor's ``.0``
     # floor.  A pinned ``X.Y.0`` equals that floor by value, so only this flag
     # tells the two apart.
-    concrete_micro: bool
+    concrete_micro: Final[bool]
     # The python_full_version clauses bounding this target's micro slice, set
     # by :func:`slices_from_points` when a consulted marker splits the minor.
     # Empty for an ordinary target.  Appended to
     # :attr:`environment_marker_string` so the per-package pins of one slice
     # do not leak onto another slice of the same python/platform.
-    micro_clauses: tuple[str, ...]
+    micro_clauses: Final[tuple[str, ...]]
 
     def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
@@ -904,16 +904,16 @@ class ResolveTarget(Record, frozen=True):
         micro_clauses: tuple[str, ...] = (),
     ) -> None:
         """Declare an environment and validate its Python version."""
-        object.__setattr__(self, "label", label)
-        object.__setattr__(self, "marker_env", marker_env)
-        object.__setattr__(self, "tags", tags)
-        object.__setattr__(self, "host_faithful", host_faithful)
-        object.__setattr__(self, "selection", selection)
-        object.__setattr__(self, "platform_spec", platform_spec)
-        object.__setattr__(self, "multi_implementation", multi_implementation)
-        object.__setattr__(self, "tags_faithful", tags_faithful)
-        object.__setattr__(self, "concrete_micro", concrete_micro)
-        object.__setattr__(self, "micro_clauses", micro_clauses)
+        self.label = label
+        self.marker_env = marker_env
+        self.tags = tags
+        self.host_faithful = host_faithful
+        self.selection = selection
+        self.platform_spec = platform_spec
+        self.multi_implementation = multi_implementation
+        self.tags_faithful = tags_faithful
+        self.concrete_micro = concrete_micro
+        self.micro_clauses = micro_clauses
         self.__post_init__()
 
     def __post_init__(self) -> None:

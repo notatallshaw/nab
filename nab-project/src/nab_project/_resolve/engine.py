@@ -613,10 +613,6 @@ class _EngineSettings(Record):
     align: bool
     resolution: ResolutionStrategy
 
-    # Injected rather than imported, so the marker-set dependency stays above
-    # this module.
-    marker_holds: MarkerHolds
-
     progress: ProgressSink | None
 
     # Safe to share: the coordinator and the policy config the pre-tag half
@@ -656,7 +652,7 @@ class _EngineSettings(Record):
         self.source_root = source_root
         self.align = align
         self.resolution = resolution
-        self.marker_holds = marker_holds
+        self.marker_holds: MarkerHolds = marker_holds
         self.progress = progress
         self.listing_filter_cache = factory_value(
             listing_filter_cache, ListingFilterCache

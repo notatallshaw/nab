@@ -15,7 +15,7 @@ import asyncio
 import enum
 import logging
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 from urllib.parse import urlsplit
 
 from packaging.utils import canonicalize_name as canonicalize_name_boundary
@@ -48,7 +48,7 @@ from nab_provider.store import (
     range_pending_key,
     sdist_artifact_key,
 )
-from nab_provider.value import Record
+from nab_provider.value import HashableRecord, Record
 
 from ._build_remote import build_remote_sdist
 from ._sources import materialize_source
@@ -193,7 +193,7 @@ def _builds_remote_sdists(inputs: ResolveInputs | None) -> bool:
     return any(o.build_policy is BuildPolicy.BUILD_REMOTE for o in overrides)
 
 
-class FetchRequest(Record, frozen=True):
+class FetchRequest(HashableRecord):
     """A single fetch request, carried across the sync->async boundary."""
 
     __slots__ = __match_args__ = (
@@ -206,13 +206,13 @@ class FetchRequest(Record, frozen=True):
         "wheel_hashes",
     )
 
-    kind: FetchKind
-    package: str
-    version: str | None
-    url: str | None
-    metadata_hash: tuple[str, str] | None
-    sdist_hashes: tuple[tuple[str, str], ...]
-    wheel_hashes: tuple[tuple[str, str], ...]
+    kind: Final[FetchKind]
+    package: Final[str]
+    version: Final[str | None]
+    url: Final[str | None]
+    metadata_hash: Final[tuple[str, str] | None]
+    sdist_hashes: Final[tuple[tuple[str, str], ...]]
+    wheel_hashes: Final[tuple[tuple[str, str], ...]]
 
     def __init__(
         self,
@@ -225,13 +225,13 @@ class FetchRequest(Record, frozen=True):
         wheel_hashes: tuple[tuple[str, str], ...] = (),
     ) -> None:
         """Describe an artifact request and its expected integrity."""
-        object.__setattr__(self, "kind", kind)
-        object.__setattr__(self, "package", package)
-        object.__setattr__(self, "version", version)
-        object.__setattr__(self, "url", url)
-        object.__setattr__(self, "metadata_hash", metadata_hash)
-        object.__setattr__(self, "sdist_hashes", sdist_hashes)
-        object.__setattr__(self, "wheel_hashes", wheel_hashes)
+        self.kind = kind
+        self.package = package
+        self.version = version
+        self.url = url
+        self.metadata_hash = metadata_hash
+        self.sdist_hashes = sdist_hashes
+        self.wheel_hashes = wheel_hashes
 
 
 class WarmSyncStats(Record):

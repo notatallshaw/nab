@@ -22,7 +22,7 @@ from ..errors import (
 from ..iso8601 import fast_iso_parser, parse_iso_datetime
 from ..metadata import intern_version as _intern_version
 from ..policy import DistPolicy
-from ..value import Record
+from ..value import HashableRecord
 from ..vcs_admission import UnsupportedVcsError
 from .metadata_resolver import pick_dist_for_metadata, version_dists
 
@@ -359,7 +359,7 @@ def base_distributions(
     )
 
 
-class ListingPolicy(Record, frozen=True):
+class ListingPolicy(HashableRecord):
     """The policy config one listing's files are judged under.
 
     ``overridden`` is true when a per-package or per-index override can
@@ -379,13 +379,13 @@ class ListingPolicy(Record, frozen=True):
         "default_drops_sdists",
     )
 
-    index_name: str | None
-    overridden: bool
-    default_dist_policy: DistPolicy
-    default_cutoff: datetime | None
-    time_filter_active: bool
-    default_drops_wheels: bool
-    default_drops_sdists: bool
+    index_name: Final[str | None]
+    overridden: Final[bool]
+    default_dist_policy: Final[DistPolicy]
+    default_cutoff: Final[datetime | None]
+    time_filter_active: Final[bool]
+    default_drops_wheels: Final[bool]
+    default_drops_sdists: Final[bool]
 
     def __init__(
         self,
@@ -398,13 +398,13 @@ class ListingPolicy(Record, frozen=True):
         default_drops_wheels: bool,
         default_drops_sdists: bool,
     ) -> None:
-        object.__setattr__(self, "index_name", index_name)
-        object.__setattr__(self, "overridden", overridden)
-        object.__setattr__(self, "default_dist_policy", default_dist_policy)
-        object.__setattr__(self, "default_cutoff", default_cutoff)
-        object.__setattr__(self, "time_filter_active", time_filter_active)
-        object.__setattr__(self, "default_drops_wheels", default_drops_wheels)
-        object.__setattr__(self, "default_drops_sdists", default_drops_sdists)
+        self.index_name = index_name
+        self.overridden = overridden
+        self.default_dist_policy = default_dist_policy
+        self.default_cutoff = default_cutoff
+        self.time_filter_active = time_filter_active
+        self.default_drops_wheels = default_drops_wheels
+        self.default_drops_sdists = default_drops_sdists
 
 
 def listing_policy(provider: Provider, normalized: str) -> ListingPolicy:

@@ -59,7 +59,7 @@ def test_metadata_url_reuses_first_result() -> None:
 
 
 def test_memo_leaves_equality_and_hashing_alone() -> None:
-    """The memo writes past the frozen guard; the fields still decide both."""
+    """Only the declared fields determine equality and hashing."""
     read, unread = make_wheel(), make_wheel()
     assert read.metadata_url is not None
 

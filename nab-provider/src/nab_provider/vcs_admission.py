@@ -17,11 +17,12 @@ from __future__ import annotations
 import enum
 import posixpath
 import re
+from typing import Final
 from urllib.parse import unquote, urlsplit
 
 from nab_provider.vcs_request import FULL_GIT_SHA_RE
 
-from .value import Record
+from .value import HashableRecord
 
 __all__ = [
     "UnsupportedVcsError",
@@ -60,7 +61,7 @@ class UnsupportedVcsError(Exception):
     """
 
 
-class VcsConfig(Record, frozen=True):
+class VcsConfig(HashableRecord):
     """Bundle of VCS opt-in knobs passed through the resolver stack.
 
     Default is fully restrictive (``BLOCK`` policy, empty allowlists,
@@ -69,10 +70,10 @@ class VcsConfig(Record, frozen=True):
 
     __match_args__ = ("policy", "allowed_schemes", "allowed_repos", "require_pin")
 
-    policy: VcsPolicy
-    allowed_schemes: frozenset[str]
-    allowed_repos: tuple[str, ...]
-    require_pin: bool
+    policy: Final[VcsPolicy]
+    allowed_schemes: Final[frozenset[str]]
+    allowed_repos: Final[tuple[str, ...]]
+    require_pin: Final[bool]
 
     def __init__(
         self,
@@ -83,10 +84,10 @@ class VcsConfig(Record, frozen=True):
         require_pin: bool = True,
     ) -> None:
         """Retain the repository admission and revision-pin policies."""
-        object.__setattr__(self, "policy", policy)
-        object.__setattr__(self, "allowed_schemes", allowed_schemes)
-        object.__setattr__(self, "allowed_repos", allowed_repos)
-        object.__setattr__(self, "require_pin", require_pin)
+        self.policy = policy
+        self.allowed_schemes = allowed_schemes
+        self.allowed_repos = allowed_repos
+        self.require_pin = require_pin
 
 
 _VCS_SCHEMES: frozenset[str] = frozenset(

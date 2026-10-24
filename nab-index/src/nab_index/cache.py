@@ -50,11 +50,11 @@ import threading
 import time
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Final, Protocol
 
 from nab_provider.digest import is_hex_digest
 from nab_provider.serialization import SimpleSerialization
-from nab_provider.value import Record, replace
+from nab_provider.value import HashableRecord, replace
 
 from ._json_decode import decode_json
 from .atomic import atomic_write
@@ -113,7 +113,7 @@ class OfflineError(Exception):
     """Raised when offline mode is set and a needed entry is not cached."""
 
 
-class CachePolicy(Record, frozen=True):
+class CachePolicy(HashableRecord):
     """RFC 9111-style freshness policy for one Simple API entry.
 
     ``fetched_at`` is the start of the freshness window: when nab received the
@@ -140,11 +140,11 @@ class CachePolicy(Record, frozen=True):
         "body_digest",
     )
 
-    fetched_at: int
-    max_age: int
-    etag: str | None
-    page_url: str | None
-    body_digest: str | None
+    fetched_at: Final[int]
+    max_age: Final[int]
+    etag: Final[str | None]
+    page_url: Final[str | None]
+    body_digest: Final[str | None]
 
     def __init__(
         self,
@@ -155,11 +155,11 @@ class CachePolicy(Record, frozen=True):
         body_digest: str | None = None,
     ) -> None:
         """Retain the freshness inputs and representation identity for one entry."""
-        object.__setattr__(self, "fetched_at", fetched_at)
-        object.__setattr__(self, "max_age", max_age)
-        object.__setattr__(self, "etag", etag)
-        object.__setattr__(self, "page_url", page_url)
-        object.__setattr__(self, "body_digest", body_digest)
+        self.fetched_at = fetched_at
+        self.max_age = max_age
+        self.etag = etag
+        self.page_url = page_url
+        self.body_digest = body_digest
 
     def is_fresh(self, now: int | None = None) -> bool:
         """Return True if the entry is still within its freshness window."""

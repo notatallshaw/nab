@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeVar
 from nab_provider._vendor.packaging import tags as ptags
 from nab_provider._vendor.packaging.version import Version
 
-from .value import Record, SlottedValue
+from .value import HashableRecord, SlottedValue
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -131,8 +131,7 @@ _X86_GLIBC2_MINOR_FLOOR = 5
 _OTHER_GLIBC2_MINOR_FLOOR = 17
 
 
-# PlatformSpec is a cache key and needs frozen fields and copy/pickle support.
-class PlatformSpec(Record, frozen=True):
+class PlatformSpec(HashableRecord):
     """Concrete tag knobs for one matrix platform_id.
 
     ``libc`` names the C library the Linux target runs; a machine links one,
@@ -167,14 +166,14 @@ class PlatformSpec(Record, frozen=True):
         "pypy_abi",
     )
 
-    platform_id: str
-    libc: Libc
-    runs_on_libc: tuple[int, int] | None  # any libc version
-    runs_on_macos: tuple[int, int] | None  # any macOS version
-    platform_release: str
-    platform_version: str
-    free_threaded: bool
-    pypy_abi: str | None
+    platform_id: Final[str]
+    libc: Final[Libc]
+    runs_on_libc: Final[tuple[int, int] | None]  # any libc version
+    runs_on_macos: Final[tuple[int, int] | None]  # any macOS version
+    platform_release: Final[str]
+    platform_version: Final[str]
+    free_threaded: Final[bool]
+    pypy_abi: Final[str | None]
 
     def __init__(
         self,
@@ -189,14 +188,14 @@ class PlatformSpec(Record, frozen=True):
         pypy_abi: str | None = None,
     ) -> None:
         """Declare one platform's wheel compatibility settings."""
-        object.__setattr__(self, "platform_id", platform_id)
-        object.__setattr__(self, "libc", libc)
-        object.__setattr__(self, "runs_on_libc", runs_on_libc)
-        object.__setattr__(self, "runs_on_macos", runs_on_macos)
-        object.__setattr__(self, "platform_release", platform_release)
-        object.__setattr__(self, "platform_version", platform_version)
-        object.__setattr__(self, "free_threaded", free_threaded)
-        object.__setattr__(self, "pypy_abi", pypy_abi)
+        self.platform_id = platform_id
+        self.libc = libc
+        self.runs_on_libc = runs_on_libc
+        self.runs_on_macos = runs_on_macos
+        self.platform_release = platform_release
+        self.platform_version = platform_version
+        self.free_threaded = free_threaded
+        self.pypy_abi = pypy_abi
         self.__post_init__()
 
     def __post_init__(self) -> None:

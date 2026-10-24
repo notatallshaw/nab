@@ -310,16 +310,6 @@ def test_requires_python_checked_before_extras() -> None:
     assert result.reason.startswith("the lockfile requires-python")
 
 
-def test_lock_disqualification_is_frozen() -> None:
-    disq = LockDisqualification(reason="x")
-    try:
-        disq.reason = "y"  # type: ignore[misc]
-    except AttributeError:
-        return
-    msg = "LockDisqualification should be frozen"
-    raise AssertionError(msg)
-
-
 LINUX_ENV = {"sys_platform": "linux"}
 
 # A target standing for the whole 3.11 minor, so its python_full_version is
@@ -712,16 +702,6 @@ def test_constraint_duplicate_versioned_pins_skipped() -> None:
         check_constraints(committed, [Requirement("baz<3")], marker_env=LINUX_ENV)
         is None
     )
-
-
-def test_root_requirement_is_frozen() -> None:
-    rr = root("foo>=1")
-    try:
-        rr.source = "x"  # type: ignore[misc]
-    except AttributeError:
-        return
-    msg = "RootRequirement should be frozen"
-    raise AssertionError(msg)
 
 
 def locked(

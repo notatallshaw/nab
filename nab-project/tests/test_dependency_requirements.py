@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import TYPE_CHECKING
 from zipfile import ZipFile
@@ -362,7 +361,7 @@ def test_local_source_keeps_its_effective_declarations(tmp_path: Path) -> None:
     }
 
 
-def test_records_are_detached_immutable_values(tmp_path: Path) -> None:
+def test_records_are_detached_values(tmp_path: Path) -> None:
     selected = _resolve(tmp_path)
     assert selected.lock is not None
     data = selected.lock.dependency_requirements
@@ -371,8 +370,6 @@ def test_records_are_detached_immutable_values(tmp_path: Path) -> None:
     assert isinstance(record, DependencyDeclaration)
     assert record.dependency_specifier == "~=2.0"
     assert record.requirement_text == 'child-name~=2.0; python_version >= "3.10"'
-    with pytest.raises(FrozenInstanceError):
-        record.dependency_specifier = "==0"
     again = _resolve(tmp_path)
     assert _text_requirements(again) == _text_requirements(selected)
 

@@ -1,4 +1,4 @@
-"""Explicit record constructors with shared value, copy and frozen behavior."""
+"""Explicit record constructors with shared comparison, repr and copying."""
 
 from __future__ import annotations
 
@@ -6,14 +6,15 @@ import dataclasses
 from reprlib import recursive_repr
 from typing import TYPE_CHECKING, ClassVar, TypeVar
 
-from ._compat import dataclass_transform, override
+from ._compat import override
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
 
 __all__ = [
     "FACTORY",
     "FactoryDefault",
+    "HashableRecord",
     "Record",
     "SlottedValue",
     "factory_value",
@@ -46,8 +47,7 @@ def factory_value(value: _T | FactoryDefault, factory: Callable[[], _T]) -> _T:
     return value
 
 
-@dataclass_transform(field_specifiers=(dataclasses.field,))
-class Record:  # noqa: PLW1641 - Frozen subclasses install their hash method.
+class Record:  # noqa: PLW1641 - Mutable records are intentionally unhashable.
     """A value whose constructor and field names are written by its owner."""
 
     __slots__ = ()
@@ -56,24 +56,6 @@ class Record:  # noqa: PLW1641 - Frozen subclasses install their hash method.
     __record_compare_fields__: ClassVar[tuple[str, ...] | None] = None
     __record_repr_fields__: ClassVar[tuple[str, ...] | None] = None
     __record_init_fields__: ClassVar[tuple[str, ...] | None] = None
-
-    @override
-    def __init_subclass__(cls, *, frozen: bool = False) -> None:
-        """Install shared refusal and state methods on frozen records."""
-        super().__init_subclass__()
-        if frozen:
-            # These assignments also update Python's special-method slots.
-            methods: dict[str, object] = {
-                "__setattr__": _frozen_setattr,
-                "__delattr__": _frozen_delattr,
-                "__hash__": _record_hash,
-            }
-            if "__slots__" in cls.__dict__:
-                methods.update(
-                    __getstate__=_record_getstate, __setstate__=_record_setstate
-                )
-            for name, method in methods.items():
-                setattr(cls, name, method)
 
     def _comparison_values(self) -> tuple[object, ...]:
         """Read the fields participating in equality and hashing."""
@@ -100,40 +82,18 @@ class Record:  # noqa: PLW1641 - Frozen subclasses install their hash method.
         return f"{type(self).__qualname__}({values})"
 
 
-def _field_owner(value: Record) -> type[object]:
-    """Find the declaration supplying an instance's record fields."""
-    return next(
-        parent
-        for parent in type(value).__mro__
-        if "__record_fields__" in parent.__dict__ or "__match_args__" in parent.__dict__
-    )
+class HashableRecord(Record):
+    """A record whose comparison fields support hashing.
 
+    Owners declare fixed fields with ``Final``; no runtime write guard is installed.
+    """
 
-def _frozen_setattr(self: Record, name: str, value: object) -> None:
-    if type(self) is _field_owner(self) or name in field_names(self):
-        msg = f"cannot assign to field {name!r}"
-        raise dataclasses.FrozenInstanceError(msg)
-    object.__setattr__(self, name, value)
+    __slots__ = ()
 
-
-def _frozen_delattr(self: Record, name: str) -> None:
-    if type(self) is _field_owner(self) or name in field_names(self):
-        msg = f"cannot delete field {name!r}"
-        raise dataclasses.FrozenInstanceError(msg)
-    object.__delattr__(self, name)
-
-
-def _record_hash(self: Record) -> int:
-    return hash(self._comparison_values())
-
-
-def _record_getstate(self: Record) -> list[object]:
-    return [getattr(self, name) for name in field_names(self)]
-
-
-def _record_setstate(self: Record, state: Sequence[object]) -> None:
-    for name, value in zip(field_names(self), state, strict=False):
-        object.__setattr__(self, name, value)
+    @override
+    def __hash__(self) -> int:
+        """Hash the fields used by equality."""
+        return hash(self._comparison_values())
 
 
 def is_record(value: object) -> bool:

@@ -28,7 +28,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.ranges import VersionRange
@@ -56,7 +56,13 @@ from nab_provider.target import (
     micro_boundary_points,
     slices_from_points,
 )
-from nab_provider.value import FACTORY, FactoryDefault, Record, factory_value
+from nab_provider.value import (
+    FACTORY,
+    FactoryDefault,
+    HashableRecord,
+    Record,
+    factory_value,
+)
 from nab_resolver.errors import ResolutionError
 
 from . import pyproject_files, toml_io
@@ -991,22 +997,22 @@ def _group_package_ranges(
     return ranges, sources
 
 
-class _SelfEmptyGroup(Record, frozen=True):
+class _SelfEmptyGroup(HashableRecord):
     """One group whose own requirements on a package leave no version."""
 
     __slots__ = __match_args__ = ("group", "package", "reqs")
 
-    group: str
-    package: str
-    reqs: str
+    group: Final[str]
+    package: Final[str]
+    reqs: Final[str]
 
     def __init__(self, group: str, package: str, reqs: str) -> None:
-        object.__setattr__(self, "group", group)
-        object.__setattr__(self, "package", package)
-        object.__setattr__(self, "reqs", reqs)
+        self.group = group
+        self.package = package
+        self.reqs = reqs
 
 
-class _GroupConflict(Record, frozen=True):
+class _GroupConflict(HashableRecord):
     """One direct group-vs-group conflict on a single package.
 
     Group names are stored sorted so the conflict has a stable identity.
@@ -1020,11 +1026,11 @@ class _GroupConflict(Record, frozen=True):
         "right_req",
     )
 
-    left_group: str
-    right_group: str
-    package: str
-    left_req: str
-    right_req: str
+    left_group: Final[str]
+    right_group: Final[str]
+    package: Final[str]
+    left_req: Final[str]
+    right_req: Final[str]
 
     def __init__(
         self,
@@ -1034,11 +1040,11 @@ class _GroupConflict(Record, frozen=True):
         left_req: str,
         right_req: str,
     ) -> None:
-        object.__setattr__(self, "left_group", left_group)
-        object.__setattr__(self, "right_group", right_group)
-        object.__setattr__(self, "package", package)
-        object.__setattr__(self, "left_req", left_req)
-        object.__setattr__(self, "right_req", right_req)
+        self.left_group = left_group
+        self.right_group = right_group
+        self.package = package
+        self.left_req = left_req
+        self.right_req = right_req
 
 
 def _find_self_empty_groups(

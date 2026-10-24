@@ -12,7 +12,7 @@ from .records import SdistFile, WheelFile, defer_hashes, defer_sidecar_hash
 
 
 # Explicit slots avoid Python 3.10 duplicating inherited record fields.
-class YankedWheelFile(WheelFile, frozen=True):
+class YankedWheelFile(WheelFile):
     """A withdrawn wheel and its optional reason."""
 
     __record_fields__: ClassVar[tuple[str, ...] | None] = (
@@ -74,10 +74,10 @@ class YankedWheelFile(WheelFile, frozen=True):
             local_path=local_path,
             metadata_hash=metadata_hash,
         )
-        object.__setattr__(self, "yanked", yanked)
+        self.yanked = yanked
 
 
-class YankedSdistFile(SdistFile, frozen=True):
+class YankedSdistFile(SdistFile):
     """A withdrawn source distribution and its optional reason."""
 
     __record_fields__: ClassVar[tuple[str, ...] | None] = (
@@ -131,7 +131,7 @@ class YankedSdistFile(SdistFile, frozen=True):
             size,
             local_path,
         )
-        object.__setattr__(self, "yanked", yanked)
+        self.yanked = yanked
 
 
 class YankedListing(list[WheelFile | SdistFile]):

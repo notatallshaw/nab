@@ -64,7 +64,8 @@ errors live with the side that must never fetch.
 
 The provider also owns `nab_provider.value`, shared record behavior used by the index, project and
 CLI layers. Concrete records keep their typed constructors in the package owning their data; the
-shared code handles comparison, frozen fields and copying.
+shared code handles comparison and copying. Fixed fields use `Final` annotations rather than runtime
+write guards.
 
 ## Why the provider is separate
 
@@ -116,7 +117,7 @@ has none.
 
 Pass `include_dependency_requirements=True`, then call `target_result.dependency_requirements()`. It
 returns a map keyed by parent and dependency, or raises for a failed target or omitted collection.
-Use canonical package names. Each immutable record has:
+Use canonical package names. Each declaration record has:
 
 - `requirement_text`: the full declaration with normalized formatting and markers.
 - `dependency_specifier`: the parent's version restriction, preserving `~=`. Empty means

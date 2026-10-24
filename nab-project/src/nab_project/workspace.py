@@ -20,13 +20,13 @@ message.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 import tomli
 
 from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
 from nab_provider.policy import LocalSource
-from nab_provider.value import Record
+from nab_provider.value import HashableRecord
 
 from . import toml_io
 from ._toml import tool_nab_section
@@ -93,7 +93,7 @@ def _workspace_declaration(data: dict[str, Any], project_file: Path) -> tuple[An
     return nab.get("workspace"), label
 
 
-class WorkspaceConfig(Record, frozen=True):
+class WorkspaceConfig(HashableRecord):
     """Parsed workspace table.
 
     ``members`` is the literal list of paths declared at the workspace
@@ -103,11 +103,11 @@ class WorkspaceConfig(Record, frozen=True):
 
     __slots__ = __match_args__ = ("members",)
 
-    members: tuple[str, ...]
+    members: Final[tuple[str, ...]]
 
     def __init__(self, members: tuple[str, ...]) -> None:
         """Retain literal member paths without expanding or resolving them."""
-        object.__setattr__(self, "members", members)
+        self.members = members
 
 
 def discover_workspace_root(member_pyproject: Path) -> Path | None:
