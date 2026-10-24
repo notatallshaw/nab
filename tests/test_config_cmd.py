@@ -1279,6 +1279,7 @@ class TestProjectCliOverrides:
             hermetic_roots, f"allow-zip-sdists = {str(not enabled).lower()}\n"
         )
         inputs = self._lock_inputs(proj, hermetic_roots / "pylock.toml", [flag])
+
         assert inputs.allow_zip_sdists is enabled
         assert inputs.build_policy is BuildPolicy.BUILD_LOCAL
         assert inputs.trust_unverified_sdist_deps is False
@@ -1614,6 +1615,7 @@ class TestDownloadCliOverrides:
     ) -> None:
         proj = _project(hermetic_roots, "allow-zip-sdists = true\n")
         inputs = self._inputs(proj, ["--no-project-allow-zip-sdists"])
+
         assert inputs.allow_zip_sdists is False
 
     def test_every_project_flag_has_a_case(self) -> None:

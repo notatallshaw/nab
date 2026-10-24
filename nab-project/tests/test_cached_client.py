@@ -561,6 +561,7 @@ class TestZipSdistListing:
             ],
         }
         files = _parse_files(data, "https://example.com/", "foo")
+
         assert [f.filename for f in files] == ["foo-1.0.tar.gz", "foo-1.0.zip"]
         assert all(isinstance(f, SdistFile) for f in files)
 
@@ -574,6 +575,7 @@ class TestZipSdistListing:
             ],
         }
         files = _parse_files(data, "https://example.com/", "foo")
+
         assert [file.filename for file in files] == ["foo-1.0.zip"]
         assert isinstance(files[0], SdistFile)
 
@@ -591,6 +593,7 @@ class TestZipSdistListing:
             ],
         }
         files = _parse_files(data, "https://example.com/", "foo")
+
         assert [f.filename for f in files] == [
             "foo-1.0-py3-none-any.whl",
             "foo-1.0.zip",
@@ -639,6 +642,7 @@ class TestZipSdistListing:
             assert warm[0].hashes == (("sha256", "deadbeef"),)
 
         asyncio.run(go())
+
         assert stats.hit == 1
         assert len(transport.calls) == 1
         assert offline_transport.calls == []
@@ -671,6 +675,7 @@ class TestZipSdistListing:
                 return await client.get_files("pkg")
 
         files = asyncio.run(go())
+
         assert [file.filename for file in files] == [
             "pkg-1.0-py3-none-any.whl",
             "pkg-1.0.zip",
@@ -4184,6 +4189,7 @@ class TestGetSdistArchive:
                 await client.aclose()
 
         asyncio.run(go())
+
         assert len(transport.calls) == 2
 
         offline_transport = _FakeTransport()
@@ -4199,6 +4205,7 @@ class TestGetSdistArchive:
                     )
 
         asyncio.run(read_warm())
+
         assert offline_transport.calls == []
 
     def test_a_held_archive_is_verified_against_the_published_hash(

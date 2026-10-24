@@ -79,4 +79,5 @@ def test_wide_resolve_emits_one_relevant_zip_action_per_command(
             assert captured.err.count("legacy ZIP sdists require") == 2
         else:
             assert "allow-zip-sdists" not in captured.err
+
     assert "allow-zip-sdists" not in caplog.text

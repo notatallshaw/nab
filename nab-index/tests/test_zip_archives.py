@@ -74,11 +74,13 @@ def test_zip_metadata_root(
 def test_zip_metadata_does_not_read_a_symlink_as_text() -> None:
     member = zipfile.ZipInfo("pkg-1/PKG-INFO")
     member.external_attr = (stat.S_IFLNK | 0o777) << 16
+
     assert _extract_sdist_files(_zip([(member, b"elsewhere")])) == (None, None)
 
 
 def test_zip_metadata_bad_crc_is_unreadable() -> None:
     data = _zip([("pkg-1/PKG-INFO", b"metadata")]).replace(b"metadata", b"corrupt!")
+
     assert _extract_sdist_files(data) == (None, None)
 
 
@@ -89,6 +91,7 @@ def test_zip_extraction_returns_the_source_root(
     prefix = "pkg-1/" if rooted else ""
     data = _zip([(f"{prefix}setup.py", b"setup"), (f"{prefix}PKG-INFO", b"metadata")])
     root = extract_sdist_archive(data, tmp_path)
+
     assert root == (tmp_path / "pkg-1" if rooted else tmp_path)
     assert (root / "setup.py").read_bytes() == b"setup"
     assert (root / "PKG-INFO").read_bytes() == b"metadata"
@@ -98,6 +101,7 @@ def test_tar_only_extraction_refuses_zip_bytes(tmp_path: Path) -> None:
     data = _zip([("pkg-1/setup.py", b"setup")])
     with pytest.raises(ValueError, match="unreadable sdist archive|tar data filter"):
         extract_sdist_archive(data, tmp_path, allow_zip=False)
+
     assert list(tmp_path.iterdir()) == []
 
 
@@ -108,9 +112,13 @@ def test_zip_extraction_preserves_execute_bits_without_special_modes(
     script.external_attr = (stat.S_IFREG | 0o4755) << 16
     data = _zip([("pkg-1/", b""), (script, b"#!/bin/sh\nexit 0\n")])
     root = extract_sdist_archive(data, tmp_path)
+
     assert (root / "configure").read_bytes() == b"#!/bin/sh\nexit 0\n"
+
     mode = (root / "configure").stat().st_mode
+
     assert mode & stat.S_ISUID == 0
+
     if os.name != "nt":
         assert mode & 0o111 == 0o111
 
@@ -141,6 +149,7 @@ def test_zip_extraction_refuses_unsafe_names_before_writing(
     target = tmp_path / "unpacked"
     with pytest.raises(ValueError, match="unsafe sdist member"):
         extract_sdist_archive(data, target)
+
     assert not target.exists()
 
 
@@ -160,6 +169,7 @@ def test_zip_extraction_refuses_existing_escaping_symlink(tmp_path: Path) -> Non
     (target / "pkg-1").symlink_to(tmp_path, target_is_directory=True)
     with pytest.raises(ValueError, match="unsafe sdist member"):
         extract_sdist_archive(_zip([("pkg-1/outside", b"outside")]), target)
+
     assert not (tmp_path / "outside").exists()
 
 

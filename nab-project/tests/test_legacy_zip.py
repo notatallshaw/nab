@@ -106,7 +106,9 @@ def test_zip_resolves_locks_and_downloads(
     result.raise_for_failure()
     lock_input = build_lock_input(result, inputs=inputs)
     pylock = build_pylock(lock_input)
+
     assert {package.name for package in pylock.packages} == {"pkg", "child"}
+
     for target in lock_input.targets.values():
         pin = target.pins["pkg"]
         assert isinstance(pin, IndexPin)
@@ -119,6 +121,7 @@ def test_zip_resolves_locks_and_downloads(
 
     output = tmp_path / "download"
     download_lock(lock_input, _NoNetwork(), output, offline=True)
+
     assert (output / archive.name).read_bytes() == archive.read_bytes()
 
     archive.write_bytes(b"changed after resolve")
@@ -138,8 +141,11 @@ def test_zip_rejection_suggests_the_scoped_option(
         targets=(ResolveTarget.for_host(),),
         inputs=ResolveInputs(indexes=(index,), build_policy=BuildPolicy.NEVER),
     )
+
     assert not result.success
+
     error = result.target_results[0].error
+
     assert error is not None
     assert 'packages."pkg".allow-zip-sdists = true' in str(error)
 
@@ -174,6 +180,7 @@ def test_rejected_zip_releases_are_quiet_when_a_tarball_resolves(
     )
 
     result.raise_for_failure()
+
     assert result.target_results[0].pins == {
         "application": Version("1"),
         "pkg": Version("1"),
@@ -201,7 +208,9 @@ def test_rejected_zip_releases_do_not_add_hints_to_an_unrelated_failure(
     )
 
     assert not result.success
+
     error = str(result.target_results[0].error)
+
     assert "absent" in error
     assert "allow-zip-sdists" not in error + caplog.text
 
@@ -222,12 +231,14 @@ def test_many_zip_rejections_produce_one_hint_per_failed_target(
 
     assert not result.success
     assert len(result.target_results) == 2
+
     for target in result.target_results:
         assert target.error is not None
         assert (
             str(target.error).count('try: set packages."pkg".allow-zip-sdists = true')
             == 1
         )
+
     assert "allow-zip-sdists" not in caplog.text
 
 
@@ -248,7 +259,9 @@ def test_zip_permission_preserves_legacy_metadata_trust(
             trust_unverified_sdist_deps=trust,
         ),
     )
+
     assert result.success is trust
+
     if trust:
         lock = result.target_results[0].lock
         assert lock is not None
@@ -278,6 +291,7 @@ def test_zip_legacy_metadata_can_use_the_build_backend(
         ),
     )
     result.raise_for_failure()
+
     assert seen == [b"# source"]
 
 

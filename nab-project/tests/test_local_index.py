@@ -569,6 +569,7 @@ class TestFlatWheelhouse:
         (tmp_path / "foo-1.0.zip").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
         files = run(client.get_files("foo"))
+
         assert [file.filename for file in files] == ["foo-1.0.zip"]
         assert isinstance(files[0], SdistFile)
         assert not client.served_unreadable_only("foo")
@@ -606,6 +607,7 @@ class TestFlatWheelhouse:
         (tmp_path / "foo-1.0.zip").write_bytes(b"")
         (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
+
         assert len(run(client.get_files("foo"))) == 2
         assert not client.served_unreadable_only("foo")
 
@@ -615,6 +617,7 @@ class TestFlatWheelhouse:
         (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
         run(client.get_files("foo"))
+
         assert client.served_zip_sdists("foo") == frozenset({"1.0"})
 
     def test_zip_of_another_package_names_no_release(self, tmp_path: Path) -> None:
@@ -1044,6 +1047,7 @@ class TestPep503Directory:
         self._make_index(tmp_path, body)
         client = LocalIndexClient(tmp_path.as_uri())
         files = run(client.get_files("foo"))
+
         assert [file.filename for file in files] == ["foo-1.0.zip", "foo-2.0.zip"]
         assert all(isinstance(file, SdistFile) for file in files)
         assert not client.served_unreadable_only("foo")
@@ -1057,6 +1061,7 @@ class TestPep503Directory:
         package_dir = self._make_index(tmp_path, body)
         (package_dir / "foo-2.0-py3-none-any.whl").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
+
         assert len(run(client.get_files("foo"))) == 2
         assert not client.served_unreadable_only("foo")
         assert client.served_zip_sdists("foo") == frozenset({"1.0"})
@@ -1659,6 +1664,7 @@ class TestPep503Directory:
         (package_dir / "foo-1.0.tar.gz").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
         result = run(client.get_files("foo"))
+
         assert [r.filename for r in result] == ["foo-1.0.zip", "foo-1.0.tar.gz"]
         assert all(isinstance(record, SdistFile) for record in result)
 

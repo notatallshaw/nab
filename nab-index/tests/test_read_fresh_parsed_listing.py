@@ -242,6 +242,7 @@ class TestReadFreshParsedListing:
         # cannot say so, so the helper declines and the async path reclassifies.
         cache = _cache(tmp_path)
         files, _ = _warm_bound(cache, body=_INSTALLER_ONLY_BYTES)
+
         assert files == []
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
 
@@ -313,8 +314,11 @@ class TestIdenticalByConstruction:
     ) -> None:
         cache = _cache(tmp_path)
         _warm_bound(cache, body=_INSTALLER_ONLY_BYTES)
+
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
+
         client = CachedAsyncSimpleClient(_FakeTransport([]), cache, _INDEX)
+
         assert _run(client.get_files("pkg")) == []
         assert client.served_unreadable_only("pkg")
 

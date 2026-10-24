@@ -124,6 +124,7 @@ def test_listing_drops_a_file_with_no_utf8_form() -> None:
 
 def test_holds_unreadable_format_finds_installer() -> None:
     data = {"files": [{"filename": "foo-1.5.win32.exe", "url": "https://e.example/f"}]}
+
     assert holds_unreadable_format(data)
 
 

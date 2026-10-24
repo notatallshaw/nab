@@ -546,6 +546,7 @@ def _scan_flat_wheelhouse(
             zip_sdists.add(version)
         if _FLAT_EXTS.search(entry.name) is None:
             continue
+
         record = _make_record(
             entry.name,
             entry.as_uri(),
@@ -562,6 +563,7 @@ def _scan_flat_wheelhouse(
                 else _read_sdist_requires_python(entry)
             )
             files.append(replace(record, requires_python=requires_python))
+
     return _ScanResult(
         files,
         unreadable=False,

@@ -852,6 +852,7 @@ class TestArchiveMaterialize:
             payload: bytes, target_dir: Path, *, allow_zip: bool
         ) -> Path:
             assert not allow_zip
+
             seen_mid_extract.append(target.exists())
             return extract_sdist_archive(payload, target_dir, allow_zip=allow_zip)
 
@@ -887,6 +888,7 @@ class TestArchiveMaterialize:
             payload: bytes, target_dir: Path, *, allow_zip: bool
         ) -> Path:
             assert not allow_zip
+
             seen_mid_extract.append(target.exists())
             root = extract_sdist_archive(payload, target_dir, allow_zip=allow_zip)
             _warm_extracted_tree(cache, digest)
@@ -920,6 +922,7 @@ class TestArchiveMaterialize:
             payload: bytes, target_dir: Path, *, allow_zip: bool
         ) -> Path:
             assert not allow_zip
+
             extract_sdist_archive(payload, target_dir, allow_zip=allow_zip)
             raise KeyboardInterrupt
 

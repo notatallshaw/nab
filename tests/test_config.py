@@ -1912,6 +1912,7 @@ class TestPolicies:
             f"[tool.nab]\nallow-zip-sdists = {str(enabled).lower()}\n",
         )
         config = read_pyproject_config(path)
+
         assert config.allow_zip_sdists is enabled
         assert config.resolve_inputs().allow_zip_sdists is enabled
         assert config.build_policy is BuildPolicy.BUILD_LOCAL
@@ -1920,6 +1921,7 @@ class TestPolicies:
     def test_allow_zip_sdists_defaults_false(self, tmp_path: Path) -> None:
         path = write(tmp_path, "[tool.nab]\n")
         config = read_pyproject_config(path)
+
         assert config.allow_zip_sdists is False
         assert config.resolve_inputs().allow_zip_sdists is False
 
@@ -3896,6 +3898,7 @@ class TestPackageSugar:
             f"{selector}\nallow-zip-sdists = {str(enabled).lower()}\n",
         )
         (override,) = read_pyproject_config(path).package_overrides
+
         assert override.allow_zip_sdists is enabled
         assert Version("1") in override.version_range
         assert Version("2") not in override.version_range
@@ -4855,6 +4858,7 @@ class TestIndexOverrides:
             f"[tool.nab.index.pypi]\nallow-zip-sdists = {str(enabled).lower()}\n",
         )
         override = read_pyproject_config(path).index_overrides["pypi"]
+
         assert override.allow_zip_sdists is enabled
 
     @pytest.mark.parametrize("value", ['"yes"', "1", "[]"])

@@ -58,11 +58,14 @@ def test_default_and_global_admission(pythons: int, *, allowed: bool) -> None:
     )
 
     files = provider.fetch_versions("pkg")
+
     assert [version for version, _ in files] == (
         [Version("2.0"), Version("1.0")] if allowed else [Version("2.0")]
     )
     assert provider.stats.excluded_zip_sdists == (0 if allowed else 1)
+
     diagnosis = provider.diagnose_listing("pkg")
+
     assert diagnosis is not None
     assert diagnosis.kept == {version for version, _ in files}
     assert provider.stats.excluded_zip_sdists == (0 if allowed else 1)
@@ -84,6 +87,7 @@ def test_shared_listing_keeps_target_python_verdicts_separate(*, allowed: bool) 
         )
         for python in ("3.10", "3.12")
     ]
+
     assert providers[0].fetch_versions("pkg") == []
     assert providers[0].stats.excluded_by_python == 1
     assert providers[0].stats.excluded_zip_sdists == 0
@@ -124,6 +128,7 @@ def test_overrides_replace_the_global_default(
         expected.append(Version("2.0"))
     if override_allow:
         expected.append(Version("1.0"))
+
     assert [version for version, _ in provider.fetch_versions("pkg")] == expected
 
 
@@ -144,12 +149,14 @@ def test_unset_overrides_preserve_global_admission() -> None:
         package_overrides=[pkg_override("pkg", requires_python="")],
         index_overrides={"other": IndexOverride(allow_zip_sdists=False)},
     )
+
     assert len(provider.fetch_versions("pkg")) == 1
 
 
 def failure(provider: Provider, spec: str = "") -> Diagnostic:
     """Return the diagnostic after a real failed version selection."""
     assert provider.choose_version("pkg", SpecifierSet(spec).to_range()) is None
+
     diagnostic = provider.get_no_versions_reason("pkg")
     assert diagnostic is not None
     return diagnostic
@@ -158,6 +165,7 @@ def failure(provider: Provider, spec: str = "") -> Diagnostic:
 def test_default_failure_suggests_a_scoped_exception() -> None:
     provider = Provider(make_coordinator([zip_sdist()]))
     diagnostic = failure(provider)
+
     assert diagnostic.short == "legacy ZIP sdists require allow-zip-sdists = true"
     assert diagnostic.remedy == 'set packages."pkg".allow-zip-sdists = true'
     assert provider.stats.sdist_pkg_info_fetched == 0
@@ -166,6 +174,7 @@ def test_default_failure_suggests_a_scoped_exception() -> None:
 @pytest.mark.parametrize("allowed", [False, True])
 def test_effective_default_without_overrides(*, allowed: bool) -> None:
     provider = Provider(make_coordinator(), allow_zip_sdists=allowed)
+
     assert provider.effective_allow_zip_sdists("pkg", Version("1.0")) is allowed
 
 
@@ -173,6 +182,7 @@ def test_unreadable_non_zip_page_keeps_its_format_diagnostic() -> None:
     coordinator = make_coordinator()
     coordinator.index.store_listing("pkg", [], unreadable_only=True)
     diagnostic = failure(Provider(coordinator))
+
     assert diagnostic.short == "no file the index served is one nab can read"
     assert diagnostic.remedy is None
 
@@ -198,6 +208,7 @@ def test_irrelevant_zip_has_no_permission_remedy(cause: str, pythons: int) -> No
         listing_filter_cache=ListingFilterCache(pythons),
     )
     diagnostic = failure(provider, "==2.0" if cause == "range" else "")
+
     assert "allow-zip-sdists" not in "\n".join(
         (diagnostic.short, *diagnostic.detail, diagnostic.remedy or "")
     )
@@ -210,6 +221,7 @@ def test_allowed_zip_has_no_permission_remedy_when_other_policy_refuses() -> Non
         dist_policy=DistPolicy.WHEEL_ONLY,
     )
     diagnostic = failure(provider)
+
     assert diagnostic.remedy is not None
     assert "allow-zip-sdists" not in diagnostic.remedy
 
@@ -251,6 +263,7 @@ def test_failure_names_the_existing_override_surface(
         package_overrides=packages,
         index_overrides=indexes,
     )
+
     assert failure(provider).remedy == remedy
 
 
@@ -260,21 +273,29 @@ def test_gzip_tar_preferred_for_metadata(*, zip_first: bool) -> None:
     zipped = zip_sdist()
     files = [zipped, tar] if zip_first else [tar, zipped]
     versions = [(Version("1.0"), dist) for dist in files]
+
     assert metadata_resolver.find_sdist(versions, Version("1.0")) is tar
     assert metadata_resolver.pick_dist(files, None) is tar
+
     provider = Provider(make_coordinator(files), allow_zip_sdists=True)
     listing = provider.fetch_versions("pkg")
+
     assert listing[0][1] is tar
+
     indexed = metadata_resolver.version_dists(provider, "pkg", listing)
+
     assert indexed.picked[Version("1.0")] is tar
 
 
 def test_zip_only_and_wheel_metadata_selection() -> None:
     zipped = zip_sdist()
     versions = [(Version("1.0"), zipped)]
+
     assert metadata_resolver.find_sdist(versions, Version("1.0")) is zipped
     assert metadata_resolver.find_sdist(versions, Version("2.0")) is None
+
     wheel = make_wheel()
+
     assert metadata_resolver.pick_dist([zipped, wheel], None) is wheel
 
 
@@ -305,6 +326,7 @@ def test_zip_admission_and_foreign_dependency_metadata_require_separate_opt_ins(
     assert provider.fetch_versions("pkg") == (
         [(Version("1.0"), zipped)] if allowed else []
     )
+
     if allowed and assumed:
         assert set(provider.get_dependencies("pkg", Version("1.0"))) == {"wheel-dep"}
         assert len(coordinator.calls_to("request_metadata")) == 1
@@ -322,4 +344,5 @@ def test_zip_admission_and_foreign_dependency_metadata_require_separate_opt_ins(
 def test_zip_siblings_keep_the_first_metadata_source() -> None:
     first, second = zip_sdist(), zip_sdist("1.0.0")
     versions = [(Version("1.0"), dist) for dist in (first, second)]
+
     assert metadata_resolver.find_sdist(versions, Version("1.0")) is first

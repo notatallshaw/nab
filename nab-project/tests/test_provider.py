@@ -1838,6 +1838,7 @@ class TestNoVersionsReasons:
         ) as coordinator:
             provider = Provider(coordinator)
             provider.choose_version("foo", SpecifierSet("").to_range())
+
         assert short_reason(provider, "foo") == (
             "legacy ZIP sdists require allow-zip-sdists = true"
         )
@@ -1865,6 +1866,7 @@ class TestNoVersionsReasons:
         ) as coordinator:
             provider = Provider(coordinator)
             provider.choose_version("foo", SpecifierSet("").to_range())
+
         assert short_reason(provider, "foo") == (
             "legacy ZIP sdists require allow-zip-sdists = true"
         )
@@ -1880,6 +1882,7 @@ class TestNoVersionsReasons:
         ) as coordinator:
             provider = Provider(coordinator)
             provider.choose_version("foo", SpecifierSet("").to_range())
+
         assert short_reason(provider, "foo") == (
             "legacy ZIP sdists require allow-zip-sdists = true"
         )
@@ -1915,6 +1918,7 @@ class TestNoVersionsReasons:
         ) as coordinator:
             provider = Provider(coordinator)
             provider.choose_version("foo", SpecifierSet("").to_range())
+
         assert short_reason(provider, "foo") == (
             "legacy ZIP sdists require allow-zip-sdists = true"
         )
@@ -9401,6 +9405,7 @@ class TestLadderSdistAvailability:
         provider = Provider(coordinator, target=_PY312, allow_zip_sdists=allowed)
         with pytest.raises(MetadataError) as excinfo:
             provider.get_dependencies("pkg", V("1.0"))
+
         assert self._ABSENT in str(excinfo.value)
         assert "allow-zip-sdists" not in str(excinfo.value)
 
@@ -9418,11 +9423,14 @@ class TestLadderSdistAvailability:
             "https://example.com/simple/pkg/",
             "pkg",
         )
+
         assert len(files) == 1
+
         coordinator = self._with_zip_sdists(files, frozenset({"1.0"}))
         provider = Provider(coordinator, target=_PY312)
         with pytest.raises(MetadataError) as excinfo:
             provider.get_dependencies("pkg", V("1.0"))
+
         assert self._ABSENT in str(excinfo.value)
         assert "allow-zip-sdists" not in str(excinfo.value)
 

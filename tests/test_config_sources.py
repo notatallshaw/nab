@@ -1619,6 +1619,7 @@ class TestScalarProjectOptions:
         _project(tmp_path)
         _write(tmp_path / "nab.toml", f"allow-zip-sdists = {str(enabled).lower()}\n")
         effective = _resolve(SourceRoots(project_dir=tmp_path))["allow-zip-sdists"]
+
         assert effective.value is enabled
         assert effective.origin.kind is SourceKind.PROJECT_TOML
 
@@ -1630,6 +1631,7 @@ class TestScalarProjectOptions:
         effective = _resolve(
             SourceRoots(project_dir=tmp_path), cli={"allow-zip-sdists": enabled}
         )["allow-zip-sdists"]
+
         assert effective.value is enabled
         assert effective.origin.kind is SourceKind.CLI
 

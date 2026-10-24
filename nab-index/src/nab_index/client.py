@@ -924,6 +924,7 @@ def _read_zip_sdist_files(data: bytes) -> tuple[str | None, str | None]:
                 or stat.S_IFMT(member.external_attr >> 16) not in (0, stat.S_IFREG)
             ):
                 continue
+
             target = (
                 pkg_infos
                 if basename == "PKG-INFO"
@@ -1064,17 +1065,21 @@ def _extract_zip_sdist_archive(data: bytes, target_dir: Path) -> Path:
     target_dir = target_dir.resolve()
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            # Validate every destination before writing the first archive member.
             destinations = [
                 (_zip_member_destination(member, target_dir), member)
                 for member in archive.infolist()
             ]
+
             for destination, member in destinations:
                 if member.is_dir():
                     destination.mkdir(parents=True, exist_ok=True)
                     continue
+
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 with archive.open(member) as source, destination.open("wb") as output:
                     shutil.copyfileobj(source, output)
+
                 executable = (member.external_attr >> 16) & 0o111
                 if executable:
                     destination.chmod(destination.stat().st_mode | executable)
@@ -1112,4 +1117,5 @@ def _zip_member_destination(member: ZipInfo, target_dir: Path) -> Path:
     ):
         msg = f"unsafe sdist member: {name!r}"
         raise ValueError(msg)
+
     return destination

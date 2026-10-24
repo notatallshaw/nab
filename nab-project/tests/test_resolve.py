@@ -4804,6 +4804,7 @@ class TestAugmentResolutionError:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         diagnostics = _diagnostics(info.value)
+
         assert (
             "foo: allow-zip-sdists excluded the sdist nab needed for metadata"
             in diagnostics
