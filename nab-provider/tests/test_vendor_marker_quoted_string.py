@@ -1,10 +1,4 @@
-"""Tests for the vendored parser's quoted-string handling.
-
-``process_python_str`` slices the quotes off the token when the body is ASCII and
-holds no backslash, line break or NUL, and falls back to ``ast.literal_eval``
-otherwise. Both paths reach the same value, and a body Python rejects is still a
-syntax error.
-"""
+"""Quoted marker values retain their contents and reject invalid literals."""
 
 from __future__ import annotations
 

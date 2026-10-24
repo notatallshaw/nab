@@ -1,12 +1,4 @@
-"""Tests for the vendored patch's bounds-only subset and disjointness walks.
-
-``is_subset`` and ``is_disjoint`` take a two-pointer walk over the interval
-lists whenever both operands are plain, so every answer is checked against the
-set-algebra oracle it replaces (``(a - b).is_empty`` and ``(a & b).is_empty``)
-and against pointwise membership over a version pool. The population runs the
-algebra over specifier-built ranges first, which reaches interval shapes no
-specifier writes.
-"""
+"""Range subset and disjointness agree with algebra and pointwise membership."""
 
 from __future__ import annotations
 
