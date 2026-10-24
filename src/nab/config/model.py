@@ -1209,12 +1209,21 @@ def _environment_from_effective(
         table = project_key_path("environment", origin.kind)
 
         valid = sorted(PLATFORM_MARKERS)
+        suggestion = f"add platform = one of {valid!r}."
+        source_labels = {source.kind: source.label for source, _value in entry.stack}
+        if {SourceKind.PYPROJECT, SourceKind.PROJECT_TOML} <= source_labels.keys():
+            suggestion += (
+                " Set the same platform in [tool.nab.environment] in"
+                f" {source_labels[SourceKind.PYPROJECT]} and [environment] in"
+                f" {source_labels[SourceKind.PROJECT_TOML]}."
+            )
+
         report = DiagnosticMessage(
             (
                 f"[{table}].implementation needs a platform: an interpreter is "
                 "modelled on a declared machine, not on the host's"
             ),
-            suggestions=(Suggestion(f"add platform = one of {valid!r}."),),
+            suggestions=(Suggestion(suggestion),),
         )
         raise ConfigError(report)
 

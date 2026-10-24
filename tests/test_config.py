@@ -2687,6 +2687,48 @@ class TestEnvironment:
         assert "[environment].implementation needs a platform" in message
         assert "tool.nab" not in message
 
+    @pytest.mark.parametrize("python", [None, "3.12"])
+    @pytest.mark.parametrize("project_filename", ["pyproject.toml", "custom.toml"])
+    def test_missing_platform_repair_updates_both_environment_tables(
+        self, tmp_path: Path, python: str | None, project_filename: str
+    ) -> None:
+        """Apply the platform edit only to tables and files named by the diagnostic."""
+        path = tmp_path / project_filename
+        path.write_text(
+            '[tool.nab.environment]\nimplementation = "pypy"\n', encoding="utf-8"
+        )
+        (tmp_path / "nab.toml").write_text(
+            '[environment]\nimplementation = "pypy"\n', encoding="utf-8"
+        )
+        overrides = (
+            {} if python is None else {"environment": _cli_environment(python=python)}
+        )
+
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(
+                path, discover_workspace=False, cli_overrides=overrides
+            )
+
+        repairs = re.findall(
+            r"\[(tool\.nab\.environment|environment)\] in (.*?\.toml)(?= and |\.$)",
+            str(excinfo.value),
+        )
+        for table, filename in repairs:
+            target = tmp_path / filename
+            target.write_text(
+                target.read_text(encoding="utf-8").replace(
+                    f"[{table}]\n", f'[{table}]\nplatform = "linux_x86_64"\n'
+                ),
+                encoding="utf-8",
+            )
+
+        config = read_pyproject_config(
+            path, discover_workspace=False, cli_overrides=overrides
+        )
+        assert config.environment == EnvironmentConfig(
+            python=python, platform=PlatformSpec("linux_x86_64"), implementation="pypy"
+        )
+
     def test_rejected_alongside_a_matrix(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
