@@ -805,8 +805,10 @@ def _common_requires_python(files: Iterable[WheelFile | SdistFile]) -> str | Non
                 return None
             previous = context
         seen.add(f.requires_python)
+
     if len(seen) == 1:
         return next(iter(seen))
+
     return None
 
 
