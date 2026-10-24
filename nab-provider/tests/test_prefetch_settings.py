@@ -13,6 +13,7 @@ from nab_provider.testing import make_coordinator, make_wheel
 
 def test_unspecified_windows_leave_defaults_to_the_consumer() -> None:
     settings = PrefetchSettings()
+
     assert settings.metadata_versions is None
     assert settings.lookahead_versions is None
 
@@ -20,6 +21,7 @@ def test_unspecified_windows_leave_defaults_to_the_consumer() -> None:
 @pytest.mark.parametrize("count", [0, 1, 16, 64])
 def test_explicit_windows_are_preserved(count: int) -> None:
     settings = PrefetchSettings(metadata_versions=count, lookahead_versions=count)
+
     assert settings.metadata_versions == count
     assert settings.lookahead_versions == count
 
@@ -44,6 +46,7 @@ def test_provider_requests_only_its_lookahead_window(window: int) -> None:
         assert [item[1] for item in items] == [str(i) for i in range(4, 4 - window, -1)]
     else:
         assert requests == []
+
     assert Provider(make_coordinator()).DEEP_PREFETCH_COUNT == 64
 
 

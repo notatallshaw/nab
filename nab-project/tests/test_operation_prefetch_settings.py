@@ -36,6 +36,7 @@ class TunedTransport(BareTransport):
 
 def test_foreign_transport_keeps_existing_defaults() -> None:
     coord = FetchCoordinator(BareTransport())
+
     assert coord.prefetch_settings.metadata_versions is None
     assert coord.prefetch_settings.lookahead_versions is None
     assert coord._max_concurrency == 50
@@ -55,6 +56,7 @@ def test_caller_overrides_each_backend_window_and_snapshots_it(
     )
     expected_metadata = 2 if override_metadata is None else override_metadata
     expected_lookahead = 3 if override_lookahead is None else override_lookahead
+
     assert coord.prefetch_settings.metadata_versions == expected_metadata
     assert coord.prefetch_settings.lookahead_versions == expected_lookahead
     assert coord._max_concurrency == 7
@@ -63,6 +65,7 @@ def test_caller_overrides_each_backend_window_and_snapshots_it(
     backend.lookahead_versions = 99
     override.metadata_versions = 99
     override.lookahead_versions = 99
+
     assert coord.prefetch_settings.metadata_versions == expected_metadata
     assert coord.prefetch_settings.lookahead_versions == expected_lookahead
 
@@ -71,6 +74,7 @@ def test_backend_settings_without_an_override_are_snapshotted() -> None:
     settings = PrefetchSettings(metadata_versions=0, lookahead_versions=12)
     coord = FetchCoordinator(TunedTransport(settings))
     settings.lookahead_versions = 99
+
     assert coord.prefetch_settings.metadata_versions == 0
     assert coord.prefetch_settings.lookahead_versions == 12
 
@@ -88,6 +92,7 @@ def test_listing_tail_obeys_the_operation_metadata_window(
         "pkg", [make_wheel(str(i)) for i in range(1, 5)]
     )
     versions = {item.version for item in queued if isinstance(item, FetchRequest)}
+
     assert versions == (
         {"4"} if window is None else {str(i) for i in range(5 - window, 5)}
     )
@@ -136,6 +141,9 @@ def test_real_resolve_forwards_backend_advice_and_explicit_zero(
         lookahead_versions=override,
     )
     result.raise_for_failure()
+
     assert str(result.target_results[0].pins["pkg"]) == str(versions - 1)
+
     expected = hint if override is None else 1 + 2 * Provider.PREFETCH_BATCH
+
     assert sum(name == "pkg" for name, _ in requested) == expected
