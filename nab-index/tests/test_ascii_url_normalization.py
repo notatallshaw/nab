@@ -38,6 +38,7 @@ def test_normalized_ascii_http_urls_skip_parsing(
         raise AssertionError("already-normalized ASCII URL was parsed")
 
     monkeypatch.setattr(client, "urlsplit", unexpected_parse)
+
     assert client._resolve_file_url(raw, BASE) is raw
 
 
@@ -71,6 +72,7 @@ def test_other_urls_keep_the_full_normalization(raw: str) -> None:
 @given(st.sampled_from(["http://", "https://", "", "HTTPS://"]), st.text(max_size=100))
 def test_url_resolution_matches_parser_oracle(prefix: str, suffix: str) -> None:
     raw = prefix + suffix
+
     assert client._resolve_file_url(raw, BASE) == expected_url(raw)
 
 
@@ -81,6 +83,7 @@ def test_url_resolution_matches_parser_oracle(prefix: str, suffix: str) -> None:
 )
 def test_ascii_resolution_matches_parser_oracle(prefix: str, suffix: str) -> None:
     raw = prefix + suffix
+
     assert client._resolve_file_url(raw, BASE) == expected_url(raw)
 
 
@@ -89,5 +92,6 @@ def test_string_subclasses_keep_the_parser_path() -> None:
         __slots__ = ()
 
     raw = URL("https://files.example/pkg.whl")
+
     assert not client._normalized_ascii_http_url(raw)
     assert client._resolve_file_url(raw, BASE) == expected_url(raw)

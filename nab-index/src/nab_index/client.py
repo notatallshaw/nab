@@ -660,6 +660,7 @@ def _normalized_ascii_http_url(url: str) -> bool:
     """Recognize HTTP URLs whose split round trip cannot change them."""
     if type(url) is not str or not url.isascii():
         return False
+
     prefix = "https://" if url.startswith("https://") else "http://"
     return (
         url.startswith(prefix)
