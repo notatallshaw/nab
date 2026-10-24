@@ -1284,21 +1284,9 @@ def _reject_vcs_sources_under_block(
     vcs_sources: EffectiveValue,
     vcs: EffectiveValue,
 ) -> None:
-    """Reject vcs-sources declared while the VCS policy blocks cloning.
+    """Reject declared VCS sources when their policy blocks cloning.
 
-    Cloning is opt-in, so a declared source under the default
-    ``policy = "block"`` is contradictory. Raising ConfigError here fails
-    at parse time and names the token to set.
-
-    Each table is named for the file that has to carry the repair: the
-    sources for the file declaring them, the policy for the file that set
-    it. The two project files share a precedence rank, so a policy written
-    into the other one conflicts instead of overriding.
-
-    ``policy = "allow"`` permits checks but does not on its own admit a
-    URL: ``allowed-schemes`` and ``allowed-repos`` are empty by default
-    and each denies every URL until an entry is added, so the message
-    names all settings instead of promising that one key is enough.
+    Project files have equal precedence, so identical policies need matching edits.
     """
     sources: tuple[VcsSource, ...] = vcs_sources.value
     config: VcsConfig = vcs.value
@@ -1314,6 +1302,14 @@ def _reject_vcs_sources_under_block(
     )
     sources_table = project_key_path("vcs-sources", vcs_sources.origin.kind)
     vcs_table = project_key_path("vcs", policy_kind)
+    policy_tables = [
+        project_key_path("vcs", origin.kind)
+        for origin, _value in vcs.stack
+        if origin.kind in {SourceKind.PYPROJECT, SourceKind.PROJECT_TOML}
+    ] or [vcs_table]
+    policy_repair = " and ".join(
+        f'[{table}].policy = "allow"' for table in policy_tables
+    )
 
     report = DiagnosticMessage(
         (
@@ -1322,7 +1318,7 @@ def _reject_vcs_sources_under_block(
         ),
         suggestions=(
             Suggestion(
-                f'remove the sources, or set [{vcs_table}].policy = "allow" and '
+                f"remove the sources, or set {policy_repair} and "
                 "configure the remaining VCS filters (vcs.allowed-schemes and "
                 "vcs.allowed-repos are empty by default and each denies every URL)"
             ),
