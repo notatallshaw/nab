@@ -255,6 +255,7 @@ def prefetch_root_batch(
     for version, dist in ordered:
         if len(items) >= PREFETCH_BATCH:
             break
+
         # Equal versions can retain different text for literal matching.
         if previous_version is None or version is not previous_version:
             previous_version = version
@@ -271,6 +272,7 @@ def prefetch_root_batch(
             and (url := dist.metadata_url) is not None
         ):
             items.append((normalized, dist.version, url, dist.metadata_hash))
+
     if items:
         provider.coordinator.request_metadata_batch(items)
 

@@ -54,6 +54,7 @@ def test_repeated_versions_share_queries_without_deduplicating_files(
     if strategy is ResolutionStrategy.LOWEST:
         expected_versions.reverse()
         expected_wheels = list(reversed(wheels))
+
     assert queries == expected_versions
     assert port.calls_to("request_metadata_batch") == [
         (
@@ -85,6 +86,7 @@ def test_nonconsecutive_and_distinct_equal_versions_are_rechecked(
 
     monkeypatch.setattr(VersionRange, "__contains__", contains)
     prefetch_root_batch(provider, "demo", rows, root_range)
+
     assert len(queries) == len(versions)
     assert all(
         actual is expected for actual, expected in zip(queries, versions, strict=True)
@@ -100,6 +102,7 @@ def test_equal_versions_can_have_distinct_literal_membership() -> None:
     root_range = SpecifierSet("===1.0").to_range()
     prefetch_root_batch(provider, "demo", rows, root_range)
     wanted = wheels[1]
+
     assert port.calls_to("request_metadata_batch") == [
         ([("demo", "1.0", wanted.metadata_url, wanted.metadata_hash)],)
     ]
