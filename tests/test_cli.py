@@ -65,7 +65,7 @@ from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.transport import HttpError, IdleClosableTransport
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_markersets._compat import get_int_max_str_digits
-from nab_project._testing.coordinator_fake import make_coordinator
+from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.download import DownloadError, DownloadResult
 from nab_project.fetch import DEFAULT_MAX_CONCURRENCY, FetchCoordinator
 from nab_project.lockfile import (
@@ -104,7 +104,7 @@ from nab_provider.records import WheelFile
 from nab_provider.requirements_file import InvalidProjectRequirementError
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import IntractableMarkerError, ResolveTarget, host_environment
-from nab_provider.testing import FakeFetchPort, make_metadata, make_wheel
+from nab_provider.testing import make_metadata, make_wheel
 from nab_resolver.errors import ResolutionError
 
 requires_int_limit = pytest.mark.skipif(
@@ -2514,29 +2514,115 @@ class TestScopedDiagnosticRemedies:
             assert capsys.readouterr().out == "foo==2.0\n"
 
 
+def _python_compatibility_coordinator() -> FakeFetchPort:
+    """Offer Python-specific releases with matching transitive dependencies."""
+    listings = {
+        "foo": [
+            make_wheel(
+                version,
+                package="foo",
+                requires_python=requires_python,
+                hashes=(("sha256", "a" * 64),),
+            )
+            for version, requires_python in (
+                ("2.0", ">=3.12"),
+                ("1.0", ">=3.10,<3.12"),
+            )
+        ],
+        "leaf": [
+            make_wheel(version, package="leaf", hashes=(("sha256", "b" * 64),))
+            for version in ("2.0", "1.0")
+        ],
+    }
+
+    metadata = {}
+    for name, wheels in listings.items():
+        for wheel in wheels:
+            dependencies = (f"leaf=={wheel.version}",) if name == "foo" else ()
+            metadata[wheel.metadata_url] = make_metadata(
+                name,
+                str(wheel.version),
+                *dependencies,
+                requires_python=wheel.requires_python,
+            )
+
+    return make_coordinator(listings=listings, metadata_by_url=metadata)
+
+
 class TestPythonFlag:
     """``--python`` retargets the resolve for one run."""
 
-    def test_threads_the_python_version_to_the_resolver(self, tmp_path: Path) -> None:
-        pyproject = _make_pyproject(tmp_path)
-        out = tmp_path / "pylock.toml"
-        with patch(
-            "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
-        ) as mock_resolve:
-            lock(pyproject, output=out, python="3.11")
+    def test_threads_the_python_version_to_the_resolver(
+        self, hermetic_roots: Path
+    ) -> None:
+        pyproject = _make_pyproject(
+            hermetic_roots,
+            '[project]\ndependencies = ["foo"]\n[tool.nab]\nbuild-policy = "never"\n',
+        )
+        out = hermetic_roots / "pylock.toml"
+        with (
+            patch(
+                "nab_project.resolve.FetchCoordinator",
+                return_value=contextlib.nullcontext(
+                    _python_compatibility_coordinator()
+                ),
+            ),
+            patch(
+                "nab._resolve.resolve_for_targets", wraps=resolve_for_targets
+            ) as mock_resolve,
+        ):
+            lock(pyproject, output=out, python="3.11", offline=True, cache=False)
 
         (target,) = mock_resolve.call_args.kwargs["targets"]
         assert target.python_version == "3.11"
 
-    def test_absent_flag_leaves_the_host_target(self, tmp_path: Path) -> None:
-        pyproject = _make_pyproject(tmp_path)
-        out = tmp_path / "pylock.toml"
-        with patch(
-            "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
-        ) as mock_resolve:
-            lock(pyproject, output=out)
+        pylock = Pylock.from_dict(tomli.loads(out.read_text()))
+        assert {package.name: str(package.version) for package in pylock.packages} == {
+            "foo": "1.0",
+            "leaf": "1.0",
+        }
+        assert {
+            package.name: [wheel.url for wheel in package.wheels]
+            for package in pylock.packages
+        } == {
+            name: [f"https://example.com/{name}-1.0-py3-none-any.whl"]
+            for name in ("foo", "leaf")
+        }
+
+    def test_absent_flag_leaves_the_host_target(self, hermetic_roots: Path) -> None:
+        pyproject = _make_pyproject(
+            hermetic_roots,
+            '[project]\ndependencies = ["foo"]\n[tool.nab]\nbuild-policy = "never"\n',
+        )
+        out = hermetic_roots / "pylock.toml"
+        with (
+            patch(
+                "nab_project.resolve.FetchCoordinator",
+                return_value=contextlib.nullcontext(
+                    _python_compatibility_coordinator()
+                ),
+            ),
+            patch(
+                "nab._resolve.resolve_for_targets", wraps=resolve_for_targets
+            ) as mock_resolve,
+        ):
+            lock(pyproject, output=out, offline=True, cache=False)
 
         assert mock_resolve.call_args.kwargs["targets"] == (ResolveTarget.for_host(),)
+
+        version = "2.0" if sys.version_info >= (3, 12) else "1.0"
+        pylock = Pylock.from_dict(tomli.loads(out.read_text()))
+        assert {package.name: str(package.version) for package in pylock.packages} == {
+            "foo": version,
+            "leaf": version,
+        }
+        assert {
+            package.name: [wheel.url for wheel in package.wheels]
+            for package in pylock.packages
+        } == {
+            name: [f"https://example.com/{name}-{version}-py3-none-any.whl"]
+            for name in ("foo", "leaf")
+        }
 
     def test_narrows_the_deprecated_marker_overlay(self, tmp_path: Path) -> None:
         """The overlay translates, and the flag moves only its python axis."""
