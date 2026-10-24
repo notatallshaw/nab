@@ -193,6 +193,26 @@ def _pins(result: ResolveResult) -> dict[str, Version]:
     return result.target_results[0].pins
 
 
+def _assert_co_selected_pins(result: ResolveResult) -> None:
+    """Check both co-selected extras' resolved pins and target locks."""
+    expected_pins = {
+        (("extra", "cpu"),): {"base": V("1.0"), "torch": V("2.0+cpu")},
+        (("extra", "gpu"),): {"base": V("1.0"), "torch": V("2.0+gpu")},
+    }
+    assert len(result.target_results) == len(expected_pins)
+    assert {
+        tr.target.selection: tr.pins for tr in result.target_results
+    } == expected_pins
+
+    for tr in result.target_results:
+        lock = tr.lock
+        assert lock is not None
+        assert {name: pin.version for name, pin in lock.pins.items()} == {
+            name: str(version)
+            for name, version in expected_pins[tr.target.selection].items()
+        }
+
+
 def _root_ranges(mock_resolver: MagicMock) -> dict[str, VersionRange]:
     """The root requirements the resolver was called with, folded per package."""
     folded: dict[str, VersionRange] = {}
@@ -278,6 +298,22 @@ def python_marker_fetch_port() -> FakeFetchPort:
             ("new-leaf", "1.0", False, ()),
         )
     )
+
+
+@pytest.fixture
+def co_selected_fetch_port() -> Iterator[FakeFetchPort]:
+    """Serve base and incompatible torch builds for co-selected extras."""
+    coordinator = make_coordinator(
+        listings={
+            "base": _index_wheels("base", "1.0"),
+            "torch": _index_wheels("torch", "2.0+cpu", "2.0+gpu"),
+        },
+        auto_metadata=True,
+    )
+    with patch(
+        "nab_project.resolve.FetchCoordinator", return_value=nullcontext(coordinator)
+    ):
+        yield coordinator
 
 
 @pytest.fixture
@@ -1694,9 +1730,12 @@ class TestResolveUniversalPyproject:
             "py313-linux_x86_64",
         ]
 
-    @patch("nab_project.resolve.resolve_with_coordinator")
+    @pytest.mark.usefixtures("co_selected_fetch_port")
+    @patch(
+        "nab_project.resolve.resolve_with_coordinator", wraps=resolve_with_coordinator
+    )
     def test_co_selected_members_build_multiple_forks(
-        self, mock_engine: MagicMock, tmp_path: Path
+        self, engine_spy: MagicMock, tmp_path: Path
     ) -> None:
         """Two co-selected conflicting extras fork into two resolves."""
         pyproject = tmp_path / "pyproject.toml"
@@ -1712,7 +1751,7 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        _resolved(
+        result = _resolved(
             pyproject,
             extras=["cpu", "gpu"],
             inputs=ResolveInputs(
@@ -1723,7 +1762,7 @@ class TestResolveUniversalPyproject:
                 python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
             ).expand(),
         )
-        forks = mock_engine.call_args.kwargs["forks"]
+        forks = engine_spy.call_args.kwargs["forks"]
         assert {f.selection for f in forks} == {
             (("extra", "cpu"),),
             (("extra", "gpu"),),
@@ -1737,6 +1776,8 @@ class TestResolveUniversalPyproject:
             "base",
             "torch==2.0+gpu",
         ]
+
+        _assert_co_selected_pins(result)
 
     @patch("nab_project.resolve.resolve_with_coordinator")
     def test_fork_selects_on_its_own_member_too(
@@ -1888,9 +1929,12 @@ class TestResolveUniversalPyproject:
         (fork,) = mock_engine.call_args.kwargs["forks"]
         assert fork.selection == ()
 
-    @patch("nab_project.resolve.resolve_with_coordinator")
+    @pytest.mark.usefixtures("co_selected_fetch_port")
+    @patch(
+        "nab_project.resolve.resolve_with_coordinator", wraps=resolve_with_coordinator
+    )
     def test_co_selection_does_not_raise_minimum(
-        self, mock_engine: MagicMock, tmp_path: Path
+        self, engine_spy: MagicMock, tmp_path: Path
     ) -> None:
         """Co-selecting an exactly-one set forks rather than raising."""
         pyproject = tmp_path / "pyproject.toml"
@@ -1907,7 +1951,7 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        _resolved(
+        result = _resolved(
             pyproject,
             extras=["cpu", "gpu"],
             inputs=ResolveInputs(
@@ -1920,8 +1964,10 @@ class TestResolveUniversalPyproject:
                 python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
             ).expand(),
         )
-        forks = mock_engine.call_args.kwargs["forks"]
+        forks = engine_spy.call_args.kwargs["forks"]
         assert len(forks) == 2
+
+        _assert_co_selected_pins(result)
 
     def test_marker_gated_member_unreachable_on_a_tuple_raises(
         self, tmp_path: Path
