@@ -111,11 +111,13 @@ def test_cycle_and_unused_hints_preserve_reachable_pins() -> None:
     )
     observer = Observer()
     resolver = Resolver(provider, observer=observer)
+
     assert resolver.try_resolve_preferred(
         {"a": Range.full()}, {"a": 1, "b": 2, "unused": 9}
     ) == {"a": 1, "b": 2}
     assert provider.reads == ["a", "b"]
     assert observer.decisions == [("a", 1, 2), ("b", 2, 3)]
+
     with pytest.raises(RuntimeError):
         resolver.resolve({"a": Range.full()})
     with pytest.raises(RuntimeError):
@@ -128,21 +130,26 @@ def test_missing_or_unpreferred_choice_refuses_without_notifications(
 ) -> None:
     observer = Observer()
     resolver = Resolver(GraphProvider({"a": {1: {}, 2: {}}}), observer=observer)
+
     assert resolver.try_resolve_preferred({"a": Range.full()}, hint) is None
     assert observer.decisions == []
     assert resolver.observer is observer
+
     with pytest.raises(RuntimeError):
         resolver.resolve({"a": Range.full()})
 
 
 def test_no_available_version_refuses() -> None:
     resolver = Resolver(GraphProvider({}))
+
     assert resolver.try_resolve_preferred({"a": Range.full()}, {"a": 1}) is None
 
 
 def test_previously_used_resolver_cannot_be_a_trial() -> None:
     resolver = Resolver(GraphProvider({"a": {1: {}}}))
+
     assert resolver.resolve({"a": Range.full()}) == {"a": 1}
+
     with pytest.raises(RuntimeError):
         resolver.try_resolve_preferred({"a": Range.full()}, {"a": 1})
 
@@ -153,16 +160,19 @@ def test_duplicate_roots_and_constraints_are_intersected() -> None:
         RootRequirement("a", Range.less_than(3), "second"),
     ]
     provider = GraphProvider({"a": {1: {}, 2: {}, 3: {}}})
+
     assert Resolver(provider).try_resolve_preferred(
         roots, {"a": 2}, {"a": Range.at_least(2)}
     ) == {"a": 2}
     assert Resolver(GraphProvider(provider.packages)).try_resolve_preferred(
         roots, {"a": 3}
     ) == {"a": 2}
+
     impossible: list[RootRequirement[str, int]] = [
         *roots,
         RootRequirement("a", Range.empty(), "third"),
     ]
+
     assert (
         Resolver(GraphProvider(provider.packages)).try_resolve_preferred(
             impossible, {"a": 2}
@@ -179,6 +189,7 @@ def test_requirements_can_force_a_different_preferred_version(
     provider.preferences = {"a": 1}
     roots = {"a": Range.full() if constrained else Range.singleton(2)}
     constraints = {"a": Range.singleton(2)} if constrained else None
+
     assert Resolver(provider).try_resolve_preferred(roots, {"a": 1}, constraints) == {
         "a": 2
     }
@@ -237,6 +248,7 @@ def test_force_backtrack_requests_refuse_the_trial(stage: str) -> None:
         provider.on_choice = force
     else:
         provider.on_metadata = force
+
     assert (
         Resolver(provider).try_resolve_preferred({"a": Range.full()}, {"a": 1}) is None
     )
@@ -258,6 +270,7 @@ def test_pending_facts_must_be_satisfied_by_the_complete_model(stage: str) -> No
         provider.on_choice = emit
     else:
         provider.on_metadata = emit
+
     assert (
         Resolver(provider).try_resolve_preferred(
             {"a": Range.full(), "b": Range.full()}, {"a": 1, "b": 1}
@@ -271,6 +284,7 @@ def test_late_constraint_keeps_the_provider_choice_and_ignores_unreachable_const
 ):
     provider = GraphProvider({"a": {1: {}, 2: {}}, "b": {1: {"a": Range.at_least(2)}}})
     hint = {"a": 2, "b": 1}
+
     assert (
         Resolver(provider).try_resolve_preferred(
             {"a": Range.full(), "b": Range.full()},
@@ -284,6 +298,7 @@ def test_late_constraint_keeps_the_provider_choice_and_ignores_unreachable_const
 
 def test_late_conflicting_dependency_refuses() -> None:
     provider = GraphProvider({"a": {1: {}}, "b": {1: {"a": Range.at_least(2)}}})
+
     assert (
         Resolver(provider).try_resolve_preferred(
             {"a": Range.full(), "b": Range.full()}, {"a": 1, "b": 1}
@@ -305,6 +320,7 @@ def test_late_policy_change_can_refuse_a_still_valid_version() -> None:
     provider = RefiningProvider(
         {"a": {1: {}, 2: {}, 3: {}}, "b": {1: {"a": Range.at_least(2)}}}
     )
+
     assert (
         Resolver(provider).try_resolve_preferred(
             {"a": Range.full(), "b": Range.full()}, {"a": 2, "b": 1}
@@ -329,6 +345,7 @@ def test_late_policy_recheck_honors_new_provider_requests(signal_kind: str) -> N
                 )
 
     provider.on_choice = emit
+
     assert (
         Resolver(provider).try_resolve_preferred(
             {"a": Range.full(), "b": Range.full()}, {"a": 2, "b": 1}
@@ -348,6 +365,7 @@ def test_callback_failure_restores_the_observer() -> None:
     resolver = Resolver(provider, observer=observer)
     with pytest.raises(ValueError, match="invalid registry metadata"):
         resolver.try_resolve_preferred({"a": Range.full()}, {"a": 1})
+
     assert resolver.observer is observer
     assert observer.decisions == []
 
@@ -375,6 +393,7 @@ def test_preferred_verification_matches_an_ordinary_success(packages: Graph) -> 
     expected = Resolver(GraphProvider(packages)).resolve(roots)
     provider = GraphProvider(packages)
     provider.preferences = expected
+
     assert Resolver(provider).try_resolve_preferred(roots, expected) == expected
 
 
@@ -396,6 +415,7 @@ def test_late_recheck_receives_complete_immutable_snapshots() -> None:
 
     provider = HintProvider({"a": {1: {}, 2: {}}, "b": {1: {"a": Range.at_least(2)}}})
     hint = {"a": 2, "b": 1}
+
     assert (
         Resolver(provider).try_resolve_preferred(
             {"a": Range.full(), "b": Range.full()}, hint

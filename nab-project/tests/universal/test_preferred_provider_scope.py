@@ -75,6 +75,7 @@ def test_refused_model_cannot_carry_provisional_clauses_into_fallback(
         constraints: Mapping[str, RangeProtocol[Version]] | None = None,
     ) -> dict[str, Version]:
         provider = self.provider
+
         assert isinstance(provider, Provider)
         assert provider.target is not None
         normal_started.append(
@@ -110,6 +111,7 @@ def test_refused_model_cannot_carry_provisional_clauses_into_fallback(
         ),
     )
     result.raise_for_failure()
+
     assert result.target_results[0].pins == {
         "a": Version("1"),
         "z": Version("2"),
@@ -143,6 +145,7 @@ def test_each_target_still_requires_an_admitted_wheel() -> None:
         inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
     )
     result.raise_for_failure()
+
     assert [item.pins for item in result.target_results] == [
         {"a": Version("2")},
         {"a": Version("1")},
@@ -169,6 +172,7 @@ def test_prerelease_fallback_is_checked_against_each_python() -> None:
         inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
     )
     result.raise_for_failure()
+
     assert [item.pins for item in result.target_results] == [
         {"a": Version("2rc1")},
         {"a": Version("2rc1")},
@@ -198,6 +202,7 @@ def test_trial_does_not_swallow_a_one_shot_termination() -> None:
         inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
         progress=progress,
     )
+
     assert result.target_results[0].success
     assert not result.target_results[1].success
     assert isinstance(result.target_results[1].error, ResolutionTerminatedError)
@@ -207,6 +212,7 @@ def test_trial_does_not_swallow_a_one_shot_termination() -> None:
 def test_target_markers_can_add_and_remove_packages_from_the_hint() -> None:
     a = make_wheel("1", package="a", hashes=(("sha256", "a" * 64),))
     b = make_wheel("1", package="b", hashes=(("sha256", "b" * 64),))
+
     assert a.metadata_url is not None
     assert b.metadata_url is not None
     result = resolve_with_coordinator(
@@ -222,6 +228,7 @@ def test_target_markers_can_add_and_remove_packages_from_the_hint() -> None:
         inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
     )
     result.raise_for_failure()
+
     assert [item.pins for item in result.target_results] == [
         {"a": Version("1")},
         {"a": Version("1"), "b": Version("1")},
@@ -232,6 +239,7 @@ def test_target_markers_can_add_and_remove_packages_from_the_hint() -> None:
 def test_metadata_requires_python_can_refuse_the_preferred_version() -> None:
     newer = make_wheel("2", package="a", hashes=(("sha256", "a" * 64),))
     older = make_wheel("1", package="a", hashes=(("sha256", "b" * 64),))
+
     assert newer.metadata_url is not None
     assert older.metadata_url is not None
     result = resolve_with_coordinator(
@@ -247,6 +255,7 @@ def test_metadata_requires_python_can_refuse_the_preferred_version() -> None:
         inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
     )
     result.raise_for_failure()
+
     assert [item.pins for item in result.target_results] == [
         {"a": Version("2")},
         {"a": Version("1")},
@@ -266,6 +275,7 @@ def test_missing_target_extra_is_reported_by_ordinary_fallback(
         constraints: Mapping[str, RangeProtocol[Version]] | None = None,
     ) -> dict[str, Version]:
         provider = self.provider
+
         assert isinstance(provider, Provider)
         assert provider.target is not None
         ordinary_targets.append(provider.target.marker_env["sys_platform"])
@@ -284,6 +294,7 @@ def test_missing_target_extra_is_reported_by_ordinary_fallback(
         tag="cp312-cp312-win_amd64",
         hashes=(("sha256", "b" * 64),),
     )
+
     assert linux.metadata_url is not None
     assert windows.metadata_url is not None
     with pytest.raises(MissingExtraError):
@@ -301,4 +312,5 @@ def test_missing_target_extra_is_reported_by_ordinary_fallback(
             [Requirement("a[speed]")],
             inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
         )
+
     assert ordinary_targets == ["linux", "win32"]

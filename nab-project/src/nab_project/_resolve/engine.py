@@ -809,6 +809,7 @@ def _preferred_hint(
         or any(req.url is not None for req in (*requirements, *constraints))
     ):
         return None
+
     result = {}
     for package in settings.preferred_names:
         base, _ = split_extra(package)
@@ -854,6 +855,8 @@ class _TargetAttempt:
             YankAdmissionRequiredError,
         ):
             self.pins = None
+
+        # A refused trial has consumed both its provider and solver.
         if self.pins is None:
             self.prior_stats = _target_stats(self.resolver, self.provider)
             self.provider = self._factory()
@@ -871,6 +874,7 @@ def _resolve_one_target(
     """Run one single-environment resolve for ``target``."""
     inputs = settings.inputs
     environment = target.marker_env
+
     try:
         root_requirements, resolver_requirements, root_extras = build_resolver_inputs(
             requirements,
@@ -907,6 +911,7 @@ def _resolve_one_target(
     artifacts = settings.artifacts
     start = time.monotonic()
     prior_stats: _TargetStats | None = None
+
     try:
         attempt.try_preferred(
             root_requirements,
@@ -916,6 +921,7 @@ def _resolve_one_target(
         provider, resolver = attempt.provider, attempt.resolver
         prior_stats = attempt.prior_stats
         raw = attempt.pins
+
         try:
             if raw is None:
                 raw = resolver.resolve(
@@ -944,6 +950,7 @@ def _resolve_one_target(
                 resolver.stats,
             )
             artifacts = ArtifactMemo()
+
         pins = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
         _raise_for_source_python(provider, target, pins)
     except ResolutionError as exc:
@@ -955,7 +962,9 @@ def _resolve_one_target(
             wall_time=time.monotonic() - start,
             **_target_stats(resolver, provider, prior_stats),
         )
+
     elapsed = time.monotonic() - start
+
     base_roots, selector_roots = _install_context_roots(
         contexts, environment, settings.marker_holds
     )
@@ -977,6 +986,7 @@ def _resolve_one_target(
 
     if provider.yank_admissions:
         _warn_selected_yanks(provider, target_lock)
+
     settings.preferred_names.update(raw)
     stats = _target_stats(resolver, provider, prior_stats)
     _logger.info(

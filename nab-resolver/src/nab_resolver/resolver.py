@@ -880,9 +880,13 @@ class Resolver(Generic[PackageType, VersionType]):
                 "Preferred-model validation requires a fresh resolver and provider"
             )
             raise RuntimeError(message)
+
         self.preferred_trial_consumed = True
+
+        # Delay decision callbacks until the complete preferred model is proved.
         observer = self.observer
         self.observer = ResolverObserver()
+
         try:
             self._reset(constraints)
             roots = _as_root_requirements(requirements)
@@ -892,9 +896,11 @@ class Resolver(Generic[PackageType, VersionType]):
             result = self._grow_preferred_model(roots, preferred)
         finally:
             self.observer = observer
+
         if result is not None:
             for level, (package, version) in enumerate(result.items(), start=2):
                 observer.on_decision(package, version, level)
+
         return result
 
     def _grow_preferred_model(
@@ -904,6 +910,7 @@ class Resolver(Generic[PackageType, VersionType]):
     ) -> dict[PackageType, VersionType] | None:
         """Check the dependency closure and every emitted clause."""
         model: _PreferredModel[PackageType, VersionType] = _PreferredModel()
+
         for root in roots:
             constraint = self.as_term_range(root.constraint)
             previous = model.required.get(root.package)
@@ -913,20 +920,26 @@ class Resolver(Generic[PackageType, VersionType]):
             if root.package not in model.queued:
                 model.pending.append(root.package)
                 model.queued.add(root.package)
+
+        # The queue grows as accepted packages introduce dependencies.
         for package in model.pending:
             if not self._accept_preferred_choice(model, package, preferred):
                 return None
+
         if not self._recheck_preferred_ranges(model):
             return None
+
         self.stats.rounds += 1
         if self.stats.rounds > self.max_iterations:
             return None
+
         contradicted = IncompatibilityState.CONTRADICTED
         if any(
             propagate.evaluate_incompatibility(self, clause) is not contradicted
             for clause in self.incompatibilities
         ):
             return None
+
         return model.pins
 
     def _accept_preferred_choice(
@@ -939,9 +952,12 @@ class Resolver(Generic[PackageType, VersionType]):
         self.stats.rounds += 1
         if self.stats.rounds >= self.max_iterations or package not in preferred:
             return False
+
         chosen = decide.choose_version(self, package)
         if chosen is None:
             return False
+
+        # A different choice is allowed only when current constraints force it.
         expected = preferred[package]
         if chosen != expected:
             required = model.required[package]
@@ -950,16 +966,21 @@ class Resolver(Generic[PackageType, VersionType]):
                 required = required & constraint
             if expected in required:
                 return False
+
         if list(self.provider.consume_force_backtrack_targets()):
             return False
+
         decide.absorb_pending_clauses(self)
         exact = self.solution.decide(package, chosen)
         self.stats.decisions += 1
         model.pins[package] = chosen
         model.chosen_ranges[package] = model.required[package]
+
         dependencies = self.provider.get_dependencies(package, chosen)
+
         if list(self.provider.consume_force_backtrack_targets()):
             return False
+
         decide.absorb_pending_clauses(self)
         return self._add_preferred_dependencies(
             model, package, chosen, exact, dependencies
@@ -980,10 +1001,12 @@ class Resolver(Generic[PackageType, VersionType]):
             model.required[dependency] = (
                 dependency_range if previous is None else previous & dependency_range
             )
+
             if dependency == package:
                 if version not in dependency_range:
                     return False
                 continue
+
             clause = Incompatibility(
                 [
                     Term(package, exact, positive=True),
@@ -997,9 +1020,11 @@ class Resolver(Generic[PackageType, VersionType]):
             )
             if narrowed.is_empty:
                 return False
+
             if dependency not in model.queued:
                 model.pending.append(dependency)
                 model.queued.add(dependency)
+
         return True
 
     def _recheck_preferred_ranges(
@@ -1010,18 +1035,22 @@ class Resolver(Generic[PackageType, VersionType]):
             final_range = model.required[package]
             if final_range == model.chosen_ranges[package]:
                 continue
+
             constraint = self.constraints.get(package)
             if constraint is not None:
                 final_range = final_range & constraint
+
             if self.provider is not self._hint_ignoring_provider:
                 self.provider.receive_partial_solution_hint(
                     self.solution.positive_ranges(), self.solution.decisions()
                 )
+
             if self.provider.choose_version(package, final_range) != chosen:
                 return False
             if list(self.provider.consume_force_backtrack_targets()):
                 return False
             decide.absorb_pending_clauses(self)
+
         return True
 
     def _handle_conflict(
