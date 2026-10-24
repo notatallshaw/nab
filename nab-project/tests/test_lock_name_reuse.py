@@ -140,5 +140,6 @@ def test_custom_string_keys_do_not_gain_hash_calls() -> None:
             raise AssertionError("Unexpected key hashing")
 
     names = {}
+
     assert builder._lock_name(UnhashableName("Core_Tool"), names) == "core-tool"
     assert names == {}
