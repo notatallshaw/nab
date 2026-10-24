@@ -43,7 +43,7 @@ its own:
 | Bucket        | Holds                                                     |
 | ------------- | --------------------------------------------------------- |
 | `vcs-v1/`     | a shallow clone, at `vcs-v1/vcs/<repo key>/<commit sha>/` |
-| `archive-v1/` | an extracted archive, at `archive-v1/<archive digest>/`   |
+| `archive-v2/` | an extracted archive, at `archive-v2/<archive digest>/`   |
 
 Both hold upstream files rather than nab records and are not keyed per index. Their bucket versions
 let nab retire trees whose reuse rules have changed.

@@ -2836,8 +2836,11 @@ class TestArchiveSourceAcrossTargets:
             assert str(target_result.pins["foo"]) == "1.0"
             assert str(target_result.pins["bar"]) == "2.0"
 
-    def test_poisoned_legacy_cached_tree_is_not_reused(self, tmp_path: Path) -> None:
-        """A tree written before source-cache isolation cannot affect a resolve."""
+    @pytest.mark.parametrize("bucket", ["archive", "archive-v1"])
+    def test_poisoned_legacy_cached_tree_is_not_reused(
+        self, tmp_path: Path, bucket: str
+    ) -> None:
+        """A previous cache layout cannot affect a resolve or be overwritten."""
         fresh = '[project]\nname = "foo"\nversion = "1.0"\n'
         data = _archive_bytes("foo", "1.0", fresh)
         digest = hashlib.sha256(data).hexdigest()
@@ -2845,7 +2848,7 @@ class TestArchiveSourceAcrossTargets:
             name="foo", url=f"https://ex.com/foo-1.0.tar.gz#sha256={digest}"
         )
 
-        legacy_entry = tmp_path / "archive" / digest
+        legacy_entry = tmp_path / bucket / digest
         legacy_tree = legacy_entry / "tree"
         legacy_tree.mkdir(parents=True)
         (legacy_tree / "pyproject.toml").write_text(

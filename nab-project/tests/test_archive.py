@@ -1116,9 +1116,17 @@ class TestWarmArchiveCache:
         assert (target / "tree" / "foo-1.0.0" / "pyproject.toml").is_file()
         assert len(provider.coordinator.calls_to("request_direct_archive")) == 1
 
-    @pytest.mark.parametrize("root_name", ["..", "nested/name", "missing"])
+    @pytest.mark.parametrize(
+        "root_record",
+        [
+            pytest.param(os.fsencode("..").hex(), id="parent"),
+            pytest.param(os.fsencode("nested/name").hex(), id="nested"),
+            pytest.param(os.fsencode("missing").hex(), id="missing"),
+            pytest.param("not-hex", id="not-hex"),
+        ],
+    )
     def test_unusable_root_record_is_not_served(
-        self, tmp_path: Path, root_name: str
+        self, tmp_path: Path, root_record: str
     ) -> None:
         digest = "b" * 64
         source = ArchiveSource(
@@ -1127,9 +1135,7 @@ class TestWarmArchiveCache:
         cache = tmp_path / "arch"
         target = cache / digest
         _warm_extracted_tree(cache, digest)
-        (target / ".nab-root").write_text(
-            os.fsencode(root_name).hex(), encoding="ascii"
-        )
+        (target / ".nab-root").write_text(root_record, encoding="ascii")
 
         provider = _provider([source], cache)
 

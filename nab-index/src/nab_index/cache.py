@@ -35,7 +35,7 @@ A resolve writes two more buckets under the same root, holding upstream
 source trees:
 
     vcs-v1/vcs/<repo key>/<commit sha>/   <- shallow clone
-    archive-v1/<archive digest>/          <- extracted archive
+    archive-v2/<archive digest>/          <- extracted archive
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ CACHE_VERSION_SDIST = "v2"
 # and rewritten there, since rebuilding one costs an archive download.
 _CACHE_VERSION_SDIST_JSON = "v1"
 CACHE_VERSION_VCS = "v1"
-CACHE_VERSION_ARCHIVE = "v1"
+CACHE_VERSION_ARCHIVE = "v2"
 
 # Buckets of nab-written records. simple-neg-* is covered by the simple- prefix.
 ENTRY_BUCKET_PREFIXES = ("simple-", "metadata-", "sdist-")
@@ -113,7 +113,7 @@ ENTRY_BUCKET_PREFIXES = ("simple-", "metadata-", "sdist-")
 VCS_BUCKET = f"vcs-{CACHE_VERSION_VCS}"
 ARCHIVE_BUCKET = f"archive-{CACHE_VERSION_ARCHIVE}"
 SOURCE_BUCKETS = (VCS_BUCKET, ARCHIVE_BUCKET)
-_LEGACY_SOURCE_BUCKETS = ("vcs", "archive")
+_LEGACY_SOURCE_BUCKETS = ("vcs", "archive", "archive-v1")
 _RECOGNIZED_SOURCE_BUCKETS = SOURCE_BUCKETS + _LEGACY_SOURCE_BUCKETS
 
 DEFAULT_PYPI_URLS = frozenset(
