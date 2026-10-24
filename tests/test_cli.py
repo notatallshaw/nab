@@ -99,6 +99,7 @@ from nab_provider.records import WheelFile
 from nab_provider.requirements_file import InvalidProjectRequirementError
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import IntractableMarkerError, ResolveTarget, host_environment
+from nab_provider.testing import make_metadata, make_wheel
 from nab_resolver.errors import ResolutionError
 
 requires_int_limit = pytest.mark.skipif(
@@ -3241,12 +3242,17 @@ class TestLockCommandUniversal:
         assert "cannot write output" in capsys.readouterr().err
         assert out.read_bytes() == committed
 
-    def test_default_groups_from_config_not_cli_groups(self, tmp_path: Path) -> None:
+    def test_default_groups_from_config_not_cli_groups(
+        self, hermetic_roots: Path
+    ) -> None:
         """Universal pylock records ``default-groups`` from config, not ``--groups``."""
         pyproject = _make_pyproject(
-            tmp_path,
+            hermetic_roots,
             '[project]\ndependencies = ["foo"]\n'
-            "[dependency-groups]\ndev = []\ntest = []\n"
+            "[dependency-groups]\n"
+            'dev = ["devonly"]\n'
+            'test = ["testonly"]\n'
+            'unused = ["unavailable"]\n'
             "[tool.nab]\n"
             'mode = "universal"\n'
             'default-groups = ["dev"]\n'
@@ -3254,15 +3260,48 @@ class TestLockCommandUniversal:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n',
         )
-        out = tmp_path / "pylock.toml"
+        listings = {
+            name: [make_wheel("1.0", package=name, hashes=(("sha256", "a" * 64),))]
+            for name in ("foo", "devonly", "testonly", "leaf")
+        }
+        metadata = {
+            wheels[0].metadata_url: make_metadata(name, "1.0")
+            for name, wheels in listings.items()
+        }
+        metadata[listings["testonly"][0].metadata_url] = make_metadata(
+            "testonly", "1.0", "leaf==1.0"
+        )
+        coordinator = make_coordinator(listings=listings, metadata_by_url=metadata)
+        out = hermetic_roots / "pylock.toml"
         with patch(
-            "nab._resolve.resolve_for_targets",
-            return_value=_universal_result(success=True),
+            "nab_project.resolve.FetchCoordinator",
+            return_value=contextlib.nullcontext(coordinator),
         ):
-            lock(pyproject, output=out, groups=("test",))
+            lock(pyproject, output=out, groups=("test",), offline=True, cache=False)
         pylock = Pylock.from_dict(tomli.loads(out.read_text()))
         assert pylock.dependency_groups == ["test"]
         assert pylock.default_groups == ["dev"]
+
+        assert {package.name: str(package.version) for package in pylock.packages} == {
+            "foo": "1.0",
+            "devonly": "1.0",
+            "testonly": "1.0",
+            "leaf": "1.0",
+        }
+
+        for groups, expected in (
+            (None, {"foo", "devonly"}),
+            ((), {"foo"}),
+            (("test",), {"foo", "testonly", "leaf"}),
+            (("dev", "test"), {"foo", "devonly", "testonly", "leaf"}),
+        ):
+            selected = {
+                package.name
+                for package, _artifact in pylock.select(
+                    environment=dict(_target().marker_env), dependency_groups=groups
+                )
+            }
+            assert selected == expected, groups
 
     def test_offline_and_http_backend_passed_to_universal(self, tmp_path: Path) -> None:
         """--http-backend and --offline reach resolve_for_targets."""
