@@ -6836,6 +6836,7 @@ class TestMain:
         gc.disable()
 
         graph = allocated[0]
+
         assert not any(obj is graph for obj in gc.get_objects(generation=0))
         assert any(obj is graph for obj in gc.get_objects(generation=2))
 

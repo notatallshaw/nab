@@ -331,4 +331,5 @@ def test_metadata_url_keeps_a_snapshot_during_payload_release() -> None:
         assert pending.result(timeout=_TIMEOUT) == (
             "https://files.example/pkg-1.0-py3-none-any.whl.metadata"
         )
+
     assert wheel.metadata_url is None
