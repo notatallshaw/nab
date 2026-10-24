@@ -536,6 +536,7 @@ def render_lock(lock_input: LockInput, *, lock_dir: Path | None = None) -> str:
         with intractable_as_error():
             pylock = build_pylock(lock_input, lock_dir=lock_dir)
         document = dict(pylock.to_dict())
+
     try:
         Pylock.from_dict(document)
     except PylockValidationError as e:
@@ -614,10 +615,12 @@ def _plain_values(pending: list[object], *, packaging_values: bool) -> bool:
             continue
         if packaging_values and _plain_packaging_value(value):
             continue
+
         if type(value) is datetime:
             if value.tzinfo is None or value.tzinfo is timezone.utc:
                 continue
             return False
+
         if type(value) is dict:
             if id(value) in containers:
                 return False
@@ -631,6 +634,7 @@ def _plain_values(pending: list[object], *, packaging_values: bool) -> bool:
             pending.extend(value)
         else:
             return False
+
     return True
 
 
@@ -708,6 +712,7 @@ def _prepare_pylock(
     environment_rows, uses_implementation_version = _prepare_environment_rows(
         lock_input.environments
     )
+
     universe, env_rows = _emission_scope(lock_input, store, rows=environment_rows)
     prepared_sets = PreparedMarkerSets()
     package_records = _build_packages(
@@ -721,6 +726,7 @@ def _prepare_pylock(
         package_output=package_output,
     )
     package_records.sort(key=_package_sort_key)
+
     validate_marker_disjointness(
         package_records,
         environments=lock_input.marker_envs,
@@ -730,6 +736,7 @@ def _prepare_pylock(
         declared_groups=conflict_member_groups(lock_input.conflicts),
         prepared_sets=prepared_sets,
     )
+
     validate_marker_coverage(
         [lock.target for lock in lock_input.targets.values()],
         environments=lock_input.environments,
@@ -737,6 +744,7 @@ def _prepare_pylock(
         environment_sets=environment_rows,
         uses_implementation_version=uses_implementation_version,
     )
+
     tool: dict[str, Any] | None = (
         {"nab": lock_input.provenance.to_block()}
         if lock_input.provenance is not None
@@ -763,6 +771,7 @@ def _prepare_pylock(
         "created_by": lock_input.created_by,
         "tool": tool,
     }
+
     return root_fields, package_records
 
 
@@ -871,6 +880,7 @@ def _pin_to_package(
             pin, marker, lock_dir=lock_dir, dependencies=dependencies
         )
         return _index_package(fields)
+
     if isinstance(pin, LocalPin):
         # PEP 751: omit version for directory sources; it is not
         # deterministic (the source tree may change at install time).
@@ -886,6 +896,7 @@ def _pin_to_package(
                 subdirectory=pin.subdirectory,
             ),
         )
+
     if isinstance(pin, VcsPin):
         # PEP 751: omit version for VCS sources for the same reason.
         # vcs.url is the bare repository URL; the ref and subdirectory
@@ -903,6 +914,7 @@ def _pin_to_package(
                 requested_revision=pin.requested_revision,
             ),
         )
+
     if isinstance(pin, ArchivePin):
         validate_artifact_hashes(pin.name, pin.hashes)
         # An archive is content-pinned by its hash, so the version is
@@ -918,6 +930,7 @@ def _pin_to_package(
                 subdirectory=pin.subdirectory,
             ),
         )
+
     msg = f"unknown pin shape: {pin!r}"
     raise TypeError(msg)
 
@@ -997,6 +1010,7 @@ def _index_fields(
     version = Version(pin.version)
     python = SpecifierSet(pin.requires_python) if pin.requires_python else None
     index = pin.index
+
     sdist = _artifact_fields(pin.sdist, lock_dir=lock_dir) if pin.sdist else None
     wheels = (
         tuple(
@@ -1005,6 +1019,7 @@ def _index_fields(
         )
         or None
     )
+
     return {
         "name": name,
         "version": version,
@@ -1212,10 +1227,12 @@ def _build_packages(
     base_names = _close_base_names(
         targets, env_signatures, env_fork_counts, lock_input.env_base_names
     )
+
     pin_groups = {
         canonical_name: _group_pins_by_pin(per_target)
         for canonical_name, per_target in by_name.items()
     }
+
     shortened: dict[str, Marker | None] = {}
     forked_groups = _forked_exclusion_groups(exclusion_groups, targets)
     axes = _ForkAxes(
@@ -1235,6 +1252,7 @@ def _build_packages(
         },
         env_rows=env_rows,
     )
+
     projections = _fork_projections(axes, pin_groups, env_fork_counts, base_names)
 
     for canonical_name, groups in pin_groups.items():
@@ -1264,6 +1282,7 @@ def _build_packages(
                 store,
                 prepared_sets=prepared_sets if len(groups) > 1 else None,
             )
+
             out.append(
                 package_output(
                     _merge_pins_in_group(pins),

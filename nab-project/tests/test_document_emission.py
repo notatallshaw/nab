@@ -146,6 +146,7 @@ def test_index_document_matches_native_values_types_order_and_text(
         value, lock_dir=tmp_path, package_output=pylock._pin_to_document
     )
     document = pylock._index_document(fields, packages)
+
     assert document == expected
     assert list(document) == list(expected)
 
@@ -158,11 +159,13 @@ def test_index_document_matches_native_values_types_order_and_text(
         assert list(actual["wheels"][0]) == list(native["wheels"][0])
         assert list(actual["wheels"][0]["hashes"]) == ["sha256", "sha512"]
         assert actual["wheels"][0]["size"] == 0
+
     assert isinstance(document["extras"], tuple)
     assert isinstance(document["dependency-groups"], tuple)
     assert isinstance(document["environments"], list)
 
     text, calls = observe_render(value, lock_dir=tmp_path)
+
     assert text == tomli_w.dumps(expected)
     assert calls == ["disjointness", "coverage", "document", "schema"]
 
@@ -170,10 +173,12 @@ def test_index_document_matches_native_values_types_order_and_text(
 def test_public_builder_still_returns_native_unvalidated_models(tmp_path: Path) -> None:
     value = lock_input(index_pin(size=False))
     model = pylock.build_pylock(value, lock_dir=tmp_path)
+
     assert isinstance(model, Pylock)
     assert isinstance(model.packages[0], Package)
     assert model.packages[0].wheels is not None
     wheel = model.packages[0].wheels[0]
+
     assert isinstance(wheel, PackageWheel)
     assert wheel.size is False
 
@@ -206,6 +211,7 @@ def test_other_source_kinds_keep_the_native_serializer(
     value = lock_input(pin)
     expected = pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
     text, calls = observe_render(value, lock_dir=tmp_path)
+
     assert text == tomli_w.dumps(expected)
     assert calls == ["disjointness", "coverage", "native-document", "schema"]
 
@@ -227,6 +233,7 @@ def test_mixed_sources_keep_index_artifacts_on_the_native_path(tmp_path: Path) -
     )
     expected = pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
     text, calls = observe_render(value, lock_dir=tmp_path)
+
     assert text == tomli_w.dumps(expected)
     assert calls == ["disjointness", "coverage", "native-document", "schema"]
 
@@ -283,12 +290,14 @@ def test_package_specifier_stringification_follows_coverage(
     )
     with pytest.raises(CoverageError):
         pylock.render_lock(value, lock_dir=tmp_path)
+
     assert serialized == []
 
     text, calls = observe_render(
         replace(value, environments=lock_input(index_pin()).environments),
         lock_dir=tmp_path,
     )
+
     assert text
     assert serialized == ["specifier"]
     assert calls == ["disjointness", "coverage", "document", "schema"]
@@ -308,6 +317,7 @@ def test_document_collections_do_not_alias_other_emissions(tmp_path: Path) -> No
     tool["nab"]["command-line"].append("changed")
 
     fresh = pylock.render_lock(value, lock_dir=tmp_path)
+
     assert "c" * 64 not in fresh
     assert "changed" not in fresh
     assert value.provenance is not None
@@ -383,6 +393,7 @@ def test_custom_scalar_copy_uses_native_serialization_once(
     expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
 
     text, calls = observe_render(value, lock_dir=tmp_path)
+
     assert text == expected
     assert ("copied" if field != "hash" else "c" * 64) in text
     assert calls == [
@@ -407,6 +418,7 @@ def test_marker_subclass_in_tool_values_keeps_native_copy(tmp_path: Path) -> Non
     )
     expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
     text, calls = observe_render(value, lock_dir=tmp_path)
+
     assert text == expected
     assert "copied-marker" in text
     assert calls == [
@@ -459,6 +471,7 @@ def test_custom_tool_container_uses_native_reconstruction(tmp_path: Path) -> Non
     )
     expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
     text, calls = observe_render(value, lock_dir=tmp_path)
+
     assert text == expected
     assert text.count("copied") == 2
     assert calls == [
@@ -509,6 +522,7 @@ def test_custom_metaclass_cannot_admit_a_scalar(tmp_path: Path) -> None:
     )
     expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
     text, calls = observe_render(value, lock_dir=tmp_path)
+
     assert text == expected
     assert "copied" in text
     assert calls == [
@@ -546,6 +560,7 @@ def test_plain_tool_scalars_keep_direct_emission(tmp_path: Path) -> None:
     )
     expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
     text, calls = observe_render(value, lock_dir=tmp_path)
+
     assert text == expected
     assert calls == ["disjointness", "coverage", "document", "schema"]
 
@@ -562,6 +577,7 @@ def test_custom_tool_mapping_uses_native_reconstruction(tmp_path: Path) -> None:
     )
     expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
     text, calls = observe_render(value, lock_dir=tmp_path)
+
     assert text == expected
     assert 'copies = "xx"' in text
     assert calls == [
@@ -612,6 +628,7 @@ def test_naive_tool_datetime_keeps_direct_emission(tmp_path: Path) -> None:
     )
     expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
     text, calls = observe_render(value, lock_dir=tmp_path)
+
     assert text == expected
     assert calls == ["disjointness", "coverage", "document", "schema"]
 
@@ -691,6 +708,7 @@ def test_semantic_specifier_text_keeps_native_copy_behavior(
     else:
         assert expected["packages"][0]["requires-python"] == ">=4"
     text, calls = observe_render(value, lock_dir=tmp_path)
+
     assert text == tomli_w.dumps(expected)
     assert calls == [
         "disjointness",
@@ -723,6 +741,7 @@ def test_runtime_specifier_object_keeps_native_member_copy(
     else:
         assert expected["packages"][0]["requires-python"] == ">=4"
     text, calls = observe_render(value, lock_dir=tmp_path)
+
     assert text == tomli_w.dumps(expected)
     assert calls == [
         "disjointness",
@@ -783,6 +802,7 @@ def test_semantic_specifier_component_copy_changes_output(
     else:
         assert expected["packages"][0]["requires-python"] == expected_range
     text, calls = observe_render(value, lock_dir=tmp_path)
+
     assert text == tomli_w.dumps(expected)
     assert calls == [
         "disjointness",

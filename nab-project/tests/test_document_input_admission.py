@@ -88,6 +88,7 @@ def test_custom_pin_mapping_keeps_native_pins(tmp_path: Path) -> None:
     target = _target()
     pins = _SwapOnSecondValues(_pins("1.0"), _pins("2.0"))
     value = _input(target, {target.label: TargetLock(target, pins)})
+
     assert pylock.render_lock(value, lock_dir=tmp_path) == _native_first_text(
         target, tmp_path
     )
@@ -99,6 +100,7 @@ def test_custom_target_mapping_keeps_native_pins(tmp_path: Path) -> None:
         {target.label: TargetLock(target, _pins("1.0"))},
         {target.label: TargetLock(target, _pins("2.0"))},
     )
+
     assert pylock.render_lock(_input(target, locks), lock_dir=tmp_path) == (
         _native_first_text(target, tmp_path)
     )
@@ -120,6 +122,7 @@ def test_target_subclass_keeps_native_property_reads(tmp_path: Path) -> None:
             """The inherited constructor must retain the supplied timeline."""
 
     value = _input(target, {target.label: ChangingTarget(target, _pins("1.0"))})
+
     assert pylock.render_lock(value, lock_dir=tmp_path) == _native_first_text(
         target, tmp_path
     )
@@ -144,6 +147,7 @@ def test_input_subclass_keeps_native_property_reads(tmp_path: Path) -> None:
         targets={target.label: TargetLock(target, _pins("1.0"))},
         environments=[Marker(environment_declaration(target, []))],
     )
+
     assert pylock.render_lock(value, lock_dir=tmp_path) == _native_first_text(
         target, tmp_path
     )
