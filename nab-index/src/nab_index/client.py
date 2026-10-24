@@ -661,11 +661,16 @@ def _normalized_ascii_http_url(url: str) -> bool:
     if type(url) is not str or not url.isascii():
         return False
 
-    prefix = "https://" if url.startswith("https://") else "http://"
+    if url.startswith("https://"):
+        authority_start = len("https://")
+    elif url.startswith("http://"):
+        authority_start = len("http://")
+    else:
+        return False
+
     return (
-        url.startswith(prefix)
-        and len(url) > len(prefix)
-        and url[len(prefix)] not in "/?#"
+        len(url) > authority_start
+        and url[authority_start] not in "/?#"
         and "[" not in url
         and "]" not in url
         and "\t" not in url
