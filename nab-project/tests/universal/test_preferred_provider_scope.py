@@ -335,6 +335,7 @@ def test_preferred_trial_filters_only_complete_selected_release() -> None:
     result.raise_for_failure()
 
     first, second = result.target_results
+
     assert first.pins == second.pins == {"a": Version("20")}
 
     # Later targets keep both artifacts without filtering the other releases.

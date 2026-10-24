@@ -3033,9 +3033,11 @@ class TestSharedListingFilter:
 
         assert result.success
         assert calls == ["pkg@3.11.0"]
+
         pinned = {
             tr.target.platform_id: str(tr.pins["pkg"]) for tr in result.target_results
         }
+
         assert pinned == {"linux_x86_64": "2.0", "windows_amd64": "1.0"}
 
     def test_each_python_filters_the_listing_once(self) -> None:

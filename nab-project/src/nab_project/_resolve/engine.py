@@ -844,6 +844,7 @@ class _TargetAttempt:
         """Retain only a proved model; failed provider state stays behind."""
         if hint is None:
             return
+
         self.provider.prepare_preferred_releases(hint)
         try:
             self.pins = self.resolver.try_resolve_preferred(roots, hint, constraints)
