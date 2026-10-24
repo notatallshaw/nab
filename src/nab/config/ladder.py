@@ -615,6 +615,8 @@ def resolve_config(
             rejected=rejected_for_key,
             cli_table=cli_table,
         )
+
+    # Infer mode only after configuration precedence has selected the matrix.
     _apply_mode_default(out)
     return out
 
@@ -625,6 +627,7 @@ def _apply_mode_default(effective: dict[str, EffectiveValue]) -> None:
     matrix: MatrixConfig | None = effective["matrix"].value
     if mode.origin.kind is not SourceKind.DEFAULT or matrix is None:
         return
+
     value = (
         ResolveMode.UNIVERSAL
         if len(matrix_from_config(matrix).expand()) > 1

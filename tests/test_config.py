@@ -578,6 +578,7 @@ class TestMode:
             '[tool.nab.matrix]\npython = ">=3.11"\nplatforms = ["linux_x86_64"]\n',
         )
         config = read_pyproject_config(path)
+
         assert config.mode is ResolveMode.UNIVERSAL
         assert len(plan_targets(config)) > 1
 
@@ -593,6 +594,7 @@ class TestMode:
         with pytest.raises(ConfigError) as excinfo:
             read_pyproject_config(path, discover_workspace=False)
         message = str(excinfo.value)
+
         assert "[matrix] in nab.toml declares multiple targets" in message
         assert "[tool.nab.matrix]" not in message
 

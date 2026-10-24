@@ -72,7 +72,9 @@ def test_project_python_support_does_not_enable_universal_mode(
 
     assert run(("config", "get", "mode", "--path", str(path))) == 0
     assert capsys.readouterr().out.strip() == "specific"
+
     (target,) = plan_targets(read_pyproject_config(path, discover_workspace=False))
+
     assert target.host_faithful
 
 
@@ -157,7 +159,9 @@ def test_explicit_mode_keeps_a_single_declared_target(
     config = read_pyproject_config(path, discover_workspace=False)
 
     assert config.mode.value == mode
+
     (target,) = plan_targets(config)
+
     assert target.python_version == "3.11"
     assert target.platform_id == "windows_amd64"
 
@@ -239,11 +243,14 @@ def test_singleton_matrix_locks_its_target_and_supports_locked(
     command = ("lock", str(path), "--offline", "--no-cache")
 
     assert run(command) == 0
+
     output = tmp_path / "pylock.toml"
     original = output.read_bytes()
     document = tomli.loads(original.decode())
+
     assert document["tool"]["nab"]["mode"] == "specific"
     assert document["tool"]["nab"]["python-specifier"] == "==3.11"
+
     pylock = Pylock.from_dict(document)
     pylock.validate()
     for platform in ("windows_amd64", "linux_x86_64"):
@@ -283,14 +290,19 @@ def test_universal_lock_records_its_targets_and_refuses_locked(
     command = ("lock", str(path), "--offline", "--no-cache")
 
     assert run(command) == 0
+
     output = tmp_path / "pylock.toml"
     original = output.read_bytes()
     document = tomli.loads(original.decode())
+
     assert document["tool"]["nab"]["mode"] == "universal"
+
     pylock = Pylock.from_dict(document)
     pylock.validate()
+
     assert pylock.environments is not None
     assert len(pylock.environments) == (1 if explicit else 2)
+
     for minor in ("3.11", "3.12", "3.13"):
         environment = _consumer_environment(minor)
         if minor == "3.11" or (minor == "3.12" and not explicit):
@@ -317,6 +329,7 @@ def test_inferred_mode_selects_the_default_requirements_destination(
         run(("lock", str(path), "--offline", "--no-cache", "--format", "requirements"))
         == 0
     )
+
     output = capsys.readouterr().out
     if python == "==3.11":
         assert (tmp_path / "requirements.txt").read_text().strip() == ""

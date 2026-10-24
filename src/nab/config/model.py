@@ -391,6 +391,7 @@ def _config_from_effective(
                 f"mode = 'universal' requires a {table} declaring python and platforms"
             )
         raise ConfigError(msg)
+
     if mode is ResolveMode.SPECIFIC and matrix is not None:
         if mode_value.origin.outranks(matrix_value.origin):
             matrix = None
