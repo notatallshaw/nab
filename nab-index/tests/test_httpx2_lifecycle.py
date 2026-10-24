@@ -33,6 +33,7 @@ def clients(monkeypatch: pytest.MonkeyPatch) -> list[httpx2.AsyncClient]:
     ) -> httpx2.AsyncClient:
         assert follow_redirects
         assert max_redirects == MAX_REDIRECTS
+
         client = actual_client(
             http2=http2,
             follow_redirects=follow_redirects,
@@ -51,6 +52,7 @@ def test_unused_close_does_not_construct_a_client(
     clients: list[httpx2.AsyncClient],
 ) -> None:
     transport = Httpx2AsyncTransport()
+
     assert not clients
 
     async def run() -> None:
@@ -60,6 +62,7 @@ def test_unused_close_does_not_construct_a_client(
             await transport.get("https://example.com/closed")
 
     asyncio.run(run())
+
     assert not clients
 
 
@@ -68,6 +71,7 @@ def test_requests_reuse_one_client_and_close_it(
     clients: list[httpx2.AsyncClient], *, http2: bool
 ) -> None:
     transport = Httpx2AsyncTransport(http2=http2)
+
     assert not clients
 
     async def run() -> None:
@@ -81,11 +85,14 @@ def test_requests_reuse_one_client_and_close_it(
             assert not clients[0].is_closed
         finally:
             await transport.aclose()
+
         assert clients[0].is_closed
+
         with pytest.raises(HttpError):
             await transport.get("https://example.com/after-close")
 
     asyncio.run(run())
+
     assert len(clients) == 1
 
 
@@ -143,6 +150,7 @@ def test_ssl_context_is_also_deferred(
 
     monkeypatch.setattr(module.truststore, "SSLContext", context)
     transport = Httpx2AsyncTransport()
+
     assert not created
 
     async def run() -> None:
@@ -153,4 +161,5 @@ def test_ssl_context_is_also_deferred(
             await transport.aclose()
 
     asyncio.run(run())
+
     assert len(created) == len(clients) == 1

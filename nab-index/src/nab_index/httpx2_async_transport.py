@@ -88,6 +88,7 @@ class Httpx2AsyncTransport:
         __import__("httpx2")
         if http2:
             __import__("h2")
+
         self.prefetch_settings = prefetch_settings_for_backend("httpx2")
         self._http2 = http2
         self._client: httpx2.AsyncClient | None = None
@@ -98,6 +99,7 @@ class Httpx2AsyncTransport:
         if self._closed:
             msg = "HTTP transport is closed"
             raise RuntimeError(msg)
+
         client = self._client
         if client is None:
             client = httpx2.AsyncClient(
@@ -108,6 +110,7 @@ class Httpx2AsyncTransport:
                 verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
             )
             self._client = client
+
         return client
 
     async def get(
@@ -131,6 +134,7 @@ class Httpx2AsyncTransport:
                     "GET", url, headers=request_headers
                 ) as response:
                     raw = b"".join([part async for part in response.aiter_raw()])
+
                 content = (
                     decode_body(raw, response.headers.get("Content-Encoding"))
                     if decode
@@ -153,6 +157,7 @@ class Httpx2AsyncTransport:
             else:
                 if response.status_code not in RETRY_STATUSES:
                     return _Httpx2Response(response, content)
+
                 failures += 1
                 # Preserve the final status and body when retries run out.
                 if failures > MAX_RETRIES:
