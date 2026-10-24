@@ -1648,6 +1648,7 @@ class TestLockCommandSpecific:
             lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
 
         err = capsys.readouterr().err
+
         assert "cannot lock" in err
         assert "sha256 mismatch" in err
         assert "0" * 64 in err
@@ -1674,6 +1675,7 @@ class TestLockCommandSpecific:
         # Guards the premise: the pin has to sit outside the prefetch window.
         versions = ("1.0", "2.0", "3.0")
         pinned = versions[0]
+
         assert len(versions) > FetchCoordinator.PREFETCH_METADATA_COUNT
 
         pyproject = _make_pyproject(
@@ -1711,6 +1713,7 @@ class TestLockCommandSpecific:
             lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
 
         err = capsys.readouterr().err
+
         assert "cannot lock" in err
         assert "sha256 mismatch" in err
         assert "0" * 64 in err
@@ -1758,6 +1761,7 @@ class TestLockCommandSpecific:
             lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
 
         err = capsys.readouterr().err
+
         assert "cannot lock" in err
         assert "wheel sha256 mismatch" in err
         assert "0" * 64 in err
@@ -1804,6 +1808,7 @@ class TestLockCommandSpecific:
             lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
 
         err = capsys.readouterr().err
+
         assert "cannot lock" in err
         assert "sdist sha256 mismatch" in err
         assert "0" * 64 in err
@@ -7726,6 +7731,7 @@ class TestResolveTransport:
             transport = _make_resolve_transport("httpx")
 
         assert transport is make.return_value
+
         make.assert_called_once_with("httpx")
 
     def test_offline_lock_without_httpx_exits_with_the_hint(
@@ -7784,6 +7790,7 @@ class TestResolveTransport:
             asyncio.run(fetch_twice())
 
         make.assert_called_once_with()
+
         assert inner.requests == [
             ("https://example.invalid/a", None),
             ("https://example.invalid/b", {"Accept": "x"}),

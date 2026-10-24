@@ -115,6 +115,7 @@ def test_concurrent_first_requests_share_one_client() -> None:
         asyncio.run(fetch_and_close())
 
     make.assert_called_once_with()
+
     assert len(inner.requests) == 2
     assert inner.closes == 1
 

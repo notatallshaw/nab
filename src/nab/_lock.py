@@ -241,6 +241,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     if locked and (format != "pylock" or is_stdout(output)):
         printer().error("--locked is only supported for pylock output to a file.")
         sys.exit(1)
+
     if build_requirements:
         _refuse_group_selection_with_build_requirements(
             groups=groups,
@@ -251,6 +252,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
             base_group=project_base_group,
             build_group=project_build_group,
         )
+
     overrides = _cli_overrides(
         cli_resolution=project_resolution,
         cli_offline=offline,
@@ -279,6 +281,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     )
     project_overrides = project_config_overrides(overrides)
     _project_cli_overrides_or_exit(project_overrides)
+
     ladder = read_config_ladder(path, overrides)
     _reject_python_flag_in_universal(ladder, python)
     anchor = _determine_lock_anchor(
@@ -288,6 +291,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         build_requirements=build_requirements,
         upgrade=upgrade,
     )
+
     config = _load_config(
         path,
         discover_workspace=workspace_discovery,
@@ -295,20 +299,25 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         cli_overrides=project_overrides,
     )
     inputs = config.resolve_inputs()
+
     if build_requirements:
         inputs = inputs_for_build_requirements(inputs)
+
     if locked and config.mode is ResolveMode.UNIVERSAL:
         printer().error("--locked is not supported in universal mode.")
         sys.exit(1)
+
     _check_targets_or_exit(config)
     settings = _layered_run_settings_or_exit(ladder)
     effective_cache_dir = _resolve_effective_cache_dir(settings.cache_dir, cache=cache)
+
     provenance = _build_provenance(
         path,
         config=config,
         anchor=anchor,
         cli_project_overrides=settings.cli_project_overrides,
     )
+
     selected_groups = resolve_group_selection(
         path, groups=groups, all_groups=all_groups
     )
@@ -377,6 +386,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     if locked:
         _check_locked(lock_input, run=run)
         return
+
     _emit_or_exit(
         lambda: _emit(
             lock_input,
