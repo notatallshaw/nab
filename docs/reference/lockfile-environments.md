@@ -67,7 +67,7 @@ nab does not split a target pinned to an exact patch release, including the host
 
 ### Unsupported boundaries
 
-A consulted full-version marker must describe intervals. nab rejects:
+On a minor-interval target, a consulted full-version marker must describe intervals. nab rejects:
 
 - membership (`in` or `not in`), verbatim `===`, non-version strings, and comparisons with another
   variable;

@@ -141,9 +141,10 @@ fresh boundary, so nab re-splits a target until a pass finds no new one.
 Every comparison that names an interval cuts a minor: the ordered operators (`<`, `<=`, `>`, `>=`)
 and the ones naming a region (`==`, `!=`, `~=`, `== V.*`).
 
-A `python_full_version` marker nab cannot turn into an interval is a loud error rather than a silent
-guess: a membership test (`in`, `not in`), a verbatim `===`, a non-version comparison, a comparison
-against another marker variable, or certain pre- or post-release literals strictly inside the minor.
+On a minor-interval target, nab rejects a `python_full_version` marker it cannot turn into an
+interval: a membership test (`in`, `not in`), a verbatim `===`, a non-version comparison, a
+comparison against another marker variable, or certain pre- or post-release literals strictly inside
+the minor.
 
 ### Pin one patch release
 
