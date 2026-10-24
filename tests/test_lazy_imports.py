@@ -91,6 +91,7 @@ console_entry()
         text=True,
         check=False,
     )
+
     assert result.returncode == 1
     assert f"{backend} is not installed" in result.stderr
     assert f"pip install nab[{backend}]" in result.stderr

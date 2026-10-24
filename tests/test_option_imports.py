@@ -47,6 +47,7 @@ def test_a_run_reads_the_registry_and_never_the_declaration() -> None:
         "assert OPTIONS\n"
         "print(sorted(n for n in sys.modules if n.startswith('nab._cli.definition.')))\n"
     )
+
     assert loaded == ["['nab._cli.definition.model']"]
 
 
@@ -58,6 +59,7 @@ def test_the_command_signatures_reach_their_aliases_through_a_leaf() -> None:
         "assert ModeFlag == __import__('typing').Literal['specific', 'universal']\n"
         f"{_REPORT}"
     )
+
     assert loaded[1] == "True"
 
 
