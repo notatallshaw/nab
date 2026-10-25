@@ -159,8 +159,13 @@ See
 
 Fresh universal locks for `requests==2.32.3` on Python 3.12, 3.13 and 3.14. All four select matching
 packages and usable wheels across 48 checked targets: eight platforms × three Python versions ×
-CPython/PyPy. Nab resolves and validates each target separately; uv, Poetry and PDM build universal
-dependency graphs with conditional markers in this comparison.
+CPython/PyPy.
+
+Nab validates dependencies and artifact compatibility for all 48 target environments;
+[uv](https://docs.astral.sh/uv/reference/internals/resolver/#wheel-tags),
+[Poetry](https://github.com/python-poetry/poetry/blob/2.5.1/src/poetry/repositories/http_repository.py#L402-L406)
+and [PDM](https://github.com/pdm-project/pdm/blob/2.29.3/src/pdm/models/candidates.py#L493-L513)
+omit full per-target validation, which could potentially produce unsound universal locks.
 
 ## Libraries
 
