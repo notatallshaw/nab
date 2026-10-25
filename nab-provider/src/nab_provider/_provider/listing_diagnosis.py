@@ -36,7 +36,7 @@ from nab_provider.diagnostics import Diagnostic
 from nab_provider.records import SdistFile, WheelFile
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion, error_message
 
-from ..errors import InvalidUploadTimeError, MetadataError
+from ..errors import InvalidUploadTimeError, MetadataError, MissingExtraError
 from ..policy import DistPolicy
 from . import listing as _listing
 from .listing import DropCause
@@ -354,12 +354,12 @@ class MetadataBlock:
         self.suggestions = suggestions
 
     @classmethod
-    def from_error(cls, error: MetadataError) -> MetadataBlock:
+    def from_error(cls, error: MetadataError | MissingExtraError) -> MetadataBlock:
         """Snapshot a rejection without retaining its exception traceback."""
         message = error_message(error)
         return cls(
             message.message,
-            error.filtered_sdist_version,
+            error.filtered_sdist_version if isinstance(error, MetadataError) else None,
             suggestions=message.suggestions,
         )
 

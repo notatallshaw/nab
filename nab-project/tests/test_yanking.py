@@ -723,10 +723,12 @@ def test_missing_extra_rejects_a_candidate_without_enabling_its_pin() -> None:
     )
     candidate = search.catalogue.choices("app[x]")[0]
     assert search.catalogue.prepare(candidate) is None
-    assert "does not provide extra" in search.catalogue.rejections[0]
+    assert "does not provide extra" in search.catalogue.rejections[candidate].message
     assert not any(candidate.withdrawn for candidate in search.catalogue.facts)
-    with pytest.raises(ResolutionError, match="does not provide extra"):
+    with pytest.raises(ResolutionError) as caught:
         search.resolve()
+    assert caught.value.verbose_message is not None
+    assert "does not provide extra" in caught.value.verbose_message
 
 
 def test_proxy_conflicts_stop_independent_choice_permutations() -> None:
@@ -999,7 +1001,7 @@ def test_cached_cyclic_metadata_cannot_supply_initial_permission() -> None:
     )
     for package in ("app", "dep"):
         search.catalogue.prepare(search.catalogue.choices(package)[0])
-    with pytest.raises(ResolutionError, match="active exact pin"):
+    with pytest.raises(ResolutionError, match="yanked-file policy"):
         search.resolve()
     assert not search.proofs
 

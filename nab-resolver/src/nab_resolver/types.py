@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 from ._compat import override
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from typing_extensions import Self
 
 __all__ = [
@@ -434,6 +436,22 @@ class Incompatibility(Generic[PackageType, VersionType]):
         self.constraint_range = constraint_range
         self.origin = origin
         self.dependency_range = dependency_range
+
+    def walk(self) -> Iterator[Incompatibility[PackageType, VersionType]]:
+        """Visit each derivation node once, with left causes before right causes."""
+        pending: list[Incompatibility[PackageType, VersionType]] = [self]
+        seen: set[int] = set()
+        while pending:
+            node = pending.pop()
+            if id(node) in seen:
+                continue
+            seen.add(id(node))
+            yield node
+
+            if node.cause_right is not None:
+                pending.append(node.cause_right)
+            if node.cause_left is not None:
+                pending.append(node.cause_left)
 
     @override
     def __repr__(self) -> str:
