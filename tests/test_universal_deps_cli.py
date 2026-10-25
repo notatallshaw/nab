@@ -3,23 +3,29 @@
 from __future__ import annotations
 
 import io
+import re
 import tarfile
+from contextlib import nullcontext
 from typing import TYPE_CHECKING
 
 import pytest
 
 from nab.cli import run
+from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.toml_io import loads
 from nab_provider._vendor.packaging.pylock import PackageSdist, Pylock
 from nab_provider._vendor.packaging.tags import Tag
+from nab_provider.records import IndexConfig
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
-from nab_provider.testing import make_metadata
+from nab_provider.testing import make_metadata, make_sdist, make_wheel
 
 from ._local_artifacts import make_wheel_archive, publish_artifacts
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from nab_provider.testing import FakeFetchPort
 
 
 def _dynamic_sdist(version: str = "6.0.0") -> bytes:
@@ -232,8 +238,240 @@ def test_dynamic_sdist_failure_suggests_a_release_scoped_assertion(
 
     assert captured.out == ""
     assert "every version in range was rejected on its metadata" in captured.err
-    assert '[tool.nab.packages."watchdog==6.0.0"]' in captured.err
+    assert 'match = ["watchdog==6.0.0"]' in captured.err
     assert "assume-universal-deps = true" in captured.err
+
+
+@pytest.fixture
+def dynamic_hint_project(hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Configure a dynamic release with fresh fetch state for each command."""
+
+    def coordinator(_transport: object, **_: object) -> nullcontext[FakeFetchPort]:
+        """Keep metadata state independent between attempted repairs."""
+        port = make_coordinator(
+            [
+                make_wheel(
+                    "6.0.0", package="watchdog", tag="cp313-cp313-macosx_11_0_arm64"
+                ),
+                make_sdist("6.0.0", package="watchdog", hashes=(("sha256", "a" * 64),)),
+            ],
+            package="watchdog",
+            metadata_text=make_metadata("watchdog", "6.0.0"),
+            sdist_pkg_info=make_metadata("watchdog", "6.0.0", metadata_version="2.2")
+            + "Dynamic: Requires-Dist\n",
+            sdist_pyproject_toml=(
+                '[project]\nname="watchdog"\nversion="6.0.0"\ndynamic=["dependencies"]\n'
+            ),
+        )
+
+        port.index.store_listing_index("watchdog", "local")
+        port.indexes = [IndexConfig("local", "https://example.com/simple/")]
+        return nullcontext(port)
+
+    monkeypatch.setattr("nab_project.resolve.FetchCoordinator", coordinator)
+
+    project = hermetic_roots / "pyproject.toml"
+    body = (
+        '[project]\nname="example"\nversion="1"\n'
+        'requires-python=">=3.10"\ndependencies=["watchdog==6.0.0"]\n'
+        '[tool.nab]\nmode="universal"\n'
+        '[tool.nab.matrix]\npython="==3.14"\nplatforms=["linux_x86_64"]\n'
+        '[[tool.nab.indexes]]\nname="local"\nurl="https://example.com/simple/"\n'
+    )
+    project.write_text(body, encoding="utf-8")
+    return project
+
+
+@pytest.mark.parametrize("duplicate", [False, True], ids=["single-file", "both-files"])
+@pytest.mark.parametrize(
+    ("policy", "location", "scope"),
+    [
+        pytest.param(
+            '[tool.nab.packages."watchdog<7"]\n',
+            "{project}: packages.'watchdog<7'",
+            "every version and package matched by this entry",
+            id="package",
+        ),
+        pytest.param(
+            '[[tool.nab.package-rules]]\nmatch = ["watchdog<7", "other"]\n',
+            "{project}: package-rules[0]",
+            "every version and package matched by this entry",
+            id="shared-rule",
+        ),
+        pytest.param(
+            "[tool.nab.index.local]\n",
+            "index 'local'",
+            "every package served by this index",
+            id="index",
+        ),
+    ],
+)
+def test_dynamic_sdist_hint_repairs_the_existing_assertion(
+    dynamic_hint_project: Path,
+    capsys: pytest.CaptureFixture[str],
+    policy: str,
+    location: str,
+    scope: str,
+    *,
+    duplicate: bool,
+) -> None:
+    project = dynamic_hint_project
+    body = (
+        project.read_text(encoding="utf-8") + policy + "assume-universal-deps = false\n"
+    )
+    project.write_text(body, encoding="utf-8")
+    declarations = [project]
+    if duplicate:
+        nab_config = project.with_name("nab.toml")
+        nab_config.write_text(
+            policy.replace("tool.nab.", "") + "assume-universal-deps = false\n",
+            encoding="utf-8",
+        )
+        declarations.append(nab_config)
+
+    assert _lock(project, "--project-assume-universal-deps") == 1
+    failure = capsys.readouterr()
+    location = location.format(project=declarations[-1])
+    assert f"set assume-universal-deps = true in {location};" in failure.err
+    assert scope in failure.err
+    if duplicate:
+        assert (
+            "if declared in both pyproject.toml and nab.toml, update both declarations"
+            in failure.err
+        )
+
+    for declaration in declarations:
+        declaration.write_text(
+            declaration.read_text(encoding="utf-8").replace(
+                "assume-universal-deps = false", "assume-universal-deps = true"
+            ),
+            encoding="utf-8",
+        )
+
+    assert _lock(project, "--project-assume-universal-deps") == 0
+
+    pylock = Pylock.from_dict(loads(capsys.readouterr().out))
+    pylock.validate()
+    assert len(pylock.packages) == 1
+
+    watchdog = pylock.packages[0]
+    assert watchdog.name == "watchdog"
+    assert str(watchdog.version) == "6.0.0"
+    assert watchdog.sdist is not None
+    assert not watchdog.wheels
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        pytest.param("", id="default"),
+        pytest.param(
+            '[tool.nab.packages."watchdog==6.0.0"]\nbuild-policy = "never"\n',
+            id="existing-release-table",
+        ),
+        pytest.param(
+            '[tool.nab.packages."watchdog>=7"]\nassume-universal-deps = false\n',
+            id="other-range",
+        ),
+        pytest.param(
+            '[tool.nab.packages."watchdog==6.0.0+local"]\nassume-universal-deps = false\n',
+            id="local-sibling",
+        ),
+    ],
+)
+def test_dynamic_sdist_hint_adds_a_disjoint_assertion(
+    dynamic_hint_project: Path,
+    capsys: pytest.CaptureFixture[str],
+    policy: str,
+) -> None:
+    project = dynamic_hint_project
+    body = project.read_text(encoding="utf-8") + policy
+    project.write_text(body, encoding="utf-8")
+
+    assert _lock(project) == 1
+    failure = capsys.readouterr()
+    match = re.search(
+        r"add a (\[\[tool.nab.package-rules\]\]) entry with"
+        r" (match = \[.*?\]) and (assume-universal-deps = true)",
+        failure.err,
+    )
+    assert match is not None, failure.err
+
+    project.write_text(body + "\n" + "\n".join(match.groups()) + "\n", encoding="utf-8")
+
+    assert _lock(project) == 0
+    pylock = Pylock.from_dict(loads(capsys.readouterr().out))
+    pylock.validate()
+    assert [str(package.version) for package in pylock.packages] == ["6.0.0"]
+    assert pylock.packages[0].sdist is not None
+    assert not pylock.packages[0].wheels
+
+
+@pytest.mark.parametrize("duplicate", [False, True], ids=["single-file", "both-files"])
+def test_dynamic_sdist_hint_adds_to_an_existing_bare_table(
+    dynamic_hint_project: Path,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    duplicate: bool,
+) -> None:
+    project = dynamic_hint_project
+    body = (
+        project.read_text(encoding="utf-8")
+        + '[tool.nab.packages.watchdog]\nbuild-policy = "never"\n'
+    )
+    project.write_text(body, encoding="utf-8")
+    declarations = [project]
+    if duplicate:
+        nab_config = project.with_name("nab.toml")
+        nab_config.write_text(
+            '[packages.watchdog]\nbuild-policy = "never"\n', encoding="utf-8"
+        )
+        declarations.append(nab_config)
+
+    assert _lock(project) == 1
+    failure = capsys.readouterr()
+    assert (
+        f"set assume-universal-deps = true in {declarations[-1]}: packages.'watchdog';"
+        in failure.err
+    )
+    if duplicate:
+        assert (
+            "if declared in both pyproject.toml and nab.toml, update both declarations"
+            in failure.err
+        )
+
+    for declaration in declarations:
+        with declaration.open("a", encoding="utf-8") as stream:
+            stream.write("assume-universal-deps = true\n")
+
+    assert _lock(project) == 0
+    assert loads(capsys.readouterr().out)["packages"][0]["name"] == "watchdog"
+
+
+def test_dynamic_sdist_hint_requests_revision_of_a_legacy_selector(
+    dynamic_hint_project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = dynamic_hint_project
+    body = (
+        project.read_text(encoding="utf-8")
+        + '[tool.nab.packages."watchdog===6.0.0.0"]\nassume-universal-deps = false\n'
+    )
+    project.write_text(body, encoding="utf-8")
+
+    assert _lock(project) == 1
+    failure = capsys.readouterr()
+    assert "revise the scoped assume-universal-deps entries" in failure.err
+    assert "add a [[tool.nab.package-rules]]" not in failure.err
+    assert "===" not in failure.err
+
+    project.write_text(
+        body.replace("watchdog===6.0.0.0", "watchdog<7").replace(
+            "assume-universal-deps = false", "assume-universal-deps = true"
+        ),
+        encoding="utf-8",
+    )
+    assert _lock(project) == 0
+    assert loads(capsys.readouterr().out)["packages"][0]["name"] == "watchdog"
 
 
 @pytest.mark.parametrize("surface", ["package", "cli"])

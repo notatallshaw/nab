@@ -500,12 +500,18 @@ def _allow_zip_sdists_value(override: PackageOverride | IndexOverride) -> object
     return _unset_if_none(override.allow_zip_sdists)
 
 
+def _assume_universal_deps_value(override: PackageOverride | IndexOverride) -> object:
+    """Read the cross-target assertion, preserving an explicit refusal."""
+    return _unset_if_none(override.assume_universal_deps)
+
+
 # What each field a remedy can name is read with, so the layer lookup and
 # the effective value read the same surfaces the same way.
 _SOURCE_VALUES: dict[str, Callable[[PackageOverride | IndexOverride], object]] = {
     "uploaded-prior-to": _uploaded_prior_to_value,
     "dist-policy": _dist_policy_value,
     "allow-zip-sdists": _allow_zip_sdists_value,
+    "assume-universal-deps": _assume_universal_deps_value,
 }
 
 
@@ -1249,7 +1255,7 @@ class Provider:
             version,
             index_name,
             field="assume-universal-deps",
-            value=lambda o: _unset_if_none(o.assume_universal_deps),
+            value=_assume_universal_deps_value,
         )
         if result is _UNSET:
             return self.assume_universal_deps
