@@ -42,6 +42,7 @@ from installer.utils import SCHEME_NAMES, Scheme
 from nab_index.client import SdistFile, WheelFile
 from nab_index.httpx2_async_transport import Httpx2AsyncTransport
 from nab_index.httpx_async_transport import HttpxAsyncTransport
+from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig
 from nab_index.transport import AsyncHttpTransport, HttpResponse
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
@@ -273,6 +274,8 @@ def _make_installable_wheel(
     package_files: dict[str, bytes] | None = None,
     *,
     requires_dist: tuple[str, ...] = (),
+    requires_python: str | None = None,
+    tags: tuple[str, ...] = ("py3-none-any",),
 ) -> None:
     """Write a minimal but installer-valid pure-Python wheel.
 
@@ -281,16 +284,18 @@ def _make_installable_wheel(
     ``package_files`` are placed inside the ``<name>/`` package.
     """
     dist = f"{name}-{version}"
+    metadata = f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+    if requires_python is not None:
+        metadata += f"Requires-Python: {requires_python}\n"
+    metadata += "".join(f"Requires-Dist: {req}\n" for req in requires_dist)
+
     files = {
         f"{name}/__init__.py": b"",
-        f"{dist}.dist-info/METADATA": (
-            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
-            + "".join(f"Requires-Dist: {req}\n" for req in requires_dist)
-        ).encode(),
+        f"{dist}.dist-info/METADATA": metadata.encode(),
         f"{dist}.dist-info/WHEEL": (
-            b"Wheel-Version: 1.0\nGenerator: nab-test\n"
-            b"Root-Is-Purelib: true\nTag: py3-none-any\n"
-        ),
+            "Wheel-Version: 1.0\nGenerator: nab-test\nRoot-Is-Purelib: true\n"
+            + "".join(f"Tag: {tag}\n" for tag in tags)
+        ).encode(),
     }
     for module, data in (package_files or {}).items():
         files[f"{name}/{module}"] = data
@@ -2708,7 +2713,9 @@ class TestResolveAndDownloadSiblingWheels:
             written = []
             for entry in iter_artifacts(lock_input):
                 requested.append(entry.filename)
-                written.append(output_dir / entry.filename)
+                wheel = output_dir / entry.filename
+                _make_installable_wheel(wheel, "demo", "1.0")
+                written.append(wheel)
             return DownloadResult(written=tuple(written), skipped=())
 
         monkeypatch.setattr("nab_project._build.env.download_lock", _fake_download)
@@ -2851,6 +2858,147 @@ class TestBuildEnvInstallsOnePreferredWheel:
 
         assert installed == ["MARK = 'specific'\n"]
         assert len(dist_infos) == 1
+
+
+class TestDownloadedBuildWheelPython:
+    """Check the selected wheel when resolution reads a sibling's sidecar."""
+
+    @staticmethod
+    def _index(root: Path, requires_python: str | None, *, reverse: bool) -> Path:
+        """Publish tied wheels with a compatible sidecar on only one sibling."""
+        index = root / "index"
+        package = index / "demo"
+        package.mkdir(parents=True)
+        links = []
+        for tag, mark, wheel_requires_python in (
+            ("py2.py3-none-any", "plain", requires_python),
+            ("py3-none-any", "sidecar", ">=3"),
+        ):
+            wheel = package / f"demo-1.0-{tag}.whl"
+            _make_installable_wheel(
+                wheel,
+                "demo",
+                "1.0",
+                package_files={"__init__.py": f"MARK = {mark!r}\n".encode()},
+                requires_python=wheel_requires_python,
+                tags=("py2-none-any", "py3-none-any")
+                if mark == "plain"
+                else ("py3-none-any",),
+            )
+            sidecar = ""
+            if mark == "sidecar":
+                with zipfile.ZipFile(wheel) as archive:
+                    wheel.with_suffix(".whl.metadata").write_bytes(
+                        archive.read("demo-1.0.dist-info/METADATA")
+                    )
+                sidecar = ' data-core-metadata="true"'
+            digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+            links.append(
+                f'<a href="{wheel.name}#sha256={digest}"{sidecar}>{wheel.name}</a>'
+            )
+        if reverse:
+            links.reverse()
+        (package / "index.html").write_text("\n".join(links), encoding="utf-8")
+        return index
+
+    @pytest.mark.parametrize(
+        ("requires_python", "reverse", "overrides", "expected"),
+        [
+            (">=999", False, (), "requires Python >=999"),
+            ("not-a-specifier", False, (), "invalid Requires-Python"),
+            (">=999", True, (), "sidecar"),
+            (">=3", False, (), "plain"),
+            (None, False, (), "plain"),
+            (
+                ">=999",
+                False,
+                (pkg_override("demo==1.0", requires_python=">=3"),),
+                "plain",
+            ),
+            (">=999", False, (pkg_override("demo", requires_python=""),), "plain"),
+            (
+                ">=999",
+                False,
+                (pkg_override("other", requires_python=""),),
+                "requires Python >=999",
+            ),
+            (
+                ">=999",
+                False,
+                (pkg_override("demo>=2", requires_python=""),),
+                "requires Python >=999",
+            ),
+        ],
+        ids=[
+            "incompatible",
+            "invalid",
+            "compatible-sibling",
+            "compatible",
+            "unspecified",
+            "override",
+            "empty-override",
+            "other-package",
+            "other-version",
+        ],
+    )
+    def test_actual_wheel_python_requirement(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        requires_python: str | None,
+        reverse: bool,
+        overrides: tuple[PackageOverride, ...],
+        expected: str,
+    ) -> None:
+        index = self._index(tmp_path, requires_python, reverse=reverse)
+        client = LocalIndexClient(index.as_uri())
+        records = asyncio.run(client.get_files("demo"))
+        metadata = {
+            record.metadata_url: asyncio.run(
+                client.get_metadata_text("demo", "1.0", record.metadata_url)
+            )
+            for record in records
+            if record.metadata_url is not None
+        }
+
+        resolutions = []
+
+        def coordinator(
+            _transport: AsyncHttpTransport,
+            *,
+            build_config: ResolveInputs,
+            **_kwargs: object,
+        ) -> AbstractContextManager[FakeFetchPort]:
+            """Serve local records and sidecars without background fetch workers."""
+            resolutions.append(build_config)
+            return nullcontext(
+                make_coordinator(
+                    records,
+                    package="demo",
+                    metadata_by_url=metadata,
+                    build_config=build_config,
+                )
+            )
+
+        monkeypatch.setattr("nab_project.resolve.FetchCoordinator", coordinator)
+        config = ResolveInputs(
+            indexes=(IndexConfig("local", index.as_uri()),), package_overrides=overrides
+        )
+        env = NabBuildEnv(requires=["demo"], config=config)
+
+        if expected not in {"plain", "sidecar"}:
+            with pytest.raises(BuildEnvError, match=expected), env:
+                pytest.fail("build environment accepted the wheel")
+            assert env._installed_files == []
+        else:
+            with env:
+                output = subprocess.check_output(  # noqa: S603 - interpreter created by this test
+                    [env.python_executable, "-c", "import demo; print(demo.MARK)"],
+                    text=True,
+                )
+                assert output.strip() == expected
+
+        assert len(resolutions) == 1
 
 
 class TestInstallPickIsNotTheMetadataPick:
