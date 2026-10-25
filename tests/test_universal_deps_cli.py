@@ -538,9 +538,7 @@ def test_dynamic_sdist_hint_recovers_missing_wheel_metadata(
     wheels = (
         []
         if wheel_state == "absent"
-        else [
-            make_wheel("6.0.0", package="watchdog", tag="cp313-cp313-macosx_11_0_arm64")
-        ]
+        else [make_wheel("6.0.0", package="watchdog", tag="cp39-cp39-win_amd64")]
     )
 
     def coordinator(_transport: object, **_: object) -> nullcontext[FakeFetchPort]:
