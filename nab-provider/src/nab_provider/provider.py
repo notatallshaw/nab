@@ -40,6 +40,7 @@ from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, Specifie
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
+from . import priority as decision_priority
 from ._provider import extras as _extras
 from ._provider import listing as _listing
 from ._provider import listing_diagnosis as _diagnosis
@@ -512,6 +513,7 @@ _SOURCE_VALUES: dict[str, Callable[[PackageOverride | IndexOverride], object]] =
     "dist-policy": _dist_policy_value,
     "allow-zip-sdists": _allow_zip_sdists_value,
     "assume-universal-deps": _assume_universal_deps_value,
+    "build-policy": lambda override: _unset_if_none(override.build_policy),
 }
 
 
@@ -673,11 +675,11 @@ class Provider:
     # blockers that are also the right pin.
     _MAX_FORCE_BACKTRACKS_PER_PKG = 3
 
-    TIER_AFFECTED = _priority.TIER_AFFECTED
-    TIER_NORMAL = _priority.TIER_NORMAL
-    TIER_CULPRIT = _priority.TIER_CULPRIT
-    CONFLICT_THRESHOLD = _priority.CONFLICT_THRESHOLD
-    CULPRIT_DEMOTE_THRESHOLD = _priority.CULPRIT_DEMOTE_THRESHOLD
+    TIER_AFFECTED = decision_priority.TIER_AFFECTED
+    TIER_NORMAL = decision_priority.TIER_NORMAL
+    TIER_CULPRIT = decision_priority.TIER_CULPRIT
+    CONFLICT_THRESHOLD = decision_priority.CONFLICT_THRESHOLD
+    CULPRIT_DEMOTE_THRESHOLD = decision_priority.CULPRIT_DEMOTE_THRESHOLD
 
     # Deferred admission retains withdrawn candidates but still guards preparation.
     yank_admissions: frozenset[tuple[str, Version]] = frozenset()
@@ -2117,12 +2119,7 @@ class Provider:
         does not replace an earlier blocker.
         """
         if not all_versions:
-            _, _, normalized = self.split_and_normalize(package)
-            reason = self._empty_listing_marker(normalized)
-            if reason.kind == _diagnosis.ReasonKind.FILTERED_EMPTY:
-                reason = _diagnosis.NoVersionsReason(
-                    reason.kind, version_range=version_range
-                )
+            reason = self._listing_no_versions_reason(package, version_range)
         elif blockers or metadata:
             # Look-ahead rejection: candidates DID match the range but
             # were rejected.  Naming the blocker is more useful than
@@ -2142,6 +2139,20 @@ class Provider:
                 _diagnosis.ReasonKind.NO_MATCH, version_range=version_range
             )
         self._no_versions_reasons[package] = reason
+
+    def _listing_no_versions_reason(
+        self, package: str, version_range: VersionRange | None
+    ) -> _diagnosis.NoVersionsReason:
+        """Classify a filtered listing within one requested version domain."""
+        normalized = self.split_and_normalize(package)[2]
+        if self.versions_cache[normalized]:
+            return _diagnosis.NoVersionsReason(
+                _diagnosis.ReasonKind.NO_MATCH, version_range=version_range
+            )
+        reason = self._empty_listing_marker(normalized)
+        if reason.kind == _diagnosis.ReasonKind.FILTERED_EMPTY:
+            return _diagnosis.NoVersionsReason(reason.kind, version_range=version_range)
+        return reason
 
     def record_extra_no_versions(
         self,
@@ -2366,11 +2377,27 @@ class Provider:
         Specific recorded causes take precedence over permanent bans.
         ``failed_range`` restricts banned versions; None includes every ban.
         """
+        normalized = self.split_and_normalize(package)[2]
         recorded = self._no_versions_reasons.get(package)
+        if isinstance(failed_range, VersionRange) and (
+            recorded is None
+            or recorded.kind
+            in (
+                _diagnosis.ReasonKind.NO_MATCH,
+                _diagnosis.ReasonKind.FILTERED_EMPTY,
+            )
+        ):
+            versions = self.versions_cache.get(normalized)
+            if versions is not None:
+                # A reporting query must not retain another requirement's domain.
+                recorded = (
+                    self._listing_no_versions_reason(package, failed_range)
+                    if not list(failed_range.filter([v for v, _ in versions]))
+                    else None
+                )
         if recorded is not None and not recorded.is_generic:
             return self._render_no_versions_reason(package, recorded)
 
-        normalized = canonicalize_name(package)
         bans = self._root_bans(normalized, failed_range)
         blocks = self._metadata_bans(normalized, failed_range)
         if bans or blocks:

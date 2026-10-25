@@ -750,19 +750,38 @@ def resolve_dynamic_sdist(
         f" '{BuildPolicy.BUILD_REMOTE.value}' but the effective policy is"
         f" '{effective.value}'"
     )
-    suggestions = (
-        ()
-        if assume_universal
-        else (_universal_deps_suggestion(provider, canonical, version),)
+    declared = provider.target is not None and provider.target.platform_spec is not None
+    steps: list[str] = []
+    build_condition = ""
+    if declared and not assume_universal:
+        steps.append(
+            _dynamic_sdist_remedy(
+                provider, canonical, version, field="assume-universal-deps"
+            )
+        )
+        # A potential wheel avoids a build only if its metadata can be read.
+        if _assumed_wheel_candidates(provider, canonical, version):
+            build_condition = "if no usable wheel metadata is available, "
+
+    steps.append(
+        build_condition
+        + _dynamic_sdist_remedy(provider, canonical, version, field="build-policy")
     )
-    report = DiagnosticMessage(msg, suggestions=suggestions)
+
+    # Both edits are prerequisites for a build, so keep them in one action.
+    suggestion = Suggestion("\n".join(steps))
+    report = DiagnosticMessage(msg, suggestions=(suggestion,))
     raise UnsupportedSdistError(report)
 
 
-def _universal_deps_suggestion(
-    provider: Provider, canonical: str, version: Version
-) -> Suggestion:
-    """Suggest an assertion edit without overlapping an existing policy."""
+def _dynamic_sdist_remedy(
+    provider: Provider,
+    canonical: str,
+    version: Version,
+    *,
+    field: Literal["assume-universal-deps", "build-policy"],
+) -> str:
+    """Suggest a metadata-policy edit in the declaration that controls it."""
     # listing_diagnosis imports listing, which imports this module.
     from .listing_diagnosis import OverrideLayer
 
@@ -770,28 +789,36 @@ def _universal_deps_suggestion(
         canonical,
         version,
         provider.serving_index(canonical),
-        field="assume-universal-deps",
+        field=field,
     )
-    condition = "if this release's dependencies apply across targets, "
+    condition = (
+        "if this release's dependencies apply across targets, "
+        if field == "assume-universal-deps"
+        else "to run the build backend for this sdist, "
+    )
+    setting = (
+        "assume-universal-deps = true"
+        if field == "assume-universal-deps"
+        else 'build-policy = "build-remote"'
+    )
     duplicate_advice = (
         "; if declared in both pyproject.toml and nab.toml, update both declarations"
     )
     if source.layer in (OverrideLayer.PACKAGE, OverrideLayer.GLOBAL_BARE_ENTRY):
-        return Suggestion(
-            condition + f"set assume-universal-deps = true in {source.label};"
+        return (
+            condition + f"set {setting} in {source.label};"
             " this changes every version and package matched by this entry"
             + duplicate_advice
         )
     if source.layer == OverrideLayer.INDEX:
-        return Suggestion(
-            condition
-            + f"set assume-universal-deps = true in index {source.selector!r};"
+        return (
+            condition + f"set {setting} in index {source.selector!r};"
             " this changes every package served by this index" + duplicate_advice
         )
     if source.layer == OverrideLayer.GLOBAL_SCOPED_OVERLAP:
-        return Suggestion(
-            condition + "revise the scoped assume-universal-deps entries to enable this"
-            " release without overlapping assertions"
+        return (
+            condition + f"revise the scoped {field} entries to enable this"
+            " release without overlapping policies"
         )
 
     selector = (
@@ -799,19 +826,16 @@ def _universal_deps_suggestion(
         if source.layer == OverrideLayer.GLOBAL_SCOPED_ENTRY
         else f"{canonical}=={version}"
     )
-    return Suggestion(
+    return (
         condition + "add a [[tool.nab.package-rules]] entry with"
-        f' match = ["{selector}"] and assume-universal-deps = true'
+        f' match = ["{selector}"] and {setting}'
     )
 
 
-def _assumed_wheel_dependencies(
-    provider: Provider,
-    package: str,
-    version: Version,
-    sdist_metadata: WheelMetadata,
-) -> WheelMetadata | None:
-    """Borrow wheel dependency fields for an explicitly opted-in release."""
+def _assumed_wheel_candidates(
+    provider: Provider, package: str, version: Version
+) -> list[WheelFile]:
+    """Find same-release metadata candidates under the non-tag artifact policies."""
     # listing imports this module for ordinary metadata selection.
     from .listing import base_distributions
 
@@ -824,8 +848,17 @@ def _assumed_wheel_dependencies(
         and (not dist.yanked or (package, version) in provider.yank_admissions)
     ]
     candidates.sort(key=lambda dist: (not dist.has_metadata, dist.filename, dist.url))
+    return candidates
 
-    for wheel in candidates:
+
+def _assumed_wheel_dependencies(
+    provider: Provider,
+    package: str,
+    version: Version,
+    sdist_metadata: WheelMetadata,
+) -> WheelMetadata | None:
+    """Borrow wheel dependency fields for an explicitly opted-in release."""
+    for wheel in _assumed_wheel_candidates(provider, package, version):
         text = _read_assumed_wheel(provider, package, str(version), wheel)
         if text is None:
             continue

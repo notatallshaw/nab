@@ -6,6 +6,8 @@ __lazy_modules__ = (
     "nab_provider._vendor.packaging.ranges",
     "nab_provider._vendor.packaging.utils",
     "nab_provider.extra_keys",
+    "nab_provider.diagnostics",
+    "nab_provider._provider.listing_diagnosis",
     "nab_provider.yank_candidates",
     "nab_resolver.errors",
     "nab_resolver.ranges",
@@ -20,9 +22,12 @@ from nab_resolver.resolver import BaseProvider, Resolver, ResolverStats
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 from ._compat import override
+from ._provider.listing_diagnosis import MetadataBlock, metadata_diagnostic
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.utils import canonicalize_name
+from .diagnostics import ResolutionMessage
 from .extra_keys import split_extra
+from .priority import compute_tier
 from .value import HashableRecord
 from .yank_candidates import Candidate, YankCandidates, add_range, is_pin, merge_stats
 from .yank_preference import (
@@ -33,12 +38,13 @@ from .yank_preference import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
 
     from nab_resolver.types import RangeProtocol, RootRequirement
 
     from ._vendor.packaging.requirements import Requirement
     from ._vendor.packaging.version import Version
+    from .diagnostics import Diagnostic
     from .provider import Provider
 
 __all__ = ["YankProxyProvider"]
@@ -226,12 +232,19 @@ class YankProxyProvider(BaseProvider[Package, int]):
         version_range: RangeProtocol[int],
         conflict_counts: Mapping[Package, int],
         culprit_counts: Mapping[Package, int] | None = None,
-    ) -> int:
-        """Choose real candidates, then read their permitted metadata."""
-        del version_range, conflict_counts, culprit_counts
+    ) -> tuple[int, int]:
+        """Choose real candidates using conflict evidence, then permitted metadata."""
+        del version_range
         if isinstance(package, str):
-            return 0
-        return 1 if isinstance(package, MetadataProxy) else 2
+            # Restarts must revise real-package order while permission stays lazy.
+            tier = compute_tier(
+                package,
+                conflict_counts.get(package, 0),
+                0 if culprit_counts is None else culprit_counts.get(package, 0),
+                culprit_counts,
+            )
+            return (0, tier)
+        return (1 if isinstance(package, MetadataProxy) else 2, 0)
 
     def block_context(self, package: Package) -> None:
         """Reject selected choices without excluding a candidate globally."""
@@ -392,6 +405,74 @@ class YankProxyProvider(BaseProvider[Package, int]):
             if isinstance(name, str)
         }
 
+    def _empty_requirements(
+        self, node: Incompatibility[Package, int]
+    ) -> Iterator[tuple[str, VersionRange]]:
+        """Recover version constraints from empty encoded dependency domains."""
+        if node.cause not in (
+            IncompatibilityCause.ROOT,
+            IncompatibilityCause.DEPENDENCY,
+        ):
+            return
+        parent = node.terms[0].package
+        for term in node.terms[1:]:
+            if not isinstance(term.package, str) or not term.constraint.is_empty:
+                continue
+            if isinstance(parent, MetadataProxy):
+                data = self.catalogue.facts[self.items[parent.candidate]]
+                assert data is not None
+                allowed = data.dependencies[term.package]
+            else:
+                allowed = self.roots[term.package]
+            yield (
+                term.package,
+                allowed & self.constraints.get(term.package, VersionRange.full()),
+            )
+
+    def _failure_diagnostics(
+        self, error: ResolutionError
+    ) -> tuple[tuple[str, Diagnostic], ...]:
+        """Translate final proof leaves into the original package requirements."""
+        incompatibility = error.incompatibility
+        assert incompatibility is not None
+        failures: dict[str, VersionRange] = {}
+        rejections: dict[str, dict[Candidate, MetadataBlock]] = {}
+        for node in incompatibility.walk():
+            for package, allowed in self._empty_requirements(node):
+                failures[package] = (
+                    failures.get(package, VersionRange.empty()) | allowed
+                )
+            if node.cause is IncompatibilityCause.NO_VERSIONS:
+                for term in node.terms:
+                    package = term.package
+                    if isinstance(package, MetadataProxy):
+                        candidate = self.items[package.candidate]
+                        block = self.catalogue.rejections.get(candidate)
+                        if block is not None:
+                            rejections.setdefault(candidate.package, {})[candidate] = (
+                                block
+                            )
+
+        entries: list[tuple[str, Diagnostic]] = []
+        for package, allowed in failures.items():
+            diagnostic = self.catalogue.provider.get_no_versions_reason(
+                package, allowed
+            )
+            if diagnostic is not None:
+                entries.append((package, diagnostic))
+        entries.extend(
+            (
+                package,
+                metadata_diagnostic(
+                    self.catalogue.provider,
+                    split_extra(package)[0],
+                    tuple(blocks.values()),
+                ),
+            )
+            for package, blocks in rejections.items()
+        )
+        return tuple(entries)
+
     def resolve(self) -> tuple[dict[str, Version], Provider]:
         """Check non-yanked alternatives before adopting the selected candidates."""
         try:
@@ -399,14 +480,12 @@ class YankProxyProvider(BaseProvider[Package, int]):
         except (IncompletePreferenceError, ResolutionTerminatedError):
             raise
         except ResolutionError as exc:
-            message = (
-                "no solution satisfies the requirements "
-                "with grounded yanked-file admission; "
-                "a withdrawn file requires an active exact pin"
-            )
-            if self.catalogue.rejections:
-                message += f"\nLast metadata rejection: {self.catalogue.rejections[-1]}"
-            raise ResolutionError(message) from exc
+            entries = self._failure_diagnostics(exc)
+            summary = "no solution satisfies the requirements and yanked-file policy"
+            message = ResolutionMessage(summary, entries)
+            error = ResolutionError(message)
+            error.verbose_message = message.render(verbose=True)
+            raise error from exc
         finally:
             merge_stats(self.catalogue.provider.stats, self.catalogue.child_stats)
         return self.preference.adopt(selected)

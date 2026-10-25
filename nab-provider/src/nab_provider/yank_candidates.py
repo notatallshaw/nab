@@ -7,6 +7,7 @@ __lazy_modules__ = (
     "nab_provider._provider.metadata_resolver",
     "nab_provider._vendor.packaging.utils",
     "nab_provider.errors",
+    "nab_provider._provider.listing_diagnosis",
     "nab_provider.extra_keys",
     "nab_provider.metadata",
     "nab_provider.policy",
@@ -16,6 +17,7 @@ __lazy_modules__ = (
 from typing import TYPE_CHECKING, ClassVar, Final
 
 from ._provider.extras import version_provides_extra
+from ._provider.listing_diagnosis import MetadataBlock
 from ._provider.metadata_resolver import classify_requirement, dists_at_version
 from ._vendor.packaging.utils import canonicalize_name
 from .errors import MetadataError, MissingExtraError
@@ -126,7 +128,7 @@ class YankCandidates:
         self.unavailable: set[Candidate] = set()
         self.missing_listings: set[str] = set()
         self.unavailable_reason = "required metadata is unavailable"
-        self.rejections: list[str] = []
+        self.rejections: dict[Candidate, MetadataBlock] = {}
         self.child_stats: ProviderStats = type(provider.stats)()
 
     def choices(self, package: str) -> tuple[Candidate, ...]:
@@ -252,7 +254,7 @@ class YankCandidates:
                         f"metadata for {base}=={version} is missing offline"
                     )
                     raise UnavailableMetadataError(msg) from exc
-            self.rejections.append(str(exc))
+            self.rejections[candidate] = MetadataBlock.from_error(exc)
             return None
         metadata = provider.metadata_cache[(base, candidate.version)]
         extra = split_extra(candidate.package)[1]

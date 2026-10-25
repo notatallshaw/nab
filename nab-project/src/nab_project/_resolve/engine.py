@@ -1241,15 +1241,7 @@ def _walk_no_versions_packages(
     Walk iteratively because backtracking can produce a deep cause graph.
     """
     out: list[tuple[str, RangeProtocol[Any]]] = []
-    seen_ids: set[int] = set()
-    stack: list[Incompatibility[Any, Any]] = [incompatibility]
-
-    while stack:
-        node = stack.pop()
-        if id(node) in seen_ids:
-            continue
-        seen_ids.add(id(node))
-
+    for node in incompatibility.walk():
         if node.cause is IncompatibilityCause.NO_VERSIONS:
             for term in node.terms:
                 pkg = term.package
@@ -1260,11 +1252,5 @@ def _walk_no_versions_packages(
             pkg = candidate.package
             if isinstance(pkg, str):
                 out.append((pkg, candidate.constraint))
-
-        # Right before left, so the left cause pops first and names keep their order.
-        if node.cause_right is not None:
-            stack.append(node.cause_right)
-        if node.cause_left is not None:
-            stack.append(node.cause_left)
 
     return out

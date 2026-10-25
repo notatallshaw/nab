@@ -15,9 +15,11 @@ from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.toml_io import loads
 from nab_provider._vendor.packaging.pylock import PackageSdist, Pylock
 from nab_provider._vendor.packaging.tags import Tag
+from nab_provider.metadata import parse_metadata
 from nab_provider.records import IndexConfig
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
+from nab_provider.testing import make_coordinator as make_provider_coordinator
 from nab_provider.testing import make_metadata, make_sdist, make_wheel
 
 from ._local_artifacts import make_wheel_archive, publish_artifacts
@@ -461,7 +463,7 @@ def test_dynamic_sdist_hint_requests_revision_of_a_legacy_selector(
     assert _lock(project) == 1
     failure = capsys.readouterr()
     assert "revise the scoped assume-universal-deps entries" in failure.err
-    assert "add a [[tool.nab.package-rules]]" not in failure.err
+    assert "and assume-universal-deps = true" not in failure.err
     assert "===" not in failure.err
 
     project.write_text(
@@ -517,3 +519,84 @@ def test_assertion_locks_the_sdist_with_target_conditioned_dependencies(
         }
         assert set(selected) == {"watchdog", dependency}
         assert isinstance(selected["watchdog"], PackageSdist)
+
+
+@pytest.mark.parametrize("wheel_state", ["absent", "unreadable"])
+@pytest.mark.parametrize("mode", ["universal", "specific"])
+@pytest.mark.parametrize("assumed", [False, True], ids=["strict", "already-assumed"])
+def test_dynamic_sdist_hint_recovers_missing_wheel_metadata(
+    dynamic_hint_project: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    wheel_state: str,
+    *,
+    assumed: bool,
+) -> None:
+    built = parse_metadata(make_metadata("watchdog", "6.0.0"))
+    ports: list[FakeFetchPort] = []
+    wheels = (
+        []
+        if wheel_state == "absent"
+        else [make_wheel("6.0.0", package="watchdog", tag="cp39-cp39-win_amd64")]
+    )
+
+    def coordinator(_transport: object, **_: object) -> nullcontext[FakeFetchPort]:
+        port = make_provider_coordinator(
+            [
+                *wheels,
+                make_sdist("6.0.0", package="watchdog", hashes=(("sha256", "a" * 64),)),
+            ],
+            package="watchdog",
+            sdist_pkg_info=make_metadata("watchdog", "6.0.0", metadata_version="2.2")
+            + "Dynamic: Requires-Dist\n",
+            build_sdist=lambda *_args: built,
+        )
+        ports.append(port)
+        return nullcontext(port)
+
+    monkeypatch.setattr("nab_project.resolve.FetchCoordinator", coordinator)
+    project = dynamic_hint_project
+    body = project.read_text(encoding="utf-8")
+    if mode == "specific":
+        body = body.replace('mode="universal"', 'mode="specific"').replace(
+            '[tool.nab.matrix]\npython="==3.14"\nplatforms=["linux_x86_64"]\n', ""
+        )
+    if assumed:
+        body = body.replace("[tool.nab]\n", "[tool.nab]\nassume-universal-deps=true\n")
+    project.write_text(body, encoding="utf-8")
+    args = ("lock", str(project), "--no-cache", "--output", "-")
+
+    assert run(args) == 1
+    failure = capsys.readouterr()
+    assert failure.out == ""
+    assert 'build-policy = "build-remote"' in failure.err
+    assert ("assume-universal-deps = true" in failure.err) is (
+        mode == "universal" and not assumed
+    )
+    assert ports[-1].calls_to("request_built_metadata") == []
+
+    edits = re.findall(
+        r"add a (\[\[tool.nab.package-rules\]\]) entry with"
+        r" (match = \[.*?\]) and (assume-universal-deps = true|build-policy = \"build-remote\")",
+        failure.err,
+    )
+    assert edits, failure.err
+    if wheel_state == "unreadable" and mode == "universal" and not assumed:
+        # Applying only the assertion cannot recover an unreadable wheel.
+        project.write_text(body + "\n" + "\n".join(edits[0]) + "\n", encoding="utf-8")
+        assert run(args) == 1
+        assert 'build-policy = "build-remote"' in capsys.readouterr().err
+        assert ports[-1].calls_to("request_built_metadata") == []
+
+    project.write_text(
+        body + "\n" + "\n\n".join("\n".join(edit) for edit in edits) + "\n",
+        encoding="utf-8",
+    )
+
+    assert run(args) == 0
+    pylock = Pylock.from_dict(loads(capsys.readouterr().out))
+    pylock.validate()
+    assert [str(package.version) for package in pylock.packages] == ["6.0.0"]
+    assert pylock.packages[0].sdist is not None
+    assert len(ports[-1].calls_to("request_built_metadata")) == 1

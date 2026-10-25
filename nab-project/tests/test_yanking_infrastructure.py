@@ -178,7 +178,7 @@ def test_invalid_extra_is_a_metadata_rejection() -> None:
     candidate = facts.choices("dep[x]")[0]
     assert facts.prepare(candidate) is None
     assert candidate in facts.facts
-    assert "does not provide extra" in facts.rejections[0]
+    assert "does not provide extra" in facts.rejections[candidate].message
     assert facts.prepare(candidate) is None
 
 

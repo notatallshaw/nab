@@ -180,7 +180,7 @@ def test_dynamic_sdist_hint_revises_an_overlapping_legacy_assertion() -> None:
         provider.get_dependencies("pkg", _VERSION)
 
     assert "revise the scoped assume-universal-deps entries" in str(caught.value)
-    assert "add a [[tool.nab.package-rules]]" not in str(caught.value)
+    assert "and assume-universal-deps = true" not in str(caught.value)
 
     repaired = Provider(
         port,
@@ -494,6 +494,94 @@ def test_unreadable_local_metadata_is_not_replaced_by_a_build(tmp_path: Path) ->
         provider.get_dependencies("pkg", _VERSION)
 
     assert port.calls_to("request_built_metadata") == []
+
+
+@pytest.mark.parametrize(
+    "wheel_state", ["absent", "other-version", "filtered", "usable"]
+)
+def test_strict_sdist_hint_conditions_builds_on_metadata_wheel_availability(
+    wheel_state: str,
+) -> None:
+    wheels = (
+        []
+        if wheel_state == "absent"
+        else [
+            _foreign_wheel(
+                version="2.0" if wheel_state == "other-version" else "1.0",
+                requires_python=">=3.12" if wheel_state == "filtered" else None,
+            )
+        ]
+    )
+    port = _port(*wheels)
+    provider = Provider(port, _MAC_TARGET)
+
+    with pytest.raises(UnsupportedSdistError) as caught:
+        provider.get_dependencies("pkg", _VERSION)
+
+    hint = error_message(caught.value).suggestions[0].action
+    assert "assume-universal-deps = true" in hint
+    assert 'build-policy = "build-remote"' in hint
+    assert ("if no usable wheel metadata is available" in hint) is (
+        wheel_state == "usable"
+    )
+    assert port.calls_to("request_built_metadata") == []
+
+
+@pytest.mark.parametrize("scope", ["default", "package", "index"])
+def test_dynamic_sdist_build_hint_repairs_the_effective_policy(scope: str) -> None:
+    built = parse_metadata(make_metadata("pkg", "1.0", "built-dep"))
+    port = make_coordinator(
+        [make_sdist()],
+        sdist_pkg_info=_DYNAMIC_PKG_INFO,
+        build_sdist=lambda *_args: built,
+    )
+    entry = pkg_override("pkg<2", build_policy=BuildPolicy.NEVER)
+    package_overrides = (entry,) if scope == "package" else ()
+    index_overrides = (
+        {"pypi": IndexOverride(build_policy=BuildPolicy.NEVER)}
+        if scope == "index"
+        else {}
+    )
+    provider = Provider(
+        port,
+        _MAC_TARGET,
+        assume_universal_deps=True,
+        package_overrides=package_overrides,
+        index_overrides=index_overrides,
+    )
+
+    with pytest.raises(UnsupportedSdistError) as first:
+        provider.get_dependencies("pkg", _VERSION)
+    with pytest.raises(UnsupportedSdistError) as cached:
+        provider.get_dependencies("pkg", _VERSION)
+
+    report = error_message(first.value)
+    assert report.suggestions == error_message(cached.value).suggestions
+    assert report.suggestions
+    hint = report.suggestions[0].action
+    assert 'build-policy = "build-remote"' in hint
+    assert "assume-universal-deps = true" not in hint
+    if scope == "package":
+        assert f"in {entry.requirement};" in hint
+        package_overrides = (entry.replace(build_policy=BuildPolicy.BUILD_REMOTE),)
+    elif scope == "index":
+        assert "in index 'pypi';" in hint
+        index_overrides = {"pypi": IndexOverride(build_policy=BuildPolicy.BUILD_REMOTE)}
+    else:
+        assert 'match = ["pkg==1.0"]' in hint
+        package_overrides = (
+            pkg_override("pkg==1.0", build_policy=BuildPolicy.BUILD_REMOTE),
+        )
+
+    repaired = Provider(
+        port,
+        _MAC_TARGET,
+        assume_universal_deps=True,
+        package_overrides=package_overrides,
+        index_overrides=index_overrides,
+    )
+    assert set(repaired.get_dependencies("pkg", _VERSION)) == {"built-dep"}
+    assert len(port.calls_to("request_built_metadata")) == 1
 
 
 @pytest.mark.parametrize("build_policy", [BuildPolicy.NEVER, BuildPolicy.BUILD_LOCAL])

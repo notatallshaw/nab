@@ -133,3 +133,10 @@ def test_shared_state_suppresses_advice_across_targets_without_hiding_causes() -
     assert "pkg: missing" in repeated
     assert "try:" not in repeated
     assert "try:" in message.render()
+
+
+def test_report_without_package_causes_has_no_empty_section() -> None:
+    message = ResolutionMessage("no solution", ())
+
+    assert str(message) == "no solution"
+    assert message.render(verbose=True) == "no solution"

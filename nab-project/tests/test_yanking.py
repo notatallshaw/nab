@@ -28,6 +28,7 @@ from nab_provider._vendor.packaging.version import Version
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.overrides import PackageOverride
 from nab_provider.policy import DistPolicy, ExtrasMode
+from nab_provider.priority import CONFLICT_THRESHOLD, CULPRIT_DEMOTE_THRESHOLD
 from nab_provider.provider import Provider, ResolutionStrategy
 from nab_provider.records import SdistFile
 from nab_provider.resolver_inputs import ProxyConstraints, build_resolver_inputs
@@ -38,6 +39,7 @@ from nab_provider.vcs_admission import VcsConfig
 from nab_provider.yank_preference import IncompletePreferenceError
 from nab_provider.yanked_resolution import MetadataProxy, YankProxyProvider
 from nab_provider.yanking import mark_yanked
+from nab_resolver import decide
 from nab_resolver.errors import (
     ResolutionError,
     ResolutionInvariantError,
@@ -640,6 +642,59 @@ def graph_search(
     )
 
 
+@pytest.mark.parametrize("roots", list(permutations(("leaf", "app", "plugin"))))
+@pytest.mark.parametrize("noise_versions", [3, 5])
+def test_unpinned_yank_does_not_exhaust_unrelated_choice_products(
+    roots: Sequence[str], noise_versions: int
+) -> None:
+    live_versions = CONFLICT_THRESHOLD + 1
+    releases: list[ReleaseRow] = [
+        ("leaf", "2", False, []),
+        ("leaf", "1", False, []),
+        ("app", str(live_versions + 1), True, []),
+        ("plugin", "1", False, [f"noise{i}" for i in range(3)]),
+    ]
+    releases.extend(
+        ("app", str(version), False, ["leaf<2"])
+        for version in range(1, live_versions + 1)
+    )
+    releases.extend(
+        (f"noise{i}", str(version), False, [])
+        for i in range(3)
+        for version in range(1, noise_versions + 1)
+    )
+    search = graph_search(releases, roots)
+    search.preference.remaining = 300
+
+    pins, _ = search.resolve()
+
+    assert pins == {
+        "leaf": Version("1"),
+        "app": Version(str(live_versions)),
+        "plugin": Version("1"),
+        **{f"noise{i}": Version(str(noise_versions)) for i in range(3)},
+    }
+    assert not any(candidate.withdrawn for candidate in search.catalogue.facts)
+
+
+@pytest.mark.parametrize("counter", ["conflict", "culprit"])
+def test_proxy_decision_scan_uses_shared_conflict_priorities(counter: str) -> None:
+    search = graph_search(
+        [("first", "1", False, []), ("second", "1", False, [])],
+        ["first", "second"],
+    )
+    resolver = Resolver(search)
+    resolver.solution.derive("first", Range.full(), positive=True, cause=None)
+    resolver.solution.derive("second", Range.full(), positive=True, cause=None)
+    resolver.root_package_order.update({"first": (0, 0, ""), "second": (0, 1, "")})
+    if counter == "conflict":
+        resolver.stats.package_conflict_counts["second"] = CONFLICT_THRESHOLD
+    else:
+        resolver.stats.package_culprit_counts["first"] = CULPRIT_DEMOTE_THRESHOLD
+
+    assert decide.choose_package_to_decide(resolver) == "second"
+
+
 def test_missing_offline_metadata_cannot_certify_live_failure() -> None:
     search = graph_search(
         [
@@ -668,10 +723,12 @@ def test_missing_extra_rejects_a_candidate_without_enabling_its_pin() -> None:
     )
     candidate = search.catalogue.choices("app[x]")[0]
     assert search.catalogue.prepare(candidate) is None
-    assert "does not provide extra" in search.catalogue.rejections[0]
+    assert "does not provide extra" in search.catalogue.rejections[candidate].message
     assert not any(candidate.withdrawn for candidate in search.catalogue.facts)
-    with pytest.raises(ResolutionError, match="does not provide extra"):
+    with pytest.raises(ResolutionError) as caught:
         search.resolve()
+    assert caught.value.verbose_message is not None
+    assert "does not provide extra" in caught.value.verbose_message
 
 
 def test_proxy_conflicts_stop_independent_choice_permutations() -> None:
@@ -944,7 +1001,7 @@ def test_cached_cyclic_metadata_cannot_supply_initial_permission() -> None:
     )
     for package in ("app", "dep"):
         search.catalogue.prepare(search.catalogue.choices(package)[0])
-    with pytest.raises(ResolutionError, match="active exact pin"):
+    with pytest.raises(ResolutionError, match="yanked-file policy"):
         search.resolve()
     assert not search.proofs
 

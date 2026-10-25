@@ -12012,25 +12012,6 @@ class TestPublicAccessors:
         assert version.comparisons < 20
 
 
-class TestComputeTier:
-    """Cover the tier-decision branches."""
-
-    def test_force_backtracked_returns_culprit(self) -> None:
-        from nab_provider._provider.priority import (
-            TIER_CULPRIT,
-            compute_tier,
-        )
-
-        tier = compute_tier(
-            "foo",
-            affected_count=0,
-            culprit_count=0,
-            culprit_counts=None,
-            force_backtracked=True,
-        )
-        assert tier == TIER_CULPRIT
-
-
 class TestExtrasInvalidMetadata:
     """Cover the invalid-metadata skip paths in extras pick mode."""
 

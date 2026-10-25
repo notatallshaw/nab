@@ -97,10 +97,11 @@ write guards.
 
 `nab_resolver.diagnostics` supplies shared messages and corrective actions without logging or
 retaining command state. `nab_provider.diagnostics.Diagnostic` adds package summaries and evidence.
-Package, index and build-policy decisions remain with the code that produces the diagnostic.
+`ResolutionMessage` renders those diagnostics for both ordinary and yanked-file searches. Package,
+index and build-policy decisions remain with the code that produces the diagnostic.
 
 `nab-project` adds provider diagnostics to a terminal resolution error through
-`nab_project.diagnostics.ResolutionMessage`. Candidate rejections retain data for that report; they
+`nab_provider.diagnostics.ResolutionMessage`. Candidate rejections retain data for that report; they
 do not emit suggestions while the resolver tries alternatives.
 
 The CLI owns verbosity, streams and the emission lifetime. Its printer shares one suggestion set

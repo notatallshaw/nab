@@ -114,6 +114,38 @@ class TestIncompatibility:
         inc = Incompatibility([t], cause=IncompatibilityCause.NO_VERSIONS)
         assert len(inc.terms) == 1
 
+    def test_walk_preserves_left_order_and_visits_shared_nodes_once(self) -> None:
+        shared: Incompatibility[str, int] = Incompatibility(
+            [], cause=IncompatibilityCause.NO_VERSIONS
+        )
+        left: Incompatibility[str, int] = Incompatibility(
+            [], cause=IncompatibilityCause.DERIVED, cause_left=shared
+        )
+        right: Incompatibility[str, int] = Incompatibility(
+            [], cause=IncompatibilityCause.DERIVED, cause_right=shared
+        )
+        root = Incompatibility(
+            [], cause=IncompatibilityCause.DERIVED, cause_left=left, cause_right=right
+        )
+
+        assert list(root.walk()) == [root, left, shared, right]
+
+    def test_walk_handles_deep_derivations(self) -> None:
+        leaf: Incompatibility[str, int] = Incompatibility(
+            [], cause=IncompatibilityCause.NO_VERSIONS
+        )
+        root = leaf
+        for _ in range(2000):
+            root = Incompatibility(
+                [], cause=IncompatibilityCause.DERIVED, cause_left=root
+            )
+
+        walked = list(root.walk())
+
+        assert len(walked) == 2001
+        assert walked[0] is root
+        assert walked[-1] is leaf
+
 
 class TestRootRequirement:
     def test_origin_defaults_to_none_and_fields_are_readable(self) -> None:
