@@ -1403,19 +1403,13 @@ class Provider:
         field: str,
         value: Callable[[PackageOverride | IndexOverride], object],
     ) -> object:
-        """Resolve one policy field for a candidate across both override surfaces.
+        """Resolve a field from matching package and serving index overrides.
 
-        Returns the per-package value when a range-matching per-package
-        override sets ``field``, else the per-index value when the serving
-        index's override sets it, else ``_UNSET`` (the caller substitutes
-        the global default).  When BOTH surfaces set the field for this
-        candidate, raises :class:`~nab_provider.errors.OverrideConflictError`:
-        the two surfaces are deliberately not ranked.
+        Raise :class:`~nab_provider.errors.OverrideConflictError` if both set it.
+        Return ``_UNSET`` for the caller's global default if neither sets it.
 
-        Both override types spell the policy fields the same way, so one
-        ``value`` callable reads either.  It returns ``_UNSET`` when the
-        override does not set the field, and the value (which may be
-        ``None`` for a disabled upload-time cutoff) when it does.
+        ``value`` accepts either override type; ``_UNSET`` marks an absent field.
+        ``None`` is a set value, as with a disabled upload-time cutoff.
         """
         pkg = self._matching_package_override(canonical_name, version, value)
         idx = self._index_overrides.get(index_name) if index_name is not None else None
@@ -1433,6 +1427,7 @@ class Provider:
                     Suggestion(
                         f"remove {field!r} from the override for "
                         f"{str(pkg.requirement)!r} or index {index_name!r}"
+                        "; remove the whole entry if it would otherwise set no policy"
                     ),
                 ),
             )
