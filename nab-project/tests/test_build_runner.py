@@ -4860,6 +4860,63 @@ class TestBuildEnvFollowUpInstall:
         ]
         assert sorted(p.name for p in (site / "probefoo").iterdir()) == ["__init__.py"]
 
+    def test_replacement_ignores_an_external_bytecode_cache(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env, scheme, site = self._env(tmp_path, monkeypatch)
+        env._scripts_dir = site.parent / "bin"  # type: ignore[attr-defined]
+        external_cache = tmp_path / "external-cache"
+
+        def import_value() -> str:
+            """Import the installed value in a fresh subprocess."""
+            code = (
+                f"import sys; sys.path.insert(0, {str(site)!r}); "
+                "import probefoo; print(probefoo.VALUE)"
+            )
+
+            environ = dict(os.environ)
+            environ.pop("PYTHONDONTWRITEBYTECODE", None)
+            environ["PYTHONPYCACHEPREFIX"] = str(external_cache)
+            environ.update(env.make_extra_environ())
+
+            result = subprocess.run(  # noqa: S603 - controlled interpreter and script
+                [sys.executable, "-c", code],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environ,
+            )
+            return result.stdout.strip()
+
+        first = tmp_path / "probefoo-2.0-py3-none-any.whl"
+        _make_installable_wheel(
+            first,
+            "probefoo",
+            "2.0",
+            package_files={"__init__.py": b'VALUE = "v2"\n'},
+        )
+        env._install_wheels([first], scheme)
+        source = site / "probefoo" / "__init__.py"
+        source.touch()
+        first_mtime = source.stat().st_mtime_ns
+        assert import_value() == "v2"
+
+        second = tmp_path / "probefoo-1.0-py3-none-any.whl"
+        _make_installable_wheel(
+            second,
+            "probefoo",
+            "1.0",
+            package_files={"__init__.py": b'VALUE = "v1"\n'},
+        )
+        monkeypatch.setattr(env, "_resolve_and_download", lambda *_a, **_k: [second])
+
+        env.install(["probefoo<2"])
+
+        # Equal source size and mtime let stale bytecode pass validation.
+        os.utime(source, ns=(first_mtime, first_mtime))
+
+        assert import_value() == "v1"
+
     def test_package_dropped_by_the_new_resolve_is_removed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

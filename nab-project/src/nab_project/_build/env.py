@@ -499,23 +499,23 @@ class NabBuildEnv:
         return str(self._python_executable)
 
     def make_extra_environ(self) -> Mapping[str, str]:
-        """PATH / PYTHONPATH overrides for the build subprocess.
+        """Return environment overrides for build subprocesses.
 
-        Prepends the venv's scripts dir so build backends find their
-        installed entry points; clears ``PYTHONPATH`` so the host's
-        ``sys.path`` does not leak in (matches the convention used by
-        ``build.env.DefaultIsolatedEnv``).
+        Prepends build entry points to ``PATH`` and clears ``PYTHONPATH``.
         """
         if self._scripts_dir is None:
             msg = "NabBuildEnv used outside its context-manager scope"
             raise BuildEnvError(msg)
+
         host_path = os.environ.get("PATH")
         new_path = (
             f"{self._scripts_dir}{os.pathsep}{host_path}"
             if host_path
             else str(self._scripts_dir)
         )
-        return {"PATH": new_path, "PYTHONPATH": ""}
+
+        # Keep dependency bytecode beside sources for replacement cleanup.
+        return {"PATH": new_path, "PYTHONPATH": "", "PYTHONPYCACHEPREFIX": ""}
 
     def install(self, requirements: list[str]) -> None:
         """Install additional requirements into the live env.
