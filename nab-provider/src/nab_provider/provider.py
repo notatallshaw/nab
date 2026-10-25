@@ -513,6 +513,7 @@ _SOURCE_VALUES: dict[str, Callable[[PackageOverride | IndexOverride], object]] =
     "dist-policy": _dist_policy_value,
     "allow-zip-sdists": _allow_zip_sdists_value,
     "assume-universal-deps": _assume_universal_deps_value,
+    "build-policy": lambda override: _unset_if_none(override.build_policy),
 }
 
 

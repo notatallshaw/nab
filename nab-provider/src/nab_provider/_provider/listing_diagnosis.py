@@ -54,7 +54,11 @@ if TYPE_CHECKING:
 
     # The configuration keys a remedy can change.
     Field: TypeAlias = Literal[
-        "uploaded-prior-to", "dist-policy", "allow-zip-sdists", "assume-universal-deps"
+        "uploaded-prior-to",
+        "dist-policy",
+        "allow-zip-sdists",
+        "assume-universal-deps",
+        "build-policy",
     ]
 
     # The values :class:`OverrideLayer`, :class:`ReasonKind` and
