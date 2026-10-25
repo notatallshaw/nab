@@ -1148,13 +1148,16 @@ class TestSourceBuckets:
         assert not clone.exists()
         assert not (root / "vcs").exists()
 
-    def test_clear_removes_the_legacy_archive_tree(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("bucket", ["archive", "archive-v1"])
+    def test_clear_removes_the_legacy_archive_tree(
+        self, tmp_path: Path, bucket: str
+    ) -> None:
         root = tmp_path / "cache"
         cache = _populate(root)
-        tree = self._extract_into(root / "archive")
-        assert "archive" in cache.clear_cache()
+        tree = self._extract_into(root / bucket)
+        assert bucket in cache.clear_cache()
         assert not tree.exists()
-        assert not (root / "archive").exists()
+        assert not (root / bucket).exists()
 
     def test_clear_removes_current_source_buckets(self, tmp_path: Path) -> None:
         root = tmp_path / "cache"
