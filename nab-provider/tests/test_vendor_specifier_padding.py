@@ -16,11 +16,11 @@ PADDED = [
     ("\t==1.0\n", ("==", "1.0")),
     ("\x0b==1.0\x0c", ("==", "1.0")),
     ("\xa0==1.0\xa0", ("==", "1.0")),
-    ("  ===  ", ("===", "")),
+    ("  ===legacy  ", ("===", "legacy")),
 ]
 
 # Strings the pattern refuses however they are padded.
-REFUSED = ["", " ", "=1.0", "== ", "==1.0 2.0", "~=1"]
+REFUSED = ["", " ", "=1.0", "== ", "==1.0 2.0", "~=1", "===", "===  "]
 
 
 @pytest.mark.parametrize(("spec", "expected"), PADDED)

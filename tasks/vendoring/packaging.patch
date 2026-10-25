@@ -1,154 +1,5 @@
-diff --git a/nab-provider/src/nab_provider/_vendor/packaging/_parser.py b/nab-provider/src/nab_provider/_vendor/packaging/_parser.py
-index 245ed43..1efb387 100644
---- a/nab-provider/src/nab_provider/_vendor/packaging/_parser.py
-+++ b/nab-provider/src/nab_provider/_vendor/packaging/_parser.py
-@@ -394,8 +394,15 @@ def process_env_var(env_var: str) -> Variable:
- 
- 
- def process_python_str(python_str: str) -> Value:
--    value = ast.literal_eval(python_str)
--    return Value(str(value))
-+    # QUOTED_STRING admits no prefix and no embedded delimiter, so an ASCII body
-+    # holding no backslash, line break or NUL is what the literal parse returns.
-+    # The rest keeps that parse, for the escapes it expands and the bodies it rejects.
-+    body = python_str[1:-1]
-+    if body.isascii() and not (
-+        "\\" in body or "\n" in body or "\r" in body or "\0" in body
-+    ):
-+        return Value(body)
-+    return Value(str(ast.literal_eval(python_str)))
- 
- 
- def _parse_marker_op(tokenizer: Tokenizer) -> Op:
-diff --git a/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py b/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py
-index e312a1f..29c32bc 100644
---- a/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py
-+++ b/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py
-@@ -82,6 +82,10 @@ class BoundaryVersion:
-         "version",
-     )
- 
-+    #: A boundary has no PEP 440 comparison key. Bound ordering reads this off
-+    #: either operand type, so a boundary falls back to the version operators.
-+    _key_cache: None = None
-+
-     def __init__(self, version: Version, kind: BoundaryKind) -> None:
-         self.version = version
-         self.kind = kind
-@@ -186,6 +190,11 @@ class LowerBound:
-     __slots__ = ("_above", "inclusive", "version")
- 
-     def __init__(self, version: _VersionOrBoundary, inclusive: bool) -> None:
-+        # -inf is not a version, so "inclusive of -inf" has no content;
-+        # canonicalizing it keeps the bound order total.
-+        if version is None:
-+            inclusive = False
-+
-         self.version = version
-         self.inclusive = inclusive
-         # Pre-bind a predicate "is parsed at or above this lower
-@@ -218,11 +227,51 @@ class LowerBound:
-             return other.version is not None
-         if other.version is None:
-             return False
--        if self.version != other.version:
-+        # A boundary has no key, and a version's is computed on first use.
-+        self_key = self.version._key_cache
-+        other_key = other.version._key_cache
-+        if self_key is not None and other_key is not None:
-+            if self_key != other_key:
-+                return self_key < other_key
-+        elif self.version != other.version:
-             return self.version < other.version
-         # [v < (v: inclusive starts earlier.
-         return self.inclusive and not other.inclusive
- 
-+    # Written out rather than left to functools.total_ordering, whose shims
-+    # reach the same answer through ``__lt__`` and ``__eq__``.
-+    def __gt__(self, other: LowerBound) -> bool:
-+        if not isinstance(other, LowerBound):
-+            return NotImplemented
-+        if self.version is None:
-+            return False
-+        if other.version is None:
-+            return True
-+        self_key = self.version._key_cache
-+        other_key = other.version._key_cache
-+        if self_key is not None and other_key is not None:
-+            if self_key != other_key:
-+                return not self_key < other_key
-+        elif self.version != other.version:
-+            return not self.version < other.version
-+        return other.inclusive and not self.inclusive
-+
-+    def __le__(self, other: LowerBound) -> bool:
-+        if not isinstance(other, LowerBound):
-+            return NotImplemented
-+        if self.version is None:
-+            return True
-+        if other.version is None:
-+            return False
-+        self_key = self.version._key_cache
-+        other_key = other.version._key_cache
-+        if self_key is not None and other_key is not None:
-+            if self_key != other_key:
-+                return self_key < other_key
-+        elif self.version != other.version:
-+            return self.version < other.version
-+        return self.inclusive or not other.inclusive
-+
-     def __hash__(self) -> int:
-         return hash((self.version, self.inclusive))
- 
-@@ -243,6 +292,10 @@ class UpperBound:
-     __slots__ = ("_below", "inclusive", "version")
- 
-     def __init__(self, version: _VersionOrBoundary, inclusive: bool) -> None:
-+        # See LowerBound: +inf carries no inclusivity either.
-+        if version is None:
-+            inclusive = False
-+
-         self.version = version
-         self.inclusive = inclusive
-         # Pre-bind a predicate "is parsed at or below this upper
-@@ -277,11 +330,34 @@ class UpperBound:
-             return False
-         if other.version is None:
-             return True
--        if self.version != other.version:
-+        # See LowerBound.__lt__ for why this reads the cached keys.
-+        self_key = self.version._key_cache
-+        other_key = other.version._key_cache
-+        if self_key is not None and other_key is not None:
-+            if self_key != other_key:
-+                return self_key < other_key
-+        elif self.version != other.version:
-             return self.version < other.version
-         # v) < v]: exclusive ends earlier.
-         return not self.inclusive and other.inclusive
- 
-+    # Written out for the same reason as on ``LowerBound``.
-+    def __gt__(self, other: UpperBound) -> bool:
-+        if not isinstance(other, UpperBound):
-+            return NotImplemented
-+        if self.version is None:
-+            return other.version is not None
-+        if other.version is None:
-+            return False
-+        self_key = self.version._key_cache
-+        other_key = other.version._key_cache
-+        if self_key is not None and other_key is not None:
-+            if self_key != other_key:
-+                return not self_key < other_key
-+        elif self.version != other.version:
-+            return not self.version < other.version
-+        return self.inclusive and not other.inclusive
-+
-     def __hash__(self) -> int:
-         return hash((self.version, self.inclusive))
- 
 diff --git a/nab-provider/src/nab_provider/_vendor/packaging/markers.py b/nab-provider/src/nab_provider/_vendor/packaging/markers.py
-index 609099c..38cf1ae 100644
+index 551fe04..198230a 100644
 --- a/nab-provider/src/nab_provider/_vendor/packaging/markers.py
 +++ b/nab-provider/src/nab_provider/_vendor/packaging/markers.py
 @@ -30,6 +30,7 @@ __all__ = [
@@ -159,48 +10,7 @@ index 609099c..38cf1ae 100644
  ]
  
  
-@@ -207,27 +208,23 @@ def _normalize_extra_values(results: MarkerList) -> MarkerList:
- def _format_marker(
-     marker: list[str] | MarkerAtom | str, first: bool | None = True
- ) -> str:
--    assert isinstance(marker, (list, tuple, str))
--
--    # Unwrap a redundant [[...]] wrapper, but keep the nesting context so a
--    # nested group keeps the parentheses its and/or precedence needs.
--    if (
--        isinstance(marker, list)
--        and len(marker) == 1
--        and isinstance(marker[0], (list, tuple))
--    ):
--        return _format_marker(marker[0], first=first)
-+    """Serialize parser output: a marker list, a three-node item, or an operator."""
-+    if isinstance(marker, tuple):
-+        lhs, op, rhs = marker
-+        return f"{lhs.serialize()} {op.serialize()} {rhs.serialize()}"
- 
-     if isinstance(marker, list):
--        inner = (_format_marker(m, first=False) for m in marker)
-+        # Unwrap a redundant [[...]] wrapper, but keep the nesting context so a
-+        # nested group keeps the parentheses its and/or precedence needs.
-+        if len(marker) == 1 and isinstance(marker[0], (list, tuple)):
-+            return _format_marker(marker[0], first=first)
-+
-+        inner = [_format_marker(m, first=False) for m in marker]
-         if first:
-             return " ".join(inner)
--        else:
--            return "(" + " ".join(inner) + ")"
--    elif isinstance(marker, tuple):
--        return " ".join([m.serialize() for m in marker])
--    else:
--        return marker
-+        return "(" + " ".join(inner) + ")"
-+
-+    return marker
- 
- 
- _operators: dict[str, Operator] = {
-@@ -378,6 +375,51 @@ def default_environment() -> Environment:
+@@ -376,6 +377,51 @@ def default_environment() -> Environment:
      return cast("Environment", dict(_cached_default_environment()))
  
  
@@ -252,41 +62,9 @@ index 609099c..38cf1ae 100644
  class Marker:
      """Represents a parsed dependency marker expression.
  
-@@ -398,7 +440,7 @@ class Marker:
-         release.
-     """
- 
--    __slots__ = ("_markers",)
-+    __slots__ = ("_markers", "_serialized")
- 
-     def __init__(self, marker: str) -> None:
-         # Note: We create a Marker object without calling this constructor in
-@@ -441,7 +483,13 @@ class Marker:
-         return new
- 
-     def __str__(self) -> str:
--        return _format_marker(self._markers)
-+        # _markers is never rebound after construction, so serialise once.
-+        try:
-+            return self._serialized
-+        except AttributeError:
-+            serialized = _format_marker(self._markers)
-+            self._serialized = serialized
-+            return serialized
- 
-     def __repr__(self) -> str:
-         return f"<{self.__class__.__name__}({str(self)!r})>"
-@@ -530,6 +578,7 @@ class Marker:
-             Added the ``context`` parameter, which influences which marker names
-             are considered valid.
-         """
-+        # Keep single evaluations free of preparation helper calls.
-         current_environment = cast(
-             "dict[str, str | AbstractSet[str]]", default_environment()
+@@ -560,6 +606,22 @@ class Marker:
          )
-@@ -554,6 +603,21 @@ class Marker:
-             self._markers, _repair_python_full_version(current_environment)
-         )
+ 
  
 +    def evaluate_prepared(self, environment: dict[str, str | AbstractSet[str]]) -> bool:
 +        """Evaluate a marker against an already-prepared environment.
@@ -303,11 +81,12 @@ index 609099c..38cf1ae 100644
 +        """
 +        return _evaluate_markers(self._markers, environment)
 +
- 
++
  def _pep440_python_full_version(python_full_version: str) -> str:
      """
+     Work around platform.python_version() returning something that is not PEP 440
 diff --git a/nab-provider/src/nab_provider/_vendor/packaging/ranges.py b/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
-index 4fbf48e..e98e5c7 100644
+index fbfca2e..bacbba2 100644
 --- a/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
 +++ b/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
 @@ -54,12 +54,41 @@ if TYPE_CHECKING:
@@ -353,7 +132,7 @@ index 4fbf48e..e98e5c7 100644
  #: The most ``!=`` exclusion fragments (``!=V`` points or ``!=P.*`` prefixes)
  #: that :meth:`VersionRange.to_specifier_set` will materialize to spell a
  #: single gap or run. Every site that expands a version-number-driven chain
-@@ -143,6 +172,97 @@ def _union_ranges(
+@@ -143,6 +172,76 @@ def _union_ranges(
      return merged
  
  
@@ -401,27 +180,6 @@ index 4fbf48e..e98e5c7 100644
 +    return _DISJOINT_REL if disjoint else _OVERLAPPING_REL
 +
 +
-+def _subset_bounds(left: Sequence[Interval], right: Sequence[Interval]) -> bool:
-+    """Return whether every version in ``left`` is also in ``right``.
-+
-+    The canonical lists let one two-pointer walk decide containment: skip the
-+    right intervals that end too early, then check that the surviving one starts
-+    early enough.
-+    """
-+    right_index = 0
-+    right_len = len(right)
-+    for left_lower, left_upper in left:
-+        # A right interval ending below this one cannot cover it, and the left
-+        # list ascends, so it cannot cover any later one either.
-+        while right_index < right_len and right[right_index][1] < left_upper:
-+            right_index += 1
-+        if right_index == right_len:
-+            return False
-+        if right[right_index][0] > left_lower:
-+            return False
-+    return True
-+
-+
 +def _disjoint_bounds(left: Sequence[Interval], right: Sequence[Interval]) -> bool:
 +    """Return whether no version lies in both ``left`` and ``right``.
 +
@@ -451,46 +209,7 @@ index 4fbf48e..e98e5c7 100644
  def _complement_ranges(ranges: Sequence[Interval]) -> list[Interval]:
      """Complement a sorted, non-overlapping interval list.
  
-@@ -183,6 +303,38 @@ def _complement_ranges(ranges: Sequence[Interval]) -> list[Interval]:
-     return result
- 
- 
-+def _difference_ranges(
-+    left: Sequence[Interval], right: Sequence[Interval]
-+) -> tuple[Interval, ...]:
-+    """Subtract sorted intervals without constructing the right-hand complement."""
-+    result: list[Interval] = []
-+    right_index = 0
-+    for lower, upper in left:
-+        while right_index < len(right):
-+            right_lower, right_upper = right[right_index]
-+            if range_is_empty(lower, right_upper):
-+                right_index += 1
-+                continue
-+            if range_is_empty(right_lower, upper):
-+                if not range_is_empty(lower, upper):
-+                    result.append((lower, upper))
-+                break
-+
-+            if lower < right_lower:
-+                gap_upper = UpperBound(right_lower.version, not right_lower.inclusive)
-+                if not range_is_empty(lower, gap_upper):
-+                    result.append((lower, gap_upper))
-+            if right_upper >= upper:
-+                break
-+
-+            lower = LowerBound(right_upper.version, not right_upper.inclusive)
-+            right_index += 1
-+        else:
-+            if not range_is_empty(lower, upper):
-+                result.append((lower, upper))
-+    return tuple(result)
-+
-+
- def _canonical_floor(bounds: tuple[Interval, ...]) -> tuple[Interval, ...]:
-     """Collapse the PEP 440 floor in a sorted interval list.
- 
-@@ -292,6 +444,72 @@ def _struct_admits(
+@@ -327,6 +426,72 @@ def _struct_admits(
      return matches_bounds_only(bounds, parsed)
  
  
@@ -563,7 +282,7 @@ index 4fbf48e..e98e5c7 100644
  # Repr helpers:
  
  
-@@ -904,7 +1122,8 @@ class VersionRange:
+@@ -939,7 +1104,8 @@ class VersionRange:
      :class:`~packaging.specifiers.SpecifierSet`.
  
      Construct via :meth:`~packaging.specifiers.SpecifierSet.to_range`, or with
@@ -573,7 +292,7 @@ index 4fbf48e..e98e5c7 100644
      Compose with :meth:`intersection`, :meth:`union`, :meth:`complement`, and
      :meth:`difference` (or the ``&`` / ``|`` / ``~`` / ``-`` operators). Test
      membership with ``in`` or :meth:`contains`, filter an iterable with
-@@ -919,9 +1138,9 @@ class VersionRange:
+@@ -954,9 +1120,9 @@ class VersionRange:
      that opt-in scoped to those versions, so unrelated pre-releases are not
      admitted wholesale.
  
@@ -586,7 +305,7 @@ index 4fbf48e..e98e5c7 100644
  
      >>> r = SpecifierSet(">=1.0,<2.0").to_range()
      >>> "1.5" in r
-@@ -997,7 +1216,8 @@ class VersionRange:
+@@ -1032,7 +1198,8 @@ class VersionRange:
          raise TypeError(
              "cannot create 'VersionRange' instances directly; use "
              "SpecifierSet.to_range(), VersionRange.full(), "
@@ -596,7 +315,7 @@ index 4fbf48e..e98e5c7 100644
          )
  
      @classmethod
-@@ -1189,6 +1409,73 @@ class VersionRange:
+@@ -1224,6 +1391,73 @@ class VersionRange:
              prereleases_configured=prereleases,
          )
  
@@ -670,43 +389,7 @@ index 4fbf48e..e98e5c7 100644
      def intersection(self, other: VersionRange) -> VersionRange:
          """Range containing exactly the versions in both self and other.
  
-@@ -1340,11 +1627,7 @@ class VersionRange:
-         if not other._bounds and not other._admit:
-             return self
- 
--        # Bound complement is two-way, so subtracting other's versions is an
--        # intersection with its gaps.
--        new_bounds = tuple(
--            intersect_ranges(self._bounds, _complement_ranges(other._bounds))
--        )
-+        new_bounds = _difference_ranges(self._bounds, other._bounds)
- 
-         # Match ``self & ~other`` on the opt-in region: a complement carries no
-         # opt-in, so only ``self``'s region survives. ``other`` acts as a
-@@ -1469,6 +1752,15 @@ class VersionRange:
-         False
-         >>> VersionRange.empty().is_subset(outer)
-         True
-+
-+        A range with an exclusion is a subset of its span, but the span is not a
-+        subset of it:
-+
-+        >>> punctured = SpecifierSet(">=1.0,<2.0,!=1.5").to_range()
-+        >>> punctured.is_subset(outer)
-+        True
-+        >>> outer.is_subset(punctured)
-+        False
-         """
-         self._check_policy_compat(other)
- 
-@@ -1479,12 +1771,55 @@ class VersionRange:
- 
-         # Plain ranges: subset reduces to bounds containment, no algebra needed.
-         if self._is_plain() and other._is_plain():
--            return not intersect_ranges(self._bounds, _complement_ranges(other._bounds))
-+            return _subset_bounds(self._bounds, other._bounds)
- 
-         # difference (unlike intersection with the one-way complement) resolves
+@@ -1516,6 +1750,49 @@ class VersionRange:
          # ``===`` literals against both operands, so it stays correct for them.
          return self.difference(other).is_empty
  
@@ -756,7 +439,7 @@ index 4fbf48e..e98e5c7 100644
      def is_superset(self, other: VersionRange) -> bool:
          """Return whether every member of other is also a member of self.
  
-@@ -1515,12 +1850,19 @@ class VersionRange:
+@@ -1546,12 +1823,19 @@ class VersionRange:
          True
          >>> a.is_disjoint(SpecifierSet(">=1.5,<2.5").to_range())
          False
@@ -777,7 +460,7 @@ index 4fbf48e..e98e5c7 100644
          return self.intersection(other).is_empty
  
      def _same_releases(self, other: VersionRange) -> bool:
-@@ -1678,6 +2020,123 @@ class VersionRange:
+@@ -1709,6 +1993,123 @@ class VersionRange:
          if not found_final:
              yield from all_nonfinal
  

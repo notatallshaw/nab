@@ -1,13 +1,4 @@
-"""Tests for the vendored patch's ``LowerBound`` / ``UpperBound`` ordering.
-
-The bounds order under ``functools.total_ordering``, with ``LowerBound.__gt__``,
-``LowerBound.__le__``, and ``UpperBound.__gt__`` written out because the interval
-walks call those three directly. Every pair over a bound pool is checked against
-the shim's expansion of ``__lt__`` and ``__eq__``, against the total-order laws,
-and against the ``_above`` / ``_below`` predicates the same bounds carry. The
-pool holds an unbounded bound spelled both inclusive and exclusive, the pair the
-constructor collapses to one point.
-"""
+"""Version bounds preserve total ordering and interval membership."""
 
 from __future__ import annotations
 
@@ -27,8 +18,8 @@ from nab_provider._vendor.packaging._ranges import (
 )
 from nab_provider._vendor.packaging.ranges import (
     RangeRelation,
+    VersionRange,
     _relate_bounds,
-    _subset_bounds,
 )
 from nab_provider._vendor.packaging.version import Version
 
@@ -189,16 +180,15 @@ class TestBoundOrdering:
                 assert pick(right, left) is right
 
     def test_the_interval_walks_see_one_unbounded_point(self) -> None:
-        # _relate_bounds reads coverage off the identity max() and min() hand
-        # back, and _subset_bounds compares the lower bounds outright, so an
-        # unbounded end spelled either way has to be the same point to both.
         left = [
             (LowerBound(None, inclusive=True), UpperBound(V("2.0"), inclusive=False))
         ]
         right = [(NEG_INF, POS_INF)]
         assert _relate_bounds(left, right) is RangeRelation.SUBSET
         assert _relate_bounds(right, left) is RangeRelation.OVERLAPPING
-        assert _subset_bounds(left, right)
+        assert VersionRange.from_bounds(upper="2.0", include_upper=False).is_subset(
+            VersionRange.full(admit_arbitrary=False)
+        )
 
     @pytest.mark.parametrize("compare", [operator.lt, operator.gt, operator.le])
     @pytest.mark.parametrize("cls", [LowerBound, UpperBound])

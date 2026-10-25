@@ -11,7 +11,7 @@ import platform
 import sys
 from collections.abc import Callable
 from collections.abc import Set as AbstractSet
-from typing import TYPE_CHECKING, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Final, Literal, TypedDict, cast
 
 from ._parser import MarkerAtom, MarkerList, Op, Value, Variable
 from ._parser import parse_marker as _parse_marker
@@ -205,26 +205,28 @@ def _normalize_extra_values(results: MarkerList) -> MarkerList:
     return [_normalize_extras(r) for r in results]
 
 
+_GROUP_TYPES: Final = (list, tuple)
+
+
 def _format_marker(
     marker: list[str] | MarkerAtom | str, first: bool | None = True
 ) -> str:
-    """Serialize parser output: a marker list, a three-node item, or an operator."""
     if isinstance(marker, tuple):
         lhs, op, rhs = marker
         return f"{lhs.serialize()} {op.serialize()} {rhs.serialize()}"
 
-    if isinstance(marker, list):
-        # Unwrap a redundant [[...]] wrapper, but keep the nesting context so a
-        # nested group keeps the parentheses its and/or precedence needs.
-        if len(marker) == 1 and isinstance(marker[0], (list, tuple)):
-            return _format_marker(marker[0], first=first)
+    if isinstance(marker, str):
+        return marker
 
-        inner = [_format_marker(m, first=False) for m in marker]
-        if first:
-            return " ".join(inner)
-        return "(" + " ".join(inner) + ")"
+    # Unwrap a redundant [[...]] wrapper, but keep the nesting context so a
+    # nested group keeps the parentheses its and/or precedence needs.
+    if len(marker) == 1 and isinstance(marker[0], _GROUP_TYPES):
+        return _format_marker(marker[0], first=first)
 
-    return marker
+    inner = [_format_marker(m, first=False) for m in marker]
+    if first:
+        return " ".join(inner)
+    return "(" + " ".join(inner) + ")"
 
 
 _operators: dict[str, Operator] = {
@@ -450,6 +452,7 @@ class Marker:
         # If this fails and throws an error, the repr still expects _markers to
         # be defined.
         self._markers: MarkerList = []
+        self._serialized: str | None = None
 
         try:
             self._markers = _normalize_extra_values(_parse_marker(marker))
@@ -480,16 +483,14 @@ class Marker:
         """
         new = cls.__new__(cls)
         new._markers = markers
+        new._serialized = None
         return new
 
     def __str__(self) -> str:
-        # _markers is never rebound after construction, so serialise once.
-        try:
-            return self._serialized
-        except AttributeError:
-            serialized = _format_marker(self._markers)
-            self._serialized = serialized
-            return serialized
+        # The parsed tree is private, so its formatted text can be reused.
+        if self._serialized is None:
+            self._serialized = _format_marker(self._markers)
+        return self._serialized
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}({str(self)!r})>"
@@ -509,6 +510,8 @@ class Marker:
         return str(self)
 
     def __setstate__(self, state: object) -> None:
+        # State restoration can replace the tree on an existing instance.
+        self._serialized = None
         if isinstance(state, str):
             # New format (26.2+): just the marker expression string.
             try:
@@ -578,7 +581,6 @@ class Marker:
             Added the ``context`` parameter, which influences which marker names
             are considered valid.
         """
-        # Keep single evaluations free of preparation helper calls.
         current_environment = cast(
             "dict[str, str | AbstractSet[str]]", default_environment()
         )
@@ -602,6 +604,7 @@ class Marker:
         return _evaluate_markers(
             self._markers, _repair_python_full_version(current_environment)
         )
+
 
     def evaluate_prepared(self, environment: dict[str, str | AbstractSet[str]]) -> bool:
         """Evaluate a marker against an already-prepared environment.

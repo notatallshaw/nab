@@ -394,15 +394,12 @@ def process_env_var(env_var: str) -> Variable:
 
 
 def process_python_str(python_str: str) -> Value:
-    # QUOTED_STRING admits no prefix and no embedded delimiter, so an ASCII body
-    # holding no backslash, line break or NUL is what the literal parse returns.
-    # The rest keeps that parse, for the escapes it expands and the bodies it rejects.
-    body = python_str[1:-1]
-    if body.isascii() and not (
-        "\\" in body or "\n" in body or "\r" in body or "\0" in body
-    ):
-        return Value(body)
-    return Value(str(ast.literal_eval(python_str)))
+    # The tokenizer guarantees matching delimiters with no embedded delimiter.
+    if "\\" not in python_str and python_str.isprintable():
+        return Value(python_str[1:-1])
+
+    value = ast.literal_eval(python_str)
+    return Value(str(value))
 
 
 def _parse_marker_op(tokenizer: Tokenizer) -> Op:
