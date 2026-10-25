@@ -17,7 +17,7 @@ from nab_provider.errors import (
     UnsupportedSdistError,
 )
 from nab_provider.metadata import parse_metadata
-from nab_provider.overrides import IndexOverride
+from nab_provider.overrides import IndexOverride, PackageOverride
 from nab_provider.provider import BuildPolicy, DistPolicy, Provider
 from nab_provider.records import RangeMetadataResult, RangeOutcome, SdistFile, WheelFile
 from nab_provider.store import sdist_artifact_key
@@ -98,9 +98,96 @@ def test_strict_default_refuses_dynamic_sdist_and_suggests_scoped_option() -> No
     with pytest.raises(UnsupportedSdistError) as caught:
         provider.get_dependencies("pkg", _VERSION)
 
-    assert '[tool.nab.packages."pkg==1.0"]' in str(caught.value)
+    assert 'match = ["pkg==1.0"]' in str(caught.value)
     assert "assume-universal-deps = true" in str(caught.value)
     assert port.calls_to("request_built_metadata") == []
+
+
+@pytest.mark.parametrize(
+    ("entry", "global_value"),
+    [
+        pytest.param(
+            pkg_override("pkg<2", assume_universal_deps=False),
+            True,
+            id="existing-assertion",
+        ),
+        pytest.param(
+            pkg_override("pkg", name_keyed=True, build_policy=BuildPolicy.NEVER),
+            False,
+            id="existing-bare-table",
+        ),
+    ],
+)
+def test_dynamic_sdist_hint_edits_the_existing_package_entry(
+    entry: PackageOverride,
+    *,
+    global_value: bool,
+) -> None:
+    port = _port(_foreign_wheel())
+    provider = Provider(
+        port,
+        _MAC_TARGET,
+        assume_universal_deps=global_value,
+        package_overrides=(entry,),
+    )
+
+    with pytest.raises(UnsupportedSdistError) as caught:
+        provider.get_dependencies("pkg", _VERSION)
+
+    assert f"set assume-universal-deps = true in {entry.requirement};" in str(
+        caught.value
+    )
+
+    repaired = Provider(
+        port,
+        _MAC_TARGET,
+        package_overrides=(entry.replace(assume_universal_deps=True),),
+    )
+    assert set(repaired.get_dependencies("pkg", _VERSION)) == {"wheel-dep"}
+
+
+def test_dynamic_sdist_hint_edits_the_serving_index_assertion() -> None:
+    port = _port(_foreign_wheel())
+    provider = Provider(
+        port,
+        _MAC_TARGET,
+        assume_universal_deps=True,
+        index_overrides={"pypi": IndexOverride(assume_universal_deps=False)},
+    )
+
+    with pytest.raises(UnsupportedSdistError) as caught:
+        provider.get_dependencies("pkg", _VERSION)
+
+    assert "set assume-universal-deps = true in index 'pypi';" in str(caught.value)
+
+    repaired = Provider(
+        port,
+        _MAC_TARGET,
+        index_overrides={"pypi": IndexOverride(assume_universal_deps=True)},
+    )
+    assert set(repaired.get_dependencies("pkg", _VERSION)) == {"wheel-dep"}
+
+
+def test_dynamic_sdist_hint_revises_an_overlapping_legacy_assertion() -> None:
+    port = _port(_foreign_wheel())
+    provider = Provider(
+        port,
+        _MAC_TARGET,
+        package_overrides=(pkg_override("pkg===1.0.0.0", assume_universal_deps=False),),
+    )
+
+    with pytest.raises(UnsupportedSdistError) as caught:
+        provider.get_dependencies("pkg", _VERSION)
+
+    assert "revise the scoped assume-universal-deps entries" in str(caught.value)
+    assert "add a [[tool.nab.package-rules]]" not in str(caught.value)
+
+    repaired = Provider(
+        port,
+        _MAC_TARGET,
+        package_overrides=(pkg_override("pkg<2", assume_universal_deps=True),),
+    )
+    assert set(repaired.get_dependencies("pkg", _VERSION)) == {"wheel-dep"}
 
 
 def test_cached_sdist_failure_preserves_the_suggested_remedy() -> None:

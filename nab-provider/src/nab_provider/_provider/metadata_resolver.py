@@ -753,16 +753,56 @@ def resolve_dynamic_sdist(
     suggestions = (
         ()
         if assume_universal
-        else (
-            Suggestion(
-                "if this release's dependencies apply across targets, set"
-                f' [tool.nab.packages."{canonical}=={version}"]'
-                " assume-universal-deps = true"
-            ),
-        )
+        else (_universal_deps_suggestion(provider, canonical, version),)
     )
     report = DiagnosticMessage(msg, suggestions=suggestions)
     raise UnsupportedSdistError(report)
+
+
+def _universal_deps_suggestion(
+    provider: Provider, canonical: str, version: Version
+) -> Suggestion:
+    """Suggest an assertion edit without overlapping an existing policy."""
+    # listing_diagnosis imports listing, which imports this module.
+    from .listing_diagnosis import OverrideLayer
+
+    source = provider.override_source(
+        canonical,
+        version,
+        provider.serving_index(canonical),
+        field="assume-universal-deps",
+    )
+    condition = "if this release's dependencies apply across targets, "
+    duplicate_advice = (
+        "; if declared in both pyproject.toml and nab.toml, update both declarations"
+    )
+    if source.layer in (OverrideLayer.PACKAGE, OverrideLayer.GLOBAL_BARE_ENTRY):
+        return Suggestion(
+            condition + f"set assume-universal-deps = true in {source.label};"
+            " this changes every version and package matched by this entry"
+            + duplicate_advice
+        )
+    if source.layer == OverrideLayer.INDEX:
+        return Suggestion(
+            condition
+            + f"set assume-universal-deps = true in index {source.selector!r};"
+            " this changes every package served by this index" + duplicate_advice
+        )
+    if source.layer == OverrideLayer.GLOBAL_SCOPED_OVERLAP:
+        return Suggestion(
+            condition + "revise the scoped assume-universal-deps entries to enable this"
+            " release without overlapping assertions"
+        )
+
+    selector = (
+        source.selector
+        if source.layer == OverrideLayer.GLOBAL_SCOPED_ENTRY
+        else f"{canonical}=={version}"
+    )
+    return Suggestion(
+        condition + "add a [[tool.nab.package-rules]] entry with"
+        f' match = ["{selector}"] and assume-universal-deps = true'
+    )
 
 
 def _assumed_wheel_dependencies(

@@ -53,7 +53,9 @@ if TYPE_CHECKING:
     from .listing import Cause, ListingPolicy
 
     # The configuration keys a remedy can change.
-    Field: TypeAlias = Literal["uploaded-prior-to", "dist-policy", "allow-zip-sdists"]
+    Field: TypeAlias = Literal[
+        "uploaded-prior-to", "dist-policy", "allow-zip-sdists", "assume-universal-deps"
+    ]
 
     # The values :class:`OverrideLayer`, :class:`ReasonKind` and
     # :class:`BlockerKind` name.
