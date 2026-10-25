@@ -194,31 +194,6 @@ class _DeferredIntegrity:
             return None
 
 
-class _WheelIntegrity(_DeferredIntegrity):
-    """Keep raw integrity tables and the metadata URL memo outside value fields."""
-
-    __slots__ = ("_metadata_url", "_raw_metadata")
-
-    _metadata_url: str
-    _raw_metadata: object
-
-    @override
-    def __getattr__(self, name: str) -> object:
-        if name != "metadata_hash":
-            return super().__getattr__(name)
-
-        value = sidecar_hash(_expand_table(self._raw_metadata))
-        setattr(self, name, value)
-        return value
-
-    def raw_sidecar(self) -> object:
-        """Return the sidecar value this wheel was built from, else ``None``."""
-        try:
-            return _expand_table(self._raw_metadata)
-        except AttributeError:
-            return None
-
-
 def defer_hashes(record: WheelFile | SdistFile, table: object) -> None:
     """Hold ``table`` unparsed, so ``record.hashes`` parses it on first read.
 
@@ -243,7 +218,7 @@ def defer_sidecar_hash(wheel: WheelFile, table: object) -> None:
     wheel._raw_metadata = _compact_table(table)
 
 
-class WheelFile(_WheelIntegrity, HashableRecord):
+class WheelFile(_DeferredIntegrity, HashableRecord):
     """Wheel file record returned by the Simple-API client.
 
     ``hashes`` is a tuple of ``(algorithm, hex_digest)`` pairs in the
@@ -264,7 +239,7 @@ class WheelFile(_WheelIntegrity, HashableRecord):
     :func:`rehydrated_wheel`).
     """
 
-    __slots__ = __match_args__ = (
+    __match_args__ = (
         "filename",
         "url",
         "version",
@@ -277,6 +252,10 @@ class WheelFile(_WheelIntegrity, HashableRecord):
         "metadata_hash",
     )
 
+    __slots__ = (*__match_args__, "_metadata_url", "_raw_metadata")
+
+    _metadata_url: str
+    _raw_metadata: object
     filename: str
     url: str
     version: str
@@ -315,6 +294,23 @@ class WheelFile(_WheelIntegrity, HashableRecord):
         self.size = size
         self.local_path = local_path
         self.metadata_hash = metadata_hash
+
+    @override
+    def __getattr__(self, name: str) -> object:
+        """Parse deferred integrity hashes on first access."""
+        if name != "metadata_hash":
+            return super().__getattr__(name)
+
+        value = sidecar_hash(_expand_table(self._raw_metadata))
+        setattr(self, name, value)
+        return value
+
+    def raw_sidecar(self) -> object:
+        """Return the sidecar value this wheel was built from, else ``None``."""
+        try:
+            return _expand_table(self._raw_metadata)
+        except AttributeError:
+            return None
 
     @property
     def metadata_url(self) -> str | None:
