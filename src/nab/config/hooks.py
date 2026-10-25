@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 __all__ = [
     "declaring_dir",
     "inspector_anchor",
-    "matrix_table",
+    "key_prefix",
     "parse_index_overrides",
     "parse_local_sources",
     "parse_matrix",
@@ -79,8 +79,8 @@ _RESOLVE_ANCHOR: ContextVar[datetime | None] = ContextVar(
 # rather than re-derived by splitting a human-facing ``where`` label.
 _DECLARING_DIR: ContextVar[Path | None] = ContextVar("_DECLARING_DIR", default=None)
 
-# The matrix table name for the file being parsed.
-_MATRIX_TABLE: ContextVar[str] = ContextVar("_MATRIX_TABLE", default="tool.nab.matrix")
+# Standalone nab.toml tables have no tool.nab prefix.
+_KEY_PREFIX: ContextVar[str] = ContextVar("_KEY_PREFIX", default="tool.nab.")
 
 # One timestamp per inspector pass keeps equal relative values equal across files.
 _INSPECTOR_ANCHOR: ContextVar[datetime | None] = ContextVar(
@@ -129,13 +129,13 @@ def declaring_dir(directory: Path) -> Generator[None, None, None]:
 
 
 @contextmanager
-def matrix_table(table: str) -> Generator[None, None, None]:
-    """Bind the matrix table name for one file read."""
-    token = _MATRIX_TABLE.set(table)
+def key_prefix(prefix: str) -> Generator[None, None, None]:
+    """Bind the declaring file's TOML key prefix for parser hints."""
+    token = _KEY_PREFIX.set(prefix)
     try:
         yield
     finally:
-        _MATRIX_TABLE.reset(token)
+        _KEY_PREFIX.reset(token)
 
 
 def parse_uploaded_prior_to(value: Any, where: str) -> Any:
@@ -186,7 +186,7 @@ def _current_declaring_dir() -> Path:
 
 def parse_matrix(value: Any, where: str) -> values.MatrixConfig:
     """Return the ``matrix`` row's config, its table named for the declaring file."""
-    return values.parse_matrix(value, where, table=_MATRIX_TABLE.get())
+    return values.parse_matrix(value, where, table=f"{_KEY_PREFIX.get()}matrix")
 
 
 def _override_anchor() -> datetime:
@@ -200,34 +200,26 @@ def _override_anchor() -> datetime:
     return datetime.now(timezone.utc)
 
 
-# ``packages`` (name-keyed sugar) and ``package-rules`` (array-of-tables) are
-# two rows that both desugar into one PackageOverride tuple, so each parses
-# only its own surface, with the body and the within-surface same-field
-# overlap validated by the shared parsers.  The cross-surface
-# packages-vs-package-rules overlap and the route-names-a-declared-index
-# check both need the merged whole, so they run on the resolve path in
-# config._config_from_effective, not here.
 def parse_packages(value: Any, where: str) -> tuple[Any, ...]:
     """Return the ``packages`` row's overrides, desugared."""
     return _checked_overrides(
-        values.parse_packages_sugar(value, where, anchor=_override_anchor())
+        values.parse_packages_sugar(
+            value, where, anchor=_override_anchor(), key_prefix=_KEY_PREFIX.get()
+        )
     )
 
 
 def parse_package_rules(value: Any, where: str) -> tuple[Any, ...]:
     """Return the ``package-rules`` row's overrides."""
     return _checked_overrides(
-        values.parse_package_rules(value, where, anchor=_override_anchor())
+        values.parse_package_rules(
+            value, where, anchor=_override_anchor(), key_prefix=_KEY_PREFIX.get()
+        )
     )
 
 
 def _checked_overrides(overrides: Iterable[Any]) -> tuple[Any, ...]:
-    """Reject a same-field overlap among one surface's desugared overrides.
-
-    The cross-surface packages-vs-package-rules overlap needs both rows
-    merged, so it runs on the resolve path; this is the within-surface half,
-    run here so ``nab config`` refuses the same file the resolve refuses.
-    """
+    """Return one table's overrides after rejecting same-field overlaps."""
     built = tuple(overrides)
     values.check_package_override_overlap(built)
     return built

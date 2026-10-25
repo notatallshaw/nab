@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import errno
 import logging
+import re
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -2632,17 +2633,42 @@ class TestArrayOfTablesSources:
 
 
 class TestOverrideTables:
-    """The per-package override tables: packages, package-rules, index.
+    """Per-package policy tables from layered configuration sources."""
 
-    ``packages`` (name-keyed sugar) and ``package-rules`` (array of tables)
-    both desugar into the same ``PackageOverride`` tuple; each is its own
-    file-only PROJECT row that carries the same-field overlap check over
-    its own surface.  ``index`` is a name-keyed table.  Each reuses the
-    single-environment parser per layer so shape/key/body/overlap messages
-    match the pyproject path; the cross-key checks (packages-vs-package-rules
-    overlap, route or key names a declared index) run over the merged config
-    instead.
-    """
+    @pytest.mark.parametrize("filename", ["pyproject.toml", "nab.toml"])
+    @pytest.mark.parametrize("key", ["packages", "package-rules"])
+    def test_package_shape_repairs_parse(
+        self, tmp_path: Path, filename: str, key: str
+    ) -> None:
+        project = _project(tmp_path)
+        path = tmp_path / filename
+        prefix = "tool.nab." if filename == "pyproject.toml" else ""
+        project_metadata = project.read_text() if path == project else ""
+        malformed_header = (
+            f"[[{prefix}packages]]"
+            if key == "packages"
+            else f"[{prefix}package-rules.demo]"
+        )
+
+        _write(path, project_metadata + malformed_header + '\nbuild-policy = "never"\n')
+
+        with pytest.raises(SourceConfigError) as excinfo:
+            read_pyproject_config(project, discover_workspace=False)
+
+        # Require a table name to exclude the [...] match placeholder.
+        headers = re.findall(r"\[\[?[a-z][^\]\n]+\]\]?", str(excinfo.value))
+        assert len(headers) == 2
+        for header in headers:
+            repair = header.replace("<name>", "demo") + "\n"
+            if header.startswith("[["):
+                repair += 'match = ["demo"]\n'
+            _write(path, project_metadata + repair + 'build-policy = "never"\n')
+
+            (override,) = read_pyproject_config(
+                project, discover_workspace=False
+            ).package_overrides
+            assert override.name == "demo"
+            assert override.build_policy is BuildPolicy.NEVER
 
     def test_packages_from_pyproject(self, tmp_path: Path) -> None:
         _project(tmp_path, '[tool.nab.packages.lxml]\ndist-policy = "sdist-only"\n')

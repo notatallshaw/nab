@@ -39,7 +39,7 @@ from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .. import env
 from .._cli.definition.model import Opt, Scope
-from .hooks import declaring_dir, matrix_table
+from .hooks import declaring_dir, key_prefix
 from .registry import OPTIONS
 from .subflags import (
     BY_PARENT,
@@ -330,8 +330,8 @@ def _load_toml_layer(
     origin = Origin(kind, str(path))
     values: dict[str, Any] = {}
     raw_tables: dict[str, Any] = {}
-    # Bind file-specific state used by parse hooks.
-    with declaring_dir(path.parent), matrix_table(project_key_path("matrix", kind)):
+
+    with declaring_dir(path.parent), key_prefix(project_key_path("", kind)):
         for key, value in raw.items():
             spec = BY_KEY.get(key)
             if spec is None:
@@ -358,6 +358,7 @@ def _load_toml_layer(
             values[key] = spec.parse(value, where)
             if key in BY_PARENT:
                 raw_tables[key] = value
+
     return Layer(origin, values, raw_tables)
 
 
