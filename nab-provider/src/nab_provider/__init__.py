@@ -1,6 +1,7 @@
 """IO-free resolution core shared by nab-index and nab-project.
 
-Supported diagnostic imports:
+Supported imports:
 
     nab_provider.diagnostics  Diagnostic
+    nab_provider.priority  compute_tier
 """

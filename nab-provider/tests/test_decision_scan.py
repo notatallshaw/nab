@@ -26,13 +26,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nab_provider._provider.priority import (
-    _NO_LISTING_PRIOR,
-    CONFLICT_THRESHOLD,
-    CULPRIT_DEMOTE_THRESHOLD,
-)
+from nab_provider._provider.priority import _NO_LISTING_PRIOR
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.priority import (
+    CONFLICT_THRESHOLD,
+    CULPRIT_DEMOTE_THRESHOLD,
+    TIER_CULPRIT,
+    compute_tier,
+)
 from nab_provider.provider import DecisionOrder, Provider
 from nab_provider.records import WheelFile
 from nab_provider.store import InMemoryIndex
@@ -462,3 +464,15 @@ class TestTheSearchCountersReachTheSortKey:
         resolver.stats.package_conflict_counts["alpha"] = CONFLICT_THRESHOLD
 
         assert decide.choose_package_to_decide(resolver) == "alpha"
+
+
+def test_force_backtracked_package_uses_culprit_tier() -> None:
+    tier = compute_tier(
+        "foo",
+        affected_count=0,
+        culprit_count=0,
+        culprit_counts=None,
+        force_backtracked=True,
+    )
+
+    assert tier == TIER_CULPRIT

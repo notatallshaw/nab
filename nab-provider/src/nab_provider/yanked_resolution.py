@@ -23,6 +23,7 @@ from ._compat import override
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.utils import canonicalize_name
 from .extra_keys import split_extra
+from .priority import compute_tier
 from .value import HashableRecord
 from .yank_candidates import Candidate, YankCandidates, add_range, is_pin, merge_stats
 from .yank_preference import (
@@ -226,12 +227,19 @@ class YankProxyProvider(BaseProvider[Package, int]):
         version_range: RangeProtocol[int],
         conflict_counts: Mapping[Package, int],
         culprit_counts: Mapping[Package, int] | None = None,
-    ) -> int:
-        """Choose real candidates, then read their permitted metadata."""
-        del version_range, conflict_counts, culprit_counts
+    ) -> tuple[int, int]:
+        """Choose real candidates using conflict evidence, then permitted metadata."""
+        del version_range
         if isinstance(package, str):
-            return 0
-        return 1 if isinstance(package, MetadataProxy) else 2
+            # Restarts must revise real-package order while permission stays lazy.
+            tier = compute_tier(
+                package,
+                conflict_counts.get(package, 0),
+                0 if culprit_counts is None else culprit_counts.get(package, 0),
+                culprit_counts,
+            )
+            return (0, tier)
+        return (1 if isinstance(package, MetadataProxy) else 2, 0)
 
     def block_context(self, package: Package) -> None:
         """Reject selected choices without excluding a candidate globally."""

@@ -40,6 +40,7 @@ from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, Specifie
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
+from . import priority as decision_priority
 from ._provider import extras as _extras
 from ._provider import listing as _listing
 from ._provider import listing_diagnosis as _diagnosis
@@ -673,11 +674,11 @@ class Provider:
     # blockers that are also the right pin.
     _MAX_FORCE_BACKTRACKS_PER_PKG = 3
 
-    TIER_AFFECTED = _priority.TIER_AFFECTED
-    TIER_NORMAL = _priority.TIER_NORMAL
-    TIER_CULPRIT = _priority.TIER_CULPRIT
-    CONFLICT_THRESHOLD = _priority.CONFLICT_THRESHOLD
-    CULPRIT_DEMOTE_THRESHOLD = _priority.CULPRIT_DEMOTE_THRESHOLD
+    TIER_AFFECTED = decision_priority.TIER_AFFECTED
+    TIER_NORMAL = decision_priority.TIER_NORMAL
+    TIER_CULPRIT = decision_priority.TIER_CULPRIT
+    CONFLICT_THRESHOLD = decision_priority.CONFLICT_THRESHOLD
+    CULPRIT_DEMOTE_THRESHOLD = decision_priority.CULPRIT_DEMOTE_THRESHOLD
 
     # Deferred admission retains withdrawn candidates but still guards preparation.
     yank_admissions: frozenset[tuple[str, Version]] = frozenset()
