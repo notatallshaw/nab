@@ -7,7 +7,7 @@ This directory contains `pypa/packaging` at the commit in `tasks/vendoring/packa
 The patch changes two modules:
 
 - `markers.py` adds `prepare_environment` and `Marker.evaluate_prepared` for evaluating multiple markers against one prepared environment. Ordinary `Marker.evaluate` retains its upstream implementation.
-- `ranges.py` adds `VersionRange.from_bounds`, `snap_bounds`, `release_intervals`, and `relation` with its `RangeRelation` result type. It also retains the direct interval walk for `is_disjoint` and the helpers these operations need.
+- `ranges.py` adds `VersionRange.from_bounds`, `snap_bounds`, and `relation` with its `RangeRelation` result type. It also retains the direct interval walk for `is_disjoint` and the helpers these operations need.
 
 Quoted-string parsing, marker formatting and serialization caching, unbounded-bound normalization, cached-key bound comparisons, interval subtraction and the subset check use the upstream implementations.
 
