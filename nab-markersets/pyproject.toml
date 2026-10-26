@@ -1,6 +1,6 @@
 [project]
 name = "nab-markersets"
-version = "0.0.23"
+version = "0.0.24.dev0"
 description = "PEP 508 marker algebra: markers as sets of environments"
 readme = "README.md"
 license = "MIT"
@@ -9,7 +9,7 @@ authors = [
     { name = "Damian Shaw", email = "damian.peter.shaw@gmail.com" },
 ]
 requires-python = ">=3.10"
-dependencies = ["nab-resolver==0.0.23"]
+dependencies = ["nab-resolver==0.0.24.dev0"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
@@ -31,7 +31,7 @@ classifiers = [
 # says whether one did.
 [project.optional-dependencies]
 packaging = ["packaging>=26.3"]
-nab-vendored-packaging = ["nab-provider==0.0.23"]
+nab-vendored-packaging = ["nab-provider==0.0.24.dev0"]
 
 [project.urls]
 Homepage = "https://github.com/notatallshaw/nab"
