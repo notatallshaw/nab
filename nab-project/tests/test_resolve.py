@@ -35,7 +35,7 @@ from nab_project.conflicts import (
 )
 from nab_project.fetch import DEFAULT_MAX_CONCURRENCY
 from nab_project.inputs import ResolveInputs
-from nab_project.lockfile import LockInput, PinShape, build_pylock
+from nab_project.lockfile import LocalPin, LockInput, PinShape, build_pylock
 from nab_project.pyproject_files import (
     read_pyproject_groups,
     read_pyproject_name,
@@ -5619,15 +5619,7 @@ def _index_wheels(name: str, *versions: str) -> list[WheelFile]:
 
 
 class TestLocalSourceExtrasMarkers:
-    """Extras and markers on a local-source package resolve like an index one.
-
-    A local source is materialised into a synthetic single-version listing
-    from its pyproject metadata, then flows through the same extras-proxy and
-    marker machinery as an index package. These end-to-end checks pin that
-    parity, plus the invariant that the single synthetic version is still
-    subject to the requirement's range (no short-circuit past an unsatisfying
-    pin).
-    """
+    """Local sources honor extras, dependency markers and version requirements."""
 
     @staticmethod
     def _resolve(
@@ -5637,19 +5629,17 @@ class TestLocalSourceExtrasMarkers:
         coordinator: FakeFetchPort,
         python_version: str,
     ) -> ResolveResult:
-        """Resolve the root project with each member tree as a local source."""
+        """Resolve the root and check its lock retains each local source tree."""
         (tmp_path / "pyproject.toml").write_text(root_body, encoding="utf-8")
         for name, body in members.items():
             member = tmp_path / name
             member.mkdir()
             (member / "pyproject.toml").write_text(body, encoding="utf-8")
-        with (
-            patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_project._resolve.engine.build_target_lock"),
-        ):
+
+        with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            return _resolved(
+            result = _resolved(
                 tmp_path / "pyproject.toml",
                 _FAKE_TRANSPORT,
                 python_version=python_version,
@@ -5659,6 +5649,20 @@ class TestLocalSourceExtrasMarkers:
                     )
                 ),
             )
+
+        (target_result,) = result.target_results
+        lock = target_result.lock
+        assert lock is not None
+        assert {name: pin.version for name, pin in lock.pins.items()} == {
+            name: str(version) for name, version in target_result.pins.items()
+        }
+
+        for name in members:
+            pin = lock.pins[name]
+            assert isinstance(pin, LocalPin)
+            assert pin.path == str((tmp_path / name).resolve())
+
+        return result
 
     _ROOT_FOO_GPU = (
         '[project]\nname = "proj"\ndependencies = ["foo[gpu]"]\n'
