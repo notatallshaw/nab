@@ -839,8 +839,9 @@ def parse_packages_sugar(
     where: str,
     *,
     anchor: datetime,
+    key_prefix: str = "tool.nab.",
 ) -> list[PackageOverride]:
-    """Parse ``[tool.nab.packages.<name>]`` into per-package overrides.
+    """Parse name-keyed ``packages`` tables into per-package overrides.
 
     Each key is a PEP 508 requirement (a bare name, or a name plus a
     version specifier in a quoted key such as ``"numpy <= 1.21"``) and the
@@ -849,11 +850,11 @@ def parse_packages_sugar(
     """
     if isinstance(value, list):
         report = DiagnosticMessage(
-            (f"{where} is the name-keyed table form ([tool.nab.packages.<name>])"),
+            (f"{where} is the name-keyed table form ([{key_prefix}packages.<name>])"),
             suggestions=(
                 Suggestion(
                     "for one body across several requirements use "
-                    "[[tool.nab.package-rules]] with match = [...]"
+                    f"[[{key_prefix}package-rules]] with match = [...]"
                 ),
             ),
         )
@@ -895,8 +896,9 @@ def parse_package_rules(
     where: str,
     *,
     anchor: datetime,
+    key_prefix: str = "tool.nab.",
 ) -> list[PackageOverride]:
-    """Parse ``[[tool.nab.package-rules]]`` into per-package overrides.
+    """Parse ``package-rules`` arrays of tables into per-package overrides.
 
     Each entry's ``match`` selector lists PEP 508 requirements (name plus
     an optional version specifier); the body applies to every one, so a
@@ -905,11 +907,11 @@ def parse_package_rules(
     """
     if not isinstance(value, list):
         report = DiagnosticMessage(
-            (f"{where} must be an array of tables ([[tool.nab.package-rules]])"),
+            (f"{where} must be an array of tables ([[{key_prefix}package-rules]])"),
             suggestions=(
                 Suggestion(
                     "for per-package policy keyed by name use "
-                    f"[tool.nab.packages.<name>].  Got {type(value).__name__}"
+                    f"[{key_prefix}packages.<name>].  Got {type(value).__name__}"
                 ),
             ),
         )
