@@ -61,7 +61,6 @@ from nab_project._build.env import (
 from nab_project._build.runner import (
     BuildBackendError,
     _build_wheel_and_extract,
-    _validate_backend_path,
     build_wheel_for_install,
     run_build_backend,
 )
@@ -928,19 +927,30 @@ class TestRunBuildBackend:
         with pytest.raises(BuildBackendError, match="must be relative"):
             run_build_backend(source, config=config)
 
-    def test_backend_path_to_sibling_sharing_a_prefix_accepted(
-        self, tmp_path: Path
+    def test_backend_path_to_sibling_sharing_a_prefix_rejected_before_build_env(
+        self,
+        tmp_path: Path,
+        config: ResolveInputs,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A sibling whose name starts with the source directory's is allowed.
-
-        pyproject_hooks compares the two paths as strings and accepts
-        this entry, so rejecting it here would refuse a tree other
-        frontends build.
-        """
+        """A prefix-sharing sibling fails before the build env is opened."""
         (tmp_path / "member-shared").mkdir()
         source = tmp_path / "member"
         source.mkdir()
-        _validate_backend_path(source, ("../member-shared",))
+        (source / "pyproject.toml").write_text(
+            "[build-system]\n"
+            "requires = []\n"
+            'build-backend = "shared_backend"\n'
+            'backend-path = ["../member-shared"]\n',
+            encoding="utf-8",
+        )
+
+        def _no_env(**_kwargs: object) -> NabBuildEnv:
+            raise AssertionError("the build env must not be opened")
+
+        monkeypatch.setattr(runner_mod, "NabBuildEnv", _no_env)
+        with pytest.raises(BuildBackendError, match="outside the source tree"):
+            run_build_backend(source, config=config)
 
     def test_venv_creation_oserror_wrapped(
         self,

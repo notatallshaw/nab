@@ -382,11 +382,7 @@ def _read_string_array(value: object, key: str) -> tuple[str, ...]:
 def _validate_backend_path(
     source_dir: Path, backend_path: tuple[str, ...] | None
 ) -> None:
-    """Reject a ``backend-path`` a PEP 517 frontend would refuse.
-
-    pyproject_hooks raises a bare ``ValueError`` for an absolute entry
-    or one that leaves the source tree.
-    """
+    """Reject absolute ``backend-path`` entries and paths outside the source tree."""
     root = os.path.abspath(source_dir)
     norm_root = os.path.normcase(root)
 
@@ -398,10 +394,8 @@ def _validate_backend_path(
             )
             raise BuildBackendError(msg)
 
-        # pyproject_hooks compares the two paths as strings, so match that
-        # rather than a stricter containment check.
         resolved = os.path.normcase(os.path.normpath(os.path.join(root, entry)))
-        if not resolved.startswith(norm_root):
+        if not Path(resolved).is_relative_to(norm_root):
             msg = (
                 f"backend-path entry {entry!r} in pyproject.toml is outside"
                 " the source tree"
