@@ -525,11 +525,9 @@ def micro_boundary_points(
     tracks ``python_full_version``, so a comparison on it mints the same
     boundary.
 
-    The per-operator boundary comes from the edges of the range's
-    :meth:`~packaging.ranges.VersionRange.release_intervals`:
-    ``<``/``>=`` at the literal, ``<=``/``>`` at the release just after it, and
-    ``==``/``!=``/``~=``/``== V.*`` at each edge of the region they name.  A
-    boundary outside the minor or at its floor cuts nothing.
+    Within one minor, a clause can change only at the literal's micro or
+    the next one. Packaging's specifier membership decides which points
+    change its answer. A boundary outside the minor or at its floor cuts nothing.
 
     An operator that cannot tile the interval raises
     :class:`NonIntervalMarkerError` (see there); with the whole-minor pin gone,
@@ -589,13 +587,24 @@ def _clause_boundary_points(
             raise _non_interval(parts, target)
         return set()
 
-    intervals = specifier.to_range().release_intervals(_PYTHON_FULL_VERSION_PARTS)
-    return {
-        edge
-        for lower, upper in intervals
-        for edge in (lower, upper)
-        if edge is not None and _in_minor(edge, minor_release, floor)
-    }
+    release = (*version.release, 0, 0)[:_PYTHON_FULL_VERSION_PARTS]
+    if version.epoch != floor.epoch or release[:_PYTHON_VERSION_PARTS] != minor_release:
+        return set()
+
+    major, minor, micro = release
+    previous = Version.from_parts(release=(major, minor, max(micro - 1, 0)))
+    admitted = specifier.contains(previous, prereleases=True)
+
+    points: set[Version] = set()
+    # These candidates cover cuts before and after the literal's final release.
+    # A shorter wildcard or compatible prefix ends outside this minor.
+    for patch in range(max(micro, 1), micro + 2):
+        point = Version.from_parts(release=(major, minor, patch))
+        next_admitted = specifier.contains(point, prereleases=True)
+        if admitted != next_admitted:
+            points.add(point)
+        admitted = next_admitted
+    return points
 
 
 def _in_minor(point: Version, minor_release: tuple[int, ...], floor: Version) -> bool:
@@ -614,7 +623,7 @@ def _in_minor(point: Version, minor_release: tuple[int, ...], floor: Version) ->
 
 def _clause_interval_literal(
     parts: tuple[str, str, str], scanned: frozenset[str], target: ResolveTarget
-) -> tuple[str, SpecifierSet, Version] | None:
+) -> tuple[str, Specifier, Version] | None:
     """Return ``(op, specifier, version)`` for a version-boundary clause.
 
     ``None`` when the clause names no scanned version variable.  Raises
@@ -648,7 +657,7 @@ def _clause_interval_literal(
     base = raw.removesuffix(".*")
     try:
         version = Version(base)
-        specifier = SpecifierSet(f"{op}{raw}")
+        specifier = Specifier(f"{op}{raw}")
     except (InvalidVersion, InvalidSpecifier):
         raise _non_interval(parts, target) from None
     return op, specifier, version

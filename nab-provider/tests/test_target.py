@@ -17,8 +17,7 @@ from nab_provider._vendor.packaging.markers import (
     Marker,
     default_environment,
 )
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.specifiers import Specifier, SpecifierSet
 from nab_provider._vendor.packaging.tags import Tag
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_provider.tags import PlatformSpec
@@ -1237,8 +1236,7 @@ class TestMicroBoundarySplitting:
         it, and ``==``/``!=``/``~=``/``== V.*`` at each edge of the region they
         name.  A boundary outside the minor or at its floor cuts nothing, so
         ``~= "3.12.4"`` cuts only its lower edge and ``== "3.12.*"`` cuts
-        nothing.  Every boundary comes from an edge of the range's
-        ``release_intervals``.
+        nothing.
         """
         found = micro_boundary_points(self._target(), [Marker(marker)])
         assert [str(point) for point in found] == points
@@ -1623,109 +1621,75 @@ class TestMicroBoundarySplitting:
         assert 'python_full_version >= "3.12.4.dev0"' in above.environment_marker_string
 
 
-class TestReleaseIntervals:
-    """The public ``VersionRange.release_intervals`` contract nab drives.
-
-    ``micro_boundary_points`` reads the edges of these intervals and filters
-    them to the target's minor; here they are exercised on the range directly,
-    so the per-operator lattice mapping is pinned without the minor filter.
-    """
-
-    @staticmethod
-    def _intervals(spec: str, parts: int = 3) -> list[tuple[str | None, str | None]]:
-        return [
-            (
-                None if lower is None else str(lower),
-                None if upper is None else str(upper),
-            )
-            for lower, upper in SpecifierSet(spec).to_range().release_intervals(parts)
-        ]
+class TestMicroBoundaryMembership:
+    """Python slices change exactly where a specifier changes on final releases."""
 
     @pytest.mark.parametrize(
-        ("spec", "intervals"),
+        ("specifier", "points"),
         [
-            ("<3.10.2", [(None, "3.10.2")]),
-            ("<=3.10.2", [(None, "3.10.3")]),
-            (">3.10.2", [("3.10.3", None)]),
-            (">=3.10.2", [("3.10.2", None)]),
-            ("==3.10.2", [("3.10.2", "3.10.3")]),
-            ("!=3.10.2", [(None, "3.10.2"), ("3.10.3", None)]),
-            ("~=3.10.2", [("3.10.2", "3.11.0")]),
-            ("==3.10.*", [("3.10.0", "3.11.0")]),
-            ("!=3.10.*", [(None, "3.10.0"), ("3.11.0", None)]),
-            ("==3.10.4.*", [("3.10.4", "3.10.5")]),
-            (">3.10.2,<3.10.4", [("3.10.3", "3.10.4")]),
+            (">=3.12.4.1", ["3.12.5"]),
+            (">3.12.4.1", ["3.12.5"]),
+            ("<=3.12.4.1", ["3.12.5"]),
+            ("<3.12.4.1", ["3.12.5"]),
+            ("==3.12.4.1", []),
+            ("!=3.12.4.1", []),
+            ("~=3.12.4.1", []),
+            ("~=3.12.4.0", ["3.12.4", "3.12.5"]),
+            ("==3.12.4.0", ["3.12.4", "3.12.5"]),
+            ("!=3.12.4.0", ["3.12.4", "3.12.5"]),
+            ("==3.12.4.0.*", ["3.12.4", "3.12.5"]),
+            ("==3.12.4.1.*", []),
+            ("!=3.12.4.*", ["3.12.4", "3.12.5"]),
+            ("!=3.12.4.1.*", []),
+            ("<=3.12.4.dev0", ["3.12.4"]),
+            (">3.12.4.dev0", ["3.12.4"]),
+            ("<=3.12.4.post1.dev0", ["3.12.5"]),
+            (">3.12.4.post1.dev0", ["3.12.5"]),
+            ("<3.12.4.post0", ["3.12.5"]),
+            ("==3.12.4+local", []),
+            ("!=3.12.4+local", []),
+            ("==1!3.12.4.0.*", []),
+            ("~=1!3.12.4.1", []),
+            ("==3.11.999", []),
+            ("==3.*", []),
+            ("!=3.*", []),
+            ("~=3.12", []),
         ],
     )
-    def test_each_operator_maps_to_lattice_intervals(
-        self, spec: str, intervals: list[tuple[str | None, str | None]]
+    def test_only_membership_changes_split_the_minor(
+        self, specifier: str, points: list[str]
     ) -> None:
-        """``<``/``>=`` open at the literal, ``<=``/``>`` at the release just
-        above it, and ``==``/``!=``/``~=``/``== V.*`` bracket the region they
-        name.  Each interval is a half-open ``[lower, upper)`` release pair, so
-        the excluded upper edge is the release just past the region; ``None`` on
-        a side is unbounded there."""
-        assert self._intervals(spec) == intervals
+        target = ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec("linux_x86_64")
+        )
+        spec = Specifier(specifier)
+        marker = Marker(f'python_full_version {spec.operator} "{spec.version}"')
 
-    def test_a_dev0_snap_edge_reports_its_final_release(self) -> None:
-        """``< X`` is carried as ``X.dev0``; the upper edge is the final release
-        ``X``, not the dev snap, and ``X`` sits outside the half-open interval."""
-        assert self._intervals("<3.11.4") == [(None, "3.11.4")]
+        found = micro_boundary_points(target, [marker])
+        assert [str(point) for point in found] == points
 
-    def test_an_upper_over_a_prerelease_reports_its_final_release(self) -> None:
-        """``<= "3.11.4rc1"`` sits just above the prerelease, whose smallest
-        lattice release above is its own final ``3.11.4``, the interval's
-        excluded upper edge."""
-        assert self._intervals("<=3.11.4rc1") == [(None, "3.11.4")]
+        # A representative must keep the clause's answer throughout its slice.
+        slices = slices_from_points(target, found)
+        for micro in range(7):
+            version = Version(f"3.12.{micro}")
+            matching = [
+                item
+                for item in slices
+                if Marker(item.environment_marker_string).evaluate(
+                    {**target.marker_env, "python_full_version": str(version)}
+                )
+            ]
+            assert len(matching) == 1
+            assert spec.contains(version, prereleases=True) == spec.contains(
+                matching[0].python_full_version, prereleases=True
+            )
 
-    def test_an_unbounded_side_is_none(self) -> None:
-        """An ``-inf`` / ``+inf`` edge names no release, so ``>=`` reports a
-        single interval open on the right and ``<`` one open on the left."""
-        assert self._intervals(">=3.11.4") == [("3.11.4", None)]
-        assert self._intervals("<3.11.4") == [(None, "3.11.4")]
-
-    def test_a_dev0_snapped_lower_bound_reports_its_release(self) -> None:
-        """``>= X.dev0`` carries the prerelease as its lower edge; the interval
-        starts at the final release ``X``, which the range includes."""
-        assert self._intervals(">=3.11.4.dev0") == [("3.11.4", None)]
-
-    def test_an_exclusion_yields_two_intervals(self) -> None:
-        """``!=`` cuts the line in two, so the range covers two disjoint
-        half-open intervals, one on each side of the excluded release."""
-        assert self._intervals("!=3.11.4") == [(None, "3.11.4"), ("3.11.5", None)]
-
-    def test_a_sub_lattice_literal_starts_at_the_release_above_it(self) -> None:
-        """A literal finer than the lattice (``2.3.0.1`` on the three-part
-        lattice) is not a lattice point, so the interval opens at the smallest
-        lattice release above it, which the ``>=`` range includes."""
-        assert self._intervals(">=2.3.0.1") == [("2.3.1", None)]
-
-    def test_adjacent_intervals_merge_at_a_shared_edge(self) -> None:
-        """Two ranges whose projected intervals meet at one release fold into a
-        single interval spanning both."""
-        lower = SpecifierSet(">=3.10.1,<3.10.3").to_range()
-        upper = SpecifierSet("==3.10.3").to_range()
-        merged = (lower | upper).release_intervals(3)
-        assert [(str(lo), str(hi)) for lo, hi in merged] == [("3.10.1", "3.10.4")]
-
-    def test_a_sub_lattice_interval_collapses_at_a_coarse_parts(self) -> None:
-        """Coarsening the lattice folds both edges of a narrow interval onto one
-        release, leaving an empty half-open span that is dropped."""
-        assert SpecifierSet("~=3.10.2").to_range().release_intervals(2) == ()
-        assert self._intervals(">=3.11.4,<3.11.9", 2) == []
-
-    def test_an_empty_range_covers_no_interval(self) -> None:
-        """The empty range has no finite edge and covers nothing."""
-        assert VersionRange.empty().release_intervals(3) == ()
-
-    def test_a_full_range_is_one_unbounded_interval(self) -> None:
-        """The full range covers one interval unbounded on both sides."""
-        assert VersionRange.full().release_intervals(3) == ((None, None),)
-
-    @pytest.mark.parametrize("parts", [0, -1])
-    def test_parts_below_one_is_rejected(self, parts: int) -> None:
-        with pytest.raises(ValueError, match="parts must be at least 1"):
-            SpecifierSet(">=3.11.4").to_range().release_intervals(parts)
+    def test_a_major_only_literal_uses_a_zero_minor(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.0", spec=PlatformSpec("linux_x86_64")
+        )
+        marker = Marker('python_full_version <= "3"')
+        assert micro_boundary_points(target, [marker]) == [Version("3.0.1")]
 
 
 class TestCheckFreeThreaded:
