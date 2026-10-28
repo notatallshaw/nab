@@ -39,6 +39,7 @@ from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
+from nab_resolver.types import IncompatibilityCause
 
 from . import priority as decision_priority
 from ._provider import extras as _extras
@@ -2369,6 +2370,46 @@ class Provider:
             if failed_range is None or version in failed_range
         ]
 
+    def extra_requirement_range(
+        self, package: str, incompatibility: Incompatibility[str, Version]
+    ) -> VersionRange | None:
+        """Recover an extras proxy's base bounds from the failure proof."""
+        base, _ = split_extra(package)
+        allowed: VersionRange | None = None
+        for node in incompatibility.walk():
+            if node.cause not in (
+                IncompatibilityCause.ROOT,
+                IncompatibilityCause.DEPENDENCY,
+            ):
+                continue
+            if not any(
+                term.package == package and not term.is_positive()
+                for term in node.terms[1:]
+            ):
+                continue
+
+            if node.cause is IncompatibilityCause.ROOT:
+                domains = [self.root_requirements[base]]
+            else:
+                parent = node.terms[0]
+                # Widened clauses can cover releases with different base bounds.
+                domains = [
+                    deps[base]
+                    for (name, version), deps in self.deps_cache.items()
+                    if name == parent.package
+                    and version in parent.constraint
+                    and package in deps
+                ]
+
+            for domain in domains:
+                allowed = domain if allowed is None else allowed | domain
+
+        if allowed is not None:
+            allowed &= self.root_requirements.get(base, VersionRange.full())
+            allowed &= self.constraints.get(base, VersionRange.full())
+
+        return allowed
+
     def get_no_versions_reason(
         self, package: str, failed_range: RangeProtocol[Version] | None = None
     ) -> Diagnostic | None:
@@ -2385,6 +2426,7 @@ class Provider:
             in (
                 _diagnosis.ReasonKind.NO_MATCH,
                 _diagnosis.ReasonKind.FILTERED_EMPTY,
+                _diagnosis.ReasonKind.EXTRA_BASE_EMPTY,
             )
         ):
             versions = self.versions_cache.get(normalized)
