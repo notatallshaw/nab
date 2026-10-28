@@ -4,12 +4,14 @@ import pytest
 
 from nab_provider._provider.listing_diagnosis import MetadataBlock
 from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.diagnostics import Diagnostic
 from nab_provider.errors import MissingExtraError, UnsupportedSdistError
 from nab_provider.provider import Provider
-from nab_provider.testing import make_coordinator, make_wheel
+from nab_provider.testing import make_coordinator, make_metadata, make_wheel
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion, error_message
+from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 
 def test_metadata_failure_snapshots_preserve_actions_and_filter_attribution() -> None:
@@ -90,3 +92,50 @@ def test_missing_extra_rejections_can_share_the_metadata_failure_snapshot() -> N
 
     assert snapshot.message == "pkg==1 does not provide extra 'x'"
     assert snapshot.filtered_sdist_version is None
+
+
+@pytest.mark.parametrize(
+    ("parent_bound", "root_bound", "constraint", "expected"),
+    [
+        ("==2", "", "", ">=2"),
+        ("", "", "", ">=1"),
+        ("", ">=2", "", ">=2"),
+        ("", "", ">=2", ">=2"),
+    ],
+)
+def test_extra_requirement_bounds_use_only_the_declaring_parent_domain(
+    parent_bound: str, root_bound: str, constraint: str, expected: str
+) -> None:
+    provider = Provider(
+        make_coordinator(
+            listings={
+                "mid": [make_wheel(version, package="mid") for version in ("1", "2")],
+                "other": [make_wheel("3", package="other")],
+                "leaf": [],
+            },
+            metadata_by_version={
+                "1": make_metadata("mid", "1", "leaf[x]>=1"),
+                "2": make_metadata("mid", "2", "leaf[x]>=2"),
+                "3": make_metadata("other", "3", "leaf[x]"),
+            },
+        ),
+        root_requirements={
+            "leaf": Requirement(f"leaf{root_bound}").specifier.to_range()
+        },
+        constraints={"leaf": Requirement(f"leaf{constraint}").specifier.to_range()},
+    )
+    for name, version in (("mid", "1"), ("mid", "2"), ("other", "3")):
+        provider.get_dependencies(name, Version(version))
+
+    clause = Incompatibility(
+        [
+            Term("mid", Requirement(f"mid{parent_bound}").specifier.to_range()),
+            Term("leaf[x]", VersionRange.full(), positive=False),
+        ],
+        IncompatibilityCause.DEPENDENCY,
+    )
+
+    allowed = provider.extra_requirement_range("leaf[x]", clause)
+
+    assert allowed == Requirement(f"leaf{expected}").specifier.to_range()
+    assert provider.extra_requirement_range("leaf[y]", clause) is None

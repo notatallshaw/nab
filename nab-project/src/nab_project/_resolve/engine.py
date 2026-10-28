@@ -1204,10 +1204,20 @@ def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
         failed[package] = clause_range if earlier is None else earlier | clause_range
 
     entries: list[tuple[str, Diagnostic]] = []
-    for package, failed_range in failed.items():
+    for package, clause_range in failed.items():
+        failed_range = clause_range
+        label = package
+        if split_extra(package)[1] is not None:
+            declared = provider.extra_requirement_range(package, exc.incompatibility)
+            if declared is not None:
+                failed_range = declared & failed_range
+                if rendered := provider.format_range(declared):
+                    label = f"{package} {rendered}"
+
         diagnostic = provider.get_no_versions_reason(package, failed_range)
         if diagnostic is not None:
-            entries.append((package, diagnostic))
+            entries.append((label, diagnostic))
+
     if not entries:
         return
 
