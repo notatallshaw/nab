@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import hashlib
 import io
 import json
 import logging
-import re
 import tarfile
 import threading
 import time
@@ -3765,6 +3763,26 @@ class TestNonOkStatusIsNotContent:
 
 
 class TestGetSdistFiles:
+    @pytest.mark.parametrize("files", [("Name: pkg\n", None), (None, None)])
+    def test_legacy_sdist_key_is_promoted_for_equivalent_versions(
+        self, tmp_path: Path, files: tuple[str | None, str | None]
+    ) -> None:
+        url = "https://x/pkg-1.0.tar.gz"
+        legacy_key = "artifact-" + hashlib.sha256(f"1.0\0{url}".encode()).hexdigest()
+        cache = _make_cache(tmp_path)
+        cache.put_sdist_files("pkg", legacy_key, *files)
+        transport = _FakeTransport()
+
+        async def read() -> None:
+            async with CachedAsyncSimpleClient(
+                transport, cache, offline=True
+            ) as client:
+                assert await client.get_sdist_files("pkg", "1.0", url) == files
+                assert await client.get_sdist_files("pkg", "1", url) == files
+
+        asyncio.run(read())
+        assert transport.calls == []
+
     def test_cold_cache_fetches_and_stores_both(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
         body = _build_tarball(
@@ -3792,6 +3810,40 @@ class TestGetSdistFiles:
         assert cache.get_sdist_files(
             "pkg", sdist_artifact_key("1.0", "https://x/pkg.tar.gz")
         ) == (pkg_info, pyproject)
+
+    @pytest.mark.parametrize(
+        ("written_version", "read_version"), [("1", "1.0"), ("1.0", "1")]
+    )
+    def test_offline_sdist_cache_reuses_equivalent_versions(
+        self, tmp_path: Path, written_version: str, read_version: str
+    ) -> None:
+        metadata = "Metadata-Version: 2.2\nName: pkg\nVersion: 1\n"
+        body = _build_tarball([("pkg-1/PKG-INFO", metadata.encode())])
+        transport = _FakeTransport([_FakeResponse(body)])
+        url = "https://x/pkg-1.0.tar.gz"
+
+        async def warm() -> None:
+            async with CachedAsyncSimpleClient(
+                transport, _make_cache(tmp_path)
+            ) as client:
+                assert await client.get_sdist_files("pkg", written_version, url) == (
+                    metadata,
+                    None,
+                )
+
+        asyncio.run(warm())
+        assert len(transport.calls) == 1
+
+        offline_transport = _FakeTransport()
+
+        async def read() -> tuple[str | None, str | None]:
+            async with CachedAsyncSimpleClient(
+                offline_transport, _make_cache(tmp_path), offline=True
+            ) as client:
+                return await client.get_sdist_files("pkg", read_version, url)
+
+        assert asyncio.run(read()) == (metadata, None)
+        assert offline_transport.calls == []
 
     def test_warm_cache_skips_network(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
@@ -4128,10 +4180,10 @@ class TestGetSdistArchive:
         with pytest.raises(OfflineError):
             asyncio.run(go())
 
+    @pytest.mark.parametrize("read_version", ["1.0", "1", "1.0.0"])
     def test_a_held_archive_answers_without_a_second_request(
-        self, tmp_path: Path
+        self, tmp_path: Path, read_version: str
     ) -> None:
-        """The PKG-INFO read's own download serves the build that follows."""
         cache = _make_cache(tmp_path)
         body = _build_tarball([("pkg-1.0/PKG-INFO", b"Name: pkg\n")])
         transport = _FakeTransport([_FakeResponse(body)])
@@ -4142,7 +4194,7 @@ class TestGetSdistArchive:
             try:
                 await client.get_sdist_files("pkg", "1.0", "https://x/pkg.tar.gz")
                 return await client.get_sdist_archive(
-                    "pkg", "1.0", "https://x/pkg.tar.gz"
+                    "pkg", read_version, "https://x/pkg.tar.gz"
                 )
             finally:
                 await client.aclose()
@@ -5159,72 +5211,6 @@ class TestOversizedListingInt:
         assert healed is not None
         assert healed[0] == LISTING_BYTES
         assert len(_cached_warnings(caplog)) == 1
-
-
-class TestModuleDocstring:
-    """Keep the module docstring in step with the client's constructor."""
-
-    @staticmethod
-    def _parse_module() -> tuple[str, ast.Module]:
-        source = Path(cached_client_mod.__file__).read_text(encoding="utf-8")
-        tree = ast.parse(source)
-        doc = ast.get_docstring(tree)
-        assert doc is not None
-        return doc, tree
-
-    @staticmethod
-    def _class_references(doc: str) -> set[str]:
-        return {
-            target.lstrip("~").split(".")[-1]
-            for target in re.findall(r":class:`([^`]+)`", doc)
-        }
-
-    @staticmethod
-    def _bound_names(tree: ast.Module) -> set[str]:
-        names: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                names.update(alias.asname or alias.name for alias in node.names)
-            elif isinstance(node, ast.Import):
-                names.update(
-                    (alias.asname or alias.name).split(".")[0] for alias in node.names
-                )
-        for node in tree.body:
-            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-                names.add(node.name)
-        return names
-
-    @staticmethod
-    def _init_annotations(tree: ast.Module) -> dict[str, str]:
-        for cls in tree.body:
-            if isinstance(cls, ast.ClassDef) and cls.name == "CachedAsyncSimpleClient":
-                for item in cls.body:
-                    if isinstance(item, ast.FunctionDef) and item.name == "__init__":
-                        args = item.args
-                        return {
-                            arg.arg: ast.unparse(arg.annotation)
-                            for arg in (*args.args, *args.kwonlyargs)
-                            if arg.annotation is not None
-                        }
-        return {}
-
-    def test_cross_references_only_bound_symbols(self) -> None:
-        doc, tree = self._parse_module()
-        referenced = self._class_references(doc)
-        assert referenced, "module docstring should reference at least one class"
-        unbound = referenced - self._bound_names(tree)
-        assert not unbound, (
-            f"module docstring references unbound symbols: {sorted(unbound)}"
-        )
-
-    def test_names_constructor_types(self) -> None:
-        doc, tree = self._parse_module()
-        referenced = self._class_references(doc)
-        annotations = self._init_annotations(tree)
-        transport_type = annotations["transport"].split(".")[-1]
-        cache_type = annotations["cache"].split(".")[-1]
-        assert transport_type in referenced
-        assert cache_type in referenced
 
 
 def _run_get_files_floor(

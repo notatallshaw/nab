@@ -27,6 +27,10 @@ remains in `sdist-v1/`.
 
 Record buckets are keyed per index, so two indexes never share an entry.
 
+For the same archive URL, equivalent versions such as `1` and `1.0` share an sdist record. Older
+artifact records are reused when the requested version text matches their stored key, then made
+available to equivalent versions.
+
 After upgrading, nab may need to download source archives again even if an older version cached
 them. If an offline resolve reports missing source metadata, run the same command without
 `--offline` once before trying offline again.

@@ -1013,6 +1013,16 @@ class CachedAsyncSimpleClient:
         if cached is not None:
             return cached
 
+        # Legacy keys contain the caller's unnormalized version.
+        legacy_key = (
+            "artifact-" + hashlib.sha256(f"{version}\0{sdist_url}".encode()).hexdigest()
+        )
+        if legacy_key != source_key:
+            cached = self._cache.get_sdist_files(package, legacy_key)
+            if cached is not None:
+                self._cache.put_sdist_files(package, source_key, *cached)
+                return cached
+
         if self._offline:
             msg = f"No cached sdist PKG-INFO for {package}=={version} (offline mode)"
             raise OfflineError(msg)
