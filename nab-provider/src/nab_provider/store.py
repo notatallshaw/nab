@@ -7,6 +7,7 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "hashlib",
+    "nab_provider._vendor.packaging.utils",
     "nab_provider.metadata",
 )
 
@@ -15,6 +16,7 @@ from contextlib import contextmanager
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
+from nab_provider._vendor.packaging.utils import canonicalize_version
 from nab_provider.metadata import metadata_header_block, metadata_without_description
 
 if TYPE_CHECKING:
@@ -55,7 +57,8 @@ def range_pending_key(package: str, version: str, wheel_url: str) -> str:
 
 
 def sdist_artifact_key(version: str, url: str) -> str:
-    """Identify an sdist's cache slots without conflating sibling artifacts."""
+    """Key an sdist by its normalized version and archive URL."""
+    version = canonicalize_version(version)
     return "artifact-" + sha256(f"{version}\0{url}".encode()).hexdigest()
 
 
