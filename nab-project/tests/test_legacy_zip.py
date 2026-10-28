@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import io
 import tarfile
 import zipfile
@@ -12,8 +13,11 @@ import pytest
 
 from nab_project.download import DownloadError, download_lock
 from nab_project.inputs import ResolveInputs
-from nab_project.lockfile import IndexPin, build_pylock
+from nab_project.lockfile import IndexPin, build_pylock, write_lock
 from nab_project.resolve import build_lock_input, resolve_for_targets
+from nab_project.toml_io import loads
+from nab_provider._vendor.packaging.markers import default_environment
+from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import WheelMetadata
 from nab_provider.policy import BuildPolicy
@@ -44,16 +48,19 @@ def _sdist(
     legacy: bool = False,
     dependency: str = "",
     version: str = "1",
+    requires_python: str = "",
 ) -> Path:
     """Write an sdist with a dependency declaration and an extractable source file."""
     metadata = (
         f"Metadata-Version: {'1.0' if legacy else '2.2'}\nName: {name}\nVersion: {version}\n"
         + (f"Requires-Dist: {dependency}\n" if dependency else "")
+        + (f"Requires-Python: {requires_python}\n" if requires_python else "")
     ).encode()
     members = [
         (f"{name}-{version}/PKG-INFO", metadata),
         (f"{name}-{version}/setup.py", b"# source"),
     ]
+
     output = io.BytesIO()
     if suffix == ".zip":
         with zipfile.ZipFile(output, "w") as archive:
@@ -67,17 +74,26 @@ def _sdist(
                 archive.addfile(member, io.BytesIO(data))
     path = directory / f"{name}-{version}{suffix}"
     path.write_bytes(output.getvalue())
+
     listing = directory / name / "index.html"
     listing.parent.mkdir(exist_ok=True)
+    python_attribute = (
+        f' data-requires-python="{html.escape(requires_python)}"'
+        if requires_python
+        else ""
+    )
     with listing.open("a", encoding="utf-8") as page:
         digest = hashlib.sha256(output.getvalue()).hexdigest()
-        page.write(f'<a href="../{path.name}#sha256={digest}">{path.name}</a>\n')
+        page.write(
+            f'<a href="../{path.name}#sha256={digest}"{python_attribute}>'
+            f"{path.name}</a>\n"
+        )
     return path
 
 
 @pytest.fixture
 def local_project(tmp_path: Path) -> tuple[Path, Path, IndexConfig]:
-    """A root depending on a ZIP-only package with a normal sdist dependency."""
+    """A root requiring pkg and a local index containing child 1."""
     index = tmp_path / "index"
     index.mkdir()
     _sdist(index, "child", ".tar.gz")
@@ -128,6 +144,66 @@ def test_zip_resolves_locks_and_downloads(
     (output / archive.name).unlink()
     with pytest.raises(DownloadError, match="sha256 mismatch"):
         download_lock(lock_input, _NoNetwork(), output, offline=True)
+
+
+@pytest.mark.parametrize("python_versions", [("3.11", "3.12"), ("3.12", "3.11")])
+def test_target_specific_sdists_survive_universal_lock(
+    tmp_path: Path,
+    local_project: tuple[Path, Path, IndexConfig],
+    python_versions: tuple[str, str],
+) -> None:
+    project, directory, index = local_project
+    _sdist(directory, "child", ".tar.gz", version="2")
+    tarball = _sdist(
+        directory, "pkg", ".tar.gz", dependency="child==1", requires_python="<3.12"
+    )
+    zipped = _sdist(
+        directory, "pkg", ".zip", dependency="child==2", requires_python=">=3.12"
+    )
+    inputs = ResolveInputs(
+        indexes=(index,), allow_zip_sdists=True, build_policy=BuildPolicy.NEVER
+    )
+    targets = tuple(ResolveTarget.for_host_python(v) for v in python_versions)
+
+    for offline in (False, True):
+        result = resolve_for_targets(
+            project,
+            _NoNetwork(),
+            targets=targets,
+            inputs=inputs,
+            cache_dir=tmp_path / "cache",
+            offline=offline,
+        )
+        result.raise_for_failure()
+        lock_input = build_lock_input(result, inputs=inputs)
+        pylock = Pylock.from_dict(loads(write_lock(lock_input)))
+
+        for target in targets:
+            archive, child_version = (
+                (tarball, "1") if target.python_version == "3.11" else (zipped, "2")
+            )
+
+            environment = default_environment()
+            environment["python_version"] = target.python_version
+            environment["python_full_version"] = target.python_full_version
+            environment["implementation_version"] = target.python_full_version
+            selected = list(
+                pylock.select(environment=environment, tags=target.tags.ordered)
+            )
+
+            assert len(selected) == 2
+            packages = {package.name: package for package, _ in selected}
+            assert packages["child"].version == Version(child_version)
+
+            package = packages["pkg"]
+            assert package.sdist is not None
+            assert package.sdist.name == archive.name
+            assert package.sdist.hashes == {
+                "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()
+            }
+
+            assert package.requires_python is not None
+            assert package.requires_python.contains(target.python_full_version)
 
 
 def test_zip_rejection_suggests_the_scoped_option(
