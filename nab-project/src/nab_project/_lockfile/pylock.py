@@ -1309,19 +1309,27 @@ def _group_by_name(
 def _group_pins_by_pin(
     per_target: dict[str, PinShape],
 ) -> list[tuple[list[PinShape], list[str]]]:
-    """Bucket targets by pin discriminator, keeping every pin.
+    """Group mergeable pins in sorted target-label order, keeping every pin."""
+    from ..lockfile import IndexPin
 
-    Walked in sorted label order so the output is independent of dict
-    insertion order.
-    """
+    sdists: defaultdict[tuple[object, ...], set[SdistArtifact]] = defaultdict(set)
+    for pin in per_target.values():
+        if isinstance(pin, IndexPin) and pin.sdist is not None:
+            sdists[_pin_discriminator(pin)].add(pin.sdist)
+
     by_key: dict[tuple[object, ...], tuple[list[PinShape], list[str]]] = {}
     for label in sorted(per_target):
         pin = per_target[label]
         key = _pin_discriminator(pin)
+        # PEP 751 allows one sdist per row; split only when archives disagree.
+        if isinstance(pin, IndexPin) and len(sdists[key]) > 1:
+            key = (*key, pin.sdist)
+
         if key not in by_key:
             by_key[key] = ([], [])
         by_key[key][0].append(pin)
         by_key[key][1].append(label)
+
     return list(by_key.values())
 
 

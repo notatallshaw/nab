@@ -89,7 +89,7 @@ from nab_project.resolve import (
     build_lock_input,
     resolve_with_coordinator,
 )
-from nab_provider._vendor.packaging.markers import Marker
+from nab_provider._vendor.packaging.markers import Marker, default_environment
 from nab_provider._vendor.packaging.pylock import Package, PackageWheel, Pylock
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
@@ -585,7 +585,71 @@ class TestPerTargetMarkerSimplification:
             )
         )
         data = tomllib.loads(text)
+        assert len(data["packages"]) == 1
         assert data["packages"][0]["sdist"]["url"].endswith("foo-1.0.tar.gz")
+
+    def test_distinct_sdists_keep_their_target_artifacts(self) -> None:
+        tarball = make_sdist_artifact()
+        zipped = SdistArtifact(
+            filename="foo-1.0.zip",
+            url="https://example.com/foo-1.0.zip",
+            hashes=(("sha256", "c" * 64),),
+            size=4096,
+            upload_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        targets = [
+            ResolveTarget.for_host_python(version)
+            for version in ("3.10", "3.11", "3.12", "3.13")
+        ]
+        wheels = [
+            make_wheel_artifact(tag=f"cp3{minor}-none-any")
+            for minor in (10, 11, 12, 13)
+        ]
+        sdists = (tarball, make_sdist_artifact(), zipped, None)
+
+        locks: dict[str, TargetLock] = {}
+        for target, sdist, wheel in zip(targets, sdists, wheels, strict=True):
+            pin = IndexPin(
+                name="foo", version="1.0", index="pypi", sdist=sdist, wheels=(wheel,)
+            )
+            locks[target.label] = TargetLock(target=target, pins={"foo": pin})
+
+        lock_input = LockInput(targets=locks)
+        pylock = Pylock.from_dict(tomllib.loads(write_lock(lock_input)))
+        assert len(pylock.packages) == 3
+
+        for target, sdist, wheel in zip(targets, sdists, wheels, strict=True):
+            environment = default_environment()
+            environment["python_version"] = target.python_version
+            environment["python_full_version"] = target.python_full_version
+            environment["implementation_version"] = target.python_full_version
+            selected = list(
+                pylock.select(environment=environment, tags=target.tags.ordered)
+            )
+
+            assert len(selected) == 1
+            package, _ = selected[0]
+
+            assert package.wheels is not None
+            expected_wheels = wheels[:2] if sdist == tarball else [wheel]
+            assert {w.name for w in package.wheels} == {
+                w.filename for w in expected_wheels
+            }
+
+            if sdist is None:
+                assert package.sdist is None
+            else:
+                assert package.sdist is not None
+                assert package.sdist.name == sdist.filename
+                assert package.sdist.url == sdist.url
+                assert package.sdist.hashes == dict(sdist.hashes)
+                assert package.sdist.size == sdist.size
+                assert package.sdist.upload_time == sdist.upload_time
+
+        reversed_input = replace(
+            lock_input, targets=dict(reversed(list(lock_input.targets.items())))
+        )
+        assert write_lock(reversed_input) == write_lock(lock_input)
 
     def test_vcs_pin_per_target(self) -> None:
         # VcsPin discriminator coverage
