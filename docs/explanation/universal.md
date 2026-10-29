@@ -44,7 +44,7 @@ once per target. Metadata is shared per wheel rather than per package, so a rele
 wheel per interpreter or per platform costs one read for each wheel the matrix picks (see Where a
 version's metadata comes from below).
 
-An sdist's `PKG-INFO` stands for the whole version, so one read serves every target that picks it.
+An sdist's `PKG-INFO` is read once per archive URL and shared among targets that select it.
 
 ### Pin preferences
 

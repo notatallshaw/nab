@@ -1134,7 +1134,7 @@ class TestMatrixPerTargetWheelDivergence:
 
 
 class TestMatrixMetadataReadGranularity:
-    """Metadata is fetched per wheel URL and per sdist version."""
+    """Metadata is fetched per wheel URL and per sdist archive URL."""
 
     def _wheel(self, tag: str) -> WheelFile:
         """A ``pkg`` 1.0 wheel tagged ``tag``, advertising a sidecar."""

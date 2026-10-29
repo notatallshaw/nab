@@ -5,7 +5,7 @@ environment, whether it read a matrix declaring many or a bare project
 declaring none.  Each gets a single-environment resolve against a shared
 :class:`~nab_project.fetch.FetchCoordinator`, so a package's listing is
 read once across them, a version's wheel metadata once per wheel they
-pick, and an sdist's ``PKG-INFO`` once for the version.
+pick, and an sdist's ``PKG-INFO`` once per archive URL.
 
 A declared conflict, matrix or not, is where a resolve produces more than
 one result for an environment.  Directly co-selecting two members of an
