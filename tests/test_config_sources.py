@@ -2730,6 +2730,64 @@ class TestOverrideTables:
         with pytest.raises(SourceConfigError, match="conflicting values"):
             _resolve(SourceRoots(project_dir=tmp_path))
 
+    def test_packages_reordered_identical_across_files_ok(self, tmp_path: Path) -> None:
+        _project(
+            tmp_path,
+            '[tool.nab.packages."demo <= 2"]\ndist-policy = "sdist-only"\n'
+            '[tool.nab.packages."demo > 2"]\ndist-policy = "wheel-only"\n',
+        )
+        _write(
+            tmp_path / "nab.toml",
+            '[packages."demo > 2"]\ndist-policy = "wheel-only"\n'
+            '[packages."demo <= 2"]\ndist-policy = "sdist-only"\n',
+        )
+
+        eff = _resolve(SourceRoots(project_dir=tmp_path))
+        assert {
+            str(override.requirement): override.dist_policy
+            for override in eff["packages"].value
+        } == {"demo<=2": DistPolicy.SDIST_ONLY, "demo>2": DistPolicy.WHEEL_ONLY}
+        assert eff["packages"].origin.kind is SourceKind.PROJECT_TOML
+
+    def test_packages_same_selectors_different_bodies_conflict(
+        self, tmp_path: Path
+    ) -> None:
+        _project(
+            tmp_path,
+            '[tool.nab.packages.alpha]\ndependencies = ["beta"]\n'
+            "[tool.nab.packages.beta]\ndependencies = []\n",
+        )
+        _write(
+            tmp_path / "nab.toml",
+            "[packages.beta]\ndependencies = []\n[packages.alpha]\ndependencies = []\n",
+        )
+
+        with pytest.raises(SourceConfigError, match="conflicting values"):
+            _resolve(SourceRoots(project_dir=tmp_path))
+
+    @pytest.mark.parametrize(
+        ("key", "entries"),
+        [
+            pytest.param("constraints", ['"alpha<2"', '"beta<2"'], id="constraints"),
+            pytest.param(
+                "package-rules",
+                [
+                    '{ match = ["alpha"], dist-policy = "sdist-only" }',
+                    '{ match = ["beta"], dist-policy = "wheel-only" }',
+                ],
+                id="package-rules",
+            ),
+        ],
+    )
+    def test_reordered_arrays_across_files_conflict(
+        self, tmp_path: Path, key: str, entries: list[str]
+    ) -> None:
+        _project(tmp_path, f"{key} = [{', '.join(entries)}]\n")
+        _write(tmp_path / "nab.toml", f"{key} = [{', '.join(reversed(entries))}]\n")
+
+        with pytest.raises(SourceConfigError, match="conflicting values"):
+            _resolve(SourceRoots(project_dir=tmp_path))
+
     def test_packages_identical_across_files_ok(self, tmp_path: Path) -> None:
         # The higher-precedence file replaces the packages table before the
         # overlap check runs.
