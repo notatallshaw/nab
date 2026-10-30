@@ -12,6 +12,7 @@ import logging
 from collections.abc import Callable, Mapping
 from contextlib import (
     AbstractContextManager,
+    nullcontext,
     redirect_stderr,
     redirect_stdout,
 )
@@ -20,6 +21,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import tomli
 
 import nab._config_cmd as config_cmd
 from nab import _run as nab_run
@@ -31,6 +33,7 @@ from nab.cli import run
 from nab.config.ladder import OPTIONS, Scope, SourceRoots, docs_url
 from nab.config.subflags import BY_PARENT
 from nab.config.values import SourceConfigError
+from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.download import DownloadResult
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import (
@@ -951,6 +954,56 @@ class TestConfigProjectFileConflict:
         with pytest.raises(SystemExit):
             config_command("list", path=hermetic_roots / "pyproject.toml")
         assert "conflicting values" in capsys.readouterr().err
+
+    def test_reordered_identical_package_tables_lock(
+        self, hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        for name in ("alpha", "beta"):
+            _write(
+                hermetic_roots / name / "pyproject.toml",
+                f'[project]\nname = "{name}"\nversion = "1"\n'
+                f'dependencies = ["missing-{name}"]\n',
+            )
+
+        alpha = '[packages.alpha]\ndependencies = ["beta"]\n'
+        beta = "[packages.beta]\ndependencies = []\n"
+        pyproject = _write(
+            hermetic_roots / "pyproject.toml",
+            '[project]\nname = "app"\nversion = "1"\ndependencies = ["alpha"]\n'
+            '[[tool.nab.local-sources]]\nname = "alpha"\npath = "alpha"\n'
+            '[[tool.nab.local-sources]]\nname = "beta"\npath = "beta"\n'
+            + (alpha + beta).replace("[packages.", "[tool.nab.packages."),
+        )
+        _write(hermetic_roots / "nab.toml", beta + alpha)
+
+        output = hermetic_roots / "pylock.toml"
+        arguments = (
+            "lock",
+            str(pyproject),
+            "--offline",
+            "--no-cache",
+            "--no-workspace-discovery",
+            "--output",
+            str(output),
+        )
+
+        _cli("config", "get", "packages", "--path", str(pyproject))
+        assert capsys.readouterr().out == "alpha, beta\n"
+
+        with patch(
+            "nab_project.resolve.FetchCoordinator",
+            return_value=nullcontext(make_coordinator([])),
+        ):
+            _cli(*arguments)
+            original = output.read_bytes()
+            assert [
+                package["name"]
+                for package in tomli.loads(output.read_text())["packages"]
+            ] == ["alpha", "beta"]
+
+            _cli(*arguments, "--locked")
+
+        assert output.read_bytes() == original
 
 
 class TestCliFlagValues:

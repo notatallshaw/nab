@@ -864,8 +864,10 @@ def parse_packages_sugar(
             f"{where} must be a table keyed by package name, got {type(value).__name__}"
         )
         raise SourceConfigError(msg)
+
     out: list[PackageOverride] = []
-    for key, body in value.items():
+    # TOML tables are unordered; canonicalize before producing a sequence.
+    for key, body in sorted(value.items()):
         entry = f"{where}.{key!r}"
         requirement = _requirement_from_selector(key, entry)
         if not isinstance(body, dict):
@@ -888,6 +890,7 @@ def parse_packages_sugar(
                 name_keyed=True,
             )
         )
+
     return out
 
 
