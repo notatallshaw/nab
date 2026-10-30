@@ -200,12 +200,24 @@ class YankCandidates:
             for file in files
         ):
             return self.provider
+        # Sdist-install can read metadata from an equivalent wheel without selecting it.
+        allow_equivalent_wheel_metadata = (
+            self.provider.effective_dist_policy(
+                candidate.base,
+                candidate.version,
+                self.provider.serving_index(candidate.base),
+            )
+            is DistPolicy.SDIST_INSTALL
+        )
         provider = self.factory()
         provider.versions_cache[candidate.base] = [
             (candidate.version, file)
             for file in files
             if bool(file.yanked) == candidate.withdrawn
-            and str(intern_version(file.version)) == candidate.label
+            and (
+                str(intern_version(file.version)) == candidate.label
+                or (allow_equivalent_wheel_metadata and isinstance(file, WheelFile))
+            )
         ]
         if candidate.withdrawn:
             provider.yank_admissions = frozenset({(candidate.base, candidate.version)})

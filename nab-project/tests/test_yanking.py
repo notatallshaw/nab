@@ -27,14 +27,14 @@ from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.overrides import PackageOverride
-from nab_provider.policy import DistPolicy, ExtrasMode
+from nab_provider.policy import BuildPolicy, DistPolicy, ExtrasMode
 from nab_provider.priority import CONFLICT_THRESHOLD, CULPRIT_DEMOTE_THRESHOLD
 from nab_provider.provider import Provider, ResolutionStrategy
 from nab_provider.records import SdistFile
 from nab_provider.resolver_inputs import ProxyConstraints, build_resolver_inputs
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
-from nab_provider.testing import pkg_override
+from nab_provider.testing import make_sdist, pkg_override
 from nab_provider.vcs_admission import VcsConfig
 from nab_provider.yank_preference import IncompletePreferenceError
 from nab_provider.yanked_resolution import MetadataProxy, YankProxyProvider
@@ -568,6 +568,36 @@ def test_sdist_install_requires_permission_for_the_install_artifact(
     else:
         assert not port.calls_to("request_sdist")
         assert not port.calls_to("request_sdist_archive")
+
+
+def test_yanked_fallback_keeps_equivalent_wheel_metadata_for_sdist_install() -> None:
+    port = graph_port([("pkg", "1", False, []), ("helper", "1", True, [])])
+    files = port.index.get_listing("pkg")
+    assert files is not None
+    port.index.store_listing("pkg", [*files, make_sdist("1.0", package="pkg")])
+
+    result = resolve_with_coordinator(
+        port,
+        [ResolveTarget.for_host()],
+        [Requirement("pkg==1"), Requirement("helper==1")],
+        inputs=ResolveInputs(
+            build_policy=BuildPolicy.NEVER,
+            package_overrides=(
+                pkg_override("pkg", dist_policy=DistPolicy.SDIST_INSTALL),
+            ),
+        ),
+    )
+
+    selected = result.target_results[0]
+    assert selected.success, selected.error
+    assert selected.pins == {"pkg": Version("1.0"), "helper": Version("1")}
+    assert selected.lock is not None
+
+    pin = selected.lock.pins["pkg"]
+    assert isinstance(pin, IndexPin)
+    assert pin.sdist is not None
+    assert pin.sdist.filename == "pkg-1.0.tar.gz"
+    assert not pin.wheels
 
 
 def test_rejected_live_metadata_still_splits_the_universal_lock() -> None:
