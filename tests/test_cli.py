@@ -2722,31 +2722,79 @@ class TestPythonFlag:
         assert target.python_version == "3.11"
 
     def test_retargets_a_free_threaded_platform_onto_a_new_python(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """``--python`` lands before the free-threaded floor is checked.
-
-        Checked against the 3.12 host instead, the floor would reject the
-        run the flag retargets onto 3.14.
-        """
+        """``--python`` retargets the free-threaded platform before validation."""
         env = {**host_environment(), "python_full_version": "3.12.11"}
         monkeypatch.setattr("nab.config.model.host_environment", lambda: env)
 
         pyproject = _make_pyproject(
-            tmp_path,
+            hermetic_roots,
             '[project]\ndependencies = ["foo"]\n'
             '[tool.nab]\nbuild-policy = "never"\n'
             "[tool.nab.environment]\n"
             'platform = { id = "linux_x86_64", free-threaded = true }\n',
         )
-        out = tmp_path / "pylock.toml"
-        with patch(
-            "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
-        ) as mock_resolve:
-            lock(pyproject, output=out, python="3.14")
+        out = hermetic_roots / "pylock.toml"
+
+        listings = {
+            "foo": [
+                make_wheel(
+                    version,
+                    package="foo",
+                    tag=tag,
+                    hashes=(("sha256", "a" * 64),),
+                )
+                for version, tag in (
+                    ("2.0", "cp314-cp314-manylinux_2_28_x86_64"),
+                    ("1.0", "cp314-cp314t-manylinux_2_28_x86_64"),
+                )
+            ],
+            "leaf": [
+                make_wheel(version, package="leaf", hashes=(("sha256", "b" * 64),))
+                for version in ("2.0", "1.0")
+            ],
+        }
+
+        metadata = {}
+        for name, wheels in listings.items():
+            for wheel in wheels:
+                dependencies = (f"leaf=={wheel.version}",) if name == "foo" else ()
+                metadata[wheel.metadata_url] = make_metadata(
+                    name, str(wheel.version), *dependencies
+                )
+
+        with (
+            patch(
+                "nab_project.resolve.FetchCoordinator",
+                return_value=contextlib.nullcontext(
+                    make_coordinator(listings=listings, metadata_by_url=metadata)
+                ),
+            ),
+            patch(
+                "nab._resolve.resolve_for_targets", wraps=resolve_for_targets
+            ) as mock_resolve,
+        ):
+            lock(pyproject, output=out, python="3.14", offline=True, cache=False)
 
         (target,) = mock_resolve.call_args.kwargs["targets"]
         assert target.python_version == "3.14"
+
+        pylock = Pylock.from_dict(tomli.loads(out.read_text()))
+        assert {package.name: str(package.version) for package in pylock.packages} == {
+            "foo": "1.0",
+            "leaf": "1.0",
+        }
+
+        assert {
+            package.name: [wheel.url for wheel in package.wheels]
+            for package in pylock.packages
+        } == {
+            "foo": [
+                "https://example.com/foo-1.0-cp314-cp314t-manylinux_2_28_x86_64.whl"
+            ],
+            "leaf": ["https://example.com/leaf-1.0-py3-none-any.whl"],
+        }
 
     def test_rejected_beside_a_cli_matrix(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
