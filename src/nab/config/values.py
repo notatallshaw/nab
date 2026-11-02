@@ -177,6 +177,7 @@ class MatrixConfig(ValueType):
         "python_patches",
         "implementations",
         "implementation_overrides",
+        "include_free_threaded",
     )
 
     python: str
@@ -185,6 +186,7 @@ class MatrixConfig(ValueType):
     python_patches: Mapping[str, str] | None
     implementations: tuple[str, ...]
     implementation_overrides: Mapping[str, ImplementationOverride] | None
+    include_free_threaded: bool
 
     def __init__(
         self,
@@ -194,6 +196,8 @@ class MatrixConfig(ValueType):
         python_patches: Mapping[str, str] | None = None,
         implementations: tuple[str, ...] = ("cpython",),
         implementation_overrides: Mapping[str, ImplementationOverride] | None = None,
+        *,
+        include_free_threaded: bool = False,
     ) -> None:
         """Record the axes ``[tool.nab.matrix]`` declared."""
         self.python = python
@@ -202,6 +206,7 @@ class MatrixConfig(ValueType):
         self.python_patches = python_patches
         self.implementations = implementations
         self.implementation_overrides = implementation_overrides
+        self.include_free_threaded = include_free_threaded
 
 
 def matrix_from_config(matrix: MatrixConfig) -> Matrix:
@@ -215,6 +220,7 @@ def matrix_from_config(matrix: MatrixConfig) -> Matrix:
         ),
         implementations=matrix.implementations,
         implementation_overrides=matrix.implementation_overrides,
+        include_free_threaded=matrix.include_free_threaded,
     )
 
 
@@ -2072,6 +2078,7 @@ _MATRIX_KEYS = frozenset(
         "python-patches",
         "implementations",
         "overrides",
+        "include-free-threaded",
     }
 )
 
@@ -2121,6 +2128,11 @@ def parse_matrix(
         python_patches=patches,
         implementations=implementations,
         implementation_overrides=implementation_overrides,
+        include_free_threaded=_parse_bool(
+            f"{where}.include-free-threaded",
+            value.get("include-free-threaded"),
+            default=False,
+        ),
     )
     _validate_matrix_axes(config, where)
     return config

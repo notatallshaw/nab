@@ -434,6 +434,10 @@ class MatrixKeys(
         help="the interpreter implementations to model",
     )
 
+    include_free_threaded = Tri(
+        help="also resolve free-threaded builds of CPython 3.13 and newer",
+    )
+
     python_order = Value[MatrixOrderFlag | None](
         help="the direction the python axis aligns across targets",
     )

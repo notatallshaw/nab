@@ -1337,6 +1337,9 @@ class Matrix(Record):
 
     ``implementation_overrides``: optional per-implementation replacements
     for the shared ``python`` and ``platforms`` defaults.
+
+    ``include_free_threaded``: also resolve each ordinary CPython 3.13+
+    target with its free-threaded wheel tags.
     """
 
     __match_args__ = (
@@ -1346,6 +1349,7 @@ class Matrix(Record):
         "python_patches",
         "implementations",
         "implementation_overrides",
+        "include_free_threaded",
     )
 
     python: str
@@ -1354,6 +1358,7 @@ class Matrix(Record):
     python_patches: dict[str, str] | None
     implementations: tuple[str, ...]
     implementation_overrides: Mapping[str, ImplementationOverride] | None
+    include_free_threaded: bool
 
     def __init__(
         self,
@@ -1363,6 +1368,8 @@ class Matrix(Record):
         python_patches: dict[str, str] | None = None,
         implementations: tuple[str, ...] = ("cpython",),
         implementation_overrides: Mapping[str, ImplementationOverride] | None = None,
+        *,
+        include_free_threaded: bool = False,
     ) -> None:
         """Declare the axes and ordering of the target expansion."""
         self.python = python
@@ -1371,6 +1378,7 @@ class Matrix(Record):
         self.python_patches = python_patches
         self.implementations = implementations
         self.implementation_overrides = implementation_overrides
+        self.include_free_threaded = include_free_threaded
 
     def expand(self) -> list[ResolveTarget]:
         """Expand the matrix into concrete targets.
@@ -1433,7 +1441,7 @@ class Matrix(Record):
         targets = [
             ResolveTarget.for_declared(
                 python_version=py,
-                spec=spec,
+                spec=build,
                 implementation=impl,
                 python_full_version=patches.get(py),
                 multi_implementation=multi_impl,
@@ -1441,6 +1449,7 @@ class Matrix(Record):
             for impl, axes in by_implementation.items()
             for py in axes.python_versions
             for spec in axes.platforms
+            for build in self._platform_builds(spec, py, impl)
         ]
         targets.sort(
             key=lambda target: (
@@ -1469,7 +1478,7 @@ class Matrix(Record):
         return [
             ResolveTarget.for_declared(
                 python_version=py,
-                spec=spec,
+                spec=build,
                 implementation=impl,
                 python_full_version=patches.get(py),
                 multi_implementation=multi_impl,
@@ -1477,7 +1486,21 @@ class Matrix(Record):
             for py in py_versions
             for spec in self.platforms
             for impl in self.implementations
+            for build in self._platform_builds(spec, py, impl)
         ]
+
+    def _platform_builds(
+        self, spec: PlatformSpec, python: str, implementation: str
+    ) -> tuple[PlatformSpec, ...]:
+        """Include the requested free-threaded counterpart where CPython supplies it."""
+        if (
+            self.include_free_threaded
+            and not spec.free_threaded
+            and implementation == "cpython"
+            and supports_free_threading(python)
+        ):
+            return spec, replace(spec, free_threaded=True)
+        return (spec,)
 
     def _implementation_axes(self) -> dict[str, _ImplementationAxes]:
         """Validate overrides and derive each selected implementation's axes."""

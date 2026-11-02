@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
-from .._cli.definition.model import Opt, Tokens
+from .._cli.definition.model import Kind, Opt, Tokens
 from .registry import SUB_ROWS
 from .values import CliTableError
 
@@ -106,6 +106,8 @@ def _cli_keys(
         raw = locals_by_param[param]
         if not _written(row, raw):
             continue
+        if row.kind is Kind.TRI:
+            raw = "true" if raw else "false"
         tokens = (raw,) if row.tokens is Tokens.SCALAR else tuple(raw)
         keys.append(
             CliKey(

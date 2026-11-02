@@ -247,6 +247,8 @@ def render_matrix(value: Any) -> str:
         return "<none>"
     platforms = [p.label for p in value.platforms]
     rendered = f"python={value.python}, platforms={platforms}"
+    if value.include_free_threaded:
+        rendered += ", include-free-threaded=true"
     if value.implementation_overrides:
         overrides = {
             "implementations": _implementation_values(value.implementation_overrides)

@@ -26,14 +26,15 @@ defaults to CPython only; nab includes PyPy only when you list `"pypy"`. nab use
 defaults for omitted platform settings; it does not expand them into extra targets. See
 {ref}`how nab chooses coverage <explicit-is-better-than-implicit>`.
 
-| Key               | Default       | Meaning                                                                                    |
-| ----------------- | ------------- | ------------------------------------------------------------------------------------------ |
-| `python`          | required      | A PEP 440 range like `>=3.11,<3.14`, expanded into one target per minor                    |
-| `platforms`       | required      | The platforms to model; a bare id, or a table of [platform tag settings](platform-tags.md) |
-| `implementations` | `["cpython"]` | The interpreter implementations to model: `"cpython"`, `"pypy"`                            |
-| `overrides`       | none          | Keyed bodies under `implementations.<name>`, with optional `python` and `platforms`        |
-| `python-order`    | `"asc"`       | Cross-target alignment direction                                                           |
-| `python-patches`  | none          | Pins a minor to one patch release, resolved whole instead of split into slices             |
+| Key                     | Default       | Meaning                                                                                    |
+| ----------------------- | ------------- | ------------------------------------------------------------------------------------------ |
+| `python`                | required      | A PEP 440 range like `>=3.11,<3.14`, expanded into one target per minor                    |
+| `platforms`             | required      | The platforms to model; a bare id, or a table of [platform tag settings](platform-tags.md) |
+| `implementations`       | `["cpython"]` | The interpreter implementations to model: `"cpython"`, `"pypy"`                            |
+| `include-free-threaded` | `false`       | Also resolve the free-threaded build of each selected CPython 3.13+ target                 |
+| `overrides`             | none          | Keyed bodies under `implementations.<name>`, with optional `python` and `platforms`        |
+| `python-order`          | `"asc"`       | Cross-target alignment direction                                                           |
+| `python-patches`        | none          | Pins a minor to one patch release, resolved whole instead of split into slices             |
 
 ## Mode selection
 
@@ -49,6 +50,33 @@ a higher-precedence `--project-mode specific` suppresses a file matrix for that 
 
 `python-order` resolves selected Python minors oldest first (`asc`, the default) or newest first
 (`desc`). Successful pins become preferences for later targets when compatible.
+
+(matrix-free-threaded)=
+
+## Ordinary and free-threaded builds
+
+Set `include-free-threaded = true` to lock both CPython builds together:
+
+```toml
+[tool.nab.matrix]
+python = ">=3.10,<3.16"
+platforms = ["linux_x86_64", "macos_arm64", "windows_amd64"]
+include-free-threaded = true
+```
+
+nab adds a free-threaded target beside each ordinary CPython 3.13+ target. Earlier CPython versions
+and PyPy keep their ordinary targets. Platform settings, implementation overrides and
+`python-patches` apply to both builds. An explicitly free-threaded platform remains free-threaded
+only.
+
+Each build resolves against its own wheel tags and metadata. Matching package versions and sources
+merge into one lock entry containing both wheel ABIs; pip selects the wheel its interpreter
+supports. PEP 508 has no threading marker, so nab refuses overlapping package entries when the
+builds choose different versions or sources. Pin a version compatible with both builds or lock them
+separately in that case. Cross-target alignment remains best effort.
+
+The command-line setting is `--project-matrix-include-free-threaded`; use
+`--no-project-matrix-include-free-threaded` to disable a file setting for one run.
 
 ## Interpreter implementations
 

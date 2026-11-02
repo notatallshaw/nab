@@ -33,7 +33,7 @@ def _cache_command() -> None:
 
 
 def _config_command() -> None:
-    """``nab config``: 30 parameters."""
+    """``nab config``: 31 parameters."""
     config_command(
         ConfigWords.action,
         ConfigWords.key,
@@ -54,6 +54,7 @@ def _config_command() -> None:
         project_matrix_python=MatrixKeys.python,
         project_matrix_platforms=MatrixKeys.platforms,
         project_matrix_implementations=MatrixKeys.implementations,
+        project_matrix_include_free_threaded=MatrixKeys.include_free_threaded,
         project_matrix_python_order=MatrixKeys.python_order,
         project_matrix_python_patches=MatrixKeys.python_patches,
         project_environment_python=EnvironmentKeys.python,
@@ -69,7 +70,7 @@ def _config_command() -> None:
 
 
 def _lock() -> None:
-    """``nab lock``: 39 parameters."""
+    """``nab lock``: 40 parameters."""
     lock(
         ConfigWords.path,
         project_resolution=ProjectKeys.resolution,
@@ -89,6 +90,7 @@ def _lock() -> None:
         project_matrix_python=MatrixKeys.python,
         project_matrix_platforms=MatrixKeys.platforms,
         project_matrix_implementations=MatrixKeys.implementations,
+        project_matrix_include_free_threaded=MatrixKeys.include_free_threaded,
         project_matrix_python_order=MatrixKeys.python_order,
         project_matrix_python_patches=MatrixKeys.python_patches,
         project_environment_python=EnvironmentKeys.python,
@@ -114,7 +116,7 @@ def _lock() -> None:
 
 
 def _download() -> None:
-    """``nab download``: 35 parameters."""
+    """``nab download``: 36 parameters."""
     download(
         ConfigWords.path,
         project_resolution=ProjectKeys.resolution,
@@ -134,6 +136,7 @@ def _download() -> None:
         project_matrix_python=MatrixKeys.python,
         project_matrix_platforms=MatrixKeys.platforms,
         project_matrix_implementations=MatrixKeys.implementations,
+        project_matrix_include_free_threaded=MatrixKeys.include_free_threaded,
         project_matrix_python_order=MatrixKeys.python_order,
         project_matrix_python_patches=MatrixKeys.python_patches,
         project_environment_python=EnvironmentKeys.python,

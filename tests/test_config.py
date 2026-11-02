@@ -102,6 +102,7 @@ _TABLE_PARAMS: dict[str, object] = {
     "project_matrix_python": None,
     "project_matrix_platforms": (),
     "project_matrix_implementations": (),
+    "project_matrix_include_free_threaded": None,
     "project_matrix_python_order": None,
     "project_matrix_python_patches": (),
     "project_environment_python": None,
@@ -5382,6 +5383,33 @@ class TestMatrix:
 
     def test_platform_table_form(self, tmp_path: Path) -> None:
         """A table entry reaches the tag knobs a bare id cannot."""
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_include_free_threaded_builds(self, tmp_path: Path, enabled: bool) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.matrix]\npython = "==3.14"\nplatforms = ["linux_x86_64"]\n'
+            f"include-free-threaded = {str(enabled).lower()}\n",
+        )
+        config = read_pyproject_config(path)
+        assert config.matrix is not None
+        assert config.matrix.include_free_threaded is enabled
+        assert len(plan_targets(config)) == (2 if enabled else 1)
+
+    @pytest.mark.parametrize("value", ['"true"', "1", "[]"])
+    def test_include_free_threaded_requires_a_boolean(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.matrix]\npython = "==3.14"\nplatforms = ["linux_x86_64"]\n'
+            f"include-free-threaded = {value}\n",
+        )
+        with pytest.raises(
+            ConfigError, match="include-free-threaded must be a boolean"
+        ):
+            read_pyproject_config(path)
+
         path = write(
             tmp_path,
             self._platforms_body(
