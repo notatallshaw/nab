@@ -77,8 +77,7 @@ directly rather than selecting a wheel from `wheelhouse`.
 
 ## Check a committed lock in CI
 
-`nab lock --locked` checks specific and universal locks. It fails if the file is missing or a fresh
-resolve would change it.
+`nab lock --locked` fails if the file is missing or a fresh resolve would change it.
 
 Set a stable search order before generating the lock you will commit:
 
