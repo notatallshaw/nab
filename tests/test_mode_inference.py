@@ -275,7 +275,7 @@ def test_inferred_universal_rejects_the_short_python_flag(
 
 
 @pytest.mark.parametrize("explicit", [False, True])
-def test_universal_lock_records_its_targets_and_refuses_locked(
+def test_universal_lock_records_its_targets_and_checks_locked(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     explicit: bool,
@@ -311,7 +311,7 @@ def test_universal_lock_records_its_targets_and_refuses_locked(
             with pytest.raises(PylockSelectError):
                 list(pylock.select(environment=environment, tags=[]))
 
-    assert run((*command, "--locked")) == 1
+    assert run((*command, "--locked")) == 0
     assert output.read_bytes() == original
 
 

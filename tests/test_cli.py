@@ -5955,14 +5955,14 @@ class TestLockedFlag:
 
         assert "only supported for pylock" in capsys.readouterr().err
 
-    def test_universal_unsupported(
+    def test_universal_missing_lock(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         _lock_cli(str(pyproject), "--output", str(out), "--locked", status=1)
 
-        assert "not supported in universal mode" in capsys.readouterr().err
+        assert "no lockfile" in capsys.readouterr().err
         assert not out.exists()
 
     def test_local_source_paths_do_not_false_mismatch(

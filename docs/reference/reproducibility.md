@@ -42,9 +42,8 @@ without `created-at` anchors to the run time.
 ## Checking the lock in CI
 
 `nab lock --locked` re-resolves project inputs and compares the result with the committed pylock
-without writing. It applies to file output in single-environment mode. nab resolves independently of
-the existing pins and ignores the lock's `[tool.nab]` record of inputs and timestamps when comparing
-results.
+without writing, in specific or universal mode. nab resolves independently of the existing pins and
+ignores the lock's `[tool.nab]` record of inputs and timestamps when comparing results.
 
 ```bash
 nab lock --locked

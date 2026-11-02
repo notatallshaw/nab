@@ -311,10 +311,6 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     if build_requirements:
         inputs = inputs_for_build_requirements(inputs)
 
-    if locked and config.mode is ResolveMode.UNIVERSAL:
-        printer().error("--locked is not supported in universal mode.")
-        sys.exit(1)
-
     _check_targets_or_exit(config)
     settings = _layered_run_settings_or_exit(ladder)
     effective_cache_dir = _resolve_effective_cache_dir(settings.cache_dir, cache=cache)
@@ -670,9 +666,8 @@ def _fast_fail_locked(
     checks.  On the first disqualification it prints the reason and exits
     non-zero; otherwise it returns and the full resolve runs.
 
-    ``config`` says which environment the checks evaluate markers against
-    and ``inputs`` carries the settings the lock records, already narrowed
-    for a build-requirements run.
+    Specific locks also check direct requirements and constraints against their
+    target. Universal locks leave per-environment validity to the full resolve.
     """
     target = _locked_target_path(run)
     refresh = run.refresh_command()
@@ -709,9 +704,10 @@ def _fast_fail_locked(
         )
         sys.exit(1)
 
-    # ``--locked`` is refused in universal mode, so the plan holds one
-    # target, and _check_targets_or_exit has already admitted it.
-    resolve_target = plan_targets(config)[0]
+    # The validity shortcut does not select pins by environment marker.
+    resolve_target = (
+        plan_targets(config)[0] if config.mode is ResolveMode.SPECIFIC else None
+    )
 
     try:
         disqualification = check_locked(
@@ -828,13 +824,7 @@ def _active_root_requirements(
 
 
 def _check_locked(lock_input: LockInput, *, run: _LockRun) -> None:
-    """Verify the committed pylock matches a fresh resolve, writing nothing.
-
-    The resolve has already run; this renders the lock it would produce and
-    compares it to the committed file with the provenance block dropped from
-    both, so only a real change to the locked packages fails.  The committed
-    lock is never read back into the resolve.
-    """
+    """Compare a fresh resolve with the committed lock, ignoring provenance."""
     target = _locked_target_path(run)
     new_text = _render_or_exit(lambda: render_lock(lock_input, lock_dir=target.parent))
     committed = _packages_only(target.read_text(encoding="utf-8"))

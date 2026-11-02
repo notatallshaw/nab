@@ -176,3 +176,68 @@ def test_both_builds_dependencies_reach_the_lock(tmp_path: Path) -> None:
         "ordinary-dep",
         "threaded-dep",
     }
+
+
+@pytest.mark.parametrize("change", ["none", "artifact", "targets"])
+def test_universal_locked_checks_content_without_rewriting(
+    tmp_path: Path, change: str
+) -> None:
+    ordinary = _publish(tmp_path, "1.0", "cp314")
+    _publish(tmp_path, "1.0", "cp314t")
+    project = _project(tmp_path)
+    project.write_text(
+        project.read_text().replace("[tool.nab]\n", '[tool.nab]\nmode = "universal"\n')
+    )
+    assert _lock(project) == 0
+    output = project.with_name("pylock.toml")
+    before = output.read_bytes()
+    if change == "artifact":
+        directory = tmp_path / "index" / "demo"
+        artifacts = {path.name: path.read_bytes() for path in directory.glob("*.whl")}
+        artifacts[ordinary] = make_wheel_archive(
+            "demo",
+            "1.0",
+            "Metadata-Version: 2.1\nName: demo\nVersion: 1.0\nSummary: changed artifact\n",
+            "cp314-cp314-manylinux_2_17_x86_64",
+        )
+        publish_artifacts(tmp_path / "index", "demo", artifacts)
+    elif change == "targets":
+        project.write_text(
+            project.read_text().replace(
+                "include-free-threaded = true", "include-free-threaded = false"
+            )
+        )
+
+    assert _lock(project, "--locked") == (0 if change == "none" else 1)
+    assert output.read_bytes() == before
+
+
+def test_universal_locked_does_not_apply_another_environments_constraint(
+    tmp_path: Path,
+) -> None:
+    publish_artifacts(
+        tmp_path / "index",
+        "demo",
+        {
+            "demo-1.0-py3-none-any.whl": make_wheel_archive(
+                "demo",
+                "1.0",
+                "Metadata-Version: 2.1\nName: demo\nVersion: 1.0\n",
+                "py3-none-any",
+            )
+        },
+    )
+    project = tmp_path / "pyproject.toml"
+    project.write_text(
+        '[project]\nname = "example"\nversion = "1.0"\n'
+        "dependencies = [\"demo==1.0; sys_platform == 'win32'\"]\n"
+        '[tool.nab]\nmode = "universal"\n'
+        "constraints = [\"demo>=2; sys_platform == 'linux'\"]\n"
+        f'[[tool.nab.indexes]]\nname = "local"\nurl = "{(tmp_path / "index").as_uri()}"\n'
+        '[tool.nab.matrix]\npython = "==3.14"\nplatforms = ["linux_x86_64", "windows_amd64"]\n',
+        encoding="utf-8",
+    )
+    assert _lock(project) == 0
+    before = project.with_name("pylock.toml").read_bytes()
+    assert _lock(project, "--locked") == 0
+    assert project.with_name("pylock.toml").read_bytes() == before

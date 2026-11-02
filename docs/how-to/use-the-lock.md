@@ -77,8 +77,8 @@ directly rather than selecting a wheel from `wheelhouse`.
 
 ## Check a committed lock in CI
 
-`nab lock --locked` works in `specific` mode, including a singleton matrix. It fails if the file is
-missing or a fresh resolve would change it. Universal mode does not support this check.
+`nab lock --locked` checks specific and universal locks. It fails if the file is missing or a fresh
+resolve would change it.
 
 Set a stable search order before generating the lock you will commit:
 

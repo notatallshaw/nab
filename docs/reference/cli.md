@@ -34,8 +34,7 @@ Write to `PATH`, or stdout with `-`. Single-environment defaults are `pylock.tom
 ### `--locked`
 
 Check that the existing lock is current without writing it. Exit `1` if it is missing or out of
-date. Requires `specific` mode, pylock output and a file. See
-{ref}`Checking a lock <checking-the-lock-in-ci>`.
+date. Requires pylock output and a file. See {ref}`Checking a lock <checking-the-lock-in-ci>`.
 
 ### `--upgrade`
 
