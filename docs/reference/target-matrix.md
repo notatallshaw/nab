@@ -64,16 +64,11 @@ platforms = ["linux_x86_64", "macos_arm64", "windows_amd64"]
 include-free-threaded = true
 ```
 
-nab adds a free-threaded target beside each ordinary CPython 3.13+ target. Earlier CPython versions
-and PyPy keep their ordinary targets. Platform settings, implementation overrides and
-`python-patches` apply to both builds. An explicitly free-threaded platform remains free-threaded
-only.
+Each ordinary CPython 3.13+ target gains a free-threaded target. Both builds use their own wheel
+tags and metadata; matching pins merge, and pip selects the compatible wheel.
 
-Each build resolves against its own wheel tags and metadata. Matching package versions and sources
-merge into one lock entry containing both wheel ABIs; pip selects the wheel its interpreter
-supports. PEP 508 has no threading marker, so nab refuses overlapping package entries when the
-builds choose different versions or sources. Pin a version compatible with both builds or lock them
-separately in that case. Cross-target alignment remains best effort.
+If the builds choose different versions or sources, constrain them to shared pins or lock them
+separately. PEP 508 has no threading marker.
 
 The command-line setting is `--project-matrix-include-free-threaded`; use
 `--no-project-matrix-include-free-threaded` to disable a file setting for one run.
