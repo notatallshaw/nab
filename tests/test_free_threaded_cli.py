@@ -75,6 +75,67 @@ def _lock(project: Path, *flags: str) -> int:
     )
 
 
+def test_locked_keeps_a_valid_snapshot_when_new_versions_appear(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _project(tmp_path)
+    _publish(tmp_path, "1", "cp314")
+    _publish(tmp_path, "1", "cp314t")
+    assert _lock(project) == 0
+    committed = (tmp_path / "pylock.toml").read_bytes()
+    _publish(tmp_path, "2", "cp314")
+    _publish(tmp_path, "2", "cp314t")
+    assert _lock(project, "--reproduce") == 1
+
+    def unexpected(_backend: object) -> None:
+        pytest.fail("checking a saved snapshot must not create a transport")
+
+    monkeypatch.setattr("nab._lock._make_resolve_transport", unexpected)
+    assert _lock(project, "--locked") == 0
+    assert (tmp_path / "pylock.toml").read_bytes() == committed
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [("--upgrade",), ("--reproduce",), ("--format", "requirements"), ("--output", "-")],
+)
+def test_locked_refuses_incompatible_modes(
+    tmp_path: Path, flags: tuple[str, ...]
+) -> None:
+    assert _lock(_project(tmp_path), "--locked", *flags) == 1
+
+
+def test_locked_missing_evidence_reports_the_update_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _project(tmp_path)
+    assert _lock(project, "--locked") == 1
+    assert "run `nab lock" in capsys.readouterr().err
+
+
+def test_locked_reads_current_local_dependency_bounds(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    _publish(tmp_path, "1", "cp314")
+    _publish(tmp_path, "1", "cp314t")
+    source = tmp_path / "local"
+    source.mkdir()
+    metadata = source / "pyproject.toml"
+    metadata.write_text(
+        '[project]\nname="local"\nversion="1"\ndependencies=["demo>=1"]\n'
+    )
+    project.write_text(
+        project.read_text().replace("dependencies = []", 'dependencies = ["local"]')
+        + f'[[tool.nab.local-sources]]\nname="local"\npath="{source.as_posix()}"\n'
+    )
+    assert _lock(project) == 0
+    committed = (tmp_path / "pylock.toml").read_bytes()
+    metadata.write_text(metadata.read_text().replace('version="1"', 'version="2"'))
+    assert _lock(project, "--locked") == 0
+    metadata.write_text(metadata.read_text().replace("demo>=1", "demo>=2"))
+    assert _lock(project, "--locked") == 1
+    assert (tmp_path / "pylock.toml").read_bytes() == committed
+
+
 @pytest.mark.parametrize("declaration", ["pyproject", "nab.toml", "cli"])
 def test_one_lock_selects_both_wheel_abis(tmp_path: Path, declaration: str) -> None:
     regular = _publish(tmp_path, "1.0", "cp314")

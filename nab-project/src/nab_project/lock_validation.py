@@ -50,10 +50,12 @@ if TYPE_CHECKING:
     from .lockfile import LockInput
 
 __all__ = [
+    "VALIDATION_VERSION",
     "capture_metadata",
     "content_digest",
     "make_validation_record",
     "snapshot_inputs",
+    "validation_digest",
 ]
 
 # This versions the validation format, independently of Nab's release number.
@@ -163,10 +165,15 @@ def _json(value: object) -> str:
     )
 
 
+def validation_digest(value: object) -> str:
+    """Hash a canonical validation-format value."""
+    return hashlib.sha256(_json(value).encode()).hexdigest()
+
+
 def content_digest(document: Mapping[str, Any]) -> str:
     """Hash install content, excluding disposable producer data."""
     content = {key: value for key, value in document.items() if key != "tool"}
-    return hashlib.sha256(_json(content).encode()).hexdigest()
+    return validation_digest(content)
 
 
 def capture_metadata(

@@ -77,29 +77,19 @@ directly rather than selecting a wheel from `wheelhouse`.
 
 ## Check a committed lock in CI
 
-`nab lock --locked` fails if the file is missing or a fresh resolve would change it.
-
-Set a stable search order before generating the lock you will commit:
-
-```toml
-[tool.nab]
-decision-order = "stable"
-```
-
-Generate it locally with `nab lock pyproject.toml`, then run the check in CI with the same target
-and settings:
+Generate the lock locally, then check it in CI with the same targets and selections:
 
 ```bash
 nab lock --locked pyproject.toml
 ```
 
-The check writes nothing, but it can contact indexes and select newer releases even when
-`pyproject.toml` has not changed. It checks what a fresh resolve would choose, not just whether the
-old pins satisfy your declarations.
+The check validates the saved solution without resolving, writing, or contacting indexes. Compatible
+bound changes pass; changed sources, targets or dependency selections require a new lock. Local
+artifact hashes and static local project metadata are checked afresh.
 
-To exclude later uploads, configure `uploaded-prior-to` when generating the lock. See
-{ref}`Reproducibility <reproducibility>` for cutoff behavior and index changes it cannot freeze, and
-[`nab lock`](../reference/cli.md) for unsupported check modes.
+Older or foreign locks without a supported validation record need regeneration with `nab lock`.
+Dynamic local metadata also requires regeneration. Use `--reproduce` when you want a fresh resolve
+and comparison instead; see [Reproducible locks](../reference/reproducibility.md).
 
 ## Download after a fresh resolve
 

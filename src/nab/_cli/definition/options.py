@@ -671,7 +671,14 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
     locked = Switch(
         default=False,
         negatable=True,
-        help="check the committed lock is current and write nothing",
+        help="check the saved solution without resolving or writing",
+        on=("lock",),
+    )
+
+    reproduce = Switch(
+        default=False,
+        negatable=True,
+        help="resolve afresh and check the saved lock without writing",
         on=("lock",),
     )
 

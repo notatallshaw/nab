@@ -2673,7 +2673,7 @@ class TestPythonFlag:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with pytest.raises(SystemExit) as exc:
-            lock(pyproject, output=out, python=value, locked=locked)
+            lock(pyproject, output=out, python=value, reproduce=locked)
         assert exc.value.code == 1
         err = capsys.readouterr().err
         assert "--python" in err
@@ -3167,7 +3167,7 @@ class TestTableFlagsEndToEnd:
             lock(
                 pyproject,
                 output=out,
-                locked=True,
+                reproduce=True,
                 project_environment_platform=("macos_arm64", "runs-on-macos=14.0"),
                 project_build_policy="never",
             )
@@ -3185,7 +3185,7 @@ class TestTableFlagsEndToEnd:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with pytest.raises(SystemExit) as exc:
-            lock(pyproject, output=out, locked=True, python="3.12")
+            lock(pyproject, output=out, reproduce=True, python="3.12")
 
         assert exc.value.code == 1
         assert capsys.readouterr().err.count("--python 3.12") == 1
@@ -5668,7 +5668,7 @@ def _conflict_fork_result(*, shared: tuple[str, str]) -> ResolveResult:
 
 
 class TestLockedFlag:
-    """``nab lock --locked`` re-resolves and verifies the committed pylock."""
+    """``nab lock --reproduce`` re-resolves and verifies the committed pylock."""
 
     def _write_lock(
         self,
@@ -5693,7 +5693,7 @@ class TestLockedFlag:
                 str(pyproject),
                 "--output",
                 str(out),
-                "--locked",
+                "--reproduce",
                 *extra_args,
                 status=status,
             )
@@ -5720,11 +5720,11 @@ class TestLockedFlag:
             'extras = ["all"]\npackages = []\n'
         )
         with pytest.raises(SystemExit, match="1"):
-            lock(pyproject, output=out, locked=True, offline=True, extras=("all",))
+            lock(pyproject, output=out, reproduce=True, offline=True, extras=("all",))
 
         err = capsys.readouterr().err
         assert 'cannot lock: marker python_full_version ~= "3"' in err
-        assert "--locked" not in err
+        assert "--reproduce" not in err
         assert "Traceback" not in err
 
     def test_up_to_date_exits_zero_without_writing(
@@ -5831,7 +5831,7 @@ class TestLockedFlag:
     def test_unhashable_pin_during_render_exits_one(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        # A pin that cannot be hashed makes the render fail; --locked reports
+        # A pin that cannot be hashed makes the render fail; --reproduce reports
         # it and exits without touching the committed lock, like a normal lock.
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
@@ -5845,7 +5845,7 @@ class TestLockedFlag:
             ),
             patch("nab._lock.render_lock", side_effect=MissingHashError("no hash")),
         ):
-            _lock_cli(str(pyproject), "--output", str(out), "--locked", status=1)
+            _lock_cli(str(pyproject), "--output", str(out), "--reproduce", status=1)
 
         assert "cannot lock" in capsys.readouterr().err
         assert out.read_bytes() == before
@@ -5886,7 +5886,7 @@ class TestLockedFlag:
             ),
             patch("nab._lock.render_lock", side_effect=DisjointnessError(hint)),
         ):
-            _lock_cli(str(pyproject), "--output", str(out), "--locked", status=1)
+            _lock_cli(str(pyproject), "--output", str(out), "--reproduce", status=1)
 
         assert f"error: {hint}\n" in capsys.readouterr().err
         assert out.read_bytes() == before
@@ -5940,7 +5940,7 @@ class TestLockedFlag:
             str(out),
             "--format",
             "requirements",
-            "--locked",
+            "--reproduce",
             status=1,
         )
 
@@ -5951,7 +5951,7 @@ class TestLockedFlag:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         pyproject = _make_pyproject(tmp_path)
-        _lock_cli(str(pyproject), "--output", "-", "--locked", status=1)
+        _lock_cli(str(pyproject), "--output", "-", "--reproduce", status=1)
 
         assert "only supported for pylock" in capsys.readouterr().err
 
@@ -5960,7 +5960,7 @@ class TestLockedFlag:
     ) -> None:
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
-        _lock_cli(str(pyproject), "--output", str(out), "--locked", status=1)
+        _lock_cli(str(pyproject), "--output", str(out), "--reproduce", status=1)
 
         assert "no lockfile" in capsys.readouterr().err
         assert not out.exists()
@@ -6000,7 +6000,7 @@ class TestLockedFlag:
         assert [package["directory"]["path"] for package in packages] == ["../vendor"]
 
         capsys.readouterr()
-        lock(pyproject, output=out, offline=True, cache=False, locked=True)
+        lock(pyproject, output=out, offline=True, cache=False, reproduce=True)
         assert "is up to date" in capsys.readouterr().err
 
 

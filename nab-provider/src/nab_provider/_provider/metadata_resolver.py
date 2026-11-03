@@ -38,7 +38,7 @@ from nab_provider.records import RangeOutcome, SdistFile, WheelFile
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .._compat import override
-from ..environment import UnevaluableMarkerError, evaluate_prepared
+from ..environment import UnevaluableMarkerError, classify_dependency, evaluate_prepared
 from ..errors import (
     ForeignMetadataError,
     IncompatiblePythonError,
@@ -1427,35 +1427,6 @@ def refuse_url_dep(provider: Provider, req: Requirement, url: str) -> None:
     raise NotImplementedError(msg)
 
 
-def _classify_requirement_uncached(
-    provider: Provider,
-    req: Requirement,
-    provided_extras: set[str],
-) -> set[str] | None:
-    """Classify like :func:`classify_requirement`, recording nothing.
-
-    These markers come from wheels :func:`target_dep_signature` parses but
-    never keeps in ``metadata_cache``.  The id-keyed marker caches would be
-    unsound here: a collected marker's ``id`` can alias a later live marker.
-    ``consulted_markers`` would leak a never-installed sibling's clauses into
-    the lock's ``environments``.  So each marker is evaluated directly.
-    """
-    marker = req.marker
-    if marker is None:
-        return set()
-    if evaluate_prepared(marker, provider.prepared_environment):
-        return set()
-    if "extra" not in str(marker):
-        return None
-    env = dict(provider.prepared_extra_environment)
-    matched: set[str] = set()
-    for extra_name in provided_extras:
-        env["extra"] = extra_name
-        if evaluate_prepared(marker, env):
-            matched.add(extra_name)
-    return matched or None
-
-
 def target_dep_signature(
     provider: Provider,
     cache_key: tuple[str, Version],
@@ -1470,7 +1441,7 @@ def target_dep_signature(
     folds away. Ranges use :func:`add_classified_dep`, so ordering,
     whitespace, and specifier syntax normalize equally. This writes no
     marker cache or ``consulted_markers`` entry: see
-    :func:`_classify_requirement_uncached`.
+    :func:`classify_dependency`.
 
     ``cache_key`` is the release the wheel was served as, not whatever the
     wheel declares for itself.  The per-package override is applied first, so a
@@ -1492,7 +1463,9 @@ def target_dep_signature(
     }
     url_buckets: dict[str | None, set[tuple[str, frozenset[str], str]]] = {}
     for req in metadata.requires_dist:
-        req_extras = _classify_requirement_uncached(provider, req, provided_extras)
+        req_extras = classify_dependency(
+            req.marker, provider.prepared_environment, provided_extras
+        )
         if req_extras is None:
             continue
         if req.url is not None:

@@ -33,8 +33,15 @@ Write to `PATH`, or stdout with `-`. Single-environment defaults are `pylock.tom
 
 ### `--locked`
 
-Check that the existing lock is current without writing it. Exit `1` if it is missing or out of
-date. Requires pylock output and a file. See {ref}`Checking a lock <checking-the-lock-in-ci>`.
+Check the saved solution without resolving or writing. New releases do not invalidate it. Exit `1`
+if the lock is missing or cannot satisfy or verify the current inputs. Requires pylock output to a
+file; cannot combine with `--upgrade` or `--reproduce`. See
+{ref}`Checking a lock <checking-the-lock-in-ci>`.
+
+### `--reproduce`
+
+Resolve afresh and compare with the saved lock without writing. Exit `1` if the result differs. Use
+stable decision order when comparing resolves. Requires pylock output to a file.
 
 ### `--upgrade`
 

@@ -71,7 +71,8 @@ HELP: tuple[str, ...] = (
         "hashed-requirements run"
     ),
     "re-anchor a relative upload window to now",
-    "check the committed lock is current and write nothing",
+    "check the saved solution without resolving or writing",
+    "resolve afresh and check the saved lock without writing",
     "the directory the artefacts are written to",
 )
 
@@ -259,6 +260,8 @@ COMMANDS: dict[
         ("--no-upgrade", "", "neg", "upgrade", "", (), False, False, False, 51),
         ("--locked", "", "flag", "locked", "", (), True, False, False, 52),
         ("--no-locked", "", "neg", "locked", "", (), False, False, False, 52),
+        ("--reproduce", "", "flag", "reproduce", "", (), True, False, False, 53),
+        ("--no-reproduce", "", "neg", "reproduce", "", (), False, False, False, 53),
     ),
     "download": (
         ("--project-resolution", "", "value", "project_resolution", "choice?",
@@ -323,7 +326,7 @@ COMMANDS: dict[
         ("--max-concurrency", "", "value", "max_concurrency", "int?", (), None, None,
         False, 34),
         ("", "", "positional", "path", "path", (), None, "pyproject.toml", False, 39),
-        ("--output", "", "value", "output", "path", (), None, "wheels", False, 53),
+        ("--output", "", "value", "output", "path", (), None, "wheels", False, 54),
         ("--cache", "", "flag", "cache", "", (), True, True, False, 42),
         ("--no-cache", "", "neg", "cache", "", (), False, True, False, 42),
         ("--python", "", "value", "python", "str?", (), None, None, False, 43),

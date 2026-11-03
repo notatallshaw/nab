@@ -140,6 +140,7 @@ __all__ = [
     "active_group_names",
     "build_lock_input",
     "inputs_for_build_requirements",
+    "plan_project_inputs",
     "resolve_for_targets",
     "resolve_with_coordinator",
 ]
@@ -216,21 +217,13 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
             _validate_build_selection(groups, extras)
             inputs = inputs_for_build_requirements(inputs)
 
-        tables = _project_tables(
-            path, build_group=inputs.build_group, build_requirements=build_requirements
-        )
-
-        effective_groups = active_group_names(
-            groups, inputs.default_groups, inputs.base_group, inputs.build_group
-        )
-
-        forks, base_requirements = _plan_forks(
+        forks, base_requirements = plan_project_inputs(
             path,
-            tables,
             inputs,
             targets,
-            extras=tuple(extras),
-            groups=effective_groups,
+            groups=groups,
+            extras=extras,
+            build_requirements=build_requirements,
         )
 
         coordinator_context = FetchCoordinator(
@@ -273,6 +266,30 @@ def _validate_build_selection(groups: Sequence[str], extras: Sequence[str]) -> N
     if groups or extras:
         msg = "a build-requirements resolve has no groups or extras to select"
         raise ValueError(msg)
+
+
+def plan_project_inputs(
+    path: Path,
+    inputs: ResolveInputs,
+    targets: Sequence[ResolveTarget],
+    *,
+    groups: Sequence[str] = (),
+    extras: Sequence[str] = (),
+    build_requirements: bool = False,
+) -> tuple[list[ResolveFork], list[Requirement] | None]:
+    """Plan the same project contexts for resolution and saved-solution checks."""
+    if build_requirements:
+        _validate_build_selection(groups, extras)
+        inputs = inputs_for_build_requirements(inputs)
+    tables = _project_tables(
+        path, build_group=inputs.build_group, build_requirements=build_requirements
+    )
+    effective_groups = active_group_names(
+        groups, inputs.default_groups, inputs.base_group, inputs.build_group
+    )
+    return _plan_forks(
+        path, tables, inputs, targets, extras=tuple(extras), groups=effective_groups
+    )
 
 
 def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve

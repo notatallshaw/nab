@@ -1,4 +1,4 @@
-"""Resolver-free disqualification checks for ``nab lock --locked``.
+"""Resolver-free disqualification checks for ``nab lock --reproduce``.
 
 These run before the fresh resolve. Each function is a disqualifier: it
 returns a :class:`LockDisqualification` when it can prove a fresh resolve

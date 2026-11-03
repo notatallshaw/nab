@@ -283,7 +283,7 @@ def _load_config(
 def _check_targets_or_exit(config: NabProjectConfig) -> None:
     """Exit 1 when the declaration admits no target, before anything else reads it.
 
-    ``nab lock --locked`` would otherwise report a stale lock and print a
+    ``nab lock --reproduce`` would otherwise report a stale lock and print a
     refresh command carrying the value that was refused.
     """
     try:

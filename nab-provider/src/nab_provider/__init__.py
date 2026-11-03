@@ -4,4 +4,5 @@ Supported imports:
 
     nab_provider.diagnostics  Diagnostic, ResolutionMessage
     nab_provider.priority  compute_tier
+    nab_provider.environment  classify_dependency
 """

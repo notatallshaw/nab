@@ -104,6 +104,7 @@ _PAGES = (
     ("no-emit-workspace", "how-to/workspaces.md"),
     ("upgrade", "reference/cli.md"),
     ("locked", "reference/cli.md"),
+    ("reproduce", "reference/cli.md"),
     ("include-rejected", "reference/cli.md"),
 )
 
@@ -182,8 +183,8 @@ class TestTheDeclaredTable:
         command = [row for row in ALL if row.commands and not row.is_global]
         file_only = [row for row in ALL if not row.commands]
 
-        assert (len(root), len(command), len(file_only)) == (7, 47, 13)
-        assert len(root) + len(command) + len(file_only) == len(ALL) == 67
+        assert (len(root), len(command), len(file_only)) == (7, 48, 13)
+        assert len(root) + len(command) + len(file_only) == len(ALL) == 68
 
         keyed = [row for row in ALL if row.key]
 
@@ -289,7 +290,7 @@ class TestTheDeclaredTable:
         """
         negatable = [row for row in ALL if row.kind in _BOOL_KINDS]
 
-        assert len(negatable) == 15
+        assert len(negatable) == 16
 
         for row in negatable:
             assert row.negatable is not row.name.startswith("no-"), row.name
