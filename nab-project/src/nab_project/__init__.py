@@ -4,8 +4,8 @@ Supported imports:
 
     nab_project.build_backend  project_metadata
     nab_project.diagnostics  ResolutionMessage
-    nab_project.lock_validation  snapshot_inputs, shape_digest, content_digest,
-        make_validation_record, validation_digest, VALIDATION_VERSION
+    nab_project.lock_validation  snapshot_inputs, selection_inputs_digest,
+        content_digest, make_validation_record, validation_digest, VALIDATION_VERSION
     nab_project.lock_check  check_saved_lock, LockConsistencyError
     nab_project.lockfile  resolve_dependency_references
     nab_project.resolve  plan_project_inputs
