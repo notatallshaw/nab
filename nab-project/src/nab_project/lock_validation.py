@@ -51,13 +51,13 @@ __all__ = [
     "VALIDATION_VERSION",
     "content_digest",
     "make_validation_record",
-    "shape_digest",
+    "selection_inputs_digest",
     "snapshot_inputs",
     "validation_digest",
 ]
 
 # This versions the validation format, independently of Nab's release number.
-VALIDATION_VERSION = 2
+VALIDATION_VERSION = 3
 _PREFERENCES = frozenset({"resolution", "decision_order", "constraints"})
 _DERIVED_FIELDS = frozenset({"version_range", "source_label", "name_keyed"})
 
@@ -175,7 +175,7 @@ def content_digest(document: Mapping[str, Any]) -> str:
     )
 
 
-def _declaration_shapes(requirements: Sequence[str]) -> list[str]:
+def _requirements_without_bounds(requirements: Sequence[str]) -> list[str]:
     """Retain dependency identities without their version bounds."""
     result = set()
     for text in requirements:
@@ -187,8 +187,8 @@ def _declaration_shapes(requirements: Sequence[str]) -> list[str]:
     return sorted(result)
 
 
-def shape_digest(inputs: Mapping[str, Any]) -> str:
-    """Hash selection and policy, ignoring bounds and local versions."""
+def selection_inputs_digest(inputs: Mapping[str, Any]) -> str:
+    """Hash inputs excluding dependency bounds, constraints and local versions."""
     local = {}
     for name, project in inputs["local"].items():
         fields = {
@@ -198,25 +198,27 @@ def shape_digest(inputs: Mapping[str, Any]) -> str:
         }
         local[name] = {
             **fields,
-            "dependencies": _declaration_shapes(project.get("dependencies", [])),
+            "dependencies": _requirements_without_bounds(
+                project.get("dependencies", [])
+            ),
             "optional-dependencies": {
-                extra: _declaration_shapes(requirements)
+                extra: _requirements_without_bounds(requirements)
                 for extra, requirements in project.get(
                     "optional-dependencies", {}
                 ).items()
             },
         }
-    shape = {
+    selection_inputs = {
         key: value
         for key, value in inputs.items()
         if key not in {"roots", "constraints", "local"}
     }
-    shape["roots"] = {
-        scope: _declaration_shapes(requirements)
+    selection_inputs["roots"] = {
+        scope: _requirements_without_bounds(requirements)
         for scope, requirements in inputs["roots"].items()
     }
-    shape["local"] = local
-    return validation_digest(shape)
+    selection_inputs["local"] = local
+    return validation_digest(selection_inputs)
 
 
 def _project_inputs(path: Path) -> dict[str, Any]:
@@ -340,7 +342,7 @@ def make_validation_record(
     """Keep fingerprints while leaving package selections in standard Pylock fields."""
     return {
         "version": VALIDATION_VERSION,
-        "inputs-sha256": validation_digest(inputs),
-        "shape-sha256": shape_digest(inputs),
+        "all-inputs-sha256": validation_digest(inputs),
+        "selection-inputs-sha256": selection_inputs_digest(inputs),
         "contents-sha256": content_digest(document),
     }

@@ -275,7 +275,8 @@ def test_repeated_paths_check_every_declared_hash(
 
 
 @pytest.mark.parametrize(
-    "change", ["contents", "missing", "version", "tool", "missing-field"]
+    "change",
+    ["contents", "missing", "version", "legacy-schema", "tool", "missing-field"],
 )
 def test_invalid_evidence_is_refused(tmp_path: Path, change: str) -> None:
     case = _saved(tmp_path)
@@ -287,10 +288,14 @@ def test_invalid_evidence_is_refused(tmp_path: Path, change: str) -> None:
         del document["tool"]["nab"]["validation"]
     elif change == "version":
         record["version"] = 999
+    elif change == "legacy-schema":
+        record["version"] = 2
+        record["inputs-sha256"] = record.pop("all-inputs-sha256")
+        record["shape-sha256"] = record.pop("selection-inputs-sha256")
     elif change == "tool":
         document["tool"]["nab"]["validation"] = []
     else:
-        del record["inputs-sha256"]
+        del record["all-inputs-sha256"]
     _replace_record(case[0], document)
     with pytest.raises(LockConsistencyError):
         _check(case)

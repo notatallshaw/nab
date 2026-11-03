@@ -25,7 +25,7 @@ from .build_backend import project_metadata
 from .lock_validation import (
     VALIDATION_VERSION,
     content_digest,
-    shape_digest,
+    selection_inputs_digest,
     validation_digest,
 )
 from .resolve import plan_project_inputs
@@ -373,9 +373,9 @@ def check_saved_lock(
         if any(project.get("dynamic") for project in current["local"].values()):
             message = "dynamic local metadata requires a lock update"
             raise LockConsistencyError(message)
-        if record["inputs-sha256"] == validation_digest(current):
+        if record["all-inputs-sha256"] == validation_digest(current):
             return
-        if record["shape-sha256"] != shape_digest(current):
+        if record["selection-inputs-sha256"] != selection_inputs_digest(current):
             message = "dependency selections or policy changed; update the lock"
             raise LockConsistencyError(message)
         _check_changed_bounds(

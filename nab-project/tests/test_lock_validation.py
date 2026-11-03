@@ -14,7 +14,7 @@ from nab_project.inputs import ResolveInputs
 from nab_project.lock_validation import (
     _value,
     content_digest,
-    shape_digest,
+    selection_inputs_digest,
     snapshot_inputs,
     validation_digest,
 )
@@ -156,15 +156,20 @@ def test_real_target_metadata_roundtrips_without_affecting_selection(
     lock_input.validation_inputs = snapshot_inputs(path, ResolveInputs(), targets)
     document = toml_io.loads(render_lock(lock_input, lock_dir=tmp_path))
     record = document["tool"]["nab"]["validation"]
+    assert record["version"] == 3
     assert record["contents-sha256"] == content_digest(document)
     assert set(record) == {
         "version",
-        "inputs-sha256",
-        "shape-sha256",
+        "all-inputs-sha256",
+        "selection-inputs-sha256",
         "contents-sha256",
     }
-    assert record["inputs-sha256"] == validation_digest(lock_input.validation_inputs)
-    assert record["shape-sha256"] == shape_digest(lock_input.validation_inputs)
+    assert record["all-inputs-sha256"] == validation_digest(
+        lock_input.validation_inputs
+    )
+    assert record["selection-inputs-sha256"] == selection_inputs_digest(
+        lock_input.validation_inputs
+    )
     parsed = Pylock.from_dict(document)
     parsed.validate()
     original = build_pylock(lock_input)
@@ -268,7 +273,7 @@ def test_workspace_root_without_project_can_record_groups(tmp_path: Path) -> Non
     assert snapshot["roots"] == {"base": [], "group:dev": ["pytest>=9"]}
 
 
-def test_shape_fingerprint_allows_only_bounds_and_local_versions(
+def test_selection_inputs_fingerprint_allows_only_bounds_and_local_versions(
     tmp_path: Path,
 ) -> None:
     path = _project(tmp_path)
@@ -288,14 +293,14 @@ def test_shape_fingerprint_allows_only_bounds_and_local_versions(
     )
     changed = snapshot_inputs(path, inputs, _targets())
     assert validation_digest(original) != validation_digest(changed)
-    assert shape_digest(original) == shape_digest(changed)
+    assert selection_inputs_digest(original) == selection_inputs_digest(changed)
     constrained = snapshot_inputs(
         path, inputs.replace(constraints=("demo<3",)), _targets()
     )
-    assert shape_digest(original) == shape_digest(constrained)
+    assert selection_inputs_digest(original) == selection_inputs_digest(constrained)
 
     metadata.write_text(metadata.read_text().replace("other<3", "new[extra]"))
-    assert shape_digest(original) != shape_digest(
+    assert selection_inputs_digest(original) != selection_inputs_digest(
         snapshot_inputs(path, inputs, _targets())
     )
 
@@ -309,7 +314,7 @@ def test_shape_fingerprint_allows_only_bounds_and_local_versions(
         "demo @ https://example.com/demo.whl",
     ],
 )
-def test_shape_fingerprint_retains_dependency_selection(
+def test_selection_inputs_fingerprint_retains_dependency_selection(
     tmp_path: Path, requirement: str
 ) -> None:
     path = _project(tmp_path)
@@ -319,17 +324,19 @@ def test_shape_fingerprint_retains_dependency_selection(
         + json.dumps([requirement])
         + "\n"
     )
-    assert shape_digest(original) != shape_digest(
+    assert selection_inputs_digest(original) != selection_inputs_digest(
         snapshot_inputs(path, ResolveInputs(), _targets())
     )
 
 
-def test_shape_fingerprint_retains_targets_sources_and_policy(tmp_path: Path) -> None:
+def test_selection_inputs_fingerprint_retains_targets_sources_and_policy(
+    tmp_path: Path,
+) -> None:
     path = _project(tmp_path)
     original = snapshot_inputs(path, ResolveInputs(), _targets())
     for field in ("policy-sha256", "targets", "excluded", "build-requirements"):
         changed = {**original, field: "changed"}
-        assert shape_digest(original) != shape_digest(changed)
+        assert selection_inputs_digest(original) != selection_inputs_digest(changed)
 
 
 def test_host_build_abi_changes_both_fingerprints(tmp_path: Path) -> None:
@@ -347,7 +354,9 @@ def test_host_build_abi_changes_both_fingerprints(tmp_path: Path) -> None:
         == snapshots[1]["targets"][0]["environment"]
     )
     assert validation_digest(snapshots[0]) != validation_digest(snapshots[1])
-    assert shape_digest(snapshots[0]) != shape_digest(snapshots[1])
+    assert selection_inputs_digest(snapshots[0]) != selection_inputs_digest(
+        snapshots[1]
+    )
 
 
 def test_target_traversal_order_does_not_change_fingerprints(tmp_path: Path) -> None:
@@ -377,4 +386,6 @@ def test_target_traversal_order_does_not_change_fingerprints(tmp_path: Path) -> 
         )
     ]
     assert validation_digest(snapshots[0]) == validation_digest(snapshots[1])
-    assert shape_digest(snapshots[0]) == shape_digest(snapshots[1])
+    assert selection_inputs_digest(snapshots[0]) == selection_inputs_digest(
+        snapshots[1]
+    )
