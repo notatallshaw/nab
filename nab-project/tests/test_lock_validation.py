@@ -23,6 +23,7 @@ from nab_project.resolve import build_lock_input, resolve_with_coordinator
 from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.tags import Tag
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.overrides import PackageOverride
 from nab_provider.pep508 import parse_requirement
@@ -329,3 +330,51 @@ def test_shape_fingerprint_retains_targets_sources_and_policy(tmp_path: Path) ->
     for field in ("policy-sha256", "targets", "excluded", "build-requirements"):
         changed = {**original, field: "changed"}
         assert shape_digest(original) != shape_digest(changed)
+
+
+def test_host_build_abi_changes_both_fingerprints(tmp_path: Path) -> None:
+    path = _project(tmp_path)
+    snapshots = []
+    for abi in ("cp314", "cp314t"):
+        host_tags = (
+            Tag("cp314", abi, "manylinux_2_17_x86_64"),
+            Tag("py3", "none", "any"),
+        )
+        target = ResolveTarget.for_host(tags_source=lambda tags=host_tags: tags)
+        snapshots.append(snapshot_inputs(path, ResolveInputs(), [target]))
+    assert (
+        snapshots[0]["targets"][0]["environment"]
+        == snapshots[1]["targets"][0]["environment"]
+    )
+    assert validation_digest(snapshots[0]) != validation_digest(snapshots[1])
+    assert shape_digest(snapshots[0]) != shape_digest(snapshots[1])
+
+
+def test_target_traversal_order_does_not_change_fingerprints(tmp_path: Path) -> None:
+    path = _project(tmp_path)
+    snapshots = [
+        snapshot_inputs(
+            path,
+            ResolveInputs(),
+            Matrix(
+                python=">=3.13,<3.15",
+                platforms=platforms,
+                python_order=order,
+                python_builds=builds,
+            ).expand(),
+        )
+        for platforms, order, builds in (
+            (
+                (PlatformSpec("linux_x86_64"), PlatformSpec("macos_arm64")),
+                "asc",
+                ("standard", "free-threaded"),
+            ),
+            (
+                (PlatformSpec("macos_arm64"), PlatformSpec("linux_x86_64")),
+                "desc",
+                ("free-threaded", "standard"),
+            ),
+        )
+    ]
+    assert validation_digest(snapshots[0]) == validation_digest(snapshots[1])
+    assert shape_digest(snapshots[0]) == shape_digest(snapshots[1])

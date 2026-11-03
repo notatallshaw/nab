@@ -315,15 +315,19 @@ def snapshot_inputs(
         "policy-sha256": hashlib.sha256(
             _json(_value(policy, base)).encode()
         ).hexdigest(),
-        "targets": [
-            {
-                "environment": dict(target.marker_env),
-                "platform": _value(target.platform_spec, base) or {},
-                "concrete-micro": target.concrete_micro,
-                "micro-clauses": list(target.micro_clauses),
-            }
-            for target in targets
-        ],
+        "targets": sorted(
+            [
+                {
+                    "environment": dict(target.marker_env),
+                    "platform": _value(target.platform_spec, base) or {},
+                    "tags": _value(target.tags, base),
+                    "concrete-micro": target.concrete_micro,
+                    "micro-clauses": list(target.micro_clauses),
+                }
+                for target in targets
+            ],
+            key=_json,
+        ),
         "local": _value(local, base),
         "excluded": sorted(exclude),
         "build-requirements": build_requirements,
