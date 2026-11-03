@@ -212,7 +212,7 @@ uploaded-prior-to = "P7D"
 
 [tool.nab.matrix]
 python = ">=3.10,<3.16"
-include-free-threaded = true
+python-builds = ["standard", "free-threaded"]
 # Platform IDs from nab_provider.target.PLATFORM_MARKERS.
 platforms = [
     "linux_x86_64",
