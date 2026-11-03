@@ -1327,6 +1327,17 @@ class TestTagSetHostConstructors:
         tags = TagSet.for_host_python("3.13", tags_source=self._free_threaded_host)
         assert "cp313t" in {t.abi for t in tags.ordered}
 
+    @pytest.mark.parametrize("abi", ["cp314t", "cp314td"])
+    def test_free_threaded_host_python_excludes_standard_native_wheels(
+        self, abi: str
+    ) -> None:
+        host = (Tag("cp314", abi, "manylinux_2_17_x86_64"), Tag("py3", "none", "any"))
+        tags = TagSet.for_host_python("3.13", tags_source=lambda: host)
+        assert tags.accepts("demo-1.0-cp313-cp313t-manylinux_2_17_x86_64.whl")
+        assert not tags.accepts("demo-1.0-cp313-cp313-manylinux_2_17_x86_64.whl")
+        assert not tags.accepts("demo-1.0-cp310-abi3-manylinux_2_17_x86_64.whl")
+        assert tags.accepts("demo-1.0-py3-none-any.whl")
+
 
 class TestTagSetAccepts:
     """``accepts`` answers wheel compatibility from the filename alone."""

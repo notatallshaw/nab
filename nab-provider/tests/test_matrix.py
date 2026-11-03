@@ -740,7 +740,7 @@ class TestIncludedFreeThreadedBuilds:
             python=">=3.12,<3.14",
             platforms=(PlatformSpec("linux_x86_64"),),
             implementations=("cpython", "pypy"),
-            include_free_threaded=True,
+            python_builds=("standard", "free-threaded"),
         )
         targets = matrix.expand()
         assert [target.label for target in targets] == [
@@ -772,7 +772,7 @@ class TestIncludedFreeThreadedBuilds:
                 "cpython": ImplementationOverride(platforms=(spec,)),
                 "pypy": ImplementationOverride(python="==3.11"),
             },
-            include_free_threaded=True,
+            python_builds=("standard", "free-threaded"),
         )
         targets = matrix.expand()
         assert [target.label for target in targets] == [
@@ -791,13 +791,93 @@ class TestIncludedFreeThreadedBuilds:
             "demo-1.0-cp313-cp313t-manylinux_2_17_x86_64.whl"
         )
 
-    def test_an_explicit_free_threaded_platform_is_not_duplicated(self) -> None:
+    def test_an_explicit_free_threaded_platform_conflicts_with_builds(self) -> None:
+        with pytest.raises(ValueError, match="cannot be combined"):
+            Matrix(
+                python="==3.14",
+                platforms=(PlatformSpec("windows_amd64", free_threaded=True),),
+                python_builds=("standard", "free-threaded"),
+            ).expand()
+
+    @pytest.mark.parametrize("builds", [(), ("unknown",), ("standard", "standard")])
+    def test_invalid_build_selections(self, builds: tuple[str, ...]) -> None:
+        with pytest.raises(ValueError, match="python_builds must list"):
+            Matrix(
+                "==3.14", (PlatformSpec("linux_x86_64"),), python_builds=builds
+            ).expand()
+
+    @pytest.mark.parametrize(
+        ("python", "implementation"), [("==3.12", "cpython"), ("==3.14", "pypy")]
+    )
+    def test_free_threaded_only_requires_supported_targets(
+        self, python: str, implementation: str
+    ) -> None:
+        with pytest.raises(ValueError, match="free.threaded"):
+            Matrix(
+                python,
+                (PlatformSpec("linux_x86_64"),),
+                implementations=(implementation,),
+                python_builds=("free-threaded",),
+            ).expand()
+
+    @pytest.mark.parametrize(
+        "builds",
+        [
+            ("standard",),
+            ("free-threaded",),
+            ("standard", "free-threaded"),
+            ("free-threaded", "standard"),
+        ],
+    )
+    def test_selected_builds_and_order(self, builds: tuple[str, ...]) -> None:
         targets = Matrix(
-            python="==3.14",
-            platforms=(PlatformSpec("windows_amd64", free_threaded=True),),
-            include_free_threaded=True,
+            "==3.14", (PlatformSpec("linux_x86_64"),), python_builds=builds
         ).expand()
-        assert [target.label for target in targets] == ["py314-windows_amd64-ft"]
+        assert [
+            target.platform_spec.free_threaded
+            for target in targets
+            if target.platform_spec is not None
+        ] == [build == "free-threaded" for build in builds]
+        for target in targets:
+            threaded = target.label.endswith("-ft")
+            assert (
+                target.tags.accepts("demo-1.0-cp314-cp314t-manylinux_2_17_x86_64.whl")
+                is threaded
+            )
+            assert (
+                target.tags.accepts("demo-1.0-cp314-cp314-manylinux_2_17_x86_64.whl")
+                is not threaded
+            )
+            assert (
+                target.tags.accepts("demo-1.0-cp310-abi3-manylinux_2_17_x86_64.whl")
+                is not threaded
+            )
+            assert target.tags.accepts("demo-1.0-py3-none-any.whl")
+
+    def test_implementation_build_overrides_replace_shared_defaults(self) -> None:
+        targets = Matrix(
+            "==3.14",
+            (PlatformSpec("linux_x86_64"),),
+            implementations=("cpython", "pypy"),
+            python_builds=("free-threaded",),
+            implementation_overrides={
+                "pypy": ImplementationOverride(python_builds=("standard",))
+            },
+        ).expand()
+        assert [target.label for target in targets] == [
+            "py314-linux_x86_64-ft",
+            "pp314-linux_x86_64",
+        ]
+
+    def test_disabled_implementation_build_values_are_validated(self) -> None:
+        with pytest.raises(ValueError, match="python_builds must list"):
+            Matrix(
+                "==3.14",
+                (PlatformSpec("linux_x86_64"),),
+                implementation_overrides={
+                    "pypy": ImplementationOverride(python_builds=("unknown",))
+                },
+            ).expand()
 
 
 class TestTargetLabels:

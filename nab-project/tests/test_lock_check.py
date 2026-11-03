@@ -57,7 +57,7 @@ def _saved(
     targets = Matrix(
         python="==3.14",
         platforms=(PlatformSpec("linux_x86_64"),),
-        include_free_threaded=True,
+        python_builds=("standard", "free-threaded"),
     ).expand()
     forks, base = plan_project_inputs(path, inputs, targets)
     wheel = make_wheel("1", package="demo", hashes=(("sha256", "a" * 64),))

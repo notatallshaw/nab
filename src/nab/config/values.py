@@ -177,7 +177,7 @@ class MatrixConfig(ValueType):
         "python_patches",
         "implementations",
         "implementation_overrides",
-        "include_free_threaded",
+        "python_builds",
     )
 
     python: str
@@ -186,7 +186,7 @@ class MatrixConfig(ValueType):
     python_patches: Mapping[str, str] | None
     implementations: tuple[str, ...]
     implementation_overrides: Mapping[str, ImplementationOverride] | None
-    include_free_threaded: bool
+    python_builds: tuple[str, ...] | None
 
     def __init__(
         self,
@@ -197,7 +197,7 @@ class MatrixConfig(ValueType):
         implementations: tuple[str, ...] = ("cpython",),
         implementation_overrides: Mapping[str, ImplementationOverride] | None = None,
         *,
-        include_free_threaded: bool = False,
+        python_builds: tuple[str, ...] | None = None,
     ) -> None:
         """Record the axes ``[tool.nab.matrix]`` declared."""
         self.python = python
@@ -206,7 +206,7 @@ class MatrixConfig(ValueType):
         self.python_patches = python_patches
         self.implementations = implementations
         self.implementation_overrides = implementation_overrides
-        self.include_free_threaded = include_free_threaded
+        self.python_builds = python_builds
 
 
 def matrix_from_config(matrix: MatrixConfig) -> Matrix:
@@ -220,7 +220,7 @@ def matrix_from_config(matrix: MatrixConfig) -> Matrix:
         ),
         implementations=matrix.implementations,
         implementation_overrides=matrix.implementation_overrides,
-        include_free_threaded=matrix.include_free_threaded,
+        python_builds=matrix.python_builds,
     )
 
 
@@ -2078,7 +2078,7 @@ _MATRIX_KEYS = frozenset(
         "python-patches",
         "implementations",
         "overrides",
-        "include-free-threaded",
+        "python-builds",
     }
 )
 
@@ -2128,11 +2128,7 @@ def parse_matrix(
         python_patches=patches,
         implementations=implementations,
         implementation_overrides=implementation_overrides,
-        include_free_threaded=_parse_bool(
-            f"{where}.include-free-threaded",
-            value.get("include-free-threaded"),
-            default=False,
-        ),
+        python_builds=_parse_python_builds(value, where),
     )
     _validate_matrix_axes(config, where)
     return config
@@ -2198,9 +2194,12 @@ def _parse_implementation_body(
     body: Mapping[str, object], label: str, where: str, table: str, implementation: str
 ) -> ImplementationOverride:
     """Parse the axes one implementation replaces; omitted axes remain unset."""
-    unknown = sorted(set(body) - {"python", "platforms"})
+    unknown = sorted(set(body) - {"python", "platforms", "python-builds"})
     if unknown:
-        msg = f"{label} has unknown keys: {unknown!r}; expected ['platforms', 'python']"
+        msg = (
+            f"{label} has unknown keys: {unknown!r};"
+            " expected ['platforms', 'python', 'python-builds']"
+        )
         raise SourceConfigError(msg)
 
     python: str | None = None
@@ -2222,7 +2221,19 @@ def _parse_implementation_body(
         if "platforms" in body
         else None
     )
-    return ImplementationOverride(python=python, platforms=platforms)
+    return ImplementationOverride(
+        python=python,
+        platforms=platforms,
+        python_builds=_parse_python_builds(body, label),
+    )
+
+
+def _parse_python_builds(
+    body: Mapping[str, object], where: str
+) -> tuple[str, ...] | None:
+    if "python-builds" not in body:
+        return None
+    return parse_string_list(body["python-builds"], f"{where}.python-builds")
 
 
 def _validate_matrix_axes(config: MatrixConfig, where: str) -> None:
