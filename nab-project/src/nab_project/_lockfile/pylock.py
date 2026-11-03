@@ -543,16 +543,14 @@ def render_lock(lock_input: LockInput, *, lock_dir: Path | None = None) -> str:
     except PylockValidationError as e:
         raise LockValidationError(str(e)) from e
 
-    if lock_input.validation_inputs is not None and all(
-        target.validation_metadata is not None for target in lock_input.targets.values()
-    ):
+    if lock_input.validation_inputs is not None:
         nab = (
             lock_input.provenance.to_block()
             if lock_input.provenance is not None
             else {}
         )
         nab["validation"] = make_validation_record(
-            document, lock_input, (lock_dir or Path.cwd()).resolve()
+            document, lock_input.validation_inputs
         )
         document["tool"] = {"nab": nab}
     return tomli_w.dumps(document)

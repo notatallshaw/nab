@@ -41,9 +41,9 @@ without `created-at` anchors to the run time.
 
 ## Checking the lock in CI
 
-`nab lock --locked` checks the saved solution against current project inputs, using the
-artifact-bound dependency metadata recorded during locking. New releases and index availability do
-not affect this check. See [Use a lock](../how-to/use-the-lock.md) for CI setup and limitations.
+`nab lock --locked` checks current project inputs against the saved Pylock selections. Compact input
+fingerprints provide an unchanged-input fast path. New releases and index availability do not affect
+this check. See [Use a lock](../how-to/use-the-lock.md) for CI setup and limitations.
 
 To check whether a fresh resolve still produces the same result, use:
 

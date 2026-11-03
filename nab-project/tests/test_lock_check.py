@@ -10,29 +10,33 @@ import pytest
 import tomli_w
 
 from nab_project import toml_io
+from nab_project._resolve.engine import InstallContexts
 from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.inputs import ResolveInputs
 from nab_project.lock_check import (
     LockConsistencyError,
-    _case_targets,
+    _check_fixed_solution,
     _check_local_artifacts,
-    _local_metadata,
-    _validate_graph,
+    _check_target_slices,
+    _current_local_metadata,
+    _fork_selections,
     check_saved_lock,
 )
 from nab_project.lock_validation import (
     content_digest,
     snapshot_inputs,
-    validation_digest,
 )
 from nab_project.lockfile import render_lock
 from nab_project.resolve import (
+    ResolveFork,
     build_lock_input,
     plan_project_inputs,
     resolve_with_coordinator,
 )
 from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.version import Version
+from nab_provider.metadata import parse_metadata
 from nab_provider.overrides import PackageOverride
 from nab_provider.pep508 import parse_requirement
 from nab_provider.policy import LocalSource
@@ -131,63 +135,8 @@ def test_constraints_cover_active_packages_and_micro_slices(
 
 
 def _replace_record(lock: Path, document: dict[str, Any]) -> None:
-    """Reseal a deliberately edited record to exercise its inner checks."""
-    record = document["tool"]["nab"]["validation"]
-    record["record-sha256"] = validation_digest(
-        {key: value for key, value in record.items() if key != "record-sha256"}
-    )
+    """Write edited machine data to exercise standard field checks."""
     lock.write_text(tomli_w.dumps(document))
-
-
-@pytest.mark.parametrize(
-    "change",
-    [
-        "record",
-        "contents",
-        "inputs",
-        "metadata",
-        "missing",
-        "version",
-        "tool",
-        "selection",
-        "target",
-    ],
-)
-def test_invalid_evidence_is_refused(tmp_path: Path, change: str) -> None:
-    case = _saved(tmp_path)
-    lock = case[0]
-    document = toml_io.load_path(lock)
-    record = document["tool"]["nab"]["validation"]
-    if change == "record":
-        record["cacheable"] = False
-        lock.write_text(
-            lock.read_text().replace("cacheable = true", "cacheable = false")
-        )
-    elif change == "contents":
-        lock.write_text(
-            lock.read_text().replace('"' + "a" * 64 + '"', '"' + "b" * 64 + '"')
-        )
-    elif change == "missing":
-        lock.write_text(lock.read_text().split("[tool.nab.validation]")[0])
-    else:
-        if change == "inputs":
-            record["inputs-sha256"] = "invalid"
-        elif change == "metadata":
-            next(iter(record["metadata"].values()))["version"] = "2"
-        elif change == "version":
-            record["version"] = 999
-        elif change == "tool":
-            document["tool"]["nab"]["validation"] = []
-            lock.write_text(tomli_w.dumps(document))
-        elif change == "selection":
-            record["targets"][0]["selection"] = [["group", "absent"]]
-        elif change == "target":
-            record["targets"][0]["environment"]["python_version"] = "3.99"
-        if change != "tool":
-            _replace_record(lock, document)
-        case[1].write_text(case[1].read_text().replace("demo>=1", "demo>=0"))
-    with pytest.raises(LockConsistencyError):
-        _check(case)
 
 
 @pytest.mark.parametrize(
@@ -220,49 +169,6 @@ def test_missing_and_malformed_locks(tmp_path: Path) -> None:
         _check(case)
 
 
-def test_transitive_versions_extras_and_cycles_are_checked() -> None:
-    metadata = {
-        "demo": {
-            "version": "1",
-            "provides-extra": ["feature"],
-            "requires-dist": [
-                'dep>=2; extra == "feature"',
-                'absent; sys_platform == "win32"',
-            ],
-        },
-        "dep": {
-            "version": "2",
-            "provides-extra": [],
-            "requires-dist": ["demo[feature]>=1"],
-        },
-    }
-    environment = ResolveTarget.for_host().marker_env | {"sys_platform": "linux"}
-    _validate_graph(
-        metadata,
-        [parse_requirement("demo[feature]"), parse_requirement("demo[feature]")],
-        ["dep<3"],
-        environment,
-    )
-    _validate_graph(
-        metadata,
-        [parse_requirement('missing; sys_platform == "win32"')],
-        [],
-        environment,
-    )
-    with pytest.raises(LockConsistencyError, match="missing missing"):
-        _validate_graph(metadata, [parse_requirement("missing")], [], environment)
-    metadata["dep"]["version"] = "1"
-    with pytest.raises(LockConsistencyError, match="dep==1 does not satisfy"):
-        _validate_graph(metadata, [parse_requirement("demo[feature]")], [], environment)
-    with pytest.raises(LockConsistencyError, match="URL constraints"):
-        _validate_graph(
-            metadata,
-            [parse_requirement("demo")],
-            ["demo @ https://example.com/demo.whl"],
-            environment,
-        )
-
-
 @pytest.mark.parametrize(
     "change",
     ["name", "dynamic", "requires-python", "dependencies", "optional-dependencies"],
@@ -285,54 +191,8 @@ def test_local_topology_changes_need_update(tmp_path: Path, change: str) -> None
         if change in {"dynamic", "dependencies"}
         else "changed"
     )
-    with pytest.raises(LockConsistencyError, match="local"):
+    with pytest.raises(LockConsistencyError, match="changed|dynamic"):
         check_saved_lock(lock, path, current, inputs, targets)
-
-
-def test_static_local_metadata_is_refreshed_without_hiding_dynamic_metadata() -> None:
-    original = {"local": {"name": "local", "version": "1", "dependencies": ["demo>=1"]}}
-    current = {
-        "local": {
-            "local": {"name": "local", "version": "2", "dependencies": ["demo<2"]}
-        }
-    }
-    metadata = {
-        "local": {
-            "name": "local",
-            "version": "1",
-            "requires-dist": ["demo>=1"],
-            "provides-extra": [],
-        }
-    }
-    result = _local_metadata(metadata, current, {"local": original}, ResolveInputs())
-    assert result["local"]["version"] == "2"
-    assert result["local"]["requires-dist"] == ["demo<2"]
-    assert metadata["local"]["version"] == "1"
-    assert (
-        _local_metadata(
-            metadata, {"local": original}, {"local": original}, ResolveInputs()
-        )
-        == metadata
-    )
-    assert _local_metadata({}, current, {"local": original}, ResolveInputs()) == {}
-    override = ResolveInputs(
-        package_overrides=(
-            PackageOverride(
-                name="local",
-                requirement=parse_requirement("local"),
-                version_range=VersionRange.full(),
-                dependencies=(parse_requirement("demo>=1"),),
-            ),
-        )
-    )
-    with pytest.raises(LockConsistencyError, match="overrides"):
-        _local_metadata(metadata, current, {"local": original}, override)
-    current["local"]["local"]["dynamic"] = ["version"]
-    with pytest.raises(LockConsistencyError, match="dynamic"):
-        _local_metadata(metadata, current, current, ResolveInputs())
-    current["local"]["local"] = {"name": "local"}
-    with pytest.raises(LockConsistencyError, match="cannot read static"):
-        _local_metadata(metadata, current, {"local": original}, ResolveInputs())
 
 
 @pytest.mark.parametrize("location", ["path", "url"])
@@ -359,19 +219,6 @@ def test_local_artifact_bytes_are_checked(
         _check(case)
 
 
-def test_micro_slices_keep_the_recorded_interval(tmp_path: Path) -> None:
-    lock, _, _, targets = _saved(tmp_path)
-    record = toml_io.load_path(lock)["tool"]["nab"]["validation"]["targets"][0]
-    record["micro-clauses"] = ['python_full_version >= "3.14.5"']
-    record["environment"]["python_full_version"] = "3.14.5"
-    assert [
-        target.marker_env["python_full_version"]
-        for target in _case_targets(record, targets, [])
-    ] == ["3.14.5"]
-    record["concrete-micro"] = True
-    assert _case_targets(record, targets, []) == [targets[0]]
-
-
 def test_local_extra_bounds_can_change_without_changing_selection(
     tmp_path: Path,
 ) -> None:
@@ -388,7 +235,7 @@ def test_local_extra_bounds_can_change_without_changing_selection(
     source.write_text(source.read_text().replace("demo>=1", "demo<2"))
     _check(case)
     source.write_text(source.read_text().replace("demo<2", "other"))
-    with pytest.raises(LockConsistencyError, match="local extras"):
+    with pytest.raises(LockConsistencyError, match="changed"):
         _check(case)
 
 
@@ -427,18 +274,200 @@ def test_repeated_paths_check_every_declared_hash(
             _check_local_artifacts(parsed, tmp_path)
 
 
-def test_graph_preserves_base_dependencies_and_individual_extra_semantics() -> None:
-    metadata = {
-        "demo": {
-            "version": "1",
-            "provides-extra": ["feature", "other"],
-            "requires-dist": ['absent; extra == "feature" and extra == "other"'],
-        },
-        "dep": {"version": "1", "provides-extra": [], "requires-dist": []},
+@pytest.mark.parametrize(
+    "change", ["contents", "missing", "version", "tool", "missing-field"]
+)
+def test_invalid_evidence_is_refused(tmp_path: Path, change: str) -> None:
+    case = _saved(tmp_path)
+    document = toml_io.load_path(case[0])
+    record = document["tool"]["nab"]["validation"]
+    if change == "contents":
+        document["packages"][0]["wheels"][0]["hashes"]["sha256"] = "b" * 64
+    elif change == "missing":
+        del document["tool"]["nab"]["validation"]
+    elif change == "version":
+        record["version"] = 999
+    elif change == "tool":
+        document["tool"]["nab"]["validation"] = []
+    else:
+        del record["inputs-sha256"]
+    _replace_record(case[0], document)
+    with pytest.raises(LockConsistencyError):
+        _check(case)
+
+
+def test_current_local_metadata_is_static_and_not_overridden() -> None:
+    current = {
+        "local": {
+            "local": {"name": "local", "version": "2", "dependencies": ["demo<2"]}
+        }
     }
-    roots = [parse_requirement("demo[feature,other]")]
+    parsed = _current_local_metadata(current, ResolveInputs())
+    assert parsed["local"].version == Version("2")
+    assert [str(req) for req in parsed["local"].requires_dist] == ["demo<2"]
+    override = PackageOverride(
+        name="local",
+        requirement=parse_requirement("local"),
+        version_range=VersionRange.full(),
+        dependencies=(parse_requirement("demo>=1"),),
+    )
+    with pytest.raises(LockConsistencyError, match="overrides"):
+        _current_local_metadata(current, ResolveInputs(package_overrides=(override,)))
+    current["local"]["local"] = {"name": "local"}
+    with pytest.raises(LockConsistencyError, match="cannot read static"):
+        _current_local_metadata(current, ResolveInputs())
+
+
+def test_fixed_solution_checks_local_cycles_extras_and_omitted_members() -> None:
+    local = {
+        "local": parse_metadata(
+            make_metadata(
+                "local",
+                "2",
+                "demo>=1",
+                'other>=2; extra == "feature"',
+                provides_extra=["feature"],
+            )
+        ),
+        "other": parse_metadata(make_metadata("other", "2", "local[feature]>=2")),
+    }
     environment = ResolveTarget.for_host().marker_env
-    _validate_graph(metadata, roots, [], environment)
-    metadata["demo"]["requires-dist"] = ['dep>=2; extra != "feature"']
-    with pytest.raises(LockConsistencyError, match="dep==1 does not satisfy"):
-        _validate_graph(metadata, roots, [], environment)
+    _check_fixed_solution(
+        {"demo": Version("1"), "other": None},
+        local,
+        [parse_requirement("local[feature]>=2")],
+        [parse_requirement("other<3")],
+        ["local"],
+        environment,
+    )
+    with pytest.raises(LockConsistencyError, match="missing"):
+        _check_fixed_solution(
+            {"demo": Version("1")},
+            local,
+            [parse_requirement("local")],
+            [],
+            [],
+            environment,
+        )
+    with pytest.raises(LockConsistencyError, match="does not satisfy"):
+        _check_fixed_solution(
+            {"demo": Version("1")},
+            local,
+            [parse_requirement("local[feature]>=3")],
+            [],
+            ["local"],
+            environment,
+        )
+    _check_fixed_solution(
+        {},
+        {},
+        [parse_requirement('missing; python_version < "0"')],
+        [],
+        [],
+        environment,
+    )
+
+
+def test_opaque_versions_are_not_guessed() -> None:
+    environment = ResolveTarget.for_host().marker_env
+    with pytest.raises(LockConsistencyError, match="cannot verify the version"):
+        _check_fixed_solution(
+            {"demo": None}, {}, [parse_requirement("demo>=1")], [], [], environment
+        )
+    with pytest.raises(LockConsistencyError, match="URL constraints"):
+        _check_fixed_solution(
+            {"demo": Version("1")},
+            {},
+            [],
+            [parse_requirement("demo @ https://example.com/demo.whl")],
+            [],
+            environment,
+        )
+
+
+def test_local_extra_conditions_match_provider_semantics() -> None:
+    environment = ResolveTarget.for_host().marker_env
+    local = {
+        "local": parse_metadata(
+            make_metadata(
+                "local",
+                "1",
+                'missing; extra == "a" and extra == "b"',
+                provides_extra=["a", "b"],
+            )
+        )
+    }
+    roots = [parse_requirement("local[a,b]"), parse_requirement("local[a,b]")]
+    _check_fixed_solution({"local": None}, local, roots, [], [], environment)
+    local["local"] = parse_metadata(
+        make_metadata("local", "1", 'demo>=2; extra != "a"', provides_extra=["a", "b"])
+    )
+    with pytest.raises(LockConsistencyError, match="does not satisfy"):
+        _check_fixed_solution(
+            {"local": None, "demo": Version("1")}, local, roots, [], [], environment
+        )
+
+
+def test_fork_selections_preserve_named_base_and_joint_contexts() -> None:
+    contexts = InstallContexts(
+        project=(parse_requirement("demo"),),
+        selectors={("extra", "feature"): (), ("group", "dev"): ()},
+        name_project=True,
+    )
+    fork = ResolveFork((), (parse_requirement("demo"),), contexts)
+    assert _fork_selections(fork, ResolveInputs(base_group="runtime")) == (
+        {"feature"},
+        {"runtime", "dev"},
+    )
+    assert _fork_selections(ResolveFork((("group", "dev"),), ()), ResolveInputs()) == (
+        set(),
+        {"dev"},
+    )
+
+
+def test_standard_markers_supply_micro_boundaries(tmp_path: Path) -> None:
+    case = _saved(tmp_path)
+    lock = Pylock.from_dict(toml_io.load_path(case[0]))
+    slices = list(
+        _check_target_slices(
+            lock,
+            case[3][0],
+            [parse_requirement('demo; python_full_version >= "3.14.5"')],
+        )
+    )
+    assert [target.marker_env["python_full_version"] for target in slices] == [
+        "3.14.0",
+        "3.14.5",
+    ]
+    concrete = ResolveTarget.for_host()
+    assert list(_check_target_slices(lock, concrete, [])) == [concrete]
+
+
+def test_standard_artifact_size_is_checked(tmp_path: Path) -> None:
+    case = _saved(tmp_path)
+    document = toml_io.load_path(case[0])
+    artifact = tmp_path / "demo-1-py3-none-any.whl"
+    artifact.write_bytes(b"local artifact")
+    wheel = document["packages"][0]["wheels"][0]
+    wheel.pop("url")
+    wheel["path"] = artifact.name
+    wheel["size"] = artifact.stat().st_size
+    wheel["hashes"] = {"sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}
+    _check_local_artifacts(Pylock.from_dict(document), tmp_path)
+    wheel["size"] += 1
+    with pytest.raises(LockConsistencyError, match="unexpected size"):
+        _check_local_artifacts(Pylock.from_dict(document), tmp_path)
+
+
+def test_standard_requires_python_keeps_every_admitted_micro_slice(
+    tmp_path: Path,
+) -> None:
+    case = _saved(tmp_path)
+    document = toml_io.load_path(case[0])
+    document["requires-python"] = ">=3.14.3"
+    lock = Pylock.from_dict(document)
+    requirements = [parse_requirement('demo; python_full_version >= "3.14.5"')]
+    assert [
+        target.marker_env["python_full_version"]
+        for target in _check_target_slices(lock, case[3][0], requirements)
+    ] == ["3.14.3", "3.14.5"]

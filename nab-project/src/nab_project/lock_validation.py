@@ -1,4 +1,4 @@
-"""Producer records for checking a saved solution without choosing new versions."""
+"""Compact fingerprints for checking a saved solution without choosing new versions."""
 
 from __future__ import annotations
 
@@ -43,23 +43,21 @@ from .pyproject_files import (
 from .value import ValueType
 
 if TYPE_CHECKING:
-    from nab_provider.metadata import WheelMetadata
     from nab_provider.target import ResolveTarget
 
     from .inputs import ResolveInputs
-    from .lockfile import LockInput
 
 __all__ = [
     "VALIDATION_VERSION",
-    "capture_metadata",
     "content_digest",
     "make_validation_record",
+    "shape_digest",
     "snapshot_inputs",
     "validation_digest",
 ]
 
 # This versions the validation format, independently of Nab's release number.
-VALIDATION_VERSION = 1
+VALIDATION_VERSION = 2
 _PREFERENCES = frozenset({"resolution", "decision_order", "constraints"})
 _DERIVED_FIELDS = frozenset({"version_range", "source_label", "name_keyed"})
 
@@ -171,28 +169,54 @@ def validation_digest(value: object) -> str:
 
 
 def content_digest(document: Mapping[str, Any]) -> str:
-    """Hash install content, excluding disposable producer data."""
-    content = {key: value for key, value in document.items() if key != "tool"}
-    return validation_digest(content)
+    """Bind producer data to standard installer fields."""
+    return validation_digest(
+        {key: value for key, value in document.items() if key != "tool"}
+    )
 
 
-def capture_metadata(
-    metadata: Mapping[tuple[str, Version], WheelMetadata], pins: Mapping[str, Version]
-) -> dict[str, dict[str, Any]]:
-    """Freeze effective metadata before a target's provider is released."""
-    return {
-        name: {
-            "name": name,
-            "version": str(version),
-            "requires-python": str(item.requires_python or ""),
-            "requires-dist": sorted(str(req) for req in item.requires_dist),
-            "provides-extra": sorted(
-                canonicalize_name(extra) for extra in item.provides_extra
-            ),
+def _declaration_shapes(requirements: Sequence[str]) -> list[str]:
+    """Retain dependency identities without their version bounds."""
+    result = set()
+    for text in requirements:
+        requirement = parse_requirement(text)
+        requirement.name = canonicalize_name(requirement.name)
+        requirement.extras = {canonicalize_name(extra) for extra in requirement.extras}
+        requirement.specifier = SpecifierSet()
+        result.add(str(requirement))
+    return sorted(result)
+
+
+def shape_digest(inputs: Mapping[str, Any]) -> str:
+    """Hash selection and policy, ignoring bounds and local versions."""
+    local = {}
+    for name, project in inputs["local"].items():
+        fields = {
+            key: value
+            for key, value in project.items()
+            if key not in {"version", "dependencies", "optional-dependencies"}
         }
-        for name, version in sorted(pins.items())
-        for item in (metadata[(name, version)],)
+        local[name] = {
+            **fields,
+            "dependencies": _declaration_shapes(project.get("dependencies", [])),
+            "optional-dependencies": {
+                extra: _declaration_shapes(requirements)
+                for extra, requirements in project.get(
+                    "optional-dependencies", {}
+                ).items()
+            },
+        }
+    shape = {
+        key: value
+        for key, value in inputs.items()
+        if key not in {"roots", "constraints", "local"}
     }
+    shape["roots"] = {
+        scope: _declaration_shapes(requirements)
+        for scope, requirements in inputs["roots"].items()
+    }
+    shape["local"] = local
+    return validation_digest(shape)
 
 
 def _project_inputs(path: Path) -> dict[str, Any]:
@@ -307,43 +331,12 @@ def snapshot_inputs(
 
 
 def make_validation_record(
-    document: Mapping[str, Any], lock_input: LockInput, base: Path
+    document: Mapping[str, Any], inputs: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """Bind per-target dependency evidence to the exact emitted artifact choices."""
-    metadata: dict[str, Any] = {}
-    metadata_sets: dict[str, Any] = {}
-    targets = []
-    for label, target_lock in sorted(lock_input.targets.items()):
-        selected: dict[str, str] = {}
-        for name, item in sorted((target_lock.validation_metadata or {}).items()):
-            normalized = _value(item, base)
-            key = hashlib.sha256(_json(normalized).encode()).hexdigest()
-            metadata[key] = normalized
-            selected[name] = key
-        selected_key = hashlib.sha256(_json(selected).encode()).hexdigest()
-        metadata_sets[selected_key] = selected
-        targets.append(
-            {
-                "label": label,
-                "environment": dict(target_lock.target.marker_env),
-                "selection": [list(member) for member in target_lock.target.selection],
-                "micro-clauses": list(target_lock.target.micro_clauses),
-                "platform": _value(target_lock.target.platform_spec, base) or {},
-                "concrete-micro": target_lock.target.concrete_micro,
-                "metadata-set": selected_key,
-            }
-        )
-    inputs = lock_input.validation_inputs
-    record = {
+    """Keep fingerprints while leaving package selections in standard Pylock fields."""
+    return {
         "version": VALIDATION_VERSION,
-        "inputs": inputs,
-        "inputs-sha256": hashlib.sha256(_json(inputs).encode()).hexdigest(),
+        "inputs-sha256": validation_digest(inputs),
+        "shape-sha256": shape_digest(inputs),
         "contents-sha256": content_digest(document),
-        "metadata": metadata,
-        "metadata-sets": metadata_sets,
-        "targets": targets,
-        "cacheable": inputs is not None
-        and all(not local.get("dynamic") for local in inputs["local"].values()),
     }
-    record["record-sha256"] = hashlib.sha256(_json(record).encode()).hexdigest()
-    return record

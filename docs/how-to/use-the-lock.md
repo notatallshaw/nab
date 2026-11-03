@@ -84,12 +84,13 @@ nab lock --locked pyproject.toml
 ```
 
 The check validates the saved solution without resolving, writing, or contacting indexes. Compatible
-bound changes pass; changed sources, targets or dependency selections require a new lock. Local
-artifact hashes and static local project metadata are checked afresh.
+bound changes are checked against saved versions. Changed sources, targets or dependency selections
+need a new lock.
 
-Older or foreign locks without a supported validation record need regeneration with `nab lock`.
-Dynamic local metadata also requires regeneration. Use `--reproduce` when you want a fresh resolve
-and comparison instead; see [Reproducible locks](../reference/reproducibility.md).
+Local artifact sizes and hashes and static local metadata are checked afresh. Locks without
+supported fingerprints and changed inputs needing dynamic metadata, local metadata overrides or
+unavailable source versions require regeneration. Use `--reproduce` for a fresh resolve and
+comparison; see [Reproducible locks](../reference/reproducibility.md).
 
 ## Download after a fresh resolve
 

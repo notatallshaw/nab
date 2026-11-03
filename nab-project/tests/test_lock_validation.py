@@ -13,9 +13,10 @@ from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.inputs import ResolveInputs
 from nab_project.lock_validation import (
     _value,
-    capture_metadata,
     content_digest,
+    shape_digest,
     snapshot_inputs,
+    validation_digest,
 )
 from nab_project.lockfile import build_pylock, render_lock
 from nab_project.resolve import build_lock_input, resolve_with_coordinator
@@ -23,7 +24,6 @@ from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
-from nab_provider.metadata import WheelMetadata
 from nab_provider.overrides import PackageOverride
 from nab_provider.pep508 import parse_requirement
 from nab_provider.policy import DecisionOrder, LocalSource, ResolutionStrategy
@@ -136,21 +136,6 @@ def test_dynamic_local_metadata_does_not_claim_static_inputs(tmp_path: Path) -> 
     assert result["local"]["local"]["dynamic"] == ["dependencies", "version"]
 
 
-def test_metadata_capture_is_an_independent_snapshot() -> None:
-    item = WheelMetadata(
-        "demo",
-        Version("1"),
-        requires_python=SpecifierSet(">=3.10"),
-        requires_dist=[parse_requirement("dep>=2")],
-        provides_extra=["Feature_Name"],
-    )
-    captured = capture_metadata({("demo", Version("1")): item}, {"demo": Version("1")})
-    item.requires_dist.clear()
-    assert captured["demo"]["requires-dist"] == ["dep>=2"]
-    assert captured["demo"]["requires-python"] == ">=3.10"
-    assert captured["demo"]["provides-extra"] == ["feature-name"]
-
-
 def test_real_target_metadata_roundtrips_without_affecting_selection(
     tmp_path: Path,
 ) -> None:
@@ -164,7 +149,6 @@ def test_real_target_metadata_roundtrips_without_affecting_selection(
         port,
         targets,
         [parse_requirement("demo>=1")],
-        include_dependency_requirements=True,
     )
     assert result.success
     lock_input = build_lock_input(result)
@@ -172,10 +156,14 @@ def test_real_target_metadata_roundtrips_without_affecting_selection(
     document = toml_io.loads(render_lock(lock_input, lock_dir=tmp_path))
     record = document["tool"]["nab"]["validation"]
     assert record["contents-sha256"] == content_digest(document)
-    assert len(record["metadata"]) == 1
-    assert len(record["targets"]) == 2
-    assert record["targets"][0]["platform"]["free_threaded"] is False
-    assert record["targets"][1]["platform"]["free_threaded"] is True
+    assert set(record) == {
+        "version",
+        "inputs-sha256",
+        "shape-sha256",
+        "contents-sha256",
+    }
+    assert record["inputs-sha256"] == validation_digest(lock_input.validation_inputs)
+    assert record["shape-sha256"] == shape_digest(lock_input.validation_inputs)
     parsed = Pylock.from_dict(document)
     parsed.validate()
     original = build_pylock(lock_input)
@@ -189,11 +177,6 @@ def test_real_target_metadata_roundtrips_without_affecting_selection(
         assert [(pkg.name, pkg.version, dist) for pkg, dist in actual] == [
             (pkg.name, pkg.version, dist) for pkg, dist in expected
         ]
-    assert record["cacheable"] is True
-    assert len(record["metadata-sets"]) == 1
-    lock_input.validation_inputs["local"]["app"] = {"dynamic": ["version"]}
-    dynamic = toml_io.loads(render_lock(lock_input, lock_dir=tmp_path))
-    assert dynamic["tool"]["nab"]["validation"]["cacheable"] is False
     before = record["contents-sha256"]
     document["packages"][0]["version"] = "2"
     assert content_digest(document) != before
@@ -282,3 +265,67 @@ def test_workspace_root_without_project_can_record_groups(tmp_path: Path) -> Non
     path.write_text('[dependency-groups]\ndev=["pytest>=9"]\n')
     snapshot = snapshot_inputs(path, ResolveInputs(), _targets(), groups=["dev"])
     assert snapshot["roots"] == {"base": [], "group:dev": ["pytest>=9"]}
+
+
+def test_shape_fingerprint_allows_only_bounds_and_local_versions(
+    tmp_path: Path,
+) -> None:
+    path = _project(tmp_path)
+    local = tmp_path / "local"
+    local.mkdir()
+    metadata = _project(
+        local, '[project.optional-dependencies]\nfeature=["other>=1"]\n'
+    )
+    inputs = ResolveInputs(local_sources=(LocalSource("app", str(local)),))
+    original = snapshot_inputs(path, inputs, _targets())
+    path.write_text(path.read_text().replace("demo >= 1", "demo<4"))
+    metadata.write_text(
+        metadata.read_text()
+        .replace('version="1"', 'version="2"')
+        .replace("demo >= 1", "demo<5")
+        .replace("other>=1", "other<3")
+    )
+    changed = snapshot_inputs(path, inputs, _targets())
+    assert validation_digest(original) != validation_digest(changed)
+    assert shape_digest(original) == shape_digest(changed)
+    constrained = snapshot_inputs(
+        path, inputs.replace(constraints=("demo<3",)), _targets()
+    )
+    assert shape_digest(original) == shape_digest(constrained)
+
+    metadata.write_text(metadata.read_text().replace("other<3", "new[extra]"))
+    assert shape_digest(original) != shape_digest(
+        snapshot_inputs(path, inputs, _targets())
+    )
+
+
+@pytest.mark.parametrize(
+    "requirement",
+    [
+        "new",
+        "demo[feature]>=1",
+        'demo>=1; python_version < "3.15"',
+        "demo @ https://example.com/demo.whl",
+    ],
+)
+def test_shape_fingerprint_retains_dependency_selection(
+    tmp_path: Path, requirement: str
+) -> None:
+    path = _project(tmp_path)
+    original = snapshot_inputs(path, ResolveInputs(), _targets())
+    path.write_text(
+        '[project]\nname="app"\nversion="1"\ndependencies='
+        + json.dumps([requirement])
+        + "\n"
+    )
+    assert shape_digest(original) != shape_digest(
+        snapshot_inputs(path, ResolveInputs(), _targets())
+    )
+
+
+def test_shape_fingerprint_retains_targets_sources_and_policy(tmp_path: Path) -> None:
+    path = _project(tmp_path)
+    original = snapshot_inputs(path, ResolveInputs(), _targets())
+    for field in ("policy-sha256", "targets", "excluded", "build-requirements"):
+        changed = {**original, field: "changed"}
+        assert shape_digest(original) != shape_digest(changed)

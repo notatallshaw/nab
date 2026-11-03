@@ -1,4 +1,4 @@
-"""Check the saved solution without discovering replacement package versions."""
+"""Check saved pins using standard Pylock selections and current declarations."""
 
 from __future__ import annotations
 
@@ -9,97 +9,51 @@ from nab_index.file_urls import is_file_url, parse_file_url
 from nab_provider._vendor.packaging.markers import Marker, prepare_environment
 from nab_provider._vendor.packaging.pylock import (
     Pylock,
+    PylockSelectError,
     PylockValidationError,
 )
 from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.conflict_kind import EMPTY_MEMBERSHIP_SETS
 from nab_provider.environment import classify_dependency
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.pep508 import parse_requirement
 from nab_provider.records import select_artifact_hash
-from nab_provider.tags import PlatformSpec
 from nab_provider.target import micro_boundary_points, slices_from_points
 
 from . import toml_io
 from .build_backend import project_metadata
 from .lock_validation import (
     VALIDATION_VERSION,
-    capture_metadata,
     content_digest,
+    shape_digest,
     validation_digest,
 )
 from .resolve import plan_project_inputs
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
+    from collections.abc import Set as AbstractSet
     from pathlib import Path
 
+    from nab_provider._vendor.packaging.markers import Environment
     from nab_provider._vendor.packaging.pylock import (
         PackageArchive,
         PackageSdist,
         PackageWheel,
     )
     from nab_provider._vendor.packaging.requirements import Requirement
+    from nab_provider._vendor.packaging.version import Version
+    from nab_provider.metadata import WheelMetadata
     from nab_provider.target import ResolveTarget
 
     from .inputs import ResolveInputs
+    from .resolve import ResolveFork
 
 __all__ = ["LockConsistencyError", "check_saved_lock"]
 
 
 class LockConsistencyError(ValueError):
-    """A committed solution cannot satisfy or verify the current inputs."""
-
-
-def _identity(text: str) -> tuple[object, ...]:
-    """Keep selection topology separate from a requirement's version bounds."""
-    req = parse_requirement(text)
-    return (
-        canonicalize_name(req.name),
-        tuple(sorted(req.extras)),
-        str(req.marker or ""),
-        req.url,
-    )
-
-
-def _same_declarations(old: Sequence[str], new: Sequence[str]) -> bool:
-    return {_identity(text) for text in old} == {_identity(text) for text in new}
-
-
-def _check_changed_inputs(old: Mapping[str, Any], current: Mapping[str, Any]) -> None:
-    """Admit bound edits while retaining the recorded selection topology."""
-    for field in ("policy-sha256", "targets", "excluded", "build-requirements"):
-        if old[field] != current[field]:
-            msg = f"{field} changed; update the lock"
-            raise LockConsistencyError(msg)
-    if old["roots"].keys() != current["roots"].keys() or any(
-        not _same_declarations(old["roots"][scope], current["roots"][scope])
-        for scope in old["roots"]
-    ):
-        msg = "dependency selections changed; update the lock"
-        raise LockConsistencyError(msg)
-    if old["local"].keys() != current["local"].keys():
-        msg = "local source declarations changed; update the lock"
-        raise LockConsistencyError(msg)
-    for name, previous in old["local"].items():
-        now = current["local"][name]
-        for field in ("name", "dynamic", "requires-python"):
-            if previous.get(field) != now.get(field):
-                msg = f"local metadata for {name} changed; update the lock"
-                raise LockConsistencyError(msg)
-        if not _same_declarations(
-            previous.get("dependencies", []), now.get("dependencies", [])
-        ):
-            msg = f"local dependencies for {name} changed; update the lock"
-            raise LockConsistencyError(msg)
-        before = previous.get("optional-dependencies", {})
-        after = now.get("optional-dependencies", {})
-        if before.keys() != after.keys() or any(
-            not _same_declarations(before[k], after[k]) for k in before
-        ):
-            msg = f"local extras for {name} changed; update the lock"
-            raise LockConsistencyError(msg)
+    """A saved solution cannot satisfy or verify the current inputs."""
 
 
 def _check_local_artifacts(lock: Pylock, base: Path) -> None:
@@ -118,6 +72,9 @@ def _check_local_artifacts(lock: Pylock, base: Path) -> None:
                 path = parse_file_url(artifact.url)
             if path is None:
                 continue
+            if artifact.size is not None and path.stat().st_size != artifact.size:
+                message = f"local artifact has unexpected size: {path}"
+                raise LockConsistencyError(message)
             selected_hash = select_artifact_hash(tuple(artifact.hashes.items()))
             if selected_hash is None:
                 msg = f"no supported hash for local artifact {path}"
@@ -136,40 +93,26 @@ def _check_local_artifacts(lock: Pylock, base: Path) -> None:
                 raise LockConsistencyError(msg)
 
 
-def _record(document: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    """Accept evidence only when both the record and install content are intact."""
+def _record(document: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Check that supported fingerprints belong to this standard Pylock document."""
     tool = document.get("tool", {})
     nab: Mapping[str, Any] = tool.get("nab", {}) if isinstance(tool, dict) else {}
     record = nab.get("validation") if isinstance(nab, dict) else None
     if not isinstance(record, dict) or record.get("version") != VALIDATION_VERSION:
-        return None
-    content = {key: value for key, value in record.items() if key != "record-sha256"}
-    if validation_digest(content) != record.get("record-sha256"):
-        msg = "validation record changed; update the lock"
-        raise LockConsistencyError(msg)
-    if content_digest(document) != record.get("contents-sha256"):
-        msg = "validation record does not match the lock contents"
-        raise LockConsistencyError(msg)
-    if validation_digest(record["inputs"]) != record["inputs-sha256"]:
-        msg = "validation inputs do not match their digest"
-        raise LockConsistencyError(msg)
+        message = "no supported validation record; regenerate the lock"
+        raise LockConsistencyError(message)
+    if content_digest(document) != record["contents-sha256"]:
+        message = "validation record does not match the lock contents"
+        raise LockConsistencyError(message)
     return record
 
 
-def _local_metadata(
-    metadata: Mapping[str, Mapping[str, Any]],
-    current: Mapping[str, Any],
-    previous: Mapping[str, Any],
-    inputs: ResolveInputs,
-) -> dict[str, Mapping[str, Any]]:
-    """Refresh static local declarations while retaining immutable package metadata."""
-    result = dict(metadata)
+def _current_local_metadata(
+    current: Mapping[str, Any], inputs: ResolveInputs
+) -> dict[str, WheelMetadata]:
+    """Read local declarations that can be checked without provider overrides."""
+    metadata = {}
     for name, project in current["local"].items():
-        if project.get("dynamic"):
-            msg = f"{name} has dynamic local metadata; update the lock"
-            raise LockConsistencyError(msg)
-        if name not in result or project == previous["local"].get(name):
-            continue
         if any(
             override.name == name
             and (
@@ -179,28 +122,97 @@ def _local_metadata(
             )
             for override in inputs.package_overrides
         ):
-            msg = f"local metadata overrides for {name} require a lock update"
-            raise LockConsistencyError(msg)
+            message = f"local metadata overrides for {name} require a lock update"
+            raise LockConsistencyError(message)
         parsed = project_metadata(dict(project))
         if parsed is None:
-            msg = f"cannot read static local metadata for {name}"
-            raise LockConsistencyError(msg)
-        result[name] = capture_metadata(
-            {(name, parsed.version): parsed}, {name: parsed.version}
-        )[name]
-    return result
+            message = f"cannot read static local metadata for {name}"
+            raise LockConsistencyError(message)
+        metadata[name] = parsed
+    return metadata
 
 
-def _validate_graph(
-    metadata: Mapping[str, Mapping[str, Any]],
+def _fork_selections(
+    fork: ResolveFork, inputs: ResolveInputs
+) -> tuple[set[str], set[str]]:
+    """Select the contexts a fork carries in one Pylock environment."""
+    contexts = fork.contexts
+    members = (
+        contexts.selectors if contexts is not None else dict.fromkeys(fork.selection)
+    )
+    extras = {name for kind, name in members if kind == "extra"}
+    groups = {name for kind, name in members if kind == "group"}
+    if contexts is not None and contexts.project and inputs.base_group is not None:
+        groups.add(inputs.base_group)
+    return extras, groups
+
+
+def _check_target_slices(
+    lock: Pylock, target: ResolveTarget, requirements: Sequence[Requirement]
+) -> Iterator[ResolveTarget]:
+    """Split a target at lock and requirement marker boundaries."""
+    markers = [
+        *(lock.environments or ()),
+        *(package.marker for package in lock.packages if package.marker is not None),
+        *(
+            requirement.marker
+            for requirement in requirements
+            if requirement.marker is not None
+        ),
+    ]
+    if lock.requires_python:
+        markers.append(
+            Marker(
+                " and ".join(
+                    f'python_full_version {specifier.operator} "{specifier.version}"'
+                    for specifier in sorted(lock.requires_python, key=str)
+                )
+            )
+        )
+    slices = (
+        [target]
+        if target.concrete_micro
+        else slices_from_points(target, sorted(micro_boundary_points(target, markers)))
+    )
+    for sliced in slices:
+        if lock.requires_python is not None and not lock.requires_python.contains(
+            sliced.marker_env["python_full_version"], prereleases=True
+        ):
+            continue
+        yield sliced
+
+
+def _require_version(name: str, versions: Mapping[str, Version | None]) -> Version:
+    """Refuse bounds we cannot verify from a stable pin or fresh local metadata."""
+    version = versions[name]
+    if version is None:
+        message = f"cannot verify the version of {name}; regenerate the lock"
+        raise LockConsistencyError(message)
+    return version
+
+
+def _check_fixed_solution(
+    versions: dict[str, Version | None],
+    local: Mapping[str, WheelMetadata],
     roots: Sequence[Requirement],
-    constraints: Sequence[str],
+    constraints: Sequence[Requirement],
+    excluded: Sequence[str],
     environment: Mapping[str, str],
 ) -> None:
-    """Propagate extras through fixed versions; no candidate selection is required."""
-    reached: dict[str, frozenset[str]] = {}
-    pending = list(roots)
+    """Validate current declarations against saved versions."""
     prepared = prepare_environment({**environment, **EMPTY_MEMBERSHIP_SETS})
+    reached: dict[str, frozenset[str]] = {}
+    versions.update(
+        (name, metadata.version) for name, metadata in local.items() if name in versions
+    )
+    pending = [
+        *roots,
+        *(
+            parse_requirement(name)
+            for name in local
+            if name in versions or name in excluded
+        ),
+    ]
     while pending:
         requirement = pending.pop()
         if requirement.marker is not None and not dependency_marker_holds(
@@ -208,107 +220,88 @@ def _validate_graph(
         ):
             continue
         name = canonicalize_name(requirement.name)
-        package = metadata.get(name)
-        if package is None:
-            msg = f"locked solution is missing {name}"
-            raise LockConsistencyError(msg)
-        version = Version(package["version"])
+        metadata = local.get(name)
+        if name not in versions:
+            if metadata is None or name not in excluded:
+                message = f"locked solution is missing {name}"
+                raise LockConsistencyError(message)
+            versions[name] = metadata.version
+        if metadata is not None:
+            versions[name] = metadata.version
         if requirement.specifier and not requirement.specifier.contains(
-            version, prereleases=True
+            _require_version(name, versions), prereleases=True
         ):
-            msg = f"{name}=={version} does not satisfy {requirement}"
-            raise LockConsistencyError(msg)
+            message = f"{name}=={versions[name]} does not satisfy {requirement}"
+            raise LockConsistencyError(message)
+        if metadata is None:
+            continue
         extras = reached.get(name, frozenset()) | (
             frozenset(canonicalize_name(extra) for extra in requirement.extras)
-            & frozenset(package["provides-extra"])
+            & frozenset(canonicalize_name(extra) for extra in metadata.provides_extra)
         )
-        if name in reached and extras == reached[name]:
+        if name in reached and reached[name] == extras:
             continue
         reached[name] = extras
-        for text in package["requires-dist"]:
-            dependency = parse_requirement(text)
-            if classify_dependency(dependency.marker, prepared, extras) is not None:
-                # The parent marker was evaluated; the child has its own extras.
-                dependency = parse_requirement(str(dependency))
-                dependency.marker = None
-                pending.append(dependency)
-    _check_constraints(metadata, reached, constraints, environment)
+        pending.extend(_active_local_dependencies(metadata, extras, prepared))
+    _check_constraints(versions, constraints, environment)
+
+
+def _active_local_dependencies(
+    metadata: WheelMetadata,
+    extras: AbstractSet[str],
+    environment: dict[str, str | AbstractSet[str]],
+) -> Iterator[Requirement]:
+    """Evaluate parent extras without carrying their markers onto the child."""
+    for dependency in metadata.requires_dist:
+        if classify_dependency(dependency.marker, environment, extras) is not None:
+            child = parse_requirement(str(dependency))
+            child.marker = None
+            yield child
 
 
 def _check_constraints(
-    metadata: Mapping[str, Mapping[str, Any]],
-    reached: Mapping[str, frozenset[str]],
-    constraints: Sequence[str],
+    versions: Mapping[str, Version | None],
+    constraints: Sequence[Requirement],
     environment: Mapping[str, str],
 ) -> None:
-    """Constraints restrict reached packages without adding dependencies."""
-    for text in constraints:
-        constraint = parse_requirement(text)
+    """Apply active constraints to the saved selection without adding packages."""
+    for constraint in constraints:
         name = canonicalize_name(constraint.name)
-        if name not in reached or (
+        if name not in versions or (
             constraint.marker is not None
             and not dependency_marker_holds(constraint.marker, environment)
         ):
             continue
-        version = Version(metadata[name]["version"])
         if constraint.url is not None:
-            msg = "URL constraints require a lock update"
-            raise LockConsistencyError(msg)
+            message = "URL constraints require a lock update"
+            raise LockConsistencyError(message)
+        version = _require_version(name, versions)
         if not constraint.specifier.contains(version, prereleases=True):
-            msg = f"{name}=={version} does not satisfy constraint {constraint}"
-            raise LockConsistencyError(msg)
+            message = f"{name}=={version} does not satisfy constraint {constraint}"
+            raise LockConsistencyError(message)
 
 
-def _case_targets(
-    case: Mapping[str, Any],
-    targets: Sequence[ResolveTarget],
-    constraints: Sequence[str],
-) -> list[ResolveTarget]:
-    """Check new constraint boundaries inside the already locked micro intervals."""
-    env = case["environment"]
-    target = next(
-        (
-            target
-            for target in targets
-            if all(
-                target.marker_env.get(key) == value
-                for key, value in env.items()
-                if key not in {"python_full_version", "implementation_version"}
-            )
-            and target.platform_spec
-            == (PlatformSpec(**case["platform"]) if case["platform"] else None)
-        ),
-        None,
-    )
-    if target is None:
-        msg = "locked target is no longer declared"
-        raise LockConsistencyError(msg)
-    if case["concrete-micro"]:
-        return [target]
-    points = {
-        point
-        for text in constraints
-        for marker in (parse_requirement(text).marker,)
-        if marker is not None
-        for point in micro_boundary_points(target, [marker])
+def _pylock_environment(environment: Mapping[str, str]) -> Environment:
+    """Project a target onto the standard marker environment."""
+    return {
+        "implementation_name": environment["implementation_name"],
+        "implementation_version": environment["implementation_version"],
+        "os_name": environment["os_name"],
+        "platform_machine": environment["platform_machine"],
+        "platform_release": environment["platform_release"],
+        "platform_system": environment["platform_system"],
+        "platform_version": environment["platform_version"],
+        "platform_python_implementation": environment["platform_python_implementation"],
+        "python_full_version": environment["python_full_version"],
+        "python_version": environment["python_version"],
+        "sys_platform": environment["sys_platform"],
     }
-    original = Version(env["python_full_version"])
-    if original > Version(target.python_version + ".0"):
-        points.add(original)
-    result = []
-    for sliced in slices_from_points(target, sorted(points)):
-        if case["micro-clauses"] and not dependency_marker_holds(
-            Marker(" and ".join(case["micro-clauses"])), sliced.marker_env
-        ):
-            continue
-        result.append(sliced)
-    return result
 
 
-def _check_record(
-    record: Mapping[str, Any],
-    current: Mapping[str, Any],
+def _check_changed_bounds(
+    lock: Pylock,
     path: Path,
+    current: Mapping[str, Any],
     inputs: ResolveInputs,
     targets: Sequence[ResolveTarget],
     *,
@@ -316,8 +309,8 @@ def _check_record(
     extras: Sequence[str],
     build_requirements: bool,
 ) -> None:
-    """Replay each recorded fork with the current bounds and static local metadata."""
-    _check_changed_inputs(record["inputs"], current)
+    """Validate compatible input edits using the standard package selections."""
+    local = _current_local_metadata(current, inputs)
     forks, _ = plan_project_inputs(
         path,
         inputs,
@@ -326,24 +319,35 @@ def _check_record(
         extras=extras,
         build_requirements=build_requirements,
     )
-    by_selection = {tuple(fork.selection): fork for fork in forks}
-    for case in record["targets"]:
-        selection = tuple(tuple(member) for member in case["selection"])
-        fork = by_selection.get(selection)
-        if fork is None:
-            msg = "locked selections are no longer declared"
-            raise LockConsistencyError(msg)
-        selected = record["metadata-sets"][case["metadata-set"]]
-        metadata = {name: record["metadata"][key] for name, key in selected.items()}
-        for key in selected.values():
-            if validation_digest(record["metadata"][key]) != key:
-                msg = "recorded dependency metadata changed"
-                raise LockConsistencyError(msg)
-        metadata = _local_metadata(metadata, current, record["inputs"], inputs)
-        for target in _case_targets(case, targets, current["constraints"]):
-            _validate_graph(
-                metadata, fork.requirements, current["constraints"], target.marker_env
-            )
+    constraints = [parse_requirement(text) for text in current["constraints"]]
+    local_requirements = [
+        requirement
+        for metadata in local.values()
+        for requirement in metadata.requires_dist
+    ]
+    for fork in forks:
+        selected_extras, selected_groups = _fork_selections(fork, inputs)
+        for target in targets:
+            for sliced in _check_target_slices(
+                lock, target, [*fork.requirements, *constraints, *local_requirements]
+            ):
+                versions = {
+                    str(package.name): package.version
+                    for package, _ in lock.select(
+                        environment=_pylock_environment(sliced.marker_env),
+                        tags=sliced.tags.ordered,
+                        extras=selected_extras,
+                        dependency_groups=selected_groups,
+                    )
+                }
+                _check_fixed_solution(
+                    versions,
+                    local,
+                    fork.requirements,
+                    constraints,
+                    current["excluded"],
+                    sliced.marker_env,
+                )
 
 
 def check_saved_lock(
@@ -357,36 +361,39 @@ def check_saved_lock(
     extras: Sequence[str] = (),
     build_requirements: bool = False,
 ) -> None:
-    """Validate a saved solution using artifact-bound dependency metadata."""
+    """Validate saved pins without version discovery or a resolver transport."""
     if not lockfile.exists():
-        msg = f"no lockfile at {lockfile} to check"
-        raise LockConsistencyError(msg)
+        message = f"no lockfile at {lockfile} to check"
+        raise LockConsistencyError(message)
     document = toml_io.load_path(lockfile)
     try:
         lock = Pylock.from_dict(document)
         _check_local_artifacts(lock, lockfile.resolve().parent)
         record = _record(document)
-        if record is not None:
-            if record["cacheable"] and record["inputs"] == current:
-                return
-            _check_record(
-                record,
-                current,
-                path,
-                inputs,
-                targets,
-                groups=groups,
-                extras=extras,
-                build_requirements=build_requirements,
-            )
+        if any(project.get("dynamic") for project in current["local"].values()):
+            message = "dynamic local metadata requires a lock update"
+            raise LockConsistencyError(message)
+        if record["inputs-sha256"] == validation_digest(current):
             return
-        msg = "no supported validation record; regenerate the lock"
-        raise LockConsistencyError(msg)
+        if record["shape-sha256"] != shape_digest(current):
+            message = "dependency selections or policy changed; update the lock"
+            raise LockConsistencyError(message)
+        _check_changed_bounds(
+            lock,
+            path,
+            current,
+            inputs,
+            targets,
+            groups=groups,
+            extras=extras,
+            build_requirements=build_requirements,
+        )
     except (
         PylockValidationError,
+        PylockSelectError,
         KeyError,
         TypeError,
         RecursionError,
     ) as exc:
-        msg = f"cannot verify saved lock: {exc}"
-        raise LockConsistencyError(msg) from exc
+        message = f"cannot verify saved lock: {exc}"
+        raise LockConsistencyError(message) from exc
