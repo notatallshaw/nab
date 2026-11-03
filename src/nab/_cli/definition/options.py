@@ -434,8 +434,8 @@ class MatrixKeys(
         help="the interpreter implementations to model",
     )
 
-    include_free_threaded = Tri(
-        help="also resolve free-threaded builds of CPython 3.13 and newer",
+    python_builds = Star[str](
+        help="the Python builds to model: standard, free-threaded, or both",
     )
 
     python_order = Value[MatrixOrderFlag | None](

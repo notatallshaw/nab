@@ -894,7 +894,7 @@ class TagSet(SlottedValue):
         # The host's free-threaded ABI only carries to a Python that has one:
         # ``cp310t`` has never existed, and a target advertising it matches no
         # wheel at all.  The declared-target path refuses the same combination.
-        free_threaded = host[0].abi.endswith(
+        free_threaded = host[0].abi.removesuffix("d").endswith(
             _FREE_THREADED_ABI_SUFFIX
         ) and supports_free_threading(python)
 
