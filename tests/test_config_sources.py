@@ -129,7 +129,7 @@ _TABLE_PARAMS: dict[str, Any] = {
     "project_matrix_python": None,
     "project_matrix_platforms": (),
     "project_matrix_implementations": (),
-    "project_matrix_python_builds": (),
+    "project_matrix_free_threaded": None,
     "project_matrix_python_order": None,
     "project_matrix_python_patches": (),
     "project_environment_python": None,
@@ -1212,6 +1212,27 @@ class TestBuildCliTables:
         assert matrix.implementation_overrides["pypy"].platforms == (
             PlatformSpec("windows_amd64"),
         )
+
+    def test_cli_shared_axes_preserve_explicit_include_entries(self) -> None:
+        include = [
+            {
+                "python": "==3.11",
+                "implementations": ["pypy"],
+                "platforms": ["windows_amd64"],
+            }
+        ]
+        table = fold_cli_table(
+            BY_KEY["matrix"],
+            _matrix_table(
+                project_matrix_python="==3.12",
+                project_matrix_platforms=("macos_arm64",),
+            ),
+            {**_FILE_MATRIX, "include": include},
+        )
+        assert table["include"] == include
+        matrix = parse_matrix(table, "--project-matrix-*")
+        assert matrix.include[0].python == "==3.11"
+        assert matrix.include[0].platforms == (PlatformSpec("windows_amd64"),)
 
     def test_a_flag_with_no_tokens_counts_as_unwritten(self) -> None:
         """The walk stores ``()`` for a star with no token, as for an absent one."""

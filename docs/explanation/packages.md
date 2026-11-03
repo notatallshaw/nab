@@ -52,6 +52,10 @@ tag model, marker evaluation, extras expansion, the metadata parser, packaging p
 per-package and per-index overrides, and the result store. It does no I/O: package data arrives
 through `nab_provider.fetch_port.FetchPort`, an interface implemented outside the provider.
 
+`nab_provider.target.Matrix` expands the base declaration and its `MatrixInclude` entries. It owns
+interpreter/ABI validation and target deduplication. The CLI parses and renders those declarations;
+`nab-project` checks project metadata and decides whether the resolved targets can share one lock.
+
 ### `nab-index`
 
 `nab-index` is the index client: the Simple API reader, the on-disk HTTP cache, the lazy-wheel range

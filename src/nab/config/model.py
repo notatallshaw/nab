@@ -853,19 +853,22 @@ def _check_requires_python_admits_target(
         f" Python {target.python_version} ({target.label})."
     )
     if matrix is not None:
+        key = "matrix.python"
         override = (matrix.implementation_overrides or {}).get(target.implementation)
-        key = (
-            f"matrix.overrides.implementations.{target.implementation}.python"
-            if override is not None and override.python is not None
-            else "matrix.python"
+        if not matrix.include and override is not None and override.python is not None:
+            key = f"matrix.overrides.implementations.{target.implementation}.python"
+        repair = (
+            f"change {key} or an include entry to drop the version, "
+            "or widen requires-python."
         )
+        if matrix.include:
+            repair = (
+                "change matrix.python, an implementation override or include entries "
+                "to drop the version, or widen requires-python."
+            )
         report = DiagnosticMessage(
-            (f"{excludes}  {key} selects this target"),
-            suggestions=(
-                Suggestion(
-                    f"change {key} to drop the version, or widen requires-python."
-                ),
-            ),
+            f"{excludes}  the matrix selects this target",
+            suggestions=(Suggestion(repair),),
         )
     else:
         report = DiagnosticMessage(

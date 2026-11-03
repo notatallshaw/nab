@@ -30,7 +30,7 @@ from nab_provider.pep508 import parse_requirement
 from nab_provider.policy import DecisionOrder, LocalSource, ResolutionStrategy
 from nab_provider.records import IndexConfig
 from nab_provider.tags import PlatformSpec
-from nab_provider.target import Matrix, ResolveTarget
+from nab_provider.target import Matrix, MatrixInclude, ResolveTarget
 from nab_provider.testing import make_metadata, make_wheel
 
 
@@ -47,7 +47,7 @@ def _targets() -> list[ResolveTarget]:
     return Matrix(
         python="==3.14",
         platforms=(PlatformSpec("linux_x86_64"),),
-        python_builds=("standard", "free-threaded"),
+        include=(MatrixInclude(free_threaded=True),),
     ).expand()
 
 
@@ -369,19 +369,20 @@ def test_target_traversal_order_does_not_change_fingerprints(tmp_path: Path) -> 
                 python=">=3.13,<3.15",
                 platforms=platforms,
                 python_order=order,
-                python_builds=builds,
+                free_threaded=threaded,
+                include=(MatrixInclude(free_threaded=not threaded),),
             ).expand(),
         )
-        for platforms, order, builds in (
+        for platforms, order, threaded in (
             (
                 (PlatformSpec("linux_x86_64"), PlatformSpec("macos_arm64")),
                 "asc",
-                ("standard", "free-threaded"),
+                False,
             ),
             (
                 (PlatformSpec("macos_arm64"), PlatformSpec("linux_x86_64")),
                 "desc",
-                ("free-threaded", "standard"),
+                True,
             ),
         )
     ]

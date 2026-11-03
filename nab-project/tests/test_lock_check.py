@@ -41,7 +41,7 @@ from nab_provider.overrides import PackageOverride
 from nab_provider.pep508 import parse_requirement
 from nab_provider.policy import LocalSource
 from nab_provider.tags import PlatformSpec
-from nab_provider.target import Matrix, ResolveTarget
+from nab_provider.target import Matrix, MatrixInclude, ResolveTarget
 from nab_provider.testing import make_metadata, make_wheel
 
 
@@ -57,7 +57,7 @@ def _saved(
     targets = Matrix(
         python="==3.14",
         platforms=(PlatformSpec("linux_x86_64"),),
-        python_builds=("standard", "free-threaded"),
+        include=(MatrixInclude(free_threaded=True),),
     ).expand()
     forks, base = plan_project_inputs(path, inputs, targets)
     wheel = make_wheel("1", package="demo", hashes=(("sha256", "a" * 64),))

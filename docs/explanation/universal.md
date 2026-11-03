@@ -171,31 +171,34 @@ platforms = ["linux_x86_64"]
 implementations = ["cpython", "pypy"]
 ```
 
-By default, each implementation uses the whole Python range. To target CPython 3.10, 3.11, 3.12,
-3.13, 3.14 and 3.15 and only PyPy 3.11 on the same platforms, narrow PyPy's range:
+Each implementation in a target group uses that group's Python range. Use a separate include entry
+for a different combination, such as CPython 3.10 through 3.15 on Linux and macOS plus PyPy 3.11 on
+Linux:
 
 ```toml
 [tool.nab.matrix]
 python = ">=3.10,<3.16"
 platforms = ["linux_x86_64", "macos_arm64"]
-implementations = ["cpython", "pypy"]
 
-[tool.nab.matrix.overrides.implementations.pypy]
+# Add PyPy 3.11 on Linux.
+[[tool.nab.matrix.include]]
 python = "==3.11"
+platforms = ["linux_x86_64"]
+implementations = ["pypy"]
 ```
 
-### Per-implementation overrides
+### Inherited target groups
 
-This declares 14 targets: six CPython minors and one PyPy minor on each platform. The keyed
-`overrides.implementations` table replaces `python` or `platforms` for one interpreter; omitted
-fields inherit the shared matrix values. For example, adding `platforms = ["linux_x86_64"]` to the
-PyPy table restricts PyPy to Linux while CPython keeps both platforms. An override may also add
-Python minors or platform IDs outside the shared defaults.
+Prefer include entries for additional target groups. An include entry replaces the axes it supplies
+and inherits the rest from the shared defaults and any applicable implementation override. It may
+add versions or platforms outside the base range. Entries expand independently, and identical target
+coordinates merge before resolution. Global Python ordering and patch pins apply to every entry.
 
-`implementations` still selects which interpreters to include. `python-order` orders all selected
-minors together. Declare implementation overrides in the project file; the shared-axis CLI flags
-change only inherited values. `--project-matrix-implementations cpython` selects only CPython for
-one run, leaving the PyPy override inactive.
+Conditional implementation overrides remain available for specializations that should follow CLI
+implementation selection. Unlike include entries, a dormant override does not add targets.
+
+The shared-axis CLI flags change inherited defaults. Explicit values in include entries retain their
+declared values. See [Target matrix](../reference/target-matrix.md) for the complete interface.
 
 ### PyPy markers and wheel tags
 
@@ -224,8 +227,8 @@ The
 defines these variables. The table below maps them to Nab's target settings.
 
 Every PEP 508 environment variable gets a value in every target, so no marker ever evaluates against
-a missing key. The table shows each target's effective axes, including any
-`overrides.implementations.<name>` overrides, and fixed defaults.
+a missing key. The table shows each target's effective axes, including any include entries, and
+fixed defaults.
 
 | Marker variable                  | Set by                           | Default                                                                   |
 | -------------------------------- | -------------------------------- | ------------------------------------------------------------------------- |

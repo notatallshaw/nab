@@ -18,8 +18,8 @@ platforms = ["linux_x86_64", "windows_amd64"]
 ```
 
 Run `nab lock` again to write one `pylock.toml` for those targets. See
-[Target matrix](../reference/target-matrix.md) for implementation overrides and patch-release pins,
-and [Platform tags](../reference/platform-tags.md) for minimum system versions.
+[Target matrix](../reference/target-matrix.md) for include entries and patch-release pins, and
+[Platform tags](../reference/platform-tags.md) for minimum system versions.
 
 ## Override targets for one run
 
@@ -29,8 +29,8 @@ Replace the platform list without editing the project:
 nab lock --project-matrix-platforms macos_arm64
 ```
 
-Other matrix keys keep their configured values. An implementation-specific override still takes
-precedence over the shared platform list.
+Other matrix keys keep their configured values. An explicit platform list in an include entry still
+takes precedence over the shared list.
 
 For a project without a configured matrix, supply the Python versions and platforms:
 

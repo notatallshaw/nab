@@ -434,8 +434,8 @@ class MatrixKeys(
         help="the interpreter implementations to model",
     )
 
-    python_builds = Star[str](
-        help="the Python builds to model: standard, free-threaded, or both",
+    free_threaded = Tri(
+        help="whether the base matrix uses the free-threaded Python ABI",
     )
 
     python_order = Value[MatrixOrderFlag | None](

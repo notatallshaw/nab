@@ -10,6 +10,7 @@ from nab_provider.target import (
     KNOWN_PYTHON_MINORS,
     ImplementationOverride,
     Matrix,
+    MatrixInclude,
     _pythons_in_range,
     declared_range_marker,
 )
@@ -734,150 +735,254 @@ class TestImplementationOverrides:
         assert not Marker(pypy.environment_marker_string).evaluate(cpython.marker_env)
 
 
-class TestIncludedFreeThreadedBuilds:
-    def test_only_supported_cpython_builds_are_added(self) -> None:
-        matrix = Matrix(
-            python=">=3.12,<3.14",
-            platforms=(PlatformSpec("linux_x86_64"),),
-            implementations=("cpython", "pypy"),
-            python_builds=("standard", "free-threaded"),
-        )
-        targets = matrix.expand()
-        assert [target.label for target in targets] == [
-            "py312-linux_x86_64",
-            "pp312-linux_x86_64",
-            "py313-linux_x86_64",
-            "py313-linux_x86_64-ft",
-            "pp313-linux_x86_64",
-        ]
-
-        ordinary, threaded = targets[2:4]
-        assert ordinary.marker_env == threaded.marker_env
-        regular_wheel = "demo-1.0-cp313-cp313-manylinux_2_17_x86_64.whl"
-        threaded_wheel = "demo-1.0-cp313-cp313t-manylinux_2_17_x86_64.whl"
-        assert ordinary.tags.accepts(regular_wheel)
-        assert not ordinary.tags.accepts(threaded_wheel)
-        assert threaded.tags.accepts(threaded_wheel)
-        assert not threaded.tags.accepts(regular_wheel)
-
-    def test_overrides_patch_versions_and_platform_settings_are_preserved(self) -> None:
-        spec = PlatformSpec("linux_x86_64", libc="musl", runs_on_libc=(1, 2))
-        matrix = Matrix(
-            python=">=3.13,<3.15",
-            platforms=(PlatformSpec("windows_amd64"),),
-            python_order="desc",
-            python_patches={"3.13": "3.13.7"},
-            implementations=("cpython", "pypy"),
+class TestMatrixIncludes:
+    def test_include_inherits_the_selected_implementation_override(self) -> None:
+        targets = Matrix(
+            "==3.15",
+            (PlatformSpec("linux_x86_64"),),
             implementation_overrides={
-                "cpython": ImplementationOverride(platforms=(spec,)),
-                "pypy": ImplementationOverride(python="==3.11"),
+                "pypy": ImplementationOverride(
+                    python="==3.11", platforms=(PlatformSpec("windows_amd64"),)
+                )
             },
-            python_builds=("standard", "free-threaded"),
-        )
-        targets = matrix.expand()
-        assert [target.label for target in targets] == [
-            "py314-linux_x86_64-musl1.2",
-            "py314-linux_x86_64-ft-musl1.2",
-            "py313-linux_x86_64-musl1.2",
-            "py313-linux_x86_64-ft-musl1.2",
-            "pp311-windows_amd64",
-        ]
-        for target in targets[2:4]:
-            assert target.python_full_version == "3.13.7"
-            assert not target.is_minor_interval
-            assert target.declares_implementation
-        assert targets[3].tags.accepts("demo-1.0-cp313-cp313t-musllinux_1_2_x86_64.whl")
-        assert not targets[3].tags.accepts(
-            "demo-1.0-cp313-cp313t-manylinux_2_17_x86_64.whl"
-        )
-
-    def test_an_explicit_free_threaded_platform_conflicts_with_builds(self) -> None:
-        with pytest.raises(ValueError, match="cannot be combined"):
-            Matrix(
-                python="==3.14",
-                platforms=(PlatformSpec("windows_amd64", free_threaded=True),),
-                python_builds=("standard", "free-threaded"),
-            ).expand()
-
-    @pytest.mark.parametrize("builds", [(), ("unknown",), ("standard", "standard")])
-    def test_invalid_build_selections(self, builds: tuple[str, ...]) -> None:
-        with pytest.raises(ValueError, match="python_builds must list"):
-            Matrix(
-                "==3.14", (PlatformSpec("linux_x86_64"),), python_builds=builds
-            ).expand()
-
-    @pytest.mark.parametrize(
-        ("python", "implementation"), [("==3.12", "cpython"), ("==3.14", "pypy")]
-    )
-    def test_free_threaded_only_requires_supported_targets(
-        self, python: str, implementation: str
-    ) -> None:
-        with pytest.raises(ValueError, match="free.threaded"):
-            Matrix(
-                python,
-                (PlatformSpec("linux_x86_64"),),
-                implementations=(implementation,),
-                python_builds=("free-threaded",),
-            ).expand()
-
-    @pytest.mark.parametrize(
-        "builds",
-        [
-            ("standard",),
-            ("free-threaded",),
-            ("standard", "free-threaded"),
-            ("free-threaded", "standard"),
-        ],
-    )
-    def test_selected_builds_and_order(self, builds: tuple[str, ...]) -> None:
-        targets = Matrix(
-            "==3.14", (PlatformSpec("linux_x86_64"),), python_builds=builds
+            include=(MatrixInclude(implementations=("pypy",)),),
         ).expand()
-        assert [
-            target.platform_spec.free_threaded
-            for target in targets
-            if target.platform_spec is not None
-        ] == [build == "free-threaded" for build in builds]
-        for target in targets:
-            threaded = target.label.endswith("-ft")
-            assert (
-                target.tags.accepts("demo-1.0-cp314-cp314t-manylinux_2_17_x86_64.whl")
-                is threaded
-            )
-            assert (
-                target.tags.accepts("demo-1.0-cp314-cp314-manylinux_2_17_x86_64.whl")
-                is not threaded
-            )
-            assert (
-                target.tags.accepts("demo-1.0-cp310-abi3-manylinux_2_17_x86_64.whl")
-                is not threaded
-            )
-            assert target.tags.accepts("demo-1.0-py3-none-any.whl")
+        assert [target.label for target in targets] == [
+            "pp311-windows_amd64",
+            "py315-linux_x86_64",
+        ]
 
-    def test_implementation_build_overrides_replace_shared_defaults(self) -> None:
+    def test_include_explicit_axes_replace_implementation_defaults(self) -> None:
         targets = Matrix(
-            "==3.14",
+            "==3.15",
             (PlatformSpec("linux_x86_64"),),
             implementations=("cpython", "pypy"),
-            python_builds=("free-threaded",),
             implementation_overrides={
-                "pypy": ImplementationOverride(python_builds=("standard",))
+                "pypy": ImplementationOverride(
+                    python="==3.11", platforms=(PlatformSpec("windows_amd64"),)
+                )
             },
+            include=(
+                MatrixInclude(
+                    python="==3.12",
+                    platforms=(PlatformSpec("macos_arm64"),),
+                    implementations=("pypy",),
+                    free_threaded=False,
+                ),
+            ),
         ).expand()
         assert [target.label for target in targets] == [
-            "py314-linux_x86_64-ft",
-            "pp314-linux_x86_64",
+            "pp311-windows_amd64",
+            "pp312-macos_arm64",
+            "py315-linux_x86_64",
         ]
 
-    def test_disabled_implementation_build_values_are_validated(self) -> None:
-        with pytest.raises(ValueError, match="python_builds must list"):
+    def test_include_false_overrides_an_implementation_feature(self) -> None:
+        targets = Matrix(
+            "==3.15",
+            (PlatformSpec("linux_x86_64"),),
+            implementation_overrides={
+                "cpython": ImplementationOverride(free_threaded=True)
+            },
+            include=(MatrixInclude(free_threaded=False),),
+        ).expand()
+        assert [target.label for target in targets] == [
+            "py315-linux_x86_64-ft",
+            "py315-linux_x86_64",
+        ]
+
+    @pytest.mark.parametrize("python_order", ["asc", "desc"])
+    def test_sparse_groups_keep_builds_and_implementations_independent(
+        self, python_order: str
+    ) -> None:
+        matrix = Matrix(
+            ">=3.10,<3.16",
+            (PlatformSpec("linux_x86_64"),),
+            python_order=python_order,
+            python_patches={"3.15": "3.15.1"},
+            include=(
+                MatrixInclude(python=">=3.15,<3.16", free_threaded=True),
+                MatrixInclude(python="==3.11", implementations=("pypy",)),
+            ),
+        )
+        targets = matrix.expand()
+        expected = [
+            "py310-linux_x86_64",
+            "py311-linux_x86_64",
+            "pp311-linux_x86_64",
+            "py312-linux_x86_64",
+            "py313-linux_x86_64",
+            "py314-linux_x86_64",
+            "py315-linux_x86_64",
+            "py315-linux_x86_64-ft",
+        ]
+        if python_order == "desc":
+            expected = [
+                *expected[6:],
+                expected[5],
+                expected[4],
+                expected[3],
+                *expected[1:3],
+                expected[0],
+            ]
+        assert [target.label for target in targets] == expected
+
+        ordinary = next(
+            target for target in targets if target.label == "py315-linux_x86_64"
+        )
+        threaded = next(
+            target for target in targets if target.label == "py315-linux_x86_64-ft"
+        )
+        assert ordinary.marker_env == threaded.marker_env
+        assert ordinary.python_full_version == threaded.python_full_version == "3.15.1"
+        for target, native_abi in [(ordinary, "cp315"), (threaded, "cp315t")]:
+            for abi in ("cp315", "cp315t"):
+                assert target.tags.accepts(
+                    f"example-1-cp315-{abi}-manylinux_2_17_x86_64.whl"
+                ) is (abi == native_abi)
+            assert target.tags.accepts("example-1-py3-none-any.whl")
+        assert not threaded.tags.accepts(
+            "example-1-cp310-abi3-manylinux_2_17_x86_64.whl"
+        )
+
+        pypy = next(target for target in targets if target.implementation == "pypy")
+        assert pypy.python_version == "3.11"
+        assert not Marker(pypy.environment_marker_string).evaluate(ordinary.marker_env)
+        assert not Marker(ordinary.environment_marker_string).evaluate(pypy.marker_env)
+
+    def test_explicit_axes_replace_inherited_defaults(self) -> None:
+        replacement = PlatformSpec("linux_x86_64", libc="musl", runs_on_libc=(1, 2))
+        targets = Matrix(
+            "==3.12",
+            (PlatformSpec("windows_amd64"),),
+            include=(
+                MatrixInclude(
+                    python="==3.11", platforms=(replacement,), implementations=("pypy",)
+                ),
+            ),
+        ).expand()
+        assert [target.label for target in targets] == [
+            "pp311-linux_x86_64-musl1.2",
+            "py312-windows_amd64",
+        ]
+        assert targets[0].platform_spec is replacement
+        assert targets[0].tags.accepts(
+            "example-1-pp311-pypy311_pp73-musllinux_1_2_x86_64.whl"
+        )
+        assert not targets[0].tags.accepts(
+            "example-1-pp311-pypy311_pp73-manylinux_2_17_x86_64.whl"
+        )
+
+    def test_overlaps_merge_exact_coordinates_only(self) -> None:
+        original = PlatformSpec("linux_x86_64")
+        newer = PlatformSpec("linux_x86_64", runs_on_libc=(2, 34))
+        targets = Matrix(
+            ">=3.11,<3.13",
+            (original,),
+            include=(
+                MatrixInclude(),
+                MatrixInclude(python="==3.11"),
+                MatrixInclude(python="==3.11", platforms=(newer,)),
+            ),
+        ).expand()
+        assert [target.label for target in targets] == [
+            "py311-linux_x86_64",
+            "py311-linux_x86_64-glibc2.34",
+            "py312-linux_x86_64",
+        ]
+        assert targets[0].platform_spec is original
+        assert targets[1].platform_spec is newer
+
+    def test_false_feature_flag_replaces_an_inherited_true(self) -> None:
+        targets = Matrix(
+            "==3.15",
+            (PlatformSpec("windows_amd64"),),
+            free_threaded=True,
+            include=(MatrixInclude(), MatrixInclude(free_threaded=False)),
+        ).expand()
+        assert [target.label for target in targets] == [
+            "py315-windows_amd64-ft",
+            "py315-windows_amd64",
+        ]
+        assert targets[0].tags.accepts("example-1-cp315-cp315t-win_amd64.whl")
+        assert targets[1].tags.accepts("example-1-cp315-cp315-win_amd64.whl")
+
+    def test_inherited_platform_settings_remain_per_entry(self) -> None:
+        spec = PlatformSpec("linux_x86_64", libc="musl", runs_on_libc=(1, 2))
+        targets = Matrix(
+            "==3.15", (spec,), include=(MatrixInclude(free_threaded=True),)
+        ).expand()
+        assert targets[0].platform_spec is spec
+        assert targets[1].tags.accepts(
+            "example-1-cp315-cp315t-musllinux_1_2_x86_64.whl"
+        )
+        assert not targets[1].tags.accepts(
+            "example-1-cp315-cp315t-manylinux_2_17_x86_64.whl"
+        )
+
+    def test_explicit_feature_overrides_the_platform_build_setting(self) -> None:
+        spec = PlatformSpec("linux_x86_64", free_threaded=True)
+        targets = Matrix("==3.15", (spec,), free_threaded=False).expand()
+        assert [target.label for target in targets] == ["py315-linux_x86_64"]
+
+    @pytest.mark.parametrize(
+        ("entry", "message"),
+        [
+            (MatrixInclude(python="==4.0"), "No known Python versions"),
+            (MatrixInclude(platforms=()), "at least one platform"),
+            (
+                MatrixInclude(platforms=(PlatformSpec("unknown"),)),
+                "Unknown platform ids",
+            ),
+            (MatrixInclude(implementations=()), "at least one implementation"),
+            (MatrixInclude(implementations=("unknown",)), "Unknown implementations"),
+            (
+                MatrixInclude(python="==3.12", free_threaded=True),
+                "free-threaded platform needs CPython",
+            ),
+            (
+                MatrixInclude(implementations=("pypy",), free_threaded=True),
+                "free-threaded platform needs CPython",
+            ),
+        ],
+    )
+    def test_each_entry_must_select_supported_targets(
+        self, entry: MatrixInclude, message: str
+    ) -> None:
+        with pytest.raises(ValueError, match=message) as exc:
             Matrix(
-                "==3.14",
-                (PlatformSpec("linux_x86_64"),),
-                implementation_overrides={
-                    "pypy": ImplementationOverride(python_builds=("unknown",))
-                },
+                "==3.15", (PlatformSpec("windows_amd64"),), include=(entry,)
             ).expand()
+        assert "matrix.include[0]" in str(exc.value)
+
+    def test_empty_base_implementation_axis_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="at least one implementation"):
+            Matrix(
+                "==3.15", (PlatformSpec("windows_amd64"),), implementations=()
+            ).expand()
+
+    def test_unsupported_build_error_precedes_an_empty_python_range(self) -> None:
+        with pytest.raises(
+            ValueError, match="free-threaded platform needs CPython, not"
+        ):
+            Matrix(
+                "==4.0",
+                (PlatformSpec("linux_x86_64", free_threaded=True),),
+                implementations=("pypy",),
+            ).expand()
+
+    def test_default_full_platform_spec_order_is_preserved(self) -> None:
+        targets = Matrix(
+            "==3.11",
+            (PlatformSpec("linux_x86_64"), PlatformSpec("linux_x86_64", libc="musl")),
+            implementations=("pypy", "cpython"),
+        ).expand()
+        assert [target.label for target in targets] == [
+            "pp311-linux_x86_64",
+            "py311-linux_x86_64",
+            "pp311-linux_x86_64-musl",
+            "py311-linux_x86_64-musl",
+        ]
 
 
 class TestTargetLabels:

@@ -21,12 +21,15 @@ if TYPE_CHECKING:
     from typing import Any
 
 
-def _project(tmp_path: Path, *, declaration: str = "pyproject") -> Path:
+def _project(
+    tmp_path: Path, *, declaration: str = "pyproject", include_threaded: bool = True
+) -> Path:
     """Declare a local wheel index and an opt-in matrix on the requested surface."""
     project = tmp_path / "pyproject.toml"
-    matrix = (
-        '[tool.nab.matrix]\npython = "==3.14"\n'
-        'platforms = ["linux_x86_64"]\npython-builds = ["standard", "free-threaded"]\n'
+    matrix = '[tool.nab.matrix]\npython = "==3.14"\nplatforms = ["linux_x86_64"]\n' + (
+        "[[tool.nab.matrix.include]]\nfree-threaded = true\n"
+        if include_threaded
+        else ""
     )
     project.write_text(
         '[project]\nname = "example"\nversion = "1.0"\ndependencies = []\n'
@@ -38,7 +41,7 @@ def _project(tmp_path: Path, *, declaration: str = "pyproject") -> Path:
     )
     if declaration == "nab.toml":
         (tmp_path / "nab.toml").write_text(
-            matrix.replace("[tool.nab.matrix]", "[matrix]"), encoding="utf-8"
+            matrix.replace("tool.nab.matrix", "matrix"), encoding="utf-8"
         )
     return project
 
@@ -136,25 +139,12 @@ def test_locked_reads_current_local_dependency_bounds(tmp_path: Path) -> None:
     assert (tmp_path / "pylock.toml").read_bytes() == committed
 
 
-@pytest.mark.parametrize("declaration", ["pyproject", "nab.toml", "cli"])
+@pytest.mark.parametrize("declaration", ["pyproject", "nab.toml"])
 def test_one_lock_selects_both_wheel_abis(tmp_path: Path, declaration: str) -> None:
     regular = _publish(tmp_path, "1.0", "cp314")
     threaded = _publish(tmp_path, "1.0", "cp314t")
     project = _project(tmp_path, declaration=declaration)
-    flags = (
-        (
-            "--project-matrix-python",
-            "==3.14",
-            "--project-matrix-platforms",
-            "linux_x86_64",
-            "--project-matrix-python-builds",
-            "standard",
-            "free-threaded",
-        )
-        if declaration == "cli"
-        else ()
-    )
-    assert _lock(project, *flags) == 0
+    assert _lock(project) == 0
 
     document = loads(project.with_name("pylock.toml").read_text(encoding="utf-8"))
     lock = Pylock.from_dict(document)
@@ -179,14 +169,21 @@ def test_one_lock_selects_both_wheel_abis(tmp_path: Path, declaration: str) -> N
         assert selected[0][1].name == filename
 
 
-@pytest.mark.parametrize(
-    ("build", "abi"), [("standard", "cp314"), ("free-threaded", "cp314t")]
-)
-def test_cli_can_replace_the_file_setting(tmp_path: Path, build: str, abi: str) -> None:
+@pytest.mark.parametrize(("threaded", "abi"), [(False, "cp314"), (True, "cp314t")])
+def test_cli_can_replace_the_base_feature_flag(
+    tmp_path: Path, threaded: bool, abi: str
+) -> None:
     regular = _publish(tmp_path, "1.0", abi)
     _publish(tmp_path, "2.0", "cp314t" if abi == "cp314" else "cp314")
-    project = _project(tmp_path)
-    assert _lock(project, "--project-matrix-python-builds", build) == 0
+    project = _project(tmp_path, include_threaded=False)
+    with project.open("a", encoding="utf-8") as stream:
+        stream.write(f"free-threaded = {str(not threaded).lower()}\n")
+    flag = (
+        "--project-matrix-free-threaded"
+        if threaded
+        else "--no-project-matrix-free-threaded"
+    )
+    assert _lock(project, flag) == 0
     document = loads(project.with_name("pylock.toml").read_text(encoding="utf-8"))
     assert [wheel["name"] for wheel in document["packages"][0]["wheels"]] == [regular]
 
@@ -207,18 +204,29 @@ def test_incompatible_abi_pins_leave_the_existing_lock_intact(
     assert "1.0" in error
 
 
-def test_config_reports_the_selected_builds(
+def test_config_reports_explicit_include_features(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     project = _project(tmp_path)
     assert run(("config", "get", "matrix", "--path", str(project))) == 0
-    assert "python-builds=['standard', 'free-threaded']" in capsys.readouterr().out
+    assert "include=[{'free-threaded': True}]" in capsys.readouterr().out
     with project.open("a", encoding="utf-8") as stream:
         stream.write(
-            '[tool.nab.matrix.overrides.implementations.cpython]\npython-builds = ["free-threaded"]\n'
+            '[[tool.nab.matrix.include]]\npython = "==3.15"\nfree-threaded = false\n'
         )
     assert run(("config", "get", "matrix", "--path", str(project))) == 0
-    assert "'cpython': {'python-builds': ['free-threaded']}" in capsys.readouterr().out
+    assert "{'python': '==3.15', 'free-threaded': False}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("threaded", [False, True])
+def test_config_reports_an_explicit_base_feature(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], threaded: bool
+) -> None:
+    project = _project(tmp_path, include_threaded=False)
+    with project.open("a", encoding="utf-8") as stream:
+        stream.write(f"free-threaded = {str(threaded).lower()}\n")
+    assert run(("config", "get", "matrix", "--path", str(project))) == 0
+    assert f"free-threaded={threaded}" in capsys.readouterr().out
 
 
 def test_a_missing_free_threaded_wheel_refuses_the_lock(tmp_path: Path) -> None:
@@ -274,8 +282,8 @@ def test_universal_locked_checks_content_without_rewriting(
     elif change == "targets":
         project.write_text(
             project.read_text().replace(
-                'python-builds = ["standard", "free-threaded"]',
-                'python-builds = ["standard"]',
+                "[[tool.nab.matrix.include]]\nfree-threaded = true\n",
+                "",
             )
         )
 
@@ -333,7 +341,7 @@ def test_inputs_changing_during_resolution_do_not_receive_validation_evidence(
     assert not project.with_name("pylock.toml").exists()
 
 
-@pytest.mark.parametrize("declaration", ["pyproject", "nab.toml", "cli"])
+@pytest.mark.parametrize("declaration", ["pyproject", "nab.toml"])
 def test_specific_free_threaded_target_excludes_newer_standard_wheel(
     tmp_path: Path, declaration: str
 ) -> None:
@@ -412,8 +420,8 @@ def test_locked_target_reordering_keeps_the_nonplanning_fast_path(
     before = output.read_bytes()
     project.write_text(
         project.read_text().replace(
-            'python-builds = ["standard", "free-threaded"]',
-            'python-builds = ["free-threaded", "standard"]',
+            "[[tool.nab.matrix.include]]\nfree-threaded = true",
+            "free-threaded = true\n[[tool.nab.matrix.include]]\nfree-threaded = false",
         )
     )
 

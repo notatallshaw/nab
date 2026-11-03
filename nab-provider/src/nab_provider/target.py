@@ -32,7 +32,7 @@ __lazy_modules__ = (
 
 import re
 from functools import lru_cache
-from typing import TYPE_CHECKING, ClassVar, Final
+from typing import TYPE_CHECKING, ClassVar, Final, NamedTuple
 
 from nab_markersets.markersets import variable_names
 from nab_markersets.python_versions import validate_python_version
@@ -75,6 +75,7 @@ __all__ = [
     "ImplementationOverride",
     "IntractableMarkerError",
     "Matrix",
+    "MatrixInclude",
     "NonIntervalMarkerError",
     "ResolveTarget",
     "UnevaluableMarkerError",
@@ -1279,76 +1280,85 @@ def declared_environment(
 class ImplementationOverride(Record):
     """Replace selected matrix defaults for one interpreter implementation."""
 
-    __match_args__ = ("python", "platforms", "python_builds")
+    __match_args__ = ("python", "platforms", "free_threaded")
 
     python: str | None
     platforms: tuple[PlatformSpec, ...] | None
-    python_builds: tuple[str, ...] | None
+    free_threaded: bool | None
 
     def __init__(
         self,
         python: str | None = None,
         platforms: tuple[PlatformSpec, ...] | None = None,
-        python_builds: tuple[str, ...] | None = None,
+        *,
+        free_threaded: bool | None = None,
     ) -> None:
         """Replace only the supplied interpreter-axis defaults."""
         self.python = python
         self.platforms = platforms
-        self.python_builds = python_builds
+        self.free_threaded = free_threaded
 
 
-class _ImplementationAxes(Record):
-    """The effective Python minors and platform specifications for one expansion."""
+class MatrixInclude(Record):
+    """One additional target group, inheriting omitted axes from its matrix."""
 
-    __match_args__ = ("python_versions", "platforms", "python_builds")
+    __match_args__ = ("python", "platforms", "implementations", "free_threaded")
+
+    python: str | None
+    platforms: tuple[PlatformSpec, ...] | None
+    implementations: tuple[str, ...] | None
+    free_threaded: bool | None
+
+    def __init__(
+        self,
+        python: str | None = None,
+        platforms: tuple[PlatformSpec, ...] | None = None,
+        implementations: tuple[str, ...] | None = None,
+        *,
+        free_threaded: bool | None = None,
+    ) -> None:
+        """Record explicit axes; omitted values inherit from the base entry."""
+        self.python = python
+        self.platforms = platforms
+        self.implementations = implementations
+        self.free_threaded = free_threaded
+
+
+class _MatrixAxes(Record):
+    """The effective axes for one implementation within a target group."""
+
+    __match_args__ = ("python_versions", "platforms", "implementation")
 
     python_versions: tuple[str, ...]
     platforms: tuple[PlatformSpec, ...]
-    python_builds: tuple[str, ...] | None
+    implementation: str
 
     def __init__(
         self,
         python_versions: tuple[str, ...],
         platforms: tuple[PlatformSpec, ...],
-        python_builds: tuple[str, ...] | None,
+        implementation: str,
     ) -> None:
         self.python_versions = python_versions
         self.platforms = platforms
-        self.python_builds = python_builds
+        self.implementation = implementation
+
+
+class _MatrixPoint(NamedTuple):
+    """An exact coordinate used for target deduplication and axis ordering."""
+
+    python: str
+    platform: PlatformSpec
+    implementation: str
 
 
 class Matrix(Record):
-    """The declared set of targets a resolve covers.
+    """Declare a base target group and additional groups with inherited defaults.
 
-    Expands a python range, a platform list, and an implementation list
-    into a finite list of :class:`ResolveTarget`.  Every PEP 508 variable
-    any marker on the dep graph names has a value in every target;
-    ``Requires-Python`` filtering happens elsewhere.
-
-    ``python_order``: ``"asc"`` (default, oldest first) or ``"desc"``.
-    Combined with cross-target alignment in the resolver this selects
-    between ``fork-strategy=fewest`` (asc: the oldest-Python pin
-    propagates forward, so the lowest common version wins) and
-    ``fork-strategy=requires-python`` (desc: the newest-Python pin
-    propagates, so older Pythons diverge only when the new version is
-    incompatible).
-
-    ``python_patches``: optional ``{minor: full_version}`` mapping that pins a
-    matrix minor to one concrete deployment micro and resolves it whole,
-    instead of as a micro interval split at each consulted boundary.  Use it to
-    resolve a minor as the single patch release you deploy.  Example:
-    ``python_patches={"3.11": "3.11.4", "3.12": "3.12.1"}``.
-
-    ``implementations``: the interpreter implementations to model
-    (``"cpython"``, ``"pypy"``).  Markers and wheel tags resolve per
-    implementation.
-
-    ``implementation_overrides``: optional per-implementation replacements
-    for the shared ``python``, ``platforms`` and ``python_builds`` defaults.
-
-    ``python_builds``: select ``"standard"``, ``"free-threaded"``, or both.
-    When both are selected, add free-threaded builds where available.
-    When omitted, use each platform's ``free_threaded`` setting.
+    Each group expands Python minors, platforms and implementations independently.
+    An explicit include axis replaces its inherited value. Global Python order and
+    patch pins apply to every group; overlapping groups emit each coordinate once.
+    ``free_threaded`` overrides the platform's build setting when supplied.
     """
 
     __match_args__ = (
@@ -1358,7 +1368,8 @@ class Matrix(Record):
         "python_patches",
         "implementations",
         "implementation_overrides",
-        "python_builds",
+        "free_threaded",
+        "include",
     )
 
     python: str
@@ -1367,7 +1378,8 @@ class Matrix(Record):
     python_patches: dict[str, str] | None
     implementations: tuple[str, ...]
     implementation_overrides: Mapping[str, ImplementationOverride] | None
-    python_builds: tuple[str, ...] | None
+    free_threaded: bool | None
+    include: tuple[MatrixInclude, ...]
 
     def __init__(
         self,
@@ -1378,50 +1390,29 @@ class Matrix(Record):
         implementations: tuple[str, ...] = ("cpython",),
         implementation_overrides: Mapping[str, ImplementationOverride] | None = None,
         *,
-        python_builds: tuple[str, ...] | None = None,
+        free_threaded: bool | None = None,
+        include: tuple[MatrixInclude, ...] = (),
     ) -> None:
-        """Declare the axes and ordering of the target expansion."""
+        """Declare base axes, global ordering and independent target groups."""
         self.python = python
         self.platforms = platforms
         self.python_order = python_order
         self.python_patches = python_patches
         self.implementations = implementations
         self.implementation_overrides = implementation_overrides
-        self.python_builds = python_builds
+        self.free_threaded = free_threaded
+        self.include = include
 
     def expand(self) -> list[ResolveTarget]:
-        """Expand the matrix into concrete targets.
-
-        Validates inputs eagerly: unknown platform ids, unknown
-        implementations, ``python_patches`` keys that are not known
-        minors, an empty python range, an invalid ``python_order``, or a
-        free-threaded platform no interpreter build can satisfy each raise a
-        ``ValueError`` before any work happens.
-        """
+        """Validate and expand the declared target groups in stable axis order."""
         if self.python_order not in {"asc", "desc"}:
             msg = f"python_order must be 'asc' or 'desc'; got {self.python_order!r}"
             raise ValueError(msg)
 
-        _validate_python_builds(self.python_builds)
-
-        unknown = [
-            s.platform_id
-            for s in self.platforms
-            if s.platform_id not in PLATFORM_MARKERS
-        ]
-        if unknown:
-            msg = f"Unknown platform ids: {unknown!r}"
-            raise ValueError(msg)
-
-        unknown_impl = [
-            i for i in self.implementations if i not in IMPLEMENTATION_MARKERS
-        ]
-        if unknown_impl:
-            msg = f"Unknown implementations: {unknown_impl!r}"
-            raise ValueError(msg)
-
         patches = self.python_patches or {}
-        unknown_patches = [m for m in patches if m not in KNOWN_PYTHON_MINORS]
+        unknown_patches = [
+            minor for minor in patches if minor not in KNOWN_PYTHON_MINORS
+        ]
         if unknown_patches:
             msg = (
                 f"Unknown python_patches minors: {unknown_patches!r};"
@@ -1429,176 +1420,186 @@ class Matrix(Record):
             )
             raise ValueError(msg)
 
-        if not self.implementation_overrides:
-            return self._expand_shared(patches)
-
-        by_implementation = self._implementation_axes()
-        py_versions = [
-            py
-            for py in KNOWN_PYTHON_MINORS
-            if any(py in axes.python_versions for axes in by_implementation.values())
-        ]
-        if self.python_order == "desc":
-            py_versions.reverse()
-        python_order = {py: i for i, py in enumerate(py_versions)}
-        platform_order = dict.fromkeys((spec.platform_id for spec in self.platforms), 0)
-        for axes in by_implementation.values():
-            for spec in axes.platforms:
-                platform_order.setdefault(spec.platform_id, 0)
-        platform_order = {platform: i for i, platform in enumerate(platform_order)}
-        implementation_order = {impl: i for i, impl in enumerate(self.implementations)}
-
-        multi_impl = len(self.implementations) > 1
-        targets = [
-            ResolveTarget.for_declared(
-                python_version=py,
-                spec=build,
-                implementation=impl,
-                python_full_version=patches.get(py),
-                multi_implementation=multi_impl,
+        self._validate_defaults_and_overrides()
+        python_order = {
+            minor: index
+            for index, minor in enumerate(
+                reversed(KNOWN_PYTHON_MINORS)
+                if self.python_order == "desc"
+                else KNOWN_PYTHON_MINORS
             )
-            for impl, axes in by_implementation.items()
-            for py in axes.python_versions
-            for spec in axes.platforms
-            for build in _platform_builds(spec, py, impl, axes.python_builds)
-        ]
-        targets.sort(
-            key=lambda target: (
-                python_order[target.python_version],
-                platform_order[target.platform_id],
-                implementation_order[target.implementation],
+        }
+        points = self._entry_points(MatrixInclude(), "matrix", python_order)
+        for index, entry in enumerate(self.include):
+            points.extend(
+                self._entry_points(entry, f"matrix.include[{index}]", python_order)
             )
-        )
-        return targets
 
-    def _expand_shared(self, patches: Mapping[str, str]) -> list[ResolveTarget]:
-        """Expand the shared axes in Python/platform/implementation order."""
-        py_versions = list(_pythons_in_range(self.python))
-        check_free_threaded(
-            platforms=self.platforms,
-            implementations=self.implementations,
-            python_versions=py_versions,
+        # Preserve each group's order while merging exact coordinates across groups.
+        ordered = sorted(
+            dict.fromkeys(points), key=lambda point: python_order[point.python]
         )
-        _check_python_builds(
-            self.python_builds, self.platforms, self.implementations, py_versions
-        )
-        if not py_versions:
-            msg = f"No known Python versions match {self.python!r}"
-            raise ValueError(msg)
-        if self.python_order == "desc":
-            py_versions.reverse()
-
-        multi_impl = len(self.implementations) > 1
+        implementations = {point.implementation for point in ordered}
         return [
             ResolveTarget.for_declared(
-                python_version=py,
-                spec=build,
-                implementation=impl,
-                python_full_version=patches.get(py),
-                multi_implementation=multi_impl,
+                python_version=point.python,
+                spec=point.platform,
+                implementation=point.implementation,
+                python_full_version=patches.get(point.python),
+                multi_implementation=len(implementations) > 1,
             )
-            for py in py_versions
-            for spec in self.platforms
-            for impl in self.implementations
-            for build in _platform_builds(spec, py, impl, self.python_builds)
+            for point in ordered
         ]
 
-    def _implementation_axes(self) -> dict[str, _ImplementationAxes]:
-        """Validate overrides and derive each selected implementation's axes."""
-        overrides = self.implementation_overrides or {}
-        unknown = [i for i in overrides if i not in IMPLEMENTATION_MARKERS]
-        if unknown:
-            msg = f"Unknown implementation_overrides implementations: {unknown!r}"
+    def _validate_defaults_and_overrides(self) -> None:
+        """Validate even dormant bodies without enabling their implementations."""
+        unknown_platforms = [
+            spec.platform_id
+            for spec in self.platforms
+            if spec.platform_id not in PLATFORM_MARKERS
+        ]
+        if unknown_platforms:
+            msg = f"Unknown platform ids: {unknown_platforms!r}"
             raise ValueError(msg)
 
-        shared = tuple(_pythons_in_range(self.python))
-        ranges = {
-            impl: tuple(_pythons_in_range(override.python))
-            for impl, override in overrides.items()
-            if override.python is not None
-        }
-        for impl, override in overrides.items():
-            _validate_python_builds(override.python_builds)
+        unknown = [
+            impl for impl in self.implementations if impl not in IMPLEMENTATION_MARKERS
+        ]
+        if unknown:
+            msg = f"Unknown implementations: {unknown!r}"
+            raise ValueError(msg)
+
+        # Validate range syntax even when implementation overrides replace it.
+        tuple(_pythons_in_range(self.python))
+        for impl, override in (self.implementation_overrides or {}).items():
+            if impl not in IMPLEMENTATION_MARKERS:
+                msg = f"Unknown implementation_overrides implementations: {[impl]!r}"
+                raise ValueError(msg)
+            if override.python is not None:
+                tuple(_pythons_in_range(override.python))
             if override.platforms is not None:
                 _validate_override_platforms(impl, override.platforms)
 
-        effective: dict[str, _ImplementationAxes] = {}
-        for impl in self.implementations:
-            override = overrides.get(impl, ImplementationOverride())
-            versions = ranges.get(impl, shared)
-            platforms = (
-                self.platforms if override.platforms is None else override.platforms
+    def _entry_points(
+        self, entry: MatrixInclude, label: str, python_order: Mapping[str, int]
+    ) -> list[_MatrixPoint]:
+        """Apply implementation defaults, then the entry's explicit axes."""
+        implementations = (
+            self.implementations
+            if entry.implementations is None
+            else entry.implementations
+        )
+        if not implementations:
+            msg = f"{label} must list at least one implementation"
+            raise ValueError(msg)
+
+        groups = []
+        for impl in implementations:
+            override = (self.implementation_overrides or {}).get(
+                impl, ImplementationOverride()
             )
-            builds = (
-                self.python_builds
-                if override.python_builds is None
-                else override.python_builds
+
+            # Explicit entry values take precedence over implementation defaults.
+            effective = MatrixInclude(
+                python=entry.python if entry.python is not None else override.python,
+                platforms=entry.platforms
+                if entry.platforms is not None
+                else override.platforms,
+                free_threaded=entry.free_threaded
+                if entry.free_threaded is not None
+                else override.free_threaded,
             )
-            if not versions:
-                python_spec = (
-                    self.python if override.python is None else override.python
-                )
-                msg = (
-                    f"No known Python versions match implementation {impl!r}:"
-                    f" {python_spec!r}"
-                )
-                raise ValueError(msg)
-            if not platforms:
-                msg = f"Implementation {impl!r} must list at least one platform"
-                raise ValueError(msg)
-            check_free_threaded(
-                platforms=platforms, implementations=(impl,), python_versions=versions
+            axes_label = (
+                f"implementation {impl!r}"
+                if bool(self.implementation_overrides) and label == "matrix"
+                else label
             )
-            _check_python_builds(builds, platforms, (impl,), versions)
-            effective[impl] = _ImplementationAxes(versions, platforms, builds)
-        return effective
+            groups.append(self._axes(effective, axes_label, impl))
+        return self._order_entry_points(groups, python_order)
 
+    def _order_entry_points(
+        self, groups: Sequence[_MatrixAxes], python_order: Mapping[str, int]
+    ) -> list[_MatrixPoint]:
+        """Retain implementation-override ordering and each entry's declared axes."""
+        if bool(self.implementation_overrides):
+            # Overrides retain the shared platform-ID order before adding new IDs.
+            ids = dict.fromkeys(spec.platform_id for spec in self.platforms)
+            for group in groups:
+                for spec in group.platforms:
+                    ids.setdefault(spec.platform_id, None)
+            positions = {name: index for index, name in enumerate(ids)}
+            platforms = {
+                spec: positions[spec.platform_id]
+                for group in groups
+                for spec in group.platforms
+            }
+        else:
+            specs = dict.fromkeys(spec for group in groups for spec in group.platforms)
+            platforms = {spec: index for index, spec in enumerate(specs)}
 
-def _validate_python_builds(builds: tuple[str, ...] | None) -> None:
-    if builds is None:
-        return
-    if (
-        not builds
-        or len(set(builds)) != len(builds)
-        or any(build not in {"standard", "free-threaded"} for build in builds)
-    ):
-        msg = "python_builds must list 'standard', 'free-threaded', or both once"
-        raise ValueError(msg)
+        names = dict.fromkeys(group.implementation for group in groups)
+        implementations = {impl: index for index, impl in enumerate(names)}
 
-
-def _check_python_builds(
-    builds: tuple[str, ...] | None,
-    platforms: Sequence[PlatformSpec],
-    implementations: Sequence[str],
-    python_versions: Sequence[str],
-) -> None:
-    if builds is None:
-        return
-    if any(spec.free_threaded for spec in platforms):
-        msg = "python_builds cannot be combined with platform free_threaded settings"
-        raise ValueError(msg)
-    if builds == ("free-threaded",):
-        check_free_threaded(
-            platforms=[replace(spec, free_threaded=True) for spec in platforms],
-            implementations=implementations,
-            python_versions=python_versions,
+        points = [
+            _MatrixPoint(minor, spec, group.implementation)
+            for group in groups
+            for minor in group.python_versions
+            for spec in group.platforms
+        ]
+        return sorted(
+            points,
+            key=lambda point: (
+                python_order[point.python],
+                platforms[point.platform],
+                implementations[point.implementation],
+            ),
         )
 
+    def _axes(
+        self, entry: MatrixInclude, label: str, implementation: str
+    ) -> _MatrixAxes:
+        """Apply one entry's explicit values and reject unsupported combinations."""
+        python = self.python if entry.python is None else entry.python
+        platforms = self.platforms if entry.platforms is None else entry.platforms
+        threaded = (
+            self.free_threaded if entry.free_threaded is None else entry.free_threaded
+        )
+        if threaded is not None:
+            platforms = tuple(
+                replace(spec, free_threaded=threaded) for spec in platforms
+            )
 
-def _platform_builds(
-    spec: PlatformSpec,
-    python: str,
-    implementation: str,
-    builds: tuple[str, ...] | None,
-) -> tuple[PlatformSpec, ...]:
-    if builds is None:
-        return (spec,)
-    return tuple(
-        replace(spec, free_threaded=build == "free-threaded")
-        for build in builds
-        if build == "standard"
-        or (implementation == "cpython" and supports_free_threading(python))
-    )
+        unknown = [
+            spec.platform_id
+            for spec in platforms
+            if spec.platform_id not in PLATFORM_MARKERS
+        ]
+        if unknown:
+            msg = f"Unknown platform ids in {label}: {unknown!r}"
+            raise ValueError(msg)
+        if not platforms:
+            msg = f"{label} must list at least one platform"
+            raise ValueError(msg)
+        if implementation not in IMPLEMENTATION_MARKERS:
+            msg = f"Unknown implementations in {label}: {[implementation]!r}"
+            raise ValueError(msg)
+
+        versions = tuple(_pythons_in_range(python))
+        try:
+            check_free_threaded(
+                platforms=platforms,
+                implementations=(implementation,),
+                python_versions=versions,
+            )
+        except ValueError as exc:
+            msg = f"{label}: {exc}"
+            raise ValueError(msg) from exc
+
+        if not versions:
+            msg = f"No known Python versions match {label}: {python!r}"
+            raise ValueError(msg)
+
+        return _MatrixAxes(versions, platforms, implementation)
 
 
 def _validate_override_platforms(

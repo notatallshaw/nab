@@ -161,8 +161,7 @@ def test_pypy_override_abi_keeps_cpython_artifacts(tmp_path: Path) -> None:
         f'[[tool.nab.indexes]]\nname = "local"\nurl = "{index.as_uri()}"\n'
         '[tool.nab.matrix]\npython = "==3.11"\n'
         'platforms = ["windows_amd64", "macos_arm64"]\n'
-        'implementations = ["cpython", "pypy"]\n'
-        "[tool.nab.matrix.overrides.implementations.pypy]\n"
+        '[[tool.nab.matrix.include]]\nimplementations = ["pypy"]\n'
         'platforms = [{ id = "windows_amd64", pypy-abi = "pp80" }, { id = "macos_arm64", pypy-abi = "pp80" }]\n',
         encoding="utf-8",
     )

@@ -212,7 +212,6 @@ uploaded-prior-to = "P7D"
 
 [tool.nab.matrix]
 python = ">=3.10,<3.16"
-python-builds = ["standard", "free-threaded"]
 # Platform IDs from nab_provider.target.PLATFORM_MARKERS.
 platforms = [
     "linux_x86_64",
@@ -221,6 +220,11 @@ platforms = [
     "macos_x86_64",
     "windows_amd64",
 ]
+
+# Retain free-threaded wheels from CPython 3.13 onward.
+[[tool.nab.matrix.include]]
+python = ">=3.13,<3.16"
+free-threaded = true
 
 # Workspace packages skip the cooldown; bumps land immediately.
 [[tool.nab.package-rules]]

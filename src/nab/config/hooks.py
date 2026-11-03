@@ -33,7 +33,9 @@ if TYPE_CHECKING:
         VcsSource,
     )
     from nab_provider.records import IndexConfig
-    from nab_provider.target import ImplementationOverride
+    from nab_provider.target import ImplementationOverride, MatrixInclude
+
+    from .values import MatrixConfig
 
 __all__ = [
     "declaring_dir",
@@ -241,38 +243,62 @@ def render_conflicts(value: Sequence[Any]) -> str:
     return "; ".join(str(cs) for cs in value)
 
 
-def render_matrix(value: Any) -> str:
-    """Render the shared matrix axes and any implementation override bodies."""
+def render_matrix(value: MatrixConfig | None) -> str:
+    """Render shared matrix axes and the values explicitly supplied by each entry."""
     if value is None:
         return "<none>"
-    platforms = [p.label for p in value.platforms]
+
+    platforms = [platform.label for platform in value.platforms]
     rendered = f"python={value.python}, platforms={platforms}"
-    if value.python_builds is not None:
-        rendered += f", python-builds={list(value.python_builds)}"
-    if value.implementation_overrides:
-        overrides = {
-            "implementations": _implementation_values(value.implementation_overrides)
-        }
-        rendered += (
-            f", implementations={list(value.implementations)}, overrides={overrides}"
-        )
+    if value.free_threaded is not None:
+        rendered += f", free-threaded={value.free_threaded}"
+    if bool(value.implementation_overrides) or value.include:
+        rendered += f", implementations={list(value.implementations)}"
+
+    if value.implementation_overrides is not None and bool(
+        value.implementation_overrides
+    ):
+        overrides = _implementation_values(value.implementation_overrides)
+        rendered += f", overrides={{'implementations': {overrides}}}"
+    if value.include:
+        rendered += f", include={_matrix_include_values(value.include)}"
+
     return rendered
 
 
 def _implementation_values(
     overrides: Mapping[str, ImplementationOverride],
-) -> dict[str, dict[str, str | list[str]]]:
+) -> dict[str, dict[str, str | bool | list[str]]]:
     """Render only the axes each implementation explicitly overrides."""
-    bodies: dict[str, dict[str, str | list[str]]] = {}
+    bodies: dict[str, dict[str, str | bool | list[str]]] = {}
     for implementation, override in overrides.items():
-        body: dict[str, str | list[str]] = {}
+        body: dict[str, str | bool | list[str]] = {}
         if override.python is not None:
             body["python"] = override.python
         if override.platforms is not None:
             body["platforms"] = [platform.label for platform in override.platforms]
-        if override.python_builds is not None:
-            body["python-builds"] = list(override.python_builds)
+        if override.free_threaded is not None:
+            body["free-threaded"] = override.free_threaded
         bodies[implementation] = body
+    return bodies
+
+
+def _matrix_include_values(
+    entries: Sequence[MatrixInclude],
+) -> list[dict[str, str | bool | list[str]]]:
+    """Keep omitted axes distinct from explicit values in configuration output."""
+    bodies: list[dict[str, str | bool | list[str]]] = []
+    for entry in entries:
+        body: dict[str, str | bool | list[str]] = {}
+        if entry.python is not None:
+            body["python"] = entry.python
+        if entry.platforms is not None:
+            body["platforms"] = [platform.label for platform in entry.platforms]
+        if entry.implementations is not None:
+            body["implementations"] = list(entry.implementations)
+        if entry.free_threaded is not None:
+            body["free-threaded"] = entry.free_threaded
+        bodies.append(body)
     return bodies
 
 

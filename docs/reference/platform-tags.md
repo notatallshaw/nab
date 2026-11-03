@@ -66,16 +66,17 @@ or 11.0 on Apple Silicon is a config error.
 
 PyPy ABIs are independent of the Python language version. Leave `pypy-abi` unset to retain wheels
 for any native PyPy ABI of the declared Python minor, deferring ABI compatibility to installation.
-To target one ABI in a mixed matrix, declare the suffix in PyPy's platform override:
+To target one ABI in a mixed matrix, declare the suffix in a PyPy include entry:
 
 ```toml
 [tool.nab.matrix]
 python = ">=3.10,<3.13"
 platforms = ["windows_amd64", "macos_arm64"]
-implementations = ["cpython", "pypy"]
 
-[tool.nab.matrix.overrides.implementations.pypy]
+# Add PyPy with its native ABI on the same platforms.
+[[tool.nab.matrix.include]]
 python = "==3.11"
+implementations = ["pypy"]
 platforms = [
     { id = "windows_amd64", pypy-abi = "pp80" },
     { id = "macos_arm64", pypy-abi = "pp80" },
@@ -116,9 +117,10 @@ target that does run that kernel has to say so.
 nab rejects settings for the wrong platform: `libc` and `runs-on-libc` apply only to Linux, and
 `runs-on-macos` applies only to macOS.
 
-Each implementation's platform list may name an id once. To include both CPython builds in one lock,
-use the matrix's {ref}`python-builds <matrix-free-threaded>` setting. Lock another libc family for
-that interpreter in a separate run and file: PEP 508 has no libc marker.
+Each entry's platform list may name an id once. Add a separate {ref}`include entry <matrix-include>`
+for another build or platform variant. PEP 508 cannot distinguish libc families or threading
+variants; entries with the same marker environment must share package selections and pins. Nab
+refuses incompatible selections instead of emitting overlapping lock rows.
 
 For declared platform targets, including singleton matrices, `build-policy` defaults to `never`.
 Host metadata builds require an `assume-universal-deps` assertion and an explicit build policy. See
