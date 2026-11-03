@@ -23,7 +23,6 @@ __lazy_modules__ = (
     "tomli",
 )
 
-from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 import tomli
@@ -62,10 +61,10 @@ __all__ = [
     "BuildBackendError",
     "extract_metadata",
     "extract_static_metadata",
+    "project_metadata",
 ]
 
 
-@lru_cache(maxsize=4096)
 def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
     """Return authoritative static metadata from ``pyproject.toml`` when possible.
 
@@ -76,7 +75,7 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
     :class:`InvalidProjectRequirementError`. ``provides_extra`` contains the
     normalized keys declared by ``project.optional-dependencies``.
 
-    Results are cached by ``source_dir`` and must be treated as read-only.
+    Reads the current file on each call; a source directory is mutable.
     """
     pyproject = source_dir / "pyproject.toml"
     state = path_state(pyproject)
@@ -102,10 +101,10 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
     project = static_project_from_table(data)
     if project is None:
         return None
-    return _project_to_metadata(project)
+    return project_metadata(project)
 
 
-def _project_to_metadata(project: dict[str, Any]) -> WheelMetadata | None:
+def project_metadata(project: dict[str, Any]) -> WheelMetadata | None:
     """Convert a static ``[project]`` table to :class:`WheelMetadata`."""
     name = project.get("name")
     version_raw = project.get("version")

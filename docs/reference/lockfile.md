@@ -127,6 +127,11 @@ lockfile-environments
 reproducibility
 ```
 
+## Validation record
+
+`tool.nab.validation` records normalized inputs and target-specific dependency metadata, with hashes
+tying the record to the lock contents. Installers use the standard Pylock fields.
+
 [hash-checking]: https://pip.pypa.io/en/stable/topics/secure-installs/#hash-checking-mode
 [pep 658]: https://packaging.python.org/en/latest/specifications/simple-repository-api/
 [pep 751]: https://packaging.python.org/en/latest/specifications/pylock-toml/

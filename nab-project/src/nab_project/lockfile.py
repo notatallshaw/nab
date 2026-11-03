@@ -600,6 +600,8 @@ class TargetLock(HashableRecord):
     Metadata overrides supply their effective declarations.
     ``None`` means collection was omitted; an empty mapping has no edges.
 
+    ``validation_metadata`` freezes effective metadata for producer-side checks.
+
     ``target`` is the environment the pins hold for.  The writer reads
     its markers and its
     :attr:`~nab_provider.target.ResolveTarget.selection` rather than being
@@ -627,6 +629,7 @@ class TargetLock(HashableRecord):
         "base_dependencies",
         "package_gates",
         "dependency_requirements",
+        "validation_metadata",
     )
 
     __match_args__ = (
@@ -647,6 +650,8 @@ class TargetLock(HashableRecord):
         Mapping[str, Mapping[str, tuple[DependencyDeclaration, ...]]] | None
     ]
 
+    validation_metadata: Final[Mapping[str, Mapping[str, Any]] | None]
+
     def __init__(
         self,
         target: ResolveTarget,
@@ -660,6 +665,7 @@ class TargetLock(HashableRecord):
             str, Mapping[str, tuple[DependencyDeclaration, ...]]
         ]
         | None = None,
+        validation_metadata: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
         """Retain a target's pins and normalize its package conditions."""
         self.target = target
@@ -668,6 +674,7 @@ class TargetLock(HashableRecord):
         self.base_dependencies = factory_value(base_dependencies, dict)
         self.package_gates = factory_value(package_gates, dict)
         self.dependency_requirements = dependency_requirements
+        self.validation_metadata = validation_metadata
 
 
 class LockInput(Record):
@@ -701,6 +708,8 @@ class LockInput(Record):
     environments (PEP 751 ``environments``): what each target declared
     of the environment it resolved for.
 
+    ``validation_inputs`` carries normalized declarations for producer-side checks.
+
     ``provenance`` is optional metadata about the inputs that
     produced this lock.  When present, it lands in the ``[tool.nab]``
     block of the emitted ``pylock.toml``.
@@ -719,6 +728,7 @@ class LockInput(Record):
         "conflicts",
         "base_group",
         "build_group",
+        "validation_inputs",
     )
 
     targets: Mapping[str, TargetLock]
@@ -739,6 +749,8 @@ class LockInput(Record):
     the project's own dependencies, or ``None`` to leave them unconditional."""
     build_group: str | None
 
+    validation_inputs: Mapping[str, Any] | None
+
     def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
         *,
@@ -755,6 +767,7 @@ class LockInput(Record):
         conflicts: tuple[ConflictSet, ...] = (),
         base_group: str | None = None,
         build_group: str | None = None,
+        validation_inputs: Mapping[str, Any] | None = None,
     ) -> None:
         """Collect the resolved targets and lockfile metadata."""
         self.targets = factory_value(targets, dict)
@@ -769,6 +782,7 @@ class LockInput(Record):
         self.conflicts = conflicts
         self.base_group = base_group
         self.build_group = build_group
+        self.validation_inputs = validation_inputs
 
     """``[tool.nab].build-group``: the group name the lock gives
     ``[build-system].requires``, or ``None`` to leave them out of the lock."""

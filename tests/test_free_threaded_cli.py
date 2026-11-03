@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from nab.cli import run
+from nab_project.resolve import ResolveResult, resolve_for_targets
 from nab_project.toml_io import loads
 from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider._vendor.packaging.tags import Tag
@@ -17,6 +18,7 @@ from ._local_artifacts import make_wheel_archive, publish_artifacts
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import Any
 
 
 def _project(tmp_path: Path, *, declaration: str = "pyproject") -> Path:
@@ -236,3 +238,22 @@ def test_universal_locked_does_not_apply_another_environments_constraint(
     before = project.with_name("pylock.toml").read_bytes()
     assert _lock(project, "--locked") == 0
     assert project.with_name("pylock.toml").read_bytes() == before
+
+
+def test_inputs_changing_during_resolution_do_not_receive_validation_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _publish(tmp_path, "1.0", "cp314")
+    _publish(tmp_path, "1.0", "cp314t")
+    project = _project(tmp_path)
+
+    def changing_inputs(*args: Any, **kwargs: Any) -> ResolveResult:
+        result = resolve_for_targets(*args, **kwargs)
+        project.write_text(
+            project.read_text().replace('dev = ["demo"]', 'dev = ["demo>=2"]')
+        )
+        return result
+
+    monkeypatch.setattr("nab._resolve.resolve_for_targets", changing_inputs)
+    assert _lock(project) == 1
+    assert not project.with_name("pylock.toml").exists()

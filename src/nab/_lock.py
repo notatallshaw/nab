@@ -48,8 +48,11 @@ from pathlib import Path
 from string import Formatter
 from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
 
+import tomli
+
 from nab._version import __version__
 from nab_project import toml_io
+from nab_project.lock_validation import snapshot_inputs
 from nab_project.lockfile import (
     DisjointnessError,
     DivergentBaseDependencyError,
@@ -359,6 +362,12 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
             run, config=config, inputs=inputs, workspace_to_drop=workspace_to_drop
         )
 
+    validation_inputs = (
+        _lock_snapshot(run, config, inputs, workspace_to_drop)
+        if format == "pylock" and not locked
+        else None
+    )
+
     transport = _make_resolve_transport(settings.http_backend)
     result = _resolve(
         path,
@@ -374,6 +383,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         resolution_strategy=settings.resolution,
         progress=ProgressReporter(printer()),
         max_concurrency=settings.max_concurrency,
+        retain_lock_metadata=format == "pylock" and not locked,
     )
 
     lock_input = drop_workspace_pins(
@@ -386,6 +396,14 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         workspace_to_drop,
     )
     lock_input.provenance = provenance
+    _attach_validation_inputs(
+        lock_input,
+        validation_inputs,
+        run=run,
+        config=config,
+        inputs=inputs,
+        exclude=workspace_to_drop,
+    )
 
     if locked:
         _check_locked(lock_input, run=run)
@@ -753,6 +771,55 @@ def _fast_fail_locked(
         )
     )
     sys.exit(1)
+
+
+def _lock_snapshot(
+    run: _LockRun,
+    config: NabProjectConfig,
+    inputs: ResolveInputs,
+    exclude: frozenset[str],
+) -> dict[str, Any] | None:
+    """Read validation inputs, leaving invalid declarations to resolution."""
+    try:
+        return snapshot_inputs(
+            run.path,
+            inputs,
+            plan_targets(config),
+            groups=run.groups,
+            extras=run.extras,
+            build_requirements=run.build_requirements,
+            exclude=exclude,
+        )
+    except (
+        InvalidProjectTableError,
+        InvalidProjectRequirementError,
+        LookupError,
+        UnevaluableMarkerError,
+        IntractableMarkerError,
+        OSError,
+        UnicodeError,
+        tomli.TOMLDecodeError,
+        TypeError,
+    ):
+        return None
+
+
+def _attach_validation_inputs(
+    lock_input: LockInput,
+    snapshot: dict[str, Any] | None,
+    *,
+    run: _LockRun,
+    config: NabProjectConfig,
+    inputs: ResolveInputs,
+    exclude: frozenset[str],
+) -> None:
+    """Refuse evidence from a resolve whose project inputs changed."""
+    if snapshot is None:
+        return
+    if _lock_snapshot(run, config, inputs, exclude) != snapshot:
+        printer().error("project inputs changed while locking; re-run nab lock")
+        sys.exit(1)
+    lock_input.validation_inputs = snapshot
 
 
 def _active_root_requirements(

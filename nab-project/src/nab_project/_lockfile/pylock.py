@@ -72,6 +72,7 @@ from nab_provider.marker_holds import intractable_as_error
 from nab_provider.value import FACTORY, FactoryDefault, Record, factory_value, replace
 
 from ..conflicts import conflict_exclusion_groups, conflict_member_groups
+from ..lock_validation import make_validation_record
 from .builder import require_artifact_hashes, validate_artifact_hashes
 from .coverage import validate_marker_coverage
 from .disjointness import validate_marker_disjointness
@@ -542,6 +543,18 @@ def render_lock(lock_input: LockInput, *, lock_dir: Path | None = None) -> str:
     except PylockValidationError as e:
         raise LockValidationError(str(e)) from e
 
+    if lock_input.validation_inputs is not None and all(
+        target.validation_metadata is not None for target in lock_input.targets.values()
+    ):
+        nab = (
+            lock_input.provenance.to_block()
+            if lock_input.provenance is not None
+            else {}
+        )
+        nab["validation"] = make_validation_record(
+            document, lock_input, (lock_dir or Path.cwd()).resolve()
+        )
+        document["tool"] = {"nab": nab}
     return tomli_w.dumps(document)
 
 
