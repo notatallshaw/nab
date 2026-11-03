@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from nab_provider._vendor.packaging.version import Version
 
     class PackageIdentity(Protocol):
-        """The package fields needed to prove marker disjointness."""
+        """Package fields used for lock identity and marker checks."""
 
         @property
         def name(self) -> NormalizedName: ...

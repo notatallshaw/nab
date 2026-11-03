@@ -225,7 +225,10 @@ def test_transitive_prerelease_admission_stays_in_its_fork() -> None:
     assert [(str(package.version), package.marker) for package in a_packages] == [
         ("1.0.0", None)
     ]
-    assert list(a_packages[0].dependencies or ()) == [{"name": "c"}]
+    assert list(a_packages[0].dependencies or ()) == [
+        {"name": "c", "version": "1.0.0"},
+        {"name": "c", "version": "2.0.0b1"},
+    ]
     c_packages = [package for package in pylock.packages if str(package.name) == "c"]
     assert len(c_packages) == 2
     assert {str(package.version) for package in c_packages} == {"1.0.0", "2.0.0b1"}

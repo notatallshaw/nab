@@ -134,7 +134,7 @@ if TYPE_CHECKING:
     _PackageT_co = TypeVar("_PackageT_co", bound=PackageIdentity, covariant=True)
 
     class _PackageOutput(Protocol[_PackageT_co]):
-        """Create one package output after the shared marker policy has decided it."""
+        """Construct a package retaining the builder's owned dependency list."""
 
         def __call__(
             self,
@@ -208,6 +208,22 @@ def _artifact_document(fields: _ArtifactFields) -> dict[str, object]:
         for name, value in fields.items()
         if value is not None
     }
+
+
+class _PendingDependencies(Record):
+    """An owned dependency list completed before the package leaves the builder."""
+
+    __slots__ = __match_args__ = ("name", "labels", "entries")
+    name: str
+    labels: Sequence[str]
+    entries: list[dict[str, str]]
+
+    def __init__(
+        self, *, name: str, labels: Sequence[str], entries: list[dict[str, str]]
+    ) -> None:
+        self.name = name
+        self.labels = labels
+        self.entries = entries
 
 
 class _ForkAxes(Record):
@@ -896,23 +912,66 @@ def _relativize_path(target: str | os.PathLike[str], lock_dir: Path) -> str:
     return Path(rel).as_posix()
 
 
-def _dependency_entries(
-    name: str, labels: Iterable[str], targets: Mapping[str, TargetLock]
-) -> list[dict[str, str]] | None:
-    """Render a package's forward edges as PEP 751 dependency tables.
+def _dependency_reference(
+    package: PackageIdentity,
+    names: Mapping[str, int],
+    versions: Mapping[tuple[str, str | None], int],
+) -> dict[str, str]:
+    """Use only emitted identity fields needed to distinguish the child row."""
+    name = str(package.name)
+    reference = {"name": name}
+    if names[name] == 1:
+        return reference
+    version = str(package.version) if package.version is not None else None
+    if version is not None:
+        reference["version"] = version
+        if versions[name, version] == 1:
+            return reference
+    reference["marker"] = str(package.marker)
+    return reference
 
-    One entry covers the targets in ``labels``, which may disagree on
-    what ``name`` depends on (a dep gated by a marker one target answers
-    differently), so the edges are the union over those targets.  Each
-    target's edges already point only at packages it locked, so every
-    edge names a package the lock carries.
-    """
-    deps: set[str] = set()
-    for label in labels:
-        deps.update(targets[label].dependencies.get(name, ()))
-    if not deps:
-        return None
-    return [{"name": dep} for dep in sorted(deps)]
+
+def _complete_dependency_references(
+    packages: Sequence[PackageIdentity],
+    rows: Mapping[tuple[str, str], int],
+    pending: Sequence[_PendingDependencies],
+    targets: Mapping[str, TargetLock],
+) -> None:
+    """Resolve forward references after every child row has its final identity."""
+    if not pending:
+        return
+
+    names = Counter(str(package.name) for package in packages)
+    versions = Counter(
+        (
+            str(package.name),
+            str(package.version) if package.version is not None else None,
+        )
+        for package in packages
+    )
+    for parent in pending:
+        children: set[int] = set()
+        for label in parent.labels:
+            for child in targets[label].dependencies.get(parent.name, ()):
+                index = rows.get((canonicalize_name(child), label))
+                if index is None:
+                    message = (
+                        f"{parent.name} depends on missing package {child} in {label}"
+                    )
+                    raise LockValidationError(message)
+                children.add(index)
+        references = [
+            _dependency_reference(packages[index], names, versions)
+            for index in children
+        ]
+        references.sort(
+            key=lambda item: (
+                item["name"],
+                item.get("version", ""),
+                item.get("marker", ""),
+            )
+        )
+        parent.entries[:] = references
 
 
 def _pin_to_package(
@@ -1269,6 +1328,8 @@ def _build_packages(
     whose no-member context misses it.
     """
     out: list[_PackageT] = []
+    package_rows: dict[tuple[str, str], int] = {}
+    pending_dependencies: list[_PendingDependencies] = []
     targets = lock_input.targets
     _check_threading_variants(targets)
     by_name = _group_by_name(targets)
@@ -1333,14 +1394,31 @@ def _build_packages(
                 prepared_sets=prepared_sets if len(groups) > 1 else None,
             )
 
+            dependencies: list[dict[str, str]] | None = (
+                []
+                if any(
+                    targets[label].dependencies.get(canonical_name) for label in labels
+                )
+                else None
+            )
+            for label in labels:
+                package_rows[canonical_name, label] = len(out)
+            if dependencies is not None:
+                pending_dependencies.append(
+                    _PendingDependencies(
+                        name=canonical_name, labels=labels, entries=dependencies
+                    )
+                )
             out.append(
                 package_output(
                     _merge_pins_in_group(pins),
                     marker,
                     lock_dir=lock_dir,
-                    dependencies=_dependency_entries(canonical_name, labels, targets),
+                    dependencies=dependencies,
                 )
             )
+
+    _complete_dependency_references(out, package_rows, pending_dependencies, targets)
 
     return out
 
