@@ -775,6 +775,44 @@ def _prepare_pylock(
     return root_fields, package_records
 
 
+def _check_threading_variants(targets: Mapping[str, TargetLock]) -> None:
+    """Reject build-specific selections that PEP 508 cannot distinguish."""
+    if not any(
+        (spec := lock.target.platform_spec) is not None and spec.free_threaded
+        for lock in targets.values()
+    ):
+        return
+    by_context: dict[tuple[object, ...], TargetLock] = {}
+    for lock in targets.values():
+        target = lock.target
+        spec = target.platform_spec
+        if spec is None:
+            continue
+        key = (
+            tuple(sorted(target.marker_env.items())),
+            target.micro_clauses,
+            target.selection,
+            replace(spec, free_threaded=False),
+        )
+        previous = by_context.get(key)
+        if previous is not None and previous.target.platform_spec != spec:
+            changed = set(previous.pins) ^ set(lock.pins)
+            changed.update(
+                name
+                for name in previous.pins.keys() & lock.pins.keys()
+                if previous.package_gates.get(name, ())
+                != lock.package_gates.get(name, ())
+            )
+            if changed:
+                message = (
+                    f"{previous.target.label} and {target.label} have different"
+                    f" package selections ({', '.join(sorted(changed))});"
+                    " lock these builds separately"
+                )
+                raise LockValidationError(message)
+        by_context[key] = lock
+
+
 def _name_base_group(lock_input: LockInput) -> LockInput:
     """Name the base member or remove its membership conditions.
 
@@ -1221,6 +1259,7 @@ def _build_packages(
     """
     out: list[_PackageT] = []
     targets = lock_input.targets
+    _check_threading_variants(targets)
     by_name = _group_by_name(targets)
     env_signatures = _env_signatures(targets)
     env_fork_counts = _count(env_signatures.values())

@@ -50,6 +50,7 @@ from nab_project.lockfile import (
     DisjointnessError,
     IndexPin,
     LockInput,
+    LockValidationError,
     SdistArtifact,
     TargetLock,
     WheelArtifact,
@@ -1374,3 +1375,48 @@ class TestEnvironmentMarkerReuse:
         assert (
             str(error.value).splitlines()[1].strip() == target.environment_marker_string
         )
+
+
+@pytest.mark.parametrize("difference", ["packages", "groups"])
+def test_threading_variants_require_shared_install_selections(difference: str) -> None:
+    ordinary = ResolveTarget.for_declared(
+        python_version="3.14", spec=PlatformSpec("linux_x86_64")
+    )
+    threaded = ResolveTarget.for_declared(
+        python_version="3.14", spec=PlatformSpec("linux_x86_64", free_threaded=True)
+    )
+    pins = {"foo": _index_pin()}
+    second = {**pins, "bar": _index_pin("bar")} if difference == "packages" else pins
+    lock = LockInput(
+        targets={
+            ordinary.label: TargetLock(ordinary, pins),
+            threaded.label: TargetLock(
+                threaded,
+                second,
+                package_gates={"foo": (("group", "dev"),)}
+                if difference == "groups"
+                else {},
+            ),
+        },
+        environments=[Marker(ordinary.environment_marker_string)],
+    )
+    with pytest.raises(LockValidationError, match="package selections"):
+        build_pylock(lock)
+
+
+def test_shared_build_pins_remain_installable_alongside_a_host_target() -> None:
+    ordinary = ResolveTarget.for_declared(
+        python_version="3.14", spec=PlatformSpec("linux_x86_64")
+    )
+    threaded = ResolveTarget.for_declared(
+        python_version="3.14", spec=PlatformSpec("linux_x86_64", free_threaded=True)
+    )
+    host = ResolveTarget.for_host()
+    pins = {"foo": _index_pin()}
+    lock = LockInput(
+        targets={t.label: TargetLock(t, pins) for t in (host, ordinary, threaded)},
+        environments=[
+            Marker(t.environment_marker_string) for t in (host, ordinary, threaded)
+        ],
+    )
+    assert [str(package.name) for package in build_pylock(lock).packages] == ["foo"]

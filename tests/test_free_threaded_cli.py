@@ -153,7 +153,7 @@ def test_a_missing_free_threaded_wheel_refuses_the_lock(tmp_path: Path) -> None:
     assert not project.with_name("pylock.toml").exists()
 
 
-def test_both_builds_dependencies_reach_the_lock(tmp_path: Path) -> None:
+def test_build_specific_dependencies_refuse_a_shared_lock(tmp_path: Path) -> None:
     _publish(tmp_path, "1.0", "cp314", "ordinary-dep")
     _publish(tmp_path, "1.0", "cp314t", "threaded-dep")
     for name in ("ordinary-dep", "threaded-dep"):
@@ -169,10 +169,5 @@ def test_both_builds_dependencies_reach_the_lock(tmp_path: Path) -> None:
             },
         )
     project = _project(tmp_path)
-    assert _lock(project) == 0
-    document = loads(project.with_name("pylock.toml").read_text(encoding="utf-8"))
-    assert {package["name"] for package in document["packages"]} == {
-        "demo",
-        "ordinary-dep",
-        "threaded-dep",
-    }
+    assert _lock(project) == 1
+    assert not project.with_name("pylock.toml").exists()
