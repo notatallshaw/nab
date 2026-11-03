@@ -15,6 +15,7 @@
 --project-matrix-python
 --project-matrix-platforms
 --project-matrix-implementations
+--project-matrix-python-builds
 --project-matrix-python-order
 --project-matrix-python-patches
 --project-environment-python

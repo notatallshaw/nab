@@ -75,6 +75,7 @@ _PAGES = (
     ("python", "reference/target-matrix.md"),
     ("platforms", "reference/target-matrix.md"),
     ("implementations", "reference/target-matrix.md"),
+    ("python-builds", "reference/target-matrix.md"),
     ("python-order", "reference/target-matrix.md"),
     ("python-patches", "reference/target-matrix.md"),
     ("python", "reference/target-environment.md"),
@@ -103,6 +104,7 @@ _PAGES = (
     ("no-emit-workspace", "how-to/workspaces.md"),
     ("upgrade", "reference/cli.md"),
     ("locked", "reference/cli.md"),
+    ("reproduce", "reference/cli.md"),
     ("include-rejected", "reference/cli.md"),
 )
 
@@ -181,8 +183,8 @@ class TestTheDeclaredTable:
         command = [row for row in ALL if row.commands and not row.is_global]
         file_only = [row for row in ALL if not row.commands]
 
-        assert (len(root), len(command), len(file_only)) == (7, 46, 13)
-        assert len(root) + len(command) + len(file_only) == len(ALL) == 66
+        assert (len(root), len(command), len(file_only)) == (7, 48, 13)
+        assert len(root) + len(command) + len(file_only) == len(ALL) == 68
 
         keyed = [row for row in ALL if row.key]
 
@@ -196,6 +198,7 @@ class TestTheDeclaredTable:
             ("python", "matrix"),
             ("platforms", "matrix"),
             ("implementations", "matrix"),
+            ("python-builds", "matrix"),
             ("python-order", "matrix"),
             ("python-patches", "matrix"),
             ("python", "environment"),
@@ -287,7 +290,7 @@ class TestTheDeclaredTable:
         """
         negatable = [row for row in ALL if row.kind in _BOOL_KINDS]
 
-        assert len(negatable) == 14
+        assert len(negatable) == 15
 
         for row in negatable:
             assert row.negatable is not row.name.startswith("no-"), row.name

@@ -283,7 +283,7 @@ def _load_config(
 def _check_targets_or_exit(config: NabProjectConfig) -> None:
     """Exit 1 when the declaration admits no target, before anything else reads it.
 
-    ``nab lock --locked`` would otherwise report a stale lock and print a
+    ``nab lock --reproduce`` would otherwise report a stale lock and print a
     refresh command carrying the value that was refused.
     """
     try:
@@ -353,9 +353,8 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
                     transport,
                     targets=targets,
                     inputs=config.resolve_inputs(),
-                    include_dependency_requirements=(
-                        printer().verbosity >= Verbosity.DEBUG
-                    ),
+                    include_dependency_requirements=printer().verbosity
+                    >= Verbosity.DEBUG,
                     build_transport_factory=partial(_make_transport, http_backend),
                     cache_dir=cache_dir,
                     offline=offline,

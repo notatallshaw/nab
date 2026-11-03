@@ -48,8 +48,12 @@ from pathlib import Path
 from string import Formatter
 from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
 
+import tomli
+
 from nab._version import __version__
 from nab_project import toml_io
+from nab_project.lock_check import check_saved_lock
+from nab_project.lock_validation import snapshot_inputs
 from nab_project.lockfile import (
     DisjointnessError,
     DivergentBaseDependencyError,
@@ -205,6 +209,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     project_matrix_python: str | None = None,
     project_matrix_platforms: tuple[str, ...] = (),
     project_matrix_implementations: tuple[str, ...] = (),
+    project_matrix_python_builds: tuple[str, ...] = (),
     project_matrix_python_order: MatrixOrderFlag | None = None,
     project_matrix_python_patches: tuple[str, ...] = (),
     project_environment_python: str | None = None,
@@ -212,6 +217,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     project_environment_implementation: ImplementationFlag | None = None,
     upgrade: bool = False,
     locked: bool = False,
+    reproduce: bool = False,
 ) -> None:
     """Resolve dependencies and emit a lockfile or pin list.
 
@@ -238,12 +244,16 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     form of ``--project-environment-python`` and is not valid in universal
     mode. ``--upgrade`` resets a relative upload cutoff to the current time.
 
-    ``--locked`` verifies an existing single-environment pylock without
-    writing and exits non-zero if the lock would change.
+    ``--locked`` checks the saved solution without resolving or writing.
+    ``--reproduce`` resolves afresh and checks that the output is identical.
     """
     _validate_pylock_output_name(output=output, format=format)
-    if locked and (format != "pylock" or is_stdout(output)):
-        printer().error("--locked is only supported for pylock output to a file.")
+    if locked and (upgrade or reproduce):
+        printer().error("--locked cannot be combined with --upgrade or --reproduce.")
+        sys.exit(1)
+
+    if (locked or reproduce) and (format != "pylock" or is_stdout(output)):
+        printer().error("lock checks are only supported for pylock output to a file.")
         sys.exit(1)
 
     if build_requirements:
@@ -278,6 +288,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         cli_matrix_python=project_matrix_python,
         cli_matrix_platforms=project_matrix_platforms,
         cli_matrix_implementations=project_matrix_implementations,
+        cli_matrix_python_builds=project_matrix_python_builds,
         cli_matrix_python_order=project_matrix_python_order,
         cli_matrix_python_patches=project_matrix_python_patches,
         cli_python=python,
@@ -308,10 +319,6 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
 
     if build_requirements:
         inputs = inputs_for_build_requirements(inputs)
-
-    if locked and config.mode is ResolveMode.UNIVERSAL:
-        printer().error("--locked is not supported in universal mode.")
-        sys.exit(1)
 
     _check_targets_or_exit(config)
     settings = _layered_run_settings_or_exit(ladder)
@@ -357,9 +364,19 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     )
 
     if locked:
-        _fast_fail_locked(
+        _check_saved(run, config=config, inputs=inputs, exclude=workspace_to_drop)
+        return
+
+    if reproduce:
+        _fast_fail_reproduction(
             run, config=config, inputs=inputs, workspace_to_drop=workspace_to_drop
         )
+
+    validation_inputs = (
+        _lock_snapshot(run, config, inputs, workspace_to_drop)
+        if format == "pylock" and not reproduce
+        else None
+    )
 
     transport = _make_resolve_transport(settings.http_backend)
     result = _resolve(
@@ -388,9 +405,17 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         workspace_to_drop,
     )
     lock_input.provenance = provenance
+    _attach_validation_inputs(
+        lock_input,
+        validation_inputs,
+        run=run,
+        config=config,
+        inputs=inputs,
+        exclude=workspace_to_drop,
+    )
 
-    if locked:
-        _check_locked(lock_input, run=run)
+    if reproduce:
+        _check_reproduction(lock_input, run=run)
         return
 
     _emit_or_exit(
@@ -648,31 +673,73 @@ class _LockRun(Record):
         return arguments
 
 
-def _locked_target_path(run: _LockRun) -> Path:
-    """Return the file ``--locked`` reads and re-renders against."""
+def _check_target_path(run: _LockRun) -> Path:
+    """Return the file this lock check reads."""
     if run.output is not None:
         return run.output
     return _default_output_path("pylock", build_requirements=run.build_requirements)
 
 
-def _fast_fail_locked(
+def _check_saved(
+    run: _LockRun,
+    *,
+    config: NabProjectConfig,
+    inputs: ResolveInputs,
+    exclude: frozenset[str],
+) -> None:
+    """Check the saved solution before creating any resolver transport."""
+    target = _check_target_path(run)
+    try:
+        targets = plan_targets(config)
+        current = snapshot_inputs(
+            run.path,
+            inputs,
+            targets,
+            groups=run.groups,
+            extras=run.extras,
+            build_requirements=run.build_requirements,
+            exclude=exclude,
+        )
+        check_saved_lock(
+            target,
+            run.path,
+            current,
+            inputs,
+            targets,
+            groups=run.groups,
+            extras=run.extras,
+            build_requirements=run.build_requirements,
+        )
+    except (OSError, ValueError, LookupError, RecursionError) as exc:
+        printer().error(
+            DiagnosticMessage(
+                f"--locked: cannot verify {target}: {exc}",
+                suggestions=(
+                    Suggestion(f"run `{run.refresh_command()}` to update it."),
+                ),
+            )
+        )
+        sys.exit(1)
+    printer().done(f"{target} is consistent with the project")
+
+
+def _fast_fail_reproduction(
     run: _LockRun,
     *,
     config: NabProjectConfig,
     inputs: ResolveInputs,
     workspace_to_drop: frozenset[str],
 ) -> None:
-    """Fast-fail ``nab lock --locked`` before any resolve when a mismatch is proven.
+    """Fast-fail ``nab lock --reproduce`` before any resolve when a mismatch is proven.
 
     Reads and parses the committed lock, then runs the envelope and validity
     checks.  On the first disqualification it prints the reason and exits
     non-zero; otherwise it returns and the full resolve runs.
 
-    ``config`` says which environment the checks evaluate markers against
-    and ``inputs`` carries the settings the lock records, already narrowed
-    for a build-requirements run.
+    Specific locks also check direct requirements and constraints against their
+    target. Universal locks leave per-environment validity to the full resolve.
     """
-    target = _locked_target_path(run)
+    target = _check_target_path(run)
     refresh = run.refresh_command()
 
     # A run whose own requirements cannot be read or evaluated is not the
@@ -701,15 +768,16 @@ def _fast_fail_locked(
     if path_state(target) is PathState.ABSENT:
         printer().error(
             DiagnosticMessage(
-                f"--locked: no lockfile at {target} to check",
+                f"--reproduce: no lockfile at {target} to check",
                 suggestions=(Suggestion(f"run `{refresh}` first."),),
             )
         )
         sys.exit(1)
 
-    # ``--locked`` is refused in universal mode, so the plan holds one
-    # target, and _check_targets_or_exit has already admitted it.
-    resolve_target = plan_targets(config)[0]
+    # The validity shortcut does not select pins by environment marker.
+    resolve_target = (
+        plan_targets(config)[0] if config.mode is ResolveMode.SPECIFIC else None
+    )
 
     try:
         disqualification = check_locked(
@@ -726,12 +794,12 @@ def _fast_fail_locked(
             exclude=workspace_to_drop,
         )
     except OSError as e:
-        printer().error(f"--locked: cannot read lockfile {target}: {e}.")
+        printer().error(f"--reproduce: cannot read lockfile {target}: {e}.")
         sys.exit(1)
     except LockfileSyntaxError as e:
         printer().error(
             DiagnosticMessage(
-                (f"--locked: lockfile {target} is not valid TOML: {e}"),
+                (f"--reproduce: lockfile {target} is not valid TOML: {e}"),
                 suggestions=(Suggestion(f"re-run `{refresh}` to regenerate it."),),
             )
         )
@@ -739,7 +807,10 @@ def _fast_fail_locked(
     except InvalidLockfileError as e:
         printer().error(
             DiagnosticMessage(
-                (f"--locked: lockfile {target} is not a valid PEP 751 lockfile: {e}"),
+                (
+                    f"--reproduce: lockfile {target} "
+                    f"is not a valid PEP 751 lockfile: {e}"
+                ),
                 suggestions=(Suggestion(f"re-run `{refresh}` to regenerate it."),),
             )
         )
@@ -750,11 +821,63 @@ def _fast_fail_locked(
 
     printer().error(
         DiagnosticMessage(
-            (f"--locked: lockfile {target} is out of date: {disqualification.reason}"),
+            (
+                f"--reproduce: lockfile {target} "
+                f"is out of date: {disqualification.reason}"
+            ),
             suggestions=(Suggestion(f"re-run `{refresh}` to update it."),),
         )
     )
     sys.exit(1)
+
+
+def _lock_snapshot(
+    run: _LockRun,
+    config: NabProjectConfig,
+    inputs: ResolveInputs,
+    exclude: frozenset[str],
+) -> dict[str, Any] | None:
+    """Read validation inputs, leaving invalid declarations to resolution."""
+    try:
+        return snapshot_inputs(
+            run.path,
+            inputs,
+            plan_targets(config),
+            groups=run.groups,
+            extras=run.extras,
+            build_requirements=run.build_requirements,
+            exclude=exclude,
+        )
+    except (
+        InvalidProjectTableError,
+        InvalidProjectRequirementError,
+        LookupError,
+        UnevaluableMarkerError,
+        IntractableMarkerError,
+        OSError,
+        UnicodeError,
+        tomli.TOMLDecodeError,
+        TypeError,
+    ):
+        return None
+
+
+def _attach_validation_inputs(
+    lock_input: LockInput,
+    snapshot: dict[str, Any] | None,
+    *,
+    run: _LockRun,
+    config: NabProjectConfig,
+    inputs: ResolveInputs,
+    exclude: frozenset[str],
+) -> None:
+    """Refuse evidence from a resolve whose project inputs changed."""
+    if snapshot is None:
+        return
+    if _lock_snapshot(run, config, inputs, exclude) != snapshot:
+        printer().error("project inputs changed while locking; re-run nab lock")
+        sys.exit(1)
+    lock_input.validation_inputs = snapshot
 
 
 def _active_root_requirements(
@@ -825,15 +948,9 @@ def _active_root_requirements(
     return roots
 
 
-def _check_locked(lock_input: LockInput, *, run: _LockRun) -> None:
-    """Verify the committed pylock matches a fresh resolve, writing nothing.
-
-    The resolve has already run; this renders the lock it would produce and
-    compares it to the committed file with the provenance block dropped from
-    both, so only a real change to the locked packages fails.  The committed
-    lock is never read back into the resolve.
-    """
-    target = _locked_target_path(run)
+def _check_reproduction(lock_input: LockInput, *, run: _LockRun) -> None:
+    """Compare a fresh resolve with the committed lock, ignoring provenance."""
+    target = _check_target_path(run)
     new_text = _render_or_exit(lambda: render_lock(lock_input, lock_dir=target.parent))
     committed = _packages_only(target.read_text(encoding="utf-8"))
     if _packages_only(new_text) == committed:
@@ -841,7 +958,7 @@ def _check_locked(lock_input: LockInput, *, run: _LockRun) -> None:
         return
     printer().error(
         DiagnosticMessage(
-            (f"--locked: lockfile {target} is out of date"),
+            (f"--reproduce: lockfile {target} is out of date"),
             suggestions=(
                 Suggestion(f"re-run `{run.refresh_command()}` to update it."),
             ),

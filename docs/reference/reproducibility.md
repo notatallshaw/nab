@@ -41,22 +41,17 @@ without `created-at` anchors to the run time.
 
 ## Checking the lock in CI
 
-`nab lock --locked` re-resolves project inputs and compares the result with the committed pylock
-without writing. It applies to file output in single-environment mode. nab resolves independently of
-the existing pins and ignores the lock's `[tool.nab]` record of inputs and timestamps when comparing
-results.
+`nab lock --locked` checks current project inputs against the saved Pylock selections. Compact input
+fingerprints provide an unchanged-input fast path. New releases and index availability do not affect
+this check. See [Use a lock](../how-to/use-the-lock.md) for CI setup and limitations.
+
+To check whether a fresh resolve still produces the same result, use:
 
 ```bash
-nab lock --locked
+nab lock --reproduce
 ```
 
-Extras and groups are sorted in the lock. Reordering the same names, or using `--all-extras` or
-`--all-groups` for that set, does not change the arrays.
-
-Input mismatches that can be proved without resolving fail early. Otherwise the full resolve runs,
-so `decision-order = "arrival"` can produce a different answer on a colder cache.
-
-Use `decision-order = "stable"` for this check. See [Use a lock](../how-to/use-the-lock.md) for the
-CI command and the [CLI reference](cli.md) for mismatch behavior.
+This can contact indexes and select newer releases. Use `decision-order = "stable"` to avoid
+response timing changing the answer. Comparison ignores `[tool.nab]` data and writes nothing.
 
 See [Lockfiles](lockfile.md) for the output formats.

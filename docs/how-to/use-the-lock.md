@@ -17,6 +17,12 @@ python -m pip install -r pylock.toml
 pip selects packages for the current interpreter and platform, uses the lock's default dependency
 groups, and selects no extras.
 
+With pip 26.3 or newer, select a named group with:
+
+```bash
+python -m pip install --group pylock.toml:dev
+```
+
 The command installs the locked dependencies, not the project that produced the lock. See
 [Selecting what to lock](../reference/selection.md) before using extras, non-default groups, or
 workspace members.
@@ -77,30 +83,20 @@ directly rather than selecting a wheel from `wheelhouse`.
 
 ## Check a committed lock in CI
 
-`nab lock --locked` works in `specific` mode, including a singleton matrix. It fails if the file is
-missing or a fresh resolve would change it. Universal mode does not support this check.
-
-Set a stable search order before generating the lock you will commit:
-
-```toml
-[tool.nab]
-decision-order = "stable"
-```
-
-Generate it locally with `nab lock pyproject.toml`, then run the check in CI with the same target
-and settings:
+Generate the lock locally, then check it in CI with the same targets and selections:
 
 ```bash
 nab lock --locked pyproject.toml
 ```
 
-The check writes nothing, but it can contact indexes and select newer releases even when
-`pyproject.toml` has not changed. It checks what a fresh resolve would choose, not just whether the
-old pins satisfy your declarations.
+The check validates the saved solution without resolving, writing, or contacting indexes. Compatible
+bound changes are checked against saved versions. Changed sources, targets or dependency selections
+need a new lock.
 
-To exclude later uploads, configure `uploaded-prior-to` when generating the lock. See
-{ref}`Reproducibility <reproducibility>` for cutoff behavior and index changes it cannot freeze, and
-[`nab lock`](../reference/cli.md) for unsupported check modes.
+Local artifact sizes and hashes and static local metadata are checked afresh. Locks without
+supported fingerprints and changed inputs needing dynamic metadata, local metadata overrides or
+unavailable source versions require regeneration. Use `--reproduce` for a fresh resolve and
+comparison; see [Reproducible locks](../reference/reproducibility.md).
 
 ## Download after a fresh resolve
 

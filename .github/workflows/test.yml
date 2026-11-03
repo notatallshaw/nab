@@ -88,16 +88,15 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: |
-            .github/requirements/pylock.nox.toml
-            .github/requirements/pylock.tests.toml
+            pylock.dev.toml
             .github/requirements/pylock.build.toml
           allow-prereleases: true
 
-      - name: Upgrade pip to PEP 751 install support
-        run: python -m pip install --upgrade "pip>=26.1"
+      - name: Ensure pip supports locked groups
+        run: python -m pip install "pip>=26.3"
 
       - name: Install nox
-        run: pip install -r .github/requirements/pylock.nox.toml
+        run: pip install --group pylock.dev.toml:nox
 
       - name: Test affected workspaces
         shell: bash
@@ -139,16 +138,15 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: |
-            .github/requirements/pylock.nox.toml
-            .github/requirements/pylock.tests.toml
+            pylock.dev.toml
             .github/requirements/pylock.build.toml
           allow-prereleases: true
 
-      - name: Upgrade pip to PEP 751 install support
-        run: python -m pip install --upgrade "pip>=26.1"
+      - name: Ensure pip supports locked groups
+        run: python -m pip install "pip>=26.3"
 
       - name: Install nox
-        run: pip install -r .github/requirements/pylock.nox.toml
+        run: pip install --group pylock.dev.toml:nox
 
       - name: Run the benchmark-harness tests
         run: nox -s benchmarks
@@ -170,15 +168,15 @@ jobs:
           python-version: "3.15"
           cache: pip
           cache-dependency-path: |
-            .github/requirements/pylock.tests.toml
+            pylock.dev.toml
             .github/requirements/pylock.build.toml
           allow-prereleases: true
 
-      - name: Upgrade pip to PEP 751 install support
-        run: python -m pip install --upgrade "pip>=26.1"
+      - name: Ensure pip supports locked groups
+        run: python -m pip install "pip>=26.3"
 
       - name: Install third-party deps
-        run: pip install -r .github/requirements/pylock.tests.toml
+        run: pip install --group pylock.dev.toml:tests
 
       - name: Install the build backend
         run: pip install -r .github/requirements/pylock.build.toml
@@ -213,14 +211,14 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: |
-            .github/requirements/pylock.crosshair.toml
+            pylock.dev.toml
             .github/requirements/pylock.build.toml
 
-      - name: Upgrade pip to PEP 751 install support
-        run: python -m pip install --upgrade "pip>=26.1"
+      - name: Ensure pip supports locked groups
+        run: python -m pip install "pip>=26.3"
 
       - name: Install third-party deps
-        run: pip install -r .github/requirements/pylock.crosshair.toml
+        run: pip install --group pylock.dev.toml:crosshair
 
       - name: Install the build backend
         run: pip install -r .github/requirements/pylock.build.toml
@@ -247,16 +245,15 @@ jobs:
           python-version: "3.15"
           cache: pip
           cache-dependency-path: |
-            .github/requirements/pylock.nox.toml
-            .github/requirements/pylock.dists.toml
+            pylock.dev.toml
             .github/requirements/pylock.build.toml
           allow-prereleases: true
 
-      - name: Upgrade pip to PEP 751 install support
-        run: python -m pip install --upgrade "pip>=26.1"
+      - name: Ensure pip supports locked groups
+        run: python -m pip install "pip>=26.3"
 
       - name: Install nox
-        run: pip install -r .github/requirements/pylock.nox.toml
+        run: pip install --group pylock.dev.toml:nox
 
       # Build logic lives in tasks/check_dists.py, driven by the dists session.
       - name: Build every distribution and install each sdist and wheel
@@ -278,16 +275,15 @@ jobs:
           python-version: "3.15"
           cache: pip
           cache-dependency-path: |
-            .github/requirements/pylock.nox.toml
-            .github/requirements/pylock.tests.toml
+            pylock.dev.toml
             .github/requirements/pylock.build.toml
           allow-prereleases: true
 
-      - name: Upgrade pip to PEP 751 install support
-        run: python -m pip install --upgrade "pip>=26.1"
+      - name: Ensure pip supports locked groups
+        run: python -m pip install "pip>=26.3"
 
       - name: Install nox
-        run: pip install -r .github/requirements/pylock.nox.toml
+        run: pip install --group pylock.dev.toml:nox
 
       # Without nab-provider installed the algebra binds released packaging,
       # which no other job reaches.

@@ -31,7 +31,7 @@ from urllib.request import url2pathname
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from nab_provider._vendor.packaging.pylock import Package, Pylock
+    from nab_provider._vendor.packaging.pylock import Pylock
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -43,7 +43,12 @@ from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_project.build_policy import enforce_build_policy_for_targets
 from nab_project.fetch import FetchCoordinator
 from nab_project.inputs import ResolveInputs
-from nab_project.lockfile import LOCK_VERSION, build_pylock
+from nab_project.lockfile import (
+    LOCK_VERSION,
+    InvalidLockfileError,
+    build_pylock,
+    resolve_dependency_references,
+)
 from nab_project.resolve import (
     ResolveResult,
     build_lock_input,
@@ -1222,41 +1227,37 @@ def _project_lock_targets(
     the fixture implies, or the lock does not describe the resolve it came from.
     """
     projected: dict[str, dict[str, str]] = {}
+    try:
+        references = resolve_dependency_references(lock)
+    except InvalidLockfileError as exc:
+        _fail(str(exc))
     for target_result in result.target_results:
         environment = target_result.target.marker_env
 
         selected: dict[str, str] = {}
-        selected_packages: dict[str, Package] = {}
-        for package in lock.packages:
+        selected_rows: dict[str, int] = {}
+        for package_index, package in enumerate(lock.packages):
             if package.marker is not None and not package.marker.evaluate(environment):
                 continue
             name = str(canonicalize_name(str(package.name), validate=True))
             if name in selected:
                 _fail(f"{target_result.target.label}: lock selects {name!r} twice")
             selected[name] = str(package.version)
-            selected_packages[name] = package
+            selected_rows[name] = package_index
 
         expected_edges = _expected_fixture_edges(
             selected, environment, requirements, fixture
         )
 
-        # PEP 751 dependency entries carry a name and nothing else; a version or
-        # source here would be a second, unreconciled copy of the resolution.
-        actual_edges: dict[str, set[str]] = {name: set() for name in selected}
-        for parent, package in selected_packages.items():
-            for dependency in package.dependencies or ():
-                if not isinstance(dependency, dict) or set(dependency) != {"name"}:
-                    _fail(
-                        f"{target_result.target.label}: lock dependency must contain"
-                        " exactly one name field"
-                    )
-                raw_name = dependency.get("name")
-                if not isinstance(raw_name, str):
-                    _fail(f"{target_result.target.label}: malformed lock dependency")
-                child = str(canonicalize_name(raw_name, validate=True))
-                if child not in selected:
-                    _fail(f"{target_result.target.label}: lock edge escapes selection")
-                actual_edges[parent].add(child)
+        selected_indices = set(selected_rows.values())
+        actual_edges = {
+            parent: {
+                str(lock.packages[child].name)
+                for child in references[index]
+                if child in selected_indices
+            }
+            for parent, index in selected_rows.items()
+        }
 
         if actual_edges != expected_edges:
             _fail(

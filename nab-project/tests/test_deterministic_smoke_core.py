@@ -947,17 +947,17 @@ def test_nab_lock_validation_accepts_the_fixture_lock(
         ),
         pytest.param(
             _dependency_version,
-            "exactly one name field",
-            id="versioned-dependency",
+            "identify exactly one package",
+            id="wrong-dependency-version",
         ),
         pytest.param(
             _dependency_source,
-            "exactly one name field",
-            id="dependency-source",
+            "identify exactly one package",
+            id="unknown-source-field",
         ),
         pytest.param(
             _unknown_dependency_field,
-            "exactly one name field",
+            "identify exactly one package",
             id="unknown-dependency-field",
         ),
     ],
@@ -984,3 +984,40 @@ def test_file_url_helper_round_trips_and_rejects_nonlocal_urls(
         harness._artifact_location("https://example.invalid/wheel.whl", tmp_path)
     with pytest.raises(harness.SmokeContractError, match="fixture file URL"):
         harness._artifact_location("file://remotehost/wheel.whl", tmp_path)
+
+
+@pytest.mark.parametrize("field", ["version", "index", "wheels"])
+def test_nab_lock_validation_accepts_standard_dependency_identity(
+    basic_lock_case: _LockValidationCase, field: str
+) -> None:
+    case = basic_lock_case
+    parent = next(package for package in case.lock.packages if package.dependencies)
+    child_name = parent.dependencies[0]["name"]
+    child = next(
+        package
+        for package in case.lock.to_dict()["packages"]
+        if package["name"] == child_name
+    )
+    qualified = _extra_dependency_field(case, field, child[field])
+    assert case.validate(qualified) == case.expected
+
+
+def test_nab_lock_validation_accepts_a_source_only_dependency_reference(
+    basic_lock_case: _LockValidationCase,
+) -> None:
+    case = basic_lock_case
+    index, parent = next(
+        (index, package)
+        for index, package in enumerate(case.lock.packages)
+        if package.dependencies
+    )
+    first, *remaining = parent.dependencies
+    child = next(
+        package
+        for package in case.lock.to_dict()["packages"]
+        if package["name"] == first["name"]
+    )
+    qualified = _replace_lock_package(
+        case.lock, index, dependencies=({"wheels": child["wheels"]}, *remaining)
+    )
+    assert case.validate(qualified) == case.expected

@@ -987,7 +987,10 @@ def _resolve_one_target(
         declarations = collect_dependency_requirements(
             provider, pins, raw, target_lock.dependencies
         )
-        target_lock = replace(target_lock, dependency_requirements=declarations)
+        target_lock = replace(
+            target_lock,
+            dependency_requirements=declarations,
+        )
 
     if provider.yank_admissions:
         _warn_selected_yanks(provider, target_lock)

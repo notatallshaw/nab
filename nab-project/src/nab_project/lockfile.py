@@ -71,6 +71,7 @@ from ._lockfile.validate import (
     LockfileSyntaxError,
     RootRequirement,
     check_locked,
+    resolve_dependency_references,
 )
 from .value import ValueType
 
@@ -122,6 +123,7 @@ __all__ = [
     "read_lockfile_anchor",
     "read_lockfile_packages",
     "render_lock",
+    "resolve_dependency_references",
     "strip_userinfo",
     "summarize_lock",
     "write_lock",
@@ -600,6 +602,7 @@ class TargetLock(HashableRecord):
     Metadata overrides supply their effective declarations.
     ``None`` means collection was omitted; an empty mapping has no edges.
 
+
     ``target`` is the environment the pins hold for.  The writer reads
     its markers and its
     :attr:`~nab_provider.target.ResolveTarget.selection` rather than being
@@ -701,6 +704,8 @@ class LockInput(Record):
     environments (PEP 751 ``environments``): what each target declared
     of the environment it resolved for.
 
+    ``validation_inputs`` carries normalized declarations for producer-side checks.
+
     ``provenance`` is optional metadata about the inputs that
     produced this lock.  When present, it lands in the ``[tool.nab]``
     block of the emitted ``pylock.toml``.
@@ -719,6 +724,7 @@ class LockInput(Record):
         "conflicts",
         "base_group",
         "build_group",
+        "validation_inputs",
     )
 
     targets: Mapping[str, TargetLock]
@@ -739,6 +745,8 @@ class LockInput(Record):
     the project's own dependencies, or ``None`` to leave them unconditional."""
     build_group: str | None
 
+    validation_inputs: Mapping[str, Any] | None
+
     def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
         *,
@@ -755,6 +763,7 @@ class LockInput(Record):
         conflicts: tuple[ConflictSet, ...] = (),
         base_group: str | None = None,
         build_group: str | None = None,
+        validation_inputs: Mapping[str, Any] | None = None,
     ) -> None:
         """Collect the resolved targets and lockfile metadata."""
         self.targets = factory_value(targets, dict)
@@ -769,6 +778,7 @@ class LockInput(Record):
         self.conflicts = conflicts
         self.base_group = base_group
         self.build_group = build_group
+        self.validation_inputs = validation_inputs
 
     """``[tool.nab].build-group``: the group name the lock gives
     ``[build-system].requires``, or ``None`` to leave them out of the lock."""

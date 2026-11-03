@@ -31,13 +31,13 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: .github/requirements/pylock.pre-commit.toml
+          cache-dependency-path: pylock.dev.toml
 
-      - name: Upgrade pip to PEP 751 install support
-        run: python -m pip install --upgrade "pip>=26.1"
+      - name: Ensure pip supports locked groups
+        run: python -m pip install "pip>=26.3"
 
       - name: Install pre-commit
-        run: pip install -r .github/requirements/pylock.pre-commit.toml
+        run: pip install --group pylock.dev.toml:pre-commit
 
       - name: Cache pre-commit environments
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
@@ -93,19 +93,38 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: .github/requirements/pylock.docs.toml
+          cache-dependency-path: pylock.dev.toml
 
-      - name: Upgrade pip to PEP 751 install support
-        run: python -m pip install --upgrade "pip>=26.1"
+      - name: Ensure pip supports locked groups
+        run: python -m pip install "pip>=26.3"
 
       - name: Install docs deps
-        run: pip install -r .github/requirements/pylock.docs.toml
+        run: pip install --group pylock.dev.toml:docs
 
       # Same lock and same sphinx invocation Read the Docs runs
       # (.readthedocs.yaml), so a dead cross-reference fails the PR rather
       # than the publish.  -W turns warnings into errors.
       - name: Build the docs
         run: python -m sphinx -n -W -b html docs docs/_build/html
+
+  locks:
+    name: development locks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            pylock.dev.toml
+            .github/requirements/pylock.build.toml
+      - run: python -m pip install "pip>=26.3"
+      - run: python -m pip install --group pylock.dev.toml:nox
+      - run: python -m nox -s locks -- --locked
 
   types:
     name: ${{ matrix.checker }}
@@ -125,15 +144,14 @@ jobs:
           python-version: "3.13"
           cache: pip
           cache-dependency-path: |
-            .github/requirements/pylock.nox.toml
-            .github/requirements/pylock.${{ matrix.checker }}.toml
+            pylock.dev.toml
             .github/requirements/pylock.build.toml
 
-      - name: Upgrade pip to PEP 751 install support
-        run: python -m pip install --upgrade "pip>=26.1"
+      - name: Ensure pip supports locked groups
+        run: python -m pip install "pip>=26.3"
 
       - name: Install nox
-        run: pip install -r .github/requirements/pylock.nox.toml
+        run: pip install --group pylock.dev.toml:nox
 
       # Type-check logic lives in noxfile.py. The checker goes through env,
       # not inline ${{ }}, for zizmor.

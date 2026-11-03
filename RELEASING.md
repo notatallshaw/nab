@@ -27,7 +27,8 @@ All six packages release together at one version (lockstep).
 - Prereleases work: `hatch run release:make 0.0.3rc1`.
 - The changelog is the generated GitHub release notes (a list of merged PRs).
 - The workflow runs `tasks/release.py check` and `tasks/build_dists.py`, and installs only from
-  hash-pinned locks: `pylock.release.toml` for the toolchain, plus `pylock.build.toml` for the
-  backend, which the build needs because it runs with `--no-isolation`.
-- After changing a dependency group, regenerate the locks with `tasks/refresh-locks.sh`.
+  hash-pinned locks: the `release` group in `pylock.dev.toml` for the toolchain, plus
+  `.github/requirements/pylock.build.toml` for the backend, which the build needs because it runs
+  with `--no-isolation`.
+- After changing a dependency group, regenerate the locks with `tasks/refresh_locks.py`.
 - To abort before publishing, delete the branch and the tag.

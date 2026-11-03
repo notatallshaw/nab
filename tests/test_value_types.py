@@ -143,8 +143,8 @@ class Case(NamedTuple):
     and ``__slots__`` are checked against.  ``alternates`` supplies one
     differing value per field so equality can be varied a field at a
     time.  ``hashable`` is False where one of the field values is itself
-    unhashable, and ``positional`` False where the constructor takes
-    keywords only.
+    unhashable, and ``positional`` False where not every field can be passed
+    positionally.
     """
 
     cls: type[ValueType]
@@ -171,6 +171,7 @@ CASES = [
             "python_patches": None,
             "implementations": ("cpython",),
             "implementation_overrides": None,
+            "python_builds": None,
         },
         {
             "python": "3.13",
@@ -181,7 +182,9 @@ CASES = [
             "implementation_overrides": {
                 "pypy": ImplementationOverride(python="==3.12")
             },
+            "python_builds": ("standard", "free-threaded"),
         },
+        positional=False,
     ),
     Case(
         ConflictMember,
@@ -563,6 +566,7 @@ DEFAULTS = [
             "python_patches": None,
             "implementations": ("cpython",),
             "implementation_overrides": None,
+            "python_builds": None,
         },
     ),
     (ConflictSet, {"members": ()}, {"policy": ConflictPolicy.AT_MOST_ONE}),
@@ -802,3 +806,11 @@ def test_a_conflict_set_renders_its_policy_and_members() -> None:
     )
 
     assert str(ConflictSet(members)) == "at-most-one (extra 'cpu', extra 'gpu')"
+
+
+def test_matrix_config_keeps_its_previous_positional_arguments() -> None:
+    matrix = MatrixConfig(
+        "3.12", (PlatformSpec("linux_x86_64"),), "asc", None, ("cpython",), None
+    )
+    assert matrix == MATRIX
+    assert matrix.python_builds is None

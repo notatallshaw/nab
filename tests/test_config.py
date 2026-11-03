@@ -102,6 +102,7 @@ _TABLE_PARAMS: dict[str, object] = {
     "project_matrix_python": None,
     "project_matrix_platforms": (),
     "project_matrix_implementations": (),
+    "project_matrix_python_builds": (),
     "project_matrix_python_order": None,
     "project_matrix_python_patches": (),
     "project_environment_python": None,
@@ -5382,6 +5383,7 @@ class TestMatrix:
 
     def test_platform_table_form(self, tmp_path: Path) -> None:
         """A table entry reaches the tag knobs a bare id cannot."""
+
         path = write(
             tmp_path,
             self._platforms_body(
@@ -5395,6 +5397,55 @@ class TestMatrix:
             PlatformSpec("macos_arm64"),
             PlatformSpec("linux_x86_64", libc="musl", runs_on_libc=(1, 2)),
         )
+
+    @pytest.mark.parametrize(
+        "builds", [("standard",), ("free-threaded",), ("standard", "free-threaded")]
+    )
+    def test_python_builds(self, tmp_path: Path, builds: tuple[str, ...]) -> None:
+        value = ", ".join(f'"{build}"' for build in builds)
+        path = write(
+            tmp_path,
+            '[tool.nab.matrix]\npython = "==3.14"\nplatforms = ["linux_x86_64"]\n'
+            f"python-builds = [{value}]\n",
+        )
+        config = read_pyproject_config(path)
+        assert config.matrix is not None
+        assert config.matrix.python_builds == builds
+        targets = plan_targets(config)
+        assert len(targets) == len(builds)
+        assert [target.label.endswith("-ft") for target in targets] == [
+            build == "free-threaded" for build in builds
+        ]
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            '"standard"',
+            "true",
+            "1",
+            "[1]",
+            "[]",
+            '["unknown"]',
+            '["standard", "standard"]',
+        ],
+    )
+    def test_invalid_python_builds(self, tmp_path: Path, value: str) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.matrix]\npython = "==3.14"\nplatforms = ["linux_x86_64"]\n'
+            f"python-builds = {value}\n",
+        )
+        with pytest.raises(ConfigError, match="python.builds"):
+            read_pyproject_config(path)
+
+    def test_implementation_python_build_override(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.matrix]\npython = "==3.14"\nplatforms = ["linux_x86_64"]\nimplementations = ["cpython", "pypy"]\npython-builds = ["free-threaded"]\n[tool.nab.matrix.overrides.implementations.pypy]\npython-builds = ["standard"]\n',
+        )
+        assert [
+            target.label for target in plan_targets(read_pyproject_config(path))
+        ] == ["py314-linux_x86_64-ft", "pp314-linux_x86_64"]
 
     def test_windows_arm64_and_linux_i686_are_known_ids(self, tmp_path: Path) -> None:
         path = write(

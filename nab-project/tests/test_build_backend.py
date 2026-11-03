@@ -444,23 +444,19 @@ class TestExtractStaticMetadata:
         # the read is missing.
         _write_pyproject(tmp_path, '[project]\nname = "foo"\nversion = "1.0"\n')
         gone = FileNotFoundError(errno.ENOENT, "No such file or directory")
-        extract_static_metadata.cache_clear()
         with patch.object(Path, "read_text", side_effect=gone):
             assert extract_static_metadata(tmp_path) is None
-        extract_static_metadata.cache_clear()
 
     def test_pyproject_read_oserror_reports_the_errno(self, tmp_path: Path) -> None:
         # Any other read failure leaves the contents unknown, so it is
         # reported rather than reduced to "no static metadata".
         _write_pyproject(tmp_path, '[project]\nname = "foo"\nversion = "1.0"\n')
         broken = OSError(errno.EIO, "Input/output error")
-        extract_static_metadata.cache_clear()
         with (
             patch.object(Path, "read_text", side_effect=broken),
             pytest.raises(BuildBackendError, match="could not read.*Input/output"),
         ):
             extract_static_metadata(tmp_path)
-        extract_static_metadata.cache_clear()
 
     def test_extra_marker_combined_with_existing(self, tmp_path: Path) -> None:
         _write_pyproject(
@@ -671,3 +667,19 @@ class TestStaticExtractAugmentParity:
         )
         with pytest.raises(ValueError, match="Expected"):
             parse_metadata(md)
+
+
+def test_static_metadata_reads_changes_in_the_same_directory(tmp_path: Path) -> None:
+    _write_pyproject(
+        tmp_path, '[project]\nname="local"\nversion="1"\ndependencies=["dep>=1"]\n'
+    )
+    first = extract_static_metadata(tmp_path)
+    assert first is not None
+    _write_pyproject(
+        tmp_path, '[project]\nname="local"\nversion="2"\ndependencies=["dep>=2"]\n'
+    )
+    second = extract_static_metadata(tmp_path)
+    assert second is not None
+    assert str(first.version) == "1"
+    assert str(second.version) == "2"
+    assert [str(req) for req in second.requires_dist] == ["dep>=2"]

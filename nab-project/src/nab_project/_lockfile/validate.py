@@ -1,6 +1,6 @@
-"""Resolver-free disqualification checks for ``nab lock --locked``.
+"""Structural Pylock checks and early failures for ``nab lock --reproduce``.
 
-These run before the fresh resolve. Each function is a disqualifier: it
+The freshness prechecks run before the fresh resolve. Each is a disqualifier: it
 returns a :class:`LockDisqualification` when it can prove a fresh resolve
 could not reproduce the committed lock, or ``None`` to fall through to the
 full re-resolve. There is no success verdict here; only the full re-resolve
@@ -42,11 +42,13 @@ __lazy_modules__ = (
     "nab_provider.pep508",
     "nab_provider.target",
     "tomli",
+    "tomli_w",
 )
 
 from typing import TYPE_CHECKING, Final
 
 import tomli
+import tomli_w
 
 from nab_provider._vendor.packaging.markers import UndefinedEnvironmentName
 from nab_provider._vendor.packaging.pylock import Pylock, PylockValidationError
@@ -113,6 +115,54 @@ class RootRequirement(HashableRecord):
     def __init__(self, requirement: Requirement, source: str) -> None:
         self.requirement = requirement
         self.source = source
+
+
+def _reference_value_matches(reference: object, candidate: object) -> bool:
+    """Match named reference fields without equating different TOML scalar types."""
+    match reference, candidate:
+        case dict() as expected, dict() as actual:
+            return all(
+                key in actual and _reference_value_matches(value, actual[key])
+                for key, value in expected.items()
+            )
+        case list() as expected, list() as actual:
+            return len(expected) == len(actual) and all(
+                _reference_value_matches(left, right)
+                for left, right in zip(expected, actual, strict=True)
+            )
+        case _:
+            return type(reference) is type(candidate) and reference == candidate
+
+
+def resolve_dependency_references(lock: Pylock) -> dict[int, frozenset[int]]:
+    """Map package positions to referenced child positions for auditing.
+
+    The Pylock must already be schema-valid. References match the serialized
+    standard fields, including nested source tables and arrays.
+    """
+    packages = toml_io.loads(tomli_w.dumps(lock.to_dict()))["packages"]
+    by_name: dict[str, list[int]] = {}
+    for index, package in enumerate(packages):
+        by_name.setdefault(package["name"], []).append(index)
+    resolved: dict[int, frozenset[int]] = {}
+    for index, package in enumerate(packages):
+        children: set[int] = set()
+        for reference in package.get("dependencies", ()):
+            name = reference.get("name")
+            candidates = (
+                by_name.get(name, ()) if isinstance(name, str) else range(len(packages))
+            )
+            matches = []
+            for candidate_index in candidates:
+                candidate = packages[candidate_index]
+                if _reference_value_matches(reference, candidate):
+                    matches.append(candidate_index)
+            if len(matches) != 1:
+                message = "lock dependency must identify exactly one package"
+                raise InvalidLockfileError(message)
+            children.add(matches[0])
+        resolved[index] = frozenset(children)
+    return resolved
 
 
 def check_envelope(

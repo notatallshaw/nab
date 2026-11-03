@@ -119,8 +119,7 @@ does not supply its build environment.
 ## Sharing and refreshing the result
 
 Use the same committed `pylock.toml` in a virtual environment it covers.
-[Use a lock](../how-to/use-the-lock.md) describes pip installation and its current extra and group
-selection limits.
+[Use a lock](../how-to/use-the-lock.md) gives the installation commands.
 
 ```bash
 nab lock
@@ -129,4 +128,4 @@ python -m pip install -r pylock.toml
 
 After changing dependencies or targets, run `nab lock` again and review the diff. Index contents can
 change between resolves; [Reproducible locks](../reference/reproducibility.md) explains upload
-cutoffs and stable decision order. `--locked` requires `specific` mode.
+cutoffs and stable decision order.

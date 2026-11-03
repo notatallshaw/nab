@@ -6,11 +6,9 @@ build:
     python: "3.13"
   jobs:
     install:
-      # pylock.docs.toml is a PEP 751 lock nab writes for its own docs group
-      # (tasks/refresh-locks.sh), so the published build resolves nothing.
-      # Installing a pylock needs pip 26.1.
-      - python -m pip install --upgrade "pip>=26.1"
-      - python -m pip install -r .github/requirements/pylock.docs.toml
+      # Group selection from a Pylock file requires pip 26.3.
+      - python -m pip install "pip>=26.3"
+      - python -m pip install --group pylock.dev.toml:docs
     build:
       html:
         - python -m sphinx -n -W -b html docs $READTHEDOCS_OUTPUT/html

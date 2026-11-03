@@ -18,6 +18,16 @@ That shell runs in the check-out's `.venv`, with all six distributions installed
 `tests` and `nox` dependency-groups. The commands below run tools by path, so they work outside the
 shell too.
 
+Development and CI dependencies share `pylock.dev.toml` at the repository root. Hatch and nox select
+its dependency groups with pip 26.3 or newer. The build backend remains in
+`.github/requirements/pylock.build.toml`.
+
+After a lock update, refresh an existing development environment with:
+
+```bash
+hatch run python -m pip install -r pylock.dev.toml
+```
+
 Ruff and the docs toolchain live in their own hatch environments, reached through `hatch run`.
 
 ## Version recommendations
@@ -125,8 +135,8 @@ hatch run lint:check
 hatch run lint:fmt
 ```
 
-Type-check through nox, which installs the pinned checker lock and runs one checker over its own
-scope:
+Type-check through nox, which installs the selected checker group from the shared lock and runs it
+over its own scope:
 
 ```bash
 .venv/bin/nox -s "types(checker='pyright')"   # or mypy, ty, pyrefly, zuban
@@ -139,8 +149,8 @@ are `TYPED_TREES` in `noxfile.py`.
 
 Ruff enables `ALL`, with the exceptions in `pyproject.toml` and the test-directory configs.
 Formatting and linting include shipped `_build` modules; vendored sources and disposable build
-output stay excluded. Hook revisions and the CI tool locks pin the reviewed tool versions. Refresh
-the `types`, `pre-commit`, and `docs` locks after changing their dependency groups.
+output stay excluded. Hook revisions and the shared development lock pin the reviewed tool versions.
+Refresh `pylock.dev.toml` after changing a dependency group.
 
 Mypy and Zuban use strict checking. Pyrefly and ty enable every diagnostic, with the exceptions
 below. Pyright enables strict inference and strict diagnostics individually because its named strict
@@ -218,12 +228,12 @@ checking and treats warnings as errors. The existing Typos hook checks words in 
 ## The build backend
 
 nab builds its distributions with `--no-isolation`, so the backend must be installed before the
-build. `tasks/refresh-locks.sh` locks `[build-system].requires` into
+build. `tasks/refresh_locks.py` locks `[build-system].requires` into
 `.github/requirements/pylock.build.toml` with `nab lock --build-requirements`. The `dists` nox
 session, release workflow, and `hatch run release:build` install that lock.
 
 One lock serves all six packages while they declare the same `[build-system]`. The refresh script
-checks that before writing, then checks that locks sharing an environment agree on shared packages.
+checks that before writing, then checks the build and development locks agree on shared packages.
 
 ## Building the docs
 
@@ -232,13 +242,18 @@ hatch run docs:build     # sphinx-build -n -W, warnings are errors
 hatch run docs:serve     # live-reloading preview
 ```
 
-The `docs` dependency-group in `pyproject.toml` declares the doc tooling. `tasks/refresh-locks.sh`
-writes it to `.github/requirements/pylock.docs.toml`; CI and Read the Docs install that lock. After
-changing the group, refresh and commit the lock.
+The `docs` group in `pylock.dev.toml` supplies CI and Read the Docs. Its Sphinx toolchain requires
+Python 3.12 or newer; the build environments use Python 3.13. `docs-live` also pins the preview
+server.
 
-Unlike the other groups, that lock is resolved only for Python 3.13, which Read the Docs and the CI
-docs job use. nab runs on 3.10 and newer, but locking the toolchain across that range would hold it
-to packages that still support the floor.
+Refresh both the development and build locks with the current checkout:
+
+```bash
+.venv/bin/nox -s locks -- --upgrade
+```
+
+CI checks them with `nox -s locks -- --locked`. The seven-day upload cutoff stays anchored to the
+committed lock unless `--upgrade` is given.
 
 ## Coverage policy
 

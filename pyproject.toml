@@ -72,14 +72,14 @@ exclude = [
     "tests/test_env_layer.py",
     "tests/test_markerset_docs.py",
     "tests/test_readme_docs.py",
+    "tests/test_refresh_locks.py",
     "tests/test_release.py",
     "tests/test_select_tests.py",
     "tests/test_type_check_scope.py",
     "tests/test_workspace_shape.py",
 ]
 
-# Dependency groups feed `nab lock` for CI lockfiles; regenerate via
-# tasks/refresh-locks.sh. Local dev uses hatch envs from hatch.toml.
+# Development groups share pylock.dev.toml; regenerate via tasks/refresh_locks.py.
 [dependency-groups]
 editable-build = [
     # Hatchling's editable hook requires this beyond [build-system].requires.
@@ -101,6 +101,17 @@ tests = [
     "hypothesis>=6.170.2; python_version >= '3.11'",
     "respx>=0.23.1",
     "tomlkit>=0.15.2",
+]
+hatch-test = [
+    {include-group = "tests"},
+    "coverage-enable-subprocess==1.0",
+    "coverage[toml]~=7.11",
+    "pytest~=9.0",
+    "pytest-mock~=3.12",
+    "pytest-randomly~=3.15",
+    "pytest-rerunfailures~=14.0",
+    # xdist can use stdlib CPU detection without an extra native dependency.
+    "pytest-xdist~=3.5",
 ]
 crosshair = [
     {include-group = "tests"},
@@ -151,23 +162,22 @@ pre-commit = [
     "pre-commit>=4.6.2; python_version < '3.11'",
     "pre-commit>=4.7.0; python_version >= '3.11'",
 ]
-# Nox drives the workspace tests and the type-check matrix; see
-# noxfile.py. Each session installs its own lock (pylock.tests.toml or
-# pylock.types.toml), so this only bootstraps the runner.
+# Nox selects each session's group from pylock.dev.toml.
 nox = [
     "nox>=2026.8.17",
 ]
-# Locked as a single resolution for one interpreter, not against the project's
-# universal matrix; see tasks/refresh-locks.sh.  myst-parser 5.1 is the floor
-# that carries the `alert` extension conf.py enables to render the GitHub alert
-# syntax the guides use; it needs Python 3.11 or newer.
+# Sphinx 9.1 requires Python 3.12; CI and Read the Docs build on 3.13.
 docs = [
-    "sphinx>=9.1.0",
-    "furo>=2025.12.19",
-    "myst-parser>=5.1.0",
-    "linkify-it-py>=2.2.0",
-    "sphinx-design>=0.7.0",
-    "sphinx-copybutton>=0.5.2",
+    "sphinx>=9.1.0; python_version >= '3.12'",
+    "furo>=2025.12.19; python_version >= '3.12'",
+    "myst-parser>=5.1.0; python_version >= '3.12'",
+    "linkify-it-py>=2.2.0; python_version >= '3.12'",
+    "sphinx-design>=0.7.0; python_version >= '3.12'",
+    "sphinx-copybutton>=0.5.2; python_version >= '3.12'",
+]
+docs-live = [
+    {include-group = "docs"},
+    "sphinx-autobuild>=2025.8.25; python_version >= '3.12'",
 ]
 release = [
     "packaging>=26.3",
@@ -196,10 +206,13 @@ members = [
 
 [tool.nab]
 mode = "universal"
+decision-order = "stable"
+default-groups = ["tests", "nox"]
 uploaded-prior-to = "P7D"
 
 [tool.nab.matrix]
 python = ">=3.10,<3.16"
+python-builds = ["standard", "free-threaded"]
 # Platform IDs from nab_provider.target.PLATFORM_MARKERS.
 platforms = [
     "linux_x86_64",

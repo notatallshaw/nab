@@ -734,6 +734,152 @@ class TestImplementationOverrides:
         assert not Marker(pypy.environment_marker_string).evaluate(cpython.marker_env)
 
 
+class TestIncludedFreeThreadedBuilds:
+    def test_only_supported_cpython_builds_are_added(self) -> None:
+        matrix = Matrix(
+            python=">=3.12,<3.14",
+            platforms=(PlatformSpec("linux_x86_64"),),
+            implementations=("cpython", "pypy"),
+            python_builds=("standard", "free-threaded"),
+        )
+        targets = matrix.expand()
+        assert [target.label for target in targets] == [
+            "py312-linux_x86_64",
+            "pp312-linux_x86_64",
+            "py313-linux_x86_64",
+            "py313-linux_x86_64-ft",
+            "pp313-linux_x86_64",
+        ]
+
+        ordinary, threaded = targets[2:4]
+        assert ordinary.marker_env == threaded.marker_env
+        regular_wheel = "demo-1.0-cp313-cp313-manylinux_2_17_x86_64.whl"
+        threaded_wheel = "demo-1.0-cp313-cp313t-manylinux_2_17_x86_64.whl"
+        assert ordinary.tags.accepts(regular_wheel)
+        assert not ordinary.tags.accepts(threaded_wheel)
+        assert threaded.tags.accepts(threaded_wheel)
+        assert not threaded.tags.accepts(regular_wheel)
+
+    def test_overrides_patch_versions_and_platform_settings_are_preserved(self) -> None:
+        spec = PlatformSpec("linux_x86_64", libc="musl", runs_on_libc=(1, 2))
+        matrix = Matrix(
+            python=">=3.13,<3.15",
+            platforms=(PlatformSpec("windows_amd64"),),
+            python_order="desc",
+            python_patches={"3.13": "3.13.7"},
+            implementations=("cpython", "pypy"),
+            implementation_overrides={
+                "cpython": ImplementationOverride(platforms=(spec,)),
+                "pypy": ImplementationOverride(python="==3.11"),
+            },
+            python_builds=("standard", "free-threaded"),
+        )
+        targets = matrix.expand()
+        assert [target.label for target in targets] == [
+            "py314-linux_x86_64-musl1.2",
+            "py314-linux_x86_64-ft-musl1.2",
+            "py313-linux_x86_64-musl1.2",
+            "py313-linux_x86_64-ft-musl1.2",
+            "pp311-windows_amd64",
+        ]
+        for target in targets[2:4]:
+            assert target.python_full_version == "3.13.7"
+            assert not target.is_minor_interval
+            assert target.declares_implementation
+        assert targets[3].tags.accepts("demo-1.0-cp313-cp313t-musllinux_1_2_x86_64.whl")
+        assert not targets[3].tags.accepts(
+            "demo-1.0-cp313-cp313t-manylinux_2_17_x86_64.whl"
+        )
+
+    def test_an_explicit_free_threaded_platform_conflicts_with_builds(self) -> None:
+        with pytest.raises(ValueError, match="cannot be combined"):
+            Matrix(
+                python="==3.14",
+                platforms=(PlatformSpec("windows_amd64", free_threaded=True),),
+                python_builds=("standard", "free-threaded"),
+            ).expand()
+
+    @pytest.mark.parametrize("builds", [(), ("unknown",), ("standard", "standard")])
+    def test_invalid_build_selections(self, builds: tuple[str, ...]) -> None:
+        with pytest.raises(ValueError, match="python_builds must list"):
+            Matrix(
+                "==3.14", (PlatformSpec("linux_x86_64"),), python_builds=builds
+            ).expand()
+
+    @pytest.mark.parametrize(
+        ("python", "implementation"), [("==3.12", "cpython"), ("==3.14", "pypy")]
+    )
+    def test_free_threaded_only_requires_supported_targets(
+        self, python: str, implementation: str
+    ) -> None:
+        with pytest.raises(ValueError, match="free.threaded"):
+            Matrix(
+                python,
+                (PlatformSpec("linux_x86_64"),),
+                implementations=(implementation,),
+                python_builds=("free-threaded",),
+            ).expand()
+
+    @pytest.mark.parametrize(
+        "builds",
+        [
+            ("standard",),
+            ("free-threaded",),
+            ("standard", "free-threaded"),
+            ("free-threaded", "standard"),
+        ],
+    )
+    def test_selected_builds_and_order(self, builds: tuple[str, ...]) -> None:
+        targets = Matrix(
+            "==3.14", (PlatformSpec("linux_x86_64"),), python_builds=builds
+        ).expand()
+        assert [
+            target.platform_spec.free_threaded
+            for target in targets
+            if target.platform_spec is not None
+        ] == [build == "free-threaded" for build in builds]
+        for target in targets:
+            threaded = target.label.endswith("-ft")
+            assert (
+                target.tags.accepts("demo-1.0-cp314-cp314t-manylinux_2_17_x86_64.whl")
+                is threaded
+            )
+            assert (
+                target.tags.accepts("demo-1.0-cp314-cp314-manylinux_2_17_x86_64.whl")
+                is not threaded
+            )
+            assert (
+                target.tags.accepts("demo-1.0-cp310-abi3-manylinux_2_17_x86_64.whl")
+                is not threaded
+            )
+            assert target.tags.accepts("demo-1.0-py3-none-any.whl")
+
+    def test_implementation_build_overrides_replace_shared_defaults(self) -> None:
+        targets = Matrix(
+            "==3.14",
+            (PlatformSpec("linux_x86_64"),),
+            implementations=("cpython", "pypy"),
+            python_builds=("free-threaded",),
+            implementation_overrides={
+                "pypy": ImplementationOverride(python_builds=("standard",))
+            },
+        ).expand()
+        assert [target.label for target in targets] == [
+            "py314-linux_x86_64-ft",
+            "pp314-linux_x86_64",
+        ]
+
+    def test_disabled_implementation_build_values_are_validated(self) -> None:
+        with pytest.raises(ValueError, match="python_builds must list"):
+            Matrix(
+                "==3.14",
+                (PlatformSpec("linux_x86_64"),),
+                implementation_overrides={
+                    "pypy": ImplementationOverride(python_builds=("unknown",))
+                },
+            ).expand()
+
+
 class TestTargetLabels:
     """Expansion gives each target a distinct label."""
 

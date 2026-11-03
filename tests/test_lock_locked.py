@@ -1,4 +1,4 @@
-"""Flow tests for the fast-fail tier in ``nab lock --locked``.
+"""Flow tests for the fast-fail tier in ``nab lock --reproduce``.
 
 Each case drives the real CLI against a committed pylock on disk.  Most mock
 ``nab._resolve.resolve_for_targets``. A disqualifier skips the resolver, while
@@ -106,14 +106,14 @@ def _run_locked(
 ) -> None:
     with patch("nab._resolve.resolve_for_targets", mock):
         _lock_cli(
-            str(pyproject), "--output", str(out), "--locked", *extra, status=status
+            str(pyproject), "--output", str(out), "--reproduce", *extra, status=status
         )
 
 
 def _run_locked_unmocked(
     pyproject: Path, out: Path, *extra: str, status: int = 0
 ) -> None:
-    """Drive ``--locked`` against the real resolve, to pin what it reports.
+    """Drive ``--reproduce`` against the real resolve, to pin what it reports.
 
     Runs offline with the cache off: these cases fail while reading the
     project, before the resolve would reach an index.
@@ -122,7 +122,7 @@ def _run_locked_unmocked(
         str(pyproject),
         "--output",
         str(out),
-        "--locked",
+        "--reproduce",
         "--offline",
         "True",
         "--no-cache",
@@ -132,7 +132,7 @@ def _run_locked_unmocked(
 
 
 def _remedy(*arguments: str) -> str:
-    """Return the command text a --locked failure names for this ``nab lock`` run.
+    """Return the command text a --reproduce failure names for this ``nab lock`` run.
 
     Joined the way the message is, so a case lists arguments instead of one
     platform's quoting.
@@ -165,7 +165,7 @@ def test_tightened_direct_specifier_fires_without_resolving(
 def test_tightened_build_requirement_fires_without_resolving(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """--locked proves a build lock stale from [build-system].requires."""
+    """--reproduce proves a build lock stale from [build-system].requires."""
     body = '[project]\nname = "proj"\ndependencies = []\n'
     pyproject = _write_pyproject(
         tmp_path, body + '[build-system]\nrequires = ["foo"]\n'
@@ -197,7 +197,7 @@ def test_locked_build_lock_defaults_to_the_build_lock_path(
         '[build-system]\nrequires = ["foo"]\n',
     )
 
-    _lock_cli(str(pyproject), "--locked", "--build-requirements", status=1)
+    _lock_cli(str(pyproject), "--reproduce", "--build-requirements", status=1)
 
     err = capsys.readouterr().err
     assert "no lockfile at pylock.build.toml" in err
@@ -226,7 +226,7 @@ def test_locked_build_lock_checks_its_own_default_file(
     with patch(
         "nab._resolve.resolve_for_targets", _locked_mock(_result({"foo": "1.0"}))
     ):
-        _lock_cli(str(pyproject), "--locked", "--build-requirements")
+        _lock_cli(str(pyproject), "--reproduce", "--build-requirements")
 
     assert "Lockfile pylock.build.toml is up to date." in capsys.readouterr().err
 
@@ -665,7 +665,7 @@ def test_non_sticky_stale_falls_through_out_of_date(
         before = out.read_bytes()
         capsys.readouterr()
 
-        _lock_cli(*arguments, "--locked")
+        _lock_cli(*arguments, "--reproduce")
         assert "is up to date" in capsys.readouterr().err
         assert out.read_bytes() == before
 
@@ -681,7 +681,7 @@ def test_non_sticky_stale_falls_through_out_of_date(
             "nab._resolve.resolve_for_targets", wraps=_resolve.resolve_for_targets
         ) as resolve_spy,
     ):
-        _lock_cli(*arguments, "--locked", status=1)
+        _lock_cli(*arguments, "--reproduce", status=1)
 
     assert "out of date" in capsys.readouterr().err
     resolve_spy.assert_called_once()
@@ -1346,7 +1346,7 @@ def test_remedy_names_a_custom_output_path(
     _write_pyproject(tmp_path, '[project]\nname = "proj"\ndependencies = []\n')
     out = Path("locks/pylock.toml")
 
-    _lock_cli("--output", str(out), "--locked", status=1)
+    _lock_cli("--output", str(out), "--reproduce", status=1)
 
     err = capsys.readouterr().err
     remedy = _remedy("--output", str(out))
@@ -1367,7 +1367,9 @@ def test_remedy_puts_an_option_shaped_project_path_after_the_separator(
         '[project]\nname = "proj"\nversion = "0"\ndependencies = []\n', encoding="utf-8"
     )
 
-    _lock_cli("./-weird.toml", "--offline", "True", "--no-cache", "--locked", status=1)
+    _lock_cli(
+        "./-weird.toml", "--offline", "True", "--no-cache", "--reproduce", status=1
+    )
 
     refresh = ["--offline", "True", "--", "-weird.toml"]
     remedy = _remedy(*refresh)
@@ -1394,7 +1396,7 @@ def test_remedy_attaches_an_option_shaped_output_path(
     out = Path("-sub/pylock.toml")
 
     _lock_cli(
-        f"--output={out}", "--offline", "True", "--no-cache", "--locked", status=1
+        f"--output={out}", "--offline", "True", "--no-cache", "--reproduce", status=1
     )
 
     refresh = [f"--output={out}", "--offline", "True"]
@@ -1432,7 +1434,7 @@ def test_remedy_attaches_an_option_shaped_group_and_override(
         "--project-default-group=-dev",
     ]
 
-    _lock_cli(*refresh, "--locked", status=1)
+    _lock_cli(*refresh, "--reproduce", status=1)
 
     remedy = _remedy(*refresh)
 
@@ -1469,7 +1471,7 @@ def test_remedy_names_all_groups_and_all_extras_not_what_they_selected(
 
     refresh = ["--all-groups", "--all-extras", "--offline", "True"]
 
-    _lock_cli(*refresh, "--locked", status=1)
+    _lock_cli(*refresh, "--reproduce", status=1)
 
     remedy = _remedy(*refresh)
 
@@ -1500,7 +1502,7 @@ def test_remedy_for_an_option_shaped_extra_fails_on_the_name_not_the_parse(
 
     refresh = ["--extras=-gpu", "--offline", "True"]
 
-    _lock_cli(*refresh, "--locked", status=1)
+    _lock_cli(*refresh, "--reproduce", status=1)
 
     remedy = _remedy(*refresh)
 
@@ -1550,7 +1552,7 @@ def test_remedy_carries_every_run_shaping_flag(
         "--upgrade",
     ]
 
-    _lock_cli(*refresh, "--locked", status=1)
+    _lock_cli(*refresh, "--reproduce", status=1)
 
     err = capsys.readouterr().err
 
@@ -1567,7 +1569,7 @@ def test_remedy_for_a_default_run_stays_bare(
     monkeypatch.chdir(tmp_path)
     _write_pyproject(tmp_path, '[project]\nname = "proj"\ndependencies = []\n')
 
-    _lock_cli("--locked", status=1)
+    _lock_cli("--reproduce", status=1)
 
     err = capsys.readouterr().err
 
@@ -1577,7 +1579,7 @@ def test_remedy_for_a_default_run_stays_bare(
 def test_following_the_remedy_makes_the_check_pass(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Running the printed remedy makes the next --locked check pass."""
+    """Running the printed remedy makes the next --reproduce check pass."""
     monkeypatch.chdir(tmp_path)
     body = (
         '[project]\nname = "proj"\nversion = "0"\ndependencies = []\n'

@@ -256,3 +256,6 @@ classes the algebra expects.
 The `nab-markersets[nab-vendored-packaging]` extra installs the fork; standalone users install
 `nab-markersets[packaging]`. `nab-index` and `nab-project` still use released `packaging` for other
 APIs, but no marker crosses between the two copies.
+
+The provider owns dependency classification by environment and extra. The project layer reuses that
+classifier when checking the dependencies of saved pins.

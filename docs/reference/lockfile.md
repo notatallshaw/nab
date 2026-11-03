@@ -127,6 +127,11 @@ lockfile-environments
 reproducibility
 ```
 
+## Validation record
+
+`tool.nab.validation` records compact input fingerprints bound to the standard lock contents.
+Package selections, environments and sources remain in the standard Pylock fields.
+
 [hash-checking]: https://pip.pypa.io/en/stable/topics/secure-installs/#hash-checking-mode
 [pep 658]: https://packaging.python.org/en/latest/specifications/simple-repository-api/
 [pep 751]: https://packaging.python.org/en/latest/specifications/pylock-toml/

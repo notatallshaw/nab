@@ -2,6 +2,7 @@
 # tools from. Every other environment is detached or names itself as its own
 # template, because inheriting `path` would land it here too.
 [envs.default]
+installer = "pip"
 path = ".venv"
 workspace.members = [
     "nab-resolver",
@@ -16,11 +17,23 @@ dependency-groups = ["tests", "nox"]
 # Hatch runs a pre-install command in the directory it was invoked from, so the
 # paths are anchored at `{root}` rather than left relative.
 pre-install-commands = [
-    "python -m pip install -e {root}/nab-resolver -e {root}/nab-markersets -e {root}/nab-provider -e {root}/nab-index -e {root}/nab-project",
+    'python -m pip install "pip>=26.3"',
+    'python -m pip install -r "{root}/.github/requirements/pylock.build.toml"',
+    'python -m pip install -r "{root}/pylock.dev.toml"',
+    'python -m pip install --no-deps --no-build-isolation -e "{root}/nab-resolver" -e "{root}/nab-markersets" -e "{root}/nab-provider" -e "{root}/nab-index" -e "{root}/nab-project"',
 ]
 
 [envs.hatch-test]
 template = "hatch-test"
+installer = "pip"
+dependencies = []
+dependency-groups = ["hatch-test"]
+pre-install-commands = [
+    'python -m pip install "pip>=26.3"',
+    'python -m pip install -r "{root}/.github/requirements/pylock.build.toml"',
+    'python -m pip install --group "{root}/pylock.dev.toml:hatch-test"',
+    'python -m pip install --no-deps --no-build-isolation -e "{root}/nab-resolver" -e "{root}/nab-markersets" -e "{root}/nab-provider" -e "{root}/nab-index" -e "{root}/nab-project"',
+]
 workspace.members = [
     "nab-resolver",
     "nab-markersets",
@@ -29,15 +42,17 @@ workspace.members = [
     "nab-index",
 ]
 features = ["httpx", "httpx2"]
-extra-dependencies = [
-    "hypothesis>=6.168.5; python_version < '3.11'",
-    "hypothesis>=6.170.2; python_version >= '3.11'",
-    "pytest-timeout>=2.4.0",
-    "respx>=0.23.1",
-]
 
 [envs.crosshair]
 template = "crosshair"
+installer = "pip"
+dependency-groups = ["crosshair"]
+pre-install-commands = [
+    'python -m pip install "pip>=26.3"',
+    'python -m pip install -r "{root}/.github/requirements/pylock.build.toml"',
+    'python -m pip install --group "{root}/pylock.dev.toml:crosshair"',
+    'python -m pip install --no-deps --no-build-isolation -e "{root}/nab-resolver" -e "{root}/nab-markersets" -e "{root}/nab-provider" -e "{root}/nab-index" -e "{root}/nab-project"',
+]
 workspace.members = [
     "nab-resolver",
     "nab-markersets",
@@ -45,71 +60,78 @@ workspace.members = [
     "nab-project",
     "nab-index",
 ]
-extra-dependencies = [
-    "crosshair-tool>=0.0.111",
-    "hypothesis-crosshair>=0.0.31",
-    "hypothesis>=6.168.5; python_version < '3.11'",
-    "hypothesis>=6.170.2; python_version >= '3.11'",
-    "pytest>=9.1.1",
-    "pytest-timeout>=2.4.0",
-]
 
 [envs.crosshair.scripts]
 check = "pytest -m crosshair {args}"
 
 [envs.types]
+installer = "pip"
 detached = true
-dependency-groups = ["nox"]
+dependency-groups = []
 
 [envs.types.scripts]
-check-pyright = "nox -s \"types(checker='pyright')\" {args}"
-check-mypy = "nox -s \"types(checker='mypy')\" {args}"
-check-ty = "nox -s \"types(checker='ty')\" {args}"
-check-pyrefly = "nox -s \"types(checker='pyrefly')\" {args}"
-check-zuban = "nox -s \"types(checker='zuban')\" {args}"
-all = ["check-pyright", "check-mypy", "check-ty", "check-pyrefly", "check-zuban"]
+_sync = [
+    'python -m pip install "pip>=26.3"',
+    'python -m pip install --group "{root}/pylock.dev.toml:nox"',
+]
+check-pyright = ["_sync", "nox -s \"types(checker='pyright')\" {args}"]
+check-mypy = ["_sync", "nox -s \"types(checker='mypy')\" {args}"]
+check-ty = ["_sync", "nox -s \"types(checker='ty')\" {args}"]
+check-pyrefly = ["_sync", "nox -s \"types(checker='pyrefly')\" {args}"]
+check-zuban = ["_sync", "nox -s \"types(checker='zuban')\" {args}"]
+all = ["_sync", "nox -s types {args}"]
 
 [envs.lint]
+installer = "pip"
 detached = true
 python = "3.13"
-dependency-groups = ["lint"]
+dependency-groups = []
 
 [envs.lint.scripts]
-check = ["ruff check .", "mdformat --check ."]
-fix = "ruff check --fix ."
-fmt = ["ruff format .", "mdformat ."]
-fmt-check = ["ruff format --check .", "mdformat --check ."]
+_sync = [
+    'python -m pip install "pip>=26.3"',
+    'python -m pip install --group "{root}/pylock.dev.toml:lint"',
+]
+check = ["_sync", "ruff check .", "mdformat --check ."]
+fix = ["_sync", "ruff check --fix ."]
+fmt = ["_sync", "ruff format .", "mdformat ."]
+fmt-check = ["_sync", "ruff format --check .", "mdformat --check ."]
 
-# nab locks the docs dependency group from pyproject.toml into
-# .github/requirements/pylock.docs.toml. CI and Read the Docs install
-# that lock; only the live-reload server remains local.
+# Development tools and CI select groups from the same root lock.
 #
 # `template` also keeps out the workspace members: hatch installs them editable
 # even under `skip-install`, and neither CI nor Read the Docs has the project in
 # the environment it builds the docs from.
 [envs.docs]
+installer = "pip"
 template = "docs"
 python = "3.13"
 skip-install = true
-dependency-groups = ["docs"]
-dependencies = [
-    "sphinx-autobuild>=2025.8.25",
-]
+dependency-groups = []
 
 [envs.docs.scripts]
-build = "sphinx-build -n -W -b html docs docs/_build/html {args}"
-serve = "sphinx-autobuild docs docs/_build/html {args}"
+_sync = [
+    'python -m pip install "pip>=26.3"',
+    'python -m pip install --group "{root}/pylock.dev.toml:docs"',
+]
+build = ["_sync", "sphinx-build -n -W -b html docs docs/_build/html {args}"]
+serve = [
+    "_sync",
+    'python -m pip install --group "{root}/pylock.dev.toml:docs-live"',
+    "sphinx-autobuild docs docs/_build/html {args}",
+]
 clean = "rm -rf docs/_build"
 
 [envs.release]
+installer = "pip"
 detached = true
 
 [envs.release.scripts]
 # Install only the hash-pinned lock; never resolve unpinned dependencies.
 _sync = [
-    'python -m pip install --upgrade "pip>=26.1"',
-    "python -m pip install -r .github/requirements/pylock.release.toml",
-    "python -m pip install -r .github/requirements/pylock.build.toml",
+    'python -m pip install "pip>=26.3"',
+    'python -m pip install --group "{root}/pylock.dev.toml:release"',
+    'python -m pip install -r "{root}/.github/requirements/pylock.build.toml"',
 ]
 make = ["_sync", "python tasks/release.py make {args}"]
 build = ["_sync", "python tasks/build_dists.py {args}"]

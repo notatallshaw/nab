@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 __all__ = [
     "EnvironmentSource",
     "UnevaluableMarkerError",
+    "classify_dependency",
     "evaluate_prepared",
     "host_environment",
     "marker_evaluation_error",
@@ -57,3 +58,26 @@ def host_environment(
     if env.get("python_full_version", "").endswith("+"):
         env["python_full_version"] += "local"
     return env
+
+
+def classify_dependency(
+    marker: Marker | None,
+    environment: dict[str, str | AbstractSet[str]],
+    normalized_extras: AbstractSet[str],
+) -> set[str] | None:
+    """Classify a dependency against a prepared provider environment.
+
+    Empty means a base dependency; None means inactive. Extras are evaluated
+    individually, as the provider's extra proxies evaluate them.
+    """
+    if marker is None or evaluate_prepared(marker, environment):
+        return set()
+    if "extra" not in str(marker):
+        return None
+    env = dict(environment)
+    matched: set[str] = set()
+    for extra in normalized_extras:
+        env["extra"] = extra
+        if evaluate_prepared(marker, env):
+            matched.add(extra)
+    return matched or None

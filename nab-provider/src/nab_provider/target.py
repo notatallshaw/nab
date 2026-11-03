@@ -1279,34 +1279,42 @@ def declared_environment(
 class ImplementationOverride(Record):
     """Replace selected matrix defaults for one interpreter implementation."""
 
-    __match_args__ = ("python", "platforms")
+    __match_args__ = ("python", "platforms", "python_builds")
 
     python: str | None
     platforms: tuple[PlatformSpec, ...] | None
+    python_builds: tuple[str, ...] | None
 
     def __init__(
         self,
         python: str | None = None,
         platforms: tuple[PlatformSpec, ...] | None = None,
+        python_builds: tuple[str, ...] | None = None,
     ) -> None:
         """Replace only the supplied interpreter-axis defaults."""
         self.python = python
         self.platforms = platforms
+        self.python_builds = python_builds
 
 
 class _ImplementationAxes(Record):
     """The effective Python minors and platform specifications for one expansion."""
 
-    __match_args__ = ("python_versions", "platforms")
+    __match_args__ = ("python_versions", "platforms", "python_builds")
 
     python_versions: tuple[str, ...]
     platforms: tuple[PlatformSpec, ...]
+    python_builds: tuple[str, ...] | None
 
     def __init__(
-        self, python_versions: tuple[str, ...], platforms: tuple[PlatformSpec, ...]
+        self,
+        python_versions: tuple[str, ...],
+        platforms: tuple[PlatformSpec, ...],
+        python_builds: tuple[str, ...] | None,
     ) -> None:
         self.python_versions = python_versions
         self.platforms = platforms
+        self.python_builds = python_builds
 
 
 class Matrix(Record):
@@ -1336,7 +1344,11 @@ class Matrix(Record):
     implementation.
 
     ``implementation_overrides``: optional per-implementation replacements
-    for the shared ``python`` and ``platforms`` defaults.
+    for the shared ``python``, ``platforms`` and ``python_builds`` defaults.
+
+    ``python_builds``: select ``"standard"``, ``"free-threaded"``, or both.
+    When both are selected, add free-threaded builds where available.
+    When omitted, use each platform's ``free_threaded`` setting.
     """
 
     __match_args__ = (
@@ -1346,6 +1358,7 @@ class Matrix(Record):
         "python_patches",
         "implementations",
         "implementation_overrides",
+        "python_builds",
     )
 
     python: str
@@ -1354,6 +1367,7 @@ class Matrix(Record):
     python_patches: dict[str, str] | None
     implementations: tuple[str, ...]
     implementation_overrides: Mapping[str, ImplementationOverride] | None
+    python_builds: tuple[str, ...] | None
 
     def __init__(
         self,
@@ -1363,6 +1377,8 @@ class Matrix(Record):
         python_patches: dict[str, str] | None = None,
         implementations: tuple[str, ...] = ("cpython",),
         implementation_overrides: Mapping[str, ImplementationOverride] | None = None,
+        *,
+        python_builds: tuple[str, ...] | None = None,
     ) -> None:
         """Declare the axes and ordering of the target expansion."""
         self.python = python
@@ -1371,6 +1387,7 @@ class Matrix(Record):
         self.python_patches = python_patches
         self.implementations = implementations
         self.implementation_overrides = implementation_overrides
+        self.python_builds = python_builds
 
     def expand(self) -> list[ResolveTarget]:
         """Expand the matrix into concrete targets.
@@ -1384,6 +1401,8 @@ class Matrix(Record):
         if self.python_order not in {"asc", "desc"}:
             msg = f"python_order must be 'asc' or 'desc'; got {self.python_order!r}"
             raise ValueError(msg)
+
+        _validate_python_builds(self.python_builds)
 
         unknown = [
             s.platform_id
@@ -1433,7 +1452,7 @@ class Matrix(Record):
         targets = [
             ResolveTarget.for_declared(
                 python_version=py,
-                spec=spec,
+                spec=build,
                 implementation=impl,
                 python_full_version=patches.get(py),
                 multi_implementation=multi_impl,
@@ -1441,6 +1460,7 @@ class Matrix(Record):
             for impl, axes in by_implementation.items()
             for py in axes.python_versions
             for spec in axes.platforms
+            for build in _platform_builds(spec, py, impl, axes.python_builds)
         ]
         targets.sort(
             key=lambda target: (
@@ -1459,6 +1479,9 @@ class Matrix(Record):
             implementations=self.implementations,
             python_versions=py_versions,
         )
+        _check_python_builds(
+            self.python_builds, self.platforms, self.implementations, py_versions
+        )
         if not py_versions:
             msg = f"No known Python versions match {self.python!r}"
             raise ValueError(msg)
@@ -1469,7 +1492,7 @@ class Matrix(Record):
         return [
             ResolveTarget.for_declared(
                 python_version=py,
-                spec=spec,
+                spec=build,
                 implementation=impl,
                 python_full_version=patches.get(py),
                 multi_implementation=multi_impl,
@@ -1477,6 +1500,7 @@ class Matrix(Record):
             for py in py_versions
             for spec in self.platforms
             for impl in self.implementations
+            for build in _platform_builds(spec, py, impl, self.python_builds)
         ]
 
     def _implementation_axes(self) -> dict[str, _ImplementationAxes]:
@@ -1494,6 +1518,7 @@ class Matrix(Record):
             if override.python is not None
         }
         for impl, override in overrides.items():
+            _validate_python_builds(override.python_builds)
             if override.platforms is not None:
                 _validate_override_platforms(impl, override.platforms)
 
@@ -1503,6 +1528,11 @@ class Matrix(Record):
             versions = ranges.get(impl, shared)
             platforms = (
                 self.platforms if override.platforms is None else override.platforms
+            )
+            builds = (
+                self.python_builds
+                if override.python_builds is None
+                else override.python_builds
             )
             if not versions:
                 python_spec = (
@@ -1519,8 +1549,56 @@ class Matrix(Record):
             check_free_threaded(
                 platforms=platforms, implementations=(impl,), python_versions=versions
             )
-            effective[impl] = _ImplementationAxes(versions, platforms)
+            _check_python_builds(builds, platforms, (impl,), versions)
+            effective[impl] = _ImplementationAxes(versions, platforms, builds)
         return effective
+
+
+def _validate_python_builds(builds: tuple[str, ...] | None) -> None:
+    if builds is None:
+        return
+    if (
+        not builds
+        or len(set(builds)) != len(builds)
+        or any(build not in {"standard", "free-threaded"} for build in builds)
+    ):
+        msg = "python_builds must list 'standard', 'free-threaded', or both once"
+        raise ValueError(msg)
+
+
+def _check_python_builds(
+    builds: tuple[str, ...] | None,
+    platforms: Sequence[PlatformSpec],
+    implementations: Sequence[str],
+    python_versions: Sequence[str],
+) -> None:
+    if builds is None:
+        return
+    if any(spec.free_threaded for spec in platforms):
+        msg = "python_builds cannot be combined with platform free_threaded settings"
+        raise ValueError(msg)
+    if builds == ("free-threaded",):
+        check_free_threaded(
+            platforms=[replace(spec, free_threaded=True) for spec in platforms],
+            implementations=implementations,
+            python_versions=python_versions,
+        )
+
+
+def _platform_builds(
+    spec: PlatformSpec,
+    python: str,
+    implementation: str,
+    builds: tuple[str, ...] | None,
+) -> tuple[PlatformSpec, ...]:
+    if builds is None:
+        return (spec,)
+    return tuple(
+        replace(spec, free_threaded=build == "free-threaded")
+        for build in builds
+        if build == "standard"
+        or (implementation == "cpython" and supports_free_threading(python))
+    )
 
 
 def _validate_override_platforms(
