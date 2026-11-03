@@ -46,7 +46,7 @@ def _targets() -> list[ResolveTarget]:
     return Matrix(
         python="==3.14",
         platforms=(PlatformSpec("linux_x86_64"),),
-        include_free_threaded=True,
+        python_builds=("standard", "free-threaded"),
     ).expand()
 
 

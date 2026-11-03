@@ -129,7 +129,7 @@ _TABLE_PARAMS: dict[str, Any] = {
     "project_matrix_python": None,
     "project_matrix_platforms": (),
     "project_matrix_implementations": (),
-    "project_matrix_include_free_threaded": None,
+    "project_matrix_python_builds": (),
     "project_matrix_python_order": None,
     "project_matrix_python_patches": (),
     "project_environment_python": None,

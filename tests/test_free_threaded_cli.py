@@ -26,7 +26,7 @@ def _project(tmp_path: Path, *, declaration: str = "pyproject") -> Path:
     project = tmp_path / "pyproject.toml"
     matrix = (
         '[tool.nab.matrix]\npython = "==3.14"\n'
-        'platforms = ["linux_x86_64"]\ninclude-free-threaded = true\n'
+        'platforms = ["linux_x86_64"]\npython-builds = ["standard", "free-threaded"]\n'
     )
     project.write_text(
         '[project]\nname = "example"\nversion = "1.0"\ndependencies = []\n'
@@ -86,7 +86,9 @@ def test_one_lock_selects_both_wheel_abis(tmp_path: Path, declaration: str) -> N
             "==3.14",
             "--project-matrix-platforms",
             "linux_x86_64",
-            "--project-matrix-include-free-threaded",
+            "--project-matrix-python-builds",
+            "standard",
+            "free-threaded",
         )
         if declaration == "cli"
         else ()
@@ -116,10 +118,14 @@ def test_one_lock_selects_both_wheel_abis(tmp_path: Path, declaration: str) -> N
         assert selected[0][1].name == filename
 
 
-def test_cli_can_disable_the_file_setting(tmp_path: Path) -> None:
-    regular = _publish(tmp_path, "1.0", "cp314")
+@pytest.mark.parametrize(
+    ("build", "abi"), [("standard", "cp314"), ("free-threaded", "cp314t")]
+)
+def test_cli_can_replace_the_file_setting(tmp_path: Path, build: str, abi: str) -> None:
+    regular = _publish(tmp_path, "1.0", abi)
+    _publish(tmp_path, "2.0", "cp314t" if abi == "cp314" else "cp314")
     project = _project(tmp_path)
-    assert _lock(project, "--no-project-matrix-include-free-threaded") == 0
+    assert _lock(project, "--project-matrix-python-builds", build) == 0
     document = loads(project.with_name("pylock.toml").read_text(encoding="utf-8"))
     assert [wheel["name"] for wheel in document["packages"][0]["wheels"]] == [regular]
 
@@ -145,7 +151,13 @@ def test_config_reports_the_selected_builds(
 ) -> None:
     project = _project(tmp_path)
     assert run(("config", "get", "matrix", "--path", str(project))) == 0
-    assert "include-free-threaded=true" in capsys.readouterr().out
+    assert "python-builds=['standard', 'free-threaded']" in capsys.readouterr().out
+    with project.open("a", encoding="utf-8") as stream:
+        stream.write(
+            '[tool.nab.matrix.overrides.implementations.cpython]\npython-builds = ["free-threaded"]\n'
+        )
+    assert run(("config", "get", "matrix", "--path", str(project))) == 0
+    assert "'cpython': {'python-builds': ['free-threaded']}" in capsys.readouterr().out
 
 
 def test_a_missing_free_threaded_wheel_refuses_the_lock(tmp_path: Path) -> None:
@@ -201,7 +213,8 @@ def test_universal_locked_checks_content_without_rewriting(
     elif change == "targets":
         project.write_text(
             project.read_text().replace(
-                "include-free-threaded = true", "include-free-threaded = false"
+                'python-builds = ["standard", "free-threaded"]',
+                'python-builds = ["standard"]',
             )
         )
 
@@ -257,3 +270,39 @@ def test_inputs_changing_during_resolution_do_not_receive_validation_evidence(
     monkeypatch.setattr("nab._resolve.resolve_for_targets", changing_inputs)
     assert _lock(project) == 1
     assert not project.with_name("pylock.toml").exists()
+
+
+@pytest.mark.parametrize("declaration", ["pyproject", "nab.toml", "cli"])
+def test_specific_free_threaded_target_excludes_newer_standard_wheel(
+    tmp_path: Path, declaration: str
+) -> None:
+    threaded = _publish(tmp_path, "1.0", "cp314t")
+    _publish(tmp_path, "2.0", "cp314")
+    _publish(tmp_path, "3.0", "abi3")
+    project = _project(tmp_path, declaration="cli")
+    environment = (
+        '[tool.nab.environment]\npython = "3.14"\n'
+        'platform = { id = "linux_x86_64", free-threaded = true }\n'
+    )
+    flags: tuple[str, ...] = ()
+    if declaration == "pyproject":
+        with project.open("a", encoding="utf-8") as stream:
+            stream.write(environment)
+    elif declaration == "nab.toml":
+        (tmp_path / "nab.toml").write_text(
+            environment.replace("[tool.nab.environment]", "[environment]"),
+            encoding="utf-8",
+        )
+    else:
+        flags = (
+            "--project-environment-python",
+            "3.14",
+            "--project-environment-platform",
+            "linux_x86_64",
+            "free-threaded=true",
+        )
+    assert _lock(project, *flags) == 0
+    document = loads(project.with_name("pylock.toml").read_text(encoding="utf-8"))
+    package = document["packages"][0]
+    assert package["version"] == "1.0"
+    assert [wheel["name"] for wheel in package["wheels"]] == [threaded]

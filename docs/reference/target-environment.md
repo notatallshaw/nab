@@ -45,6 +45,12 @@ platform = { id = "macos_arm64", runs-on-macos = "14.0" }
 accepts wheels of any level. Declare `runs-on-macos` to set the oldest supported macOS; wheels
 needing a newer one are dropped.
 
+For a specific free-threaded target, run nab on that interpreter or declare
+`platform = { id = "linux_x86_64", free-threaded = true }` with Python 3.13 or newer. It accepts
+compatible free-threaded and pure Python wheels, excluding standard native and `abi3` wheels.
+Enabling the GIL at runtime does not change the build ABI. A Python-only override preserves the host
+build where that Python version supports it.
+
 ## Marker evaluation and wheel compatibility
 
 PEP 508 markers condition dependencies; PEP 425 tags filter wheels. A version with only incompatible
