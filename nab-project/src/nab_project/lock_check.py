@@ -98,7 +98,12 @@ def _record(document: Mapping[str, Any]) -> Mapping[str, Any]:
     tool = document.get("tool", {})
     nab: Mapping[str, Any] = tool.get("nab", {}) if isinstance(tool, dict) else {}
     record = nab.get("validation") if isinstance(nab, dict) else None
-    if not isinstance(record, dict) or record.get("version") != VALIDATION_VERSION:
+    # Equality alone accepts boolean and floating-point version values.
+    if (
+        not isinstance(record, dict)
+        or type(record.get("version")) is not int
+        or record["version"] != VALIDATION_VERSION
+    ):
         message = "no supported validation record; regenerate the lock"
         raise LockConsistencyError(message)
     if content_digest(document) != record["contents-sha256"]:

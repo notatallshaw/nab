@@ -156,7 +156,7 @@ def test_real_target_metadata_roundtrips_without_affecting_selection(
     lock_input.validation_inputs = snapshot_inputs(path, ResolveInputs(), targets)
     document = toml_io.loads(render_lock(lock_input, lock_dir=tmp_path))
     record = document["tool"]["nab"]["validation"]
-    assert record["version"] == 3
+    assert record["version"] == 1
     assert record["contents-sha256"] == content_digest(document)
     assert set(record) == {
         "version",

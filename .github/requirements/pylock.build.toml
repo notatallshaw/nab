@@ -233,7 +233,7 @@ platforms = [
 ]
 
 [tool.nab.validation]
-version = 3
+version = 1
 all-inputs-sha256 = "7098224edb721352c69b3a68cef8a19d5f8f829ce49f934ec2504671d269a57a"
 selection-inputs-sha256 = "9dbc96f961a04b17181f92a53443d8437f0c5824e35f2b09eb3ffaf442a4b1f0"
 contents-sha256 = "b6f02a32f6f62744cf3b7a2d5f8e77709a722606e31f74a934ac8aa36edf6924"

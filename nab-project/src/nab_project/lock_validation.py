@@ -57,7 +57,7 @@ __all__ = [
 ]
 
 # This versions the validation format, independently of Nab's release number.
-VALIDATION_VERSION = 3
+VALIDATION_VERSION = 1
 _PREFERENCES = frozenset({"resolution", "decision_order", "constraints"})
 _DERIVED_FIELDS = frozenset({"version_range", "source_label", "name_keyed"})
 
