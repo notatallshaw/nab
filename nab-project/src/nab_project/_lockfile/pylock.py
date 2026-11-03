@@ -923,10 +923,9 @@ def _dependency_reference(
     if names[name] == 1:
         return reference
     version = str(package.version) if package.version is not None else None
-    if version is not None:
+    if version is not None and versions[name, version] == 1:
         reference["version"] = version
-        if versions[name, version] == 1:
-            return reference
+        return reference
     reference["marker"] = str(package.marker)
     return reference
 

@@ -71,6 +71,7 @@ from ._lockfile.validate import (
     LockfileSyntaxError,
     RootRequirement,
     check_locked,
+    resolve_dependency_references,
 )
 from .value import ValueType
 
@@ -122,6 +123,7 @@ __all__ = [
     "read_lockfile_anchor",
     "read_lockfile_packages",
     "render_lock",
+    "resolve_dependency_references",
     "strip_userinfo",
     "summarize_lock",
     "write_lock",
