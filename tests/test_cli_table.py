@@ -75,7 +75,7 @@ _PAGES = (
     ("python", "reference/target-matrix.md"),
     ("platforms", "reference/target-matrix.md"),
     ("implementations", "reference/target-matrix.md"),
-    ("include-free-threaded", "reference/target-matrix.md"),
+    ("python-builds", "reference/target-matrix.md"),
     ("python-order", "reference/target-matrix.md"),
     ("python-patches", "reference/target-matrix.md"),
     ("python", "reference/target-environment.md"),
@@ -197,7 +197,7 @@ class TestTheDeclaredTable:
             ("python", "matrix"),
             ("platforms", "matrix"),
             ("implementations", "matrix"),
-            ("include-free-threaded", "matrix"),
+            ("python-builds", "matrix"),
             ("python-order", "matrix"),
             ("python-patches", "matrix"),
             ("python", "environment"),
@@ -289,7 +289,7 @@ class TestTheDeclaredTable:
         """
         negatable = [row for row in ALL if row.kind in _BOOL_KINDS]
 
-        assert len(negatable) == 15
+        assert len(negatable) == 14
 
         for row in negatable:
             assert row.negatable is not row.name.startswith("no-"), row.name
