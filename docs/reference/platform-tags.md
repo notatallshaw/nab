@@ -117,8 +117,8 @@ nab rejects settings for the wrong platform: `libc` and `runs-on-libc` apply onl
 `runs-on-macos` applies only to macOS.
 
 Each implementation's platform list may name an id once. To include both CPython builds in one lock,
-use the matrix's {ref}`include-free-threaded <matrix-free-threaded>` setting. Lock another libc
-family for that interpreter in a separate run and file: PEP 508 has no libc marker.
+use the matrix's {ref}`python-builds <matrix-free-threaded>` setting. Lock another libc family for
+that interpreter in a separate run and file: PEP 508 has no libc marker.
 
 For declared platform targets, including singleton matrices, `build-policy` defaults to `never`.
 Host metadata builds require an `assume-universal-deps` assertion and an explicit build policy. See
