@@ -67,8 +67,8 @@ include-free-threaded = true
 Each ordinary CPython 3.13+ target gains a free-threaded target. Both builds use their own wheel
 tags and metadata; matching pins merge, and pip selects the compatible wheel.
 
-If the builds choose different versions or sources, constrain them to shared pins or lock them
-separately. PEP 508 has no threading marker.
+Both builds must share package selections and pins. Otherwise, lock them separately; PEP 508 has no
+threading marker.
 
 The command-line setting is `--project-matrix-include-free-threaded`; use
 `--no-project-matrix-include-free-threaded` to disable a file setting for one run.
