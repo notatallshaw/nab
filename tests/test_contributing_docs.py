@@ -242,7 +242,7 @@ def test_only_the_default_environment_is_the_check_out_venv() -> None:
 
 
 def test_the_docs_environment_carries_no_project() -> None:
-    """CI and Read the Docs build the docs from pylock.docs.toml and nothing else.
+    """CI and Read the Docs select the docs group without installing workspace members.
 
     Hatch installs `workspace.members` editable even under `skip-install`, so an
     environment that names members carries more than that lock does.

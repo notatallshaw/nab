@@ -17,6 +17,12 @@ python -m pip install -r pylock.toml
 pip selects packages for the current interpreter and platform, uses the lock's default dependency
 groups, and selects no extras.
 
+With pip 26.3 or newer, select a named group with:
+
+```bash
+python -m pip install --group pylock.toml:dev
+```
+
 The command installs the locked dependencies, not the project that produced the lock. See
 [Selecting what to lock](../reference/selection.md) before using extras, non-default groups, or
 workspace members.

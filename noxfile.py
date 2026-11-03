@@ -1,9 +1,9 @@
-"""Nox sessions: ``tests``, ``standalone``, ``types``, ``benchmarks``, ``dists``.
+"""Development and CI sessions for the nab workspace.
 
 Coverage is split across two files: ``fail_under`` and the
 ``[tool.coverage.paths]`` remaps live in ``pyproject.toml``, while the
-per-package ``--include`` globs are built here. Every session takes its
-pinned dependencies from ``.github/requirements``.
+per-package ``--include`` globs are built here. Each session selects its
+pinned dependency group from ``pylock.dev.toml``.
 
 The Python version comes from whoever launches nox, so CI drives the matrix
 through ``actions/setup-python`` and stays off the per-OS versioned-binary
@@ -26,8 +26,7 @@ from nox.command import CommandFailed
 # Stdlib venv keeps the backend explicit; nab never resolves through uv.
 nox.options.default_venv_backend = "venv"
 
-TESTS_LOCK = ".github/requirements/pylock.tests.toml"
-DISTS_LOCK = ".github/requirements/pylock.dists.toml"
+DEV_LOCK = "pylock.dev.toml"
 BUILD_LOCK = ".github/requirements/pylock.build.toml"
 
 # workspace -> (editable packages, pytest paths, coverage-gated packages).
@@ -114,11 +113,11 @@ TYPE_CHECKERS = {
 }
 
 
-def _install_lock(session: nox.Session, lock: str) -> None:
-    """Install pinned dependencies and the editable build backend."""
-    # Installing a PEP 751 lock needs a recent pip.
-    session.install("--upgrade", "pip>=26.1")
-    session.install("-r", lock)
+def _install_lock(session: nox.Session, group: str) -> None:
+    """Install one pinned development group and the editable build backend."""
+    # Pylock dependency-group selection requires pip 26.3.
+    session.install("pip>=26.3")
+    session.install("--group", f"{DEV_LOCK}:{group}")
     session.install("-r", BUILD_LOCK)
 
 
@@ -132,9 +131,9 @@ def _install_editable(session: nox.Session, packages: list[str]) -> None:
     session.install("--no-deps", "--no-build-isolation", *editable_args)
 
 
-def _install(session: nox.Session, lock: str, editables: list[str]) -> None:
+def _install(session: nox.Session, group: str, editables: list[str]) -> None:
     """Install a pinned lock, then the given workspace packages editable."""
-    _install_lock(session, lock)
+    _install_lock(session, group)
     _install_editable(session, editables)
 
 
@@ -240,7 +239,7 @@ def tests(session: nox.Session) -> None:
         session.error(f"no such workspace: {', '.join(sorted(unknown))}")
 
     steps = _test_steps(session, selected)
-    _install_lock(session, TESTS_LOCK)
+    _install_lock(session, "tests")
     session.run("coverage", "erase")
 
     ran: set[str] = set()
@@ -267,7 +266,7 @@ def standalone(session: nox.Session) -> None:
     ``nab_markersets`` binds in preference, so this is the only run that reaches
     released packaging.
     """
-    _install_lock(session, TESTS_LOCK)
+    _install_lock(session, "tests")
 
     # The extra, and without --no-deps, so the range nab-markersets declares is
     # what pip resolves. The lock already pins a packaging inside that range,
@@ -286,7 +285,7 @@ def benchmarks(session: nox.Session) -> None:
     # nab-project/benchmarks, which no coverage check owns.
     _install(
         session,
-        TESTS_LOCK,
+        "tests",
         ["nab-resolver", "nab-markersets", "nab-provider", "nab-index", "nab-project"],
     )
     session.run(
@@ -306,16 +305,20 @@ def types(session: nox.Session, checker: str) -> None:
     """Run one checker over its own scope: :data:`CHECKED`, or pyright's include."""
     # The umbrella entry installs every distribution, so every import resolves.
     editables, _, _ = WORKSPACES["umbrella"]
-    _install(session, f".github/requirements/pylock.{checker}.toml", editables)
+    _install(session, checker, editables)
     session.run(*TYPE_CHECKERS[checker])
+
+
+@nox.session
+def locks(session: nox.Session) -> None:
+    """Check or refresh both locks with the current checkout."""
+    editables, _, _ = WORKSPACES["umbrella"]
+    _install(session, "editable-build", editables)
+    session.run("python", "tasks/refresh_locks.py", *session.posargs)
 
 
 @nox.session
 def dists(session: nox.Session) -> None:
     """Build every distribution and prove each sdist and wheel installs."""
-    session.install("--upgrade", "pip>=26.1")
-    session.install("-r", DISTS_LOCK)
-    # The build runs with --no-isolation, so the backend comes from the lock
-    # of [build-system].requires rather than from a hand-listed group.
-    session.install("-r", BUILD_LOCK)
+    _install_lock(session, "dists")
     session.run("python", "tasks/check_dists.py")

@@ -980,9 +980,12 @@ class TestRegenLocksIdempotent:
     """
 
     def test_committed_locks_refinalize_identically(self) -> None:
-        lock_dir = Path(__file__).parents[2] / ".github" / "requirements"
-        for name in _LOCK_MARKERS["locks"]:
-            data = tomllib.loads((lock_dir / f"pylock.{name}.toml").read_text())
+        root = Path(__file__).parents[2]
+        for path in (
+            root / "pylock.dev.toml",
+            root / ".github/requirements/pylock.build.toml",
+        ):
+            data = tomllib.loads(path.read_text())
             within = _fixture_universe(data.get("environments", []))
             for pkg in data["packages"]:
                 marker = pkg.get("marker")

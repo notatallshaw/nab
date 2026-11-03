@@ -26,6 +26,8 @@ from typing import Any
 import pytest
 import tomli
 
+from nab_provider._vendor.packaging.pylock import Pylock
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NOXFILE = REPO_ROOT / "noxfile.py"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -187,7 +189,9 @@ def _nox_helpers(*names: str) -> dict[str, Any]:
             type_ignores=[],
         )
     )
-    namespace: dict[str, Any] = {"BUILD_LOCK": _literal(NOXFILE, "BUILD_LOCK")}
+    namespace: dict[str, Any] = {
+        name: _literal(NOXFILE, name) for name in ("BUILD_LOCK", "DEV_LOCK")
+    }
     # Loading only these functions avoids importing the optional nox runner.
     exec(compile(module, str(NOXFILE), "exec"), namespace)  # noqa: S102
     return namespace
@@ -195,10 +199,10 @@ def _nox_helpers(*names: str) -> dict[str, Any]:
 
 def test_install_helper_prepares_the_locked_build_backend() -> None:
     installer = _Installer()
-    _nox_helpers("_install_lock")["_install_lock"](installer, "dependencies.toml")
+    _nox_helpers("_install_lock")["_install_lock"](installer, "tests")
     assert installer.calls == [
-        ("--upgrade", "pip>=26.1"),
-        ("-r", "dependencies.toml"),
+        ("pip>=26.3",),
+        ("--group", "pylock.dev.toml:tests"),
         ("-r", ".github/requirements/pylock.build.toml"),
     ]
 
@@ -225,24 +229,25 @@ def test_editable_helper_uses_the_prepared_build_environment(
 
 
 @pytest.mark.parametrize("checker", ["mypy", "pyright", "ty", "pyrefly", "zuban"])
-def test_type_session_selects_its_own_checker_lock(checker: str) -> None:
+def test_type_session_selects_its_own_checker_group(checker: str) -> None:
     session = _Installer()
-    locks = []
+    groups = []
     helpers = _nox_helpers("types")
     helpers.update(
         WORKSPACES=_literal(NOXFILE, "WORKSPACES"),
         TYPE_CHECKERS={checker: [checker]},
-        _install=lambda session, lock, editables: locks.append(lock),
+        _install=lambda session, group, editables: groups.append(group),
     )
     helpers["types"](session, checker)
-    assert locks == [f".github/requirements/pylock.{checker}.toml"]
+    assert groups == [checker]
     assert session.commands == [(checker,)]
 
-    lock = _toml(REPO_ROOT / locks[0])
+    lock = Pylock.from_dict(_toml(REPO_ROOT / "pylock.dev.toml"))
     checker_names = {"mypy", "pyright", "ty", "pyrefly", "zuban"}
-    assert {package["name"] for package in lock["packages"]} & checker_names == {
-        checker
+    selected = {
+        str(package.name) for package, _ in lock.select(dependency_groups=[checker])
     }
+    assert selected & checker_names == {checker}
 
 
 def _session_editables(name: str) -> list[str]:

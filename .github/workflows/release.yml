@@ -35,11 +35,11 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Upgrade pip to PEP 751 install support
-        run: python -m pip install --upgrade "pip>=26.1"
+      - name: Ensure pip supports locked groups
+        run: python -m pip install "pip>=26.3"
 
       - name: Install release toolchain
-        run: pip install -r .github/requirements/pylock.release.toml
+        run: pip install --group pylock.dev.toml:release
 
       - name: Install the build backend
         run: pip install -r .github/requirements/pylock.build.toml
@@ -140,11 +140,11 @@ jobs:
           name: dist
           path: dist
 
-      - name: Upgrade pip to PEP 751 install support
-        run: python -m pip install --upgrade "pip>=26.1"
+      - name: Ensure pip supports locked groups
+        run: python -m pip install "pip>=26.3"
 
       - name: Install release toolchain
-        run: pip install -r .github/requirements/pylock.release.toml
+        run: pip install --group pylock.dev.toml:release
 
       - name: Verify attestations and published bytes
         env:
