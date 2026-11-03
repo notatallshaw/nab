@@ -247,8 +247,8 @@ def render_matrix(value: Any) -> str:
         return "<none>"
     platforms = [p.label for p in value.platforms]
     rendered = f"python={value.python}, platforms={platforms}"
-    if value.include_free_threaded:
-        rendered += ", include-free-threaded=true"
+    if value.python_builds is not None:
+        rendered += f", python-builds={list(value.python_builds)}"
     if value.implementation_overrides:
         overrides = {
             "implementations": _implementation_values(value.implementation_overrides)
@@ -270,6 +270,8 @@ def _implementation_values(
             body["python"] = override.python
         if override.platforms is not None:
             body["platforms"] = [platform.label for platform in override.platforms]
+        if override.python_builds is not None:
+            body["python-builds"] = list(override.python_builds)
         bodies[implementation] = body
     return bodies
 

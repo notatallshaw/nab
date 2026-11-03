@@ -171,7 +171,7 @@ CASES = [
             "python_patches": None,
             "implementations": ("cpython",),
             "implementation_overrides": None,
-            "include_free_threaded": False,
+            "python_builds": None,
         },
         {
             "python": "3.13",
@@ -182,7 +182,7 @@ CASES = [
             "implementation_overrides": {
                 "pypy": ImplementationOverride(python="==3.12")
             },
-            "include_free_threaded": True,
+            "python_builds": ("standard", "free-threaded"),
         },
         positional=False,
     ),
@@ -566,7 +566,7 @@ DEFAULTS = [
             "python_patches": None,
             "implementations": ("cpython",),
             "implementation_overrides": None,
-            "include_free_threaded": False,
+            "python_builds": None,
         },
     ),
     (ConflictSet, {"members": ()}, {"policy": ConflictPolicy.AT_MOST_ONE}),
@@ -813,4 +813,4 @@ def test_matrix_config_keeps_its_previous_positional_arguments() -> None:
         "3.12", (PlatformSpec("linux_x86_64"),), "asc", None, ("cpython",), None
     )
     assert matrix == MATRIX
-    assert not matrix.include_free_threaded
+    assert matrix.python_builds is None
