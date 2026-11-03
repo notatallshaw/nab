@@ -333,7 +333,6 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     resolution_strategy: ResolutionStrategy | None = None,
     progress: ProgressReporter | None = None,
     max_concurrency: int,
-    retain_lock_metadata: bool = False,
 ) -> ResolveResult:
     """Run the resolver and map known user-facing failures to process exits.
 
@@ -354,9 +353,8 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
                     transport,
                     targets=targets,
                     inputs=config.resolve_inputs(),
-                    include_dependency_requirements=(
-                        retain_lock_metadata or printer().verbosity >= Verbosity.DEBUG
-                    ),
+                    include_dependency_requirements=printer().verbosity
+                    >= Verbosity.DEBUG,
                     build_transport_factory=partial(_make_transport, http_backend),
                     cache_dir=cache_dir,
                     offline=offline,

@@ -600,7 +600,6 @@ class TargetLock(HashableRecord):
     Metadata overrides supply their effective declarations.
     ``None`` means collection was omitted; an empty mapping has no edges.
 
-    ``validation_metadata`` freezes effective metadata for producer-side checks.
 
     ``target`` is the environment the pins hold for.  The writer reads
     its markers and its
@@ -629,7 +628,6 @@ class TargetLock(HashableRecord):
         "base_dependencies",
         "package_gates",
         "dependency_requirements",
-        "validation_metadata",
     )
 
     __match_args__ = (
@@ -650,8 +648,6 @@ class TargetLock(HashableRecord):
         Mapping[str, Mapping[str, tuple[DependencyDeclaration, ...]]] | None
     ]
 
-    validation_metadata: Final[Mapping[str, Mapping[str, Any]] | None]
-
     def __init__(
         self,
         target: ResolveTarget,
@@ -665,7 +661,6 @@ class TargetLock(HashableRecord):
             str, Mapping[str, tuple[DependencyDeclaration, ...]]
         ]
         | None = None,
-        validation_metadata: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
         """Retain a target's pins and normalize its package conditions."""
         self.target = target
@@ -674,7 +669,6 @@ class TargetLock(HashableRecord):
         self.base_dependencies = factory_value(base_dependencies, dict)
         self.package_gates = factory_value(package_gates, dict)
         self.dependency_requirements = dependency_requirements
-        self.validation_metadata = validation_metadata
 
 
 class LockInput(Record):

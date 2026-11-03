@@ -383,7 +383,6 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         resolution_strategy=settings.resolution,
         progress=ProgressReporter(printer()),
         max_concurrency=settings.max_concurrency,
-        retain_lock_metadata=format == "pylock" and not locked,
     )
 
     lock_input = drop_workspace_pins(
