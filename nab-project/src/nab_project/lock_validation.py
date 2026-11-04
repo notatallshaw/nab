@@ -157,10 +157,20 @@ def _collection(value: object, base: Path) -> Any:
     raise TypeError(message)
 
 
+def _json_default(value: object) -> str:
+    if isinstance(value, datetime):
+        return datetime.isoformat(value)
+    return str(value)
+
+
 def _json(value: object) -> str:
     """Give hashes one representation regardless of mapping insertion order."""
     return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        default=_json_default,
     )
 
 

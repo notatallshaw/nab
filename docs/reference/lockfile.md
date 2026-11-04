@@ -132,6 +132,45 @@ reproducibility
 `tool.nab.validation` records compact input fingerprints bound to the standard lock contents.
 Package selections, environments and sources remain in the standard Pylock fields.
 
+For validation format 1, `contents-sha256` hashes the UTF-8 encoding of the lock's parsed contents
+with the top-level `tool` table removed. Encode the remaining data as JSON with keys sorted, no
+whitespace between items, and non-ASCII characters escaped. Datetime values use
+`YYYY-MM-DDTHH:MM:SS[.ffffff]` followed by their UTC offset when present. Emit exactly six
+fractional digits when microseconds are nonzero and omit the fractional part otherwise. Write UTC as
+`+00:00`.
+
+For example, Python tools can use:
+
+```python
+import hashlib
+import json
+import tomllib
+from datetime import datetime
+
+
+def scalar_text(value):
+    if isinstance(value, datetime):
+        return datetime.isoformat(value)
+    return str(value)
+
+
+with open("pylock.toml", "rb") as stream:
+    document = tomllib.load(stream)
+validation = document.pop("tool")["nab"]["validation"]
+assert validation["version"] == 1
+encoded = json.dumps(
+    document,
+    sort_keys=True,
+    separators=(",", ":"),
+    ensure_ascii=True,
+    default=scalar_text,
+).encode("utf-8")
+assert hashlib.sha256(encoded).hexdigest() == validation["contents-sha256"]
+```
+
+Regenerate validation records created with the earlier datetime encoding before using
+`nab lock --locked`.
+
 [hash-checking]: https://pip.pypa.io/en/stable/topics/secure-installs/#hash-checking-mode
 [pep 658]: https://packaging.python.org/en/latest/specifications/simple-repository-api/
 [pep 751]: https://packaging.python.org/en/latest/specifications/pylock-toml/
