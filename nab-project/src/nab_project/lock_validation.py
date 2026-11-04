@@ -103,6 +103,8 @@ def _value(value: object, base: Path) -> Any:
                 if "@" in value.split("://", 1)[0]
                 else _url(value, base)
             )
+    elif isinstance(value, (dict, list, tuple, set, frozenset)):
+        encoded = _collection(value, base)
     elif isinstance(
         value,
         (
