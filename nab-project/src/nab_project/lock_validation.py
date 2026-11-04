@@ -95,6 +95,14 @@ def _value(value: object, base: Path) -> Any:
     encoded: object
     if value is None:
         encoded = None
+    elif isinstance(value, (str, bool, int, float)):
+        encoded = value
+        if isinstance(value, str) and "://" in value:
+            encoded = (
+                _requirement(parse_requirement(value), base)
+                if "@" in value.split("://", 1)[0]
+                else _url(value, base)
+            )
     elif isinstance(
         value,
         (
@@ -117,14 +125,6 @@ def _value(value: object, base: Path) -> Any:
         encoded = value.isoformat()
     elif isinstance(value, Path):
         encoded = _relative(value, base)
-    elif isinstance(value, (str, bool, int, float)):
-        encoded = value
-        if isinstance(value, str) and "://" in value:
-            encoded = (
-                _requirement(parse_requirement(value), base)
-                if "@" in value.split("://", 1)[0]
-                else _url(value, base)
-            )
     else:
         encoded = _collection(value, base)
     return encoded

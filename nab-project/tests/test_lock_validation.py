@@ -28,7 +28,13 @@ from nab_provider._vendor.packaging.tags import Tag
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.overrides import PackageOverride
 from nab_provider.pep508 import parse_requirement
-from nab_provider.policy import DecisionOrder, LocalSource, ResolutionStrategy
+from nab_provider.policy import (
+    BuildPolicy,
+    DecisionOrder,
+    DistPolicy,
+    LocalSource,
+    ResolutionStrategy,
+)
 from nab_provider.records import IndexConfig
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, MatrixInclude, ResolveTarget
@@ -213,6 +219,33 @@ def test_known_input_types_are_serializable(value: object, tmp_path: Path) -> No
     result = _value(value, tmp_path)
     encoded = json.dumps(result)
     assert "secret" not in encoded
+
+
+@pytest.mark.parametrize(
+    "value", [BuildPolicy.NEVER, DecisionOrder.STABLE, DistPolicy.WHEEL_ONLY]
+)
+def test_policy_values_are_encoded_as_plain_strings(
+    value: BuildPolicy | DecisionOrder | DistPolicy, tmp_path: Path
+) -> None:
+    encoded = _value(value, tmp_path)
+    assert type(encoded) is str
+    assert encoded == value.value
+
+
+def test_scalar_subclass_urls_are_still_normalized(tmp_path: Path) -> None:
+    class Text(str):
+        __slots__ = ()
+
+    text = Text("Demo @ https://user:secret@example.invalid/demo.whl")
+    assert _value(text, tmp_path) == "demo @ https://example.invalid/demo.whl"
+
+
+def test_scalar_subclass_without_url_is_retained(tmp_path: Path) -> None:
+    class Text(str):
+        __slots__ = ()
+
+    text = Text("value")
+    assert _value(text, tmp_path) is text
 
 
 @pytest.mark.parametrize("microsecond", [0, 1, 123456])
