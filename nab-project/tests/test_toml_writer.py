@@ -41,6 +41,32 @@ def test_tuple_is_written_as_array() -> None:
     assert toml_io.loads(dumps({"values": (1, "text")})) == {"values": [1, "text"]}
 
 
+@pytest.mark.parametrize("key", ["environments", "command-line", "platforms"])
+def test_array_entries_are_on_separate_lines(key: str) -> None:
+    text = dumps({key: ["first", "second"]})
+    assert text == f'{key} = [\n    "first",\n    "second",\n]\n'
+    assert toml_io.loads(text) == {key: ["first", "second"]}
+
+
+def test_dependency_references_use_inline_tables() -> None:
+    document = {
+        "packages": [
+            {
+                "name": "example",
+                "dependencies": [{"name": "first"}, {"name": "second"}],
+                "wheels": [{"name": "example.whl", "hashes": {"sha256": "a"}}],
+            },
+        ],
+    }
+    text = dumps(document)
+    assert (
+        'dependencies = [\n    { name = "first" },\n    { name = "second" },\n]\n'
+        in text
+    )
+    assert "[[packages.wheels]]" in text
+    assert toml_io.loads(text) == document
+
+
 def test_datetimes_always_use_t() -> None:
     timestamp = datetime(2026, 1, 2, tzinfo=timezone.utc)
     text = dumps({"created-at": timestamp, "wheels": [{"upload-time": timestamp}]})

@@ -86,18 +86,31 @@ def _table_array(value: object) -> TypeGuard[Sequence[Mapping[str, object]]]:
     )
 
 
+def _assignment(key: str, value: object, output: list[str]) -> None:
+    """Write nonempty arrays with one element per line."""
+    name = _key(key)
+    if isinstance(value, (list, tuple)) and value:
+        output.append(name + " = [\n")
+        output.extend("    " + _literal(item) + ",\n" for item in value)
+        output.append("]\n")
+    else:
+        output.append(name + " = " + _literal(value) + "\n")
+
+
 def _table(
     values: Mapping[str, object], path: tuple[str, ...], output: list[str]
 ) -> None:
     children: list[
         tuple[str, Mapping[str, object] | Sequence[Mapping[str, object]]]
     ] = []
-    # Emit scalar keys before child headers change the current table.
+    # Emit values before child headers change the current table.
     for key, value in values.items():
-        if isinstance(value, Mapping) or _table_array(value):
+        if isinstance(value, Mapping) or (
+            key != "dependencies" and _table_array(value)
+        ):
             children.append((key, value))
         else:
-            output.append(_key(key) + " = " + _literal(value) + "\n")
+            _assignment(key, value, output)
 
     for key, value in children:
         nested_path = (*path, _key(key))

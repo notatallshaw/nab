@@ -1,5 +1,36 @@
 lock-version = "1.0"
-environments = ["python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"", "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"", "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"", "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"", "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\"", "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"", "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"", "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"", "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"", "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\"", "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"", "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"", "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"", "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"", "python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\"", "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"", "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"", "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"", "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"", "python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\"", "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"", "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"", "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"", "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"", "python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\"", "python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"", "python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"", "python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"", "python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"", "python_version == \"3.15\" and sys_platform == \"win32\" and platform_machine == \"AMD64\""]
+environments = [
+    "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"",
+    "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"",
+    "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"",
+    "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"",
+    "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\"",
+    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"",
+    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"",
+    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"",
+    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"",
+    "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\"",
+    "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"",
+    "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"",
+    "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"",
+    "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"",
+    "python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\"",
+    "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"",
+    "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"",
+    "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"",
+    "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"",
+    "python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\"",
+    "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"",
+    "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"",
+    "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"",
+    "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"",
+    "python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\"",
+    "python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"",
+    "python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"aarch64\"",
+    "python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"arm64\"",
+    "python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\"",
+    "python_version == \"3.15\" and sys_platform == \"win32\" and platform_machine == \"AMD64\"",
+]
 requires-python = ">=3.10"
 created-by = "nab"
 
@@ -7,25 +38,15 @@ created-by = "nab"
 name = "hatchling"
 version = "1.32.4"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "packaging" },
+    { name = "pathspec" },
+    { name = "pluggy" },
+    { name = "tomli" },
+    { name = "tomlkit" },
+    { name = "trove-classifiers" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "packaging"
-
-[[packages.dependencies]]
-name = "pathspec"
-
-[[packages.dependencies]]
-name = "pluggy"
-
-[[packages.dependencies]]
-name = "tomli"
-
-[[packages.dependencies]]
-name = "tomlkit"
-
-[[packages.dependencies]]
-name = "trove-classifiers"
 
 [packages.sdist]
 name = "hatchling-1.32.4.tar.gz"
@@ -194,11 +215,24 @@ sha256 = "8b1ff4f9c191b1040b71c37f1e445ab99732911e3cd91de52838453a854d7a17"
 [tool.nab]
 nab-version = "0.0.26.dev0"
 created-at = 2026-11-03T02:06:19.779414+00:00
-command-line = ["nab", "lock", "--build-requirements", "--no-emit-workspace", "--output", ".github/requirements/pylock.build.toml"]
+command-line = [
+    "nab",
+    "lock",
+    "--build-requirements",
+    "--no-emit-workspace",
+    "--output",
+    ".github/requirements/pylock.build.toml",
+]
 input-path = "pyproject.toml"
 mode = "universal"
 python-specifier = ">=3.10,<3.16"
-platforms = ["linux_x86_64", "linux_aarch64", "macos_arm64", "macos_x86_64", "windows_amd64"]
+platforms = [
+    "linux_x86_64",
+    "linux_aarch64",
+    "macos_arm64",
+    "macos_x86_64",
+    "windows_amd64",
+]
 
 [tool.nab.validation]
 version = 1

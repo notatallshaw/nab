@@ -1,8 +1,67 @@
 lock-version = "1.0"
-environments = ["python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"", "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"", "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"", "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"", "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\"", "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"", "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"", "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"", "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"", "python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\"", "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"", "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"", "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"", "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"", "python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\"", "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"", "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"", "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"", "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"", "python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\"", "python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"", "python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"", "python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"", "python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"", "python_version == \"3.15\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\"", "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version < \"3.10.2\"", "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version >= \"3.10.2.dev0\"", "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version < \"3.10.2\"", "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version >= \"3.10.2.dev0\"", "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version < \"3.10.2\"", "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version >= \"3.10.2.dev0\"", "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version < \"3.10.2\"", "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version >= \"3.10.2.dev0\"", "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\" and python_full_version < \"3.10.2\"", "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\" and python_full_version >= \"3.10.2.dev0\""]
+environments = [
+    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+    "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\"",
+    "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+    "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+    "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+    "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+    "python_version == \"3.12\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\"",
+    "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+    "python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+    "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+    "python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+    "python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\"",
+    "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+    "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+    "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+    "python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+    "python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\"",
+    "python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+    "python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
+    "python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+    "python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
+    "python_version == \"3.15\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\"",
+    "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version < \"3.10.2\"",
+    "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version >= \"3.10.2.dev0\"",
+    "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version < \"3.10.2\"",
+    "python_version == \"3.10\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version >= \"3.10.2.dev0\"",
+    "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version < \"3.10.2\"",
+    "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version >= \"3.10.2.dev0\"",
+    "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version < \"3.10.2\"",
+    "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version >= \"3.10.2.dev0\"",
+    "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\" and python_full_version < \"3.10.2\"",
+    "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\" and python_full_version >= \"3.10.2.dev0\"",
+]
 requires-python = ">=3.10"
-dependency-groups = ["crosshair", "dists", "docs", "docs-live", "editable-build", "hatch-test", "http-backends", "lint", "mypy", "nox", "pre-commit", "pyrefly", "pyright", "release", "tests", "ty", "type-common", "types", "zuban"]
-default-groups = ["nox", "tests"]
+dependency-groups = [
+    "crosshair",
+    "dists",
+    "docs",
+    "docs-live",
+    "editable-build",
+    "hatch-test",
+    "http-backends",
+    "lint",
+    "mypy",
+    "nox",
+    "pre-commit",
+    "pyrefly",
+    "pyright",
+    "release",
+    "tests",
+    "ty",
+    "type-common",
+    "types",
+    "zuban",
+]
+default-groups = [
+    "nox",
+    "tests",
+]
 created-by = "nab"
 
 [[packages]]
@@ -10,10 +69,10 @@ name = "accessible-pygments"
 version = "0.0.5"
 marker = "(\"docs\" in dependency_groups or \"docs-live\" in dependency_groups) and (python_version == \"3.12\" or python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\")"
 requires-python = ">=3.9"
+dependencies = [
+    { name = "pygments" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "pygments"
 
 [packages.sdist]
 name = "accessible_pygments-0.0.5.tar.gz"
@@ -88,16 +147,12 @@ name = "anyio"
 version = "4.15.1"
 marker = "((python_version == \"3.10\" or python_version == \"3.11\") and (\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or ((python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups))) or (python_version == \"3.12\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups))"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "exceptiongroup" },
+    { name = "idna" },
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "exceptiongroup"
-
-[[packages.dependencies]]
-name = "idna"
-
-[[packages.dependencies]]
-name = "typing-extensions"
 
 [packages.sdist]
 name = "anyio-4.15.1.tar.gz"
@@ -373,13 +428,11 @@ name = "beautifulsoup4"
 version = "4.15.0"
 marker = "(\"docs\" in dependency_groups or \"docs-live\" in dependency_groups) and (python_version == \"3.12\" or python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\")"
 requires-python = ">=3.7.0"
+dependencies = [
+    { name = "soupsieve" },
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "soupsieve"
-
-[[packages.dependencies]]
-name = "typing-extensions"
 
 [packages.sdist]
 name = "beautifulsoup4-4.15.0.tar.gz"
@@ -403,22 +456,14 @@ sha256 = "d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9"
 name = "build"
 version = "1.6.1"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "colorama" },
+    { name = "importlib-metadata" },
+    { name = "packaging" },
+    { name = "pyproject-hooks" },
+    { name = "tomli" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "colorama"
-
-[[packages.dependencies]]
-name = "importlib-metadata"
-
-[[packages.dependencies]]
-name = "packaging"
-
-[[packages.dependencies]]
-name = "pyproject-hooks"
-
-[[packages.dependencies]]
-name = "tomli"
 
 [packages.sdist]
 name = "build-1.6.1.tar.gz"
@@ -443,16 +488,12 @@ name = "cattrs"
 version = "26.2.1"
 marker = "\"crosshair\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "attrs" },
+    { name = "exceptiongroup" },
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "attrs"
-
-[[packages.dependencies]]
-name = "exceptiongroup"
-
-[[packages.dependencies]]
-name = "typing-extensions"
 
 [packages.sdist]
 name = "cattrs-26.2.1.tar.gz"
@@ -502,10 +543,10 @@ name = "cffi"
 version = "2.1.1"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "pycparser" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "pycparser"
 
 [packages.sdist]
 name = "cffi-2.1.1.tar.gz"
@@ -1305,10 +1346,10 @@ name = "colorlog"
 version = "6.12.0"
 marker = "\"nox\" in dependency_groups"
 requires-python = ">=3.6"
+dependencies = [
+    { name = "colorama" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "colorama"
 
 [packages.sdist]
 name = "colorlog-6.12.0.tar.gz"
@@ -1333,10 +1374,10 @@ name = "coverage"
 version = "7.16.2"
 marker = "\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"types\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "tomli" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "tomli"
 
 [packages.sdist]
 name = "coverage-7.16.2.tar.gz"
@@ -1720,10 +1761,10 @@ sha256 = "11d28e9123a9156cb405d8d27b44256c9a58fb5decc2073a8f17862057e3aa0f"
 name = "coverage-enable-subprocess"
 version = "1.0"
 marker = "\"hatch-test\" in dependency_groups"
+dependencies = [
+    { name = "coverage" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "coverage"
 
 [packages.sdist]
 name = "coverage_enable_subprocess-1.0.tar.gz"
@@ -1748,25 +1789,15 @@ name = "crosshair-tool"
 version = "0.0.112"
 marker = "\"crosshair\" in dependency_groups"
 requires-python = ">=3.9"
+dependencies = [
+    { name = "packaging" },
+    { name = "pygls" },
+    { name = "typeshed-client" },
+    { name = "typing-extensions" },
+    { name = "typing-inspect" },
+    { name = "z3-solver" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "packaging"
-
-[[packages.dependencies]]
-name = "pygls"
-
-[[packages.dependencies]]
-name = "typeshed-client"
-
-[[packages.dependencies]]
-name = "typing-extensions"
-
-[[packages.dependencies]]
-name = "typing-inspect"
-
-[[packages.dependencies]]
-name = "z3-solver"
 
 [packages.sdist]
 name = "crosshair_tool-0.0.112.tar.gz"
@@ -2052,13 +2083,11 @@ name = "cryptography"
 version = "50.0.2"
 marker = "\"release\" in dependency_groups"
 requires-python = "!=3.9.0,!=3.9.1,>=3.9"
+dependencies = [
+    { name = "cffi" },
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "cffi"
-
-[[packages.dependencies]]
-name = "typing-extensions"
 
 [packages.sdist]
 name = "cryptography-50.0.2.tar.gz"
@@ -2362,13 +2391,11 @@ name = "dependency-groups"
 version = "1.3.2"
 marker = "\"nox\" in dependency_groups"
 requires-python = ">=3.9"
+dependencies = [
+    { name = "packaging" },
+    { name = "tomli" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "packaging"
-
-[[packages.dependencies]]
-name = "tomli"
 
 [packages.sdist]
 name = "dependency_groups-1.3.2.tar.gz"
@@ -2517,13 +2544,11 @@ name = "email-validator"
 version = "2.3.0"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.8"
+dependencies = [
+    { name = "dnspython" },
+    { name = "idna" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "dnspython"
-
-[[packages.dependencies]]
-name = "idna"
 
 [packages.sdist]
 name = "email_validator-2.3.0.tar.gz"
@@ -2548,10 +2573,10 @@ name = "exceptiongroup"
 version = "1.3.1"
 marker = "(\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups) and python_version == \"3.10\""
 requires-python = ">=3.7"
+dependencies = [
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "typing-extensions"
 
 [packages.sdist]
 name = "exceptiongroup-1.3.1.tar.gz"
@@ -2626,22 +2651,14 @@ name = "furo"
 version = "2025.12.19"
 marker = "(\"docs\" in dependency_groups or \"docs-live\" in dependency_groups) and (python_version == \"3.12\" or python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\")"
 requires-python = ">=3.8"
+dependencies = [
+    { name = "accessible-pygments" },
+    { name = "beautifulsoup4" },
+    { name = "pygments" },
+    { name = "sphinx" },
+    { name = "sphinx-basic-ng" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "accessible-pygments"
-
-[[packages.dependencies]]
-name = "beautifulsoup4"
-
-[[packages.dependencies]]
-name = "pygments"
-
-[[packages.dependencies]]
-name = "sphinx"
-
-[[packages.dependencies]]
-name = "sphinx-basic-ng"
 
 [packages.sdist]
 name = "furo-2025.12.19.tar.gz"
@@ -2691,13 +2708,11 @@ name = "h2"
 version = "4.4.1"
 marker = "\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "hpack" },
+    { name = "hyperframe" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "hpack"
-
-[[packages.dependencies]]
-name = "hyperframe"
 
 [packages.sdist]
 name = "h2-4.4.1.tar.gz"
@@ -2747,13 +2762,11 @@ name = "httpcore"
 version = "1.0.9"
 marker = "\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups"
 requires-python = ">=3.8"
+dependencies = [
+    { name = "certifi" },
+    { name = "h11" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "certifi"
-
-[[packages.dependencies]]
-name = "h11"
 
 [packages.sdist]
 name = "httpcore-1.0.9.tar.gz"
@@ -2778,13 +2791,11 @@ name = "httpcore2"
 version = "2.14.0"
 marker = "\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "h11" },
+    { name = "truststore" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "h11"
-
-[[packages.dependencies]]
-name = "truststore"
 
 [packages.sdist]
 name = "httpcore2-2.14.0.tar.gz"
@@ -2809,22 +2820,14 @@ name = "httpx"
 version = "0.28.1"
 marker = "\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups"
 requires-python = ">=3.8"
+dependencies = [
+    { name = "anyio" },
+    { name = "certifi" },
+    { name = "h2" },
+    { name = "httpcore" },
+    { name = "idna" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "anyio"
-
-[[packages.dependencies]]
-name = "certifi"
-
-[[packages.dependencies]]
-name = "h2"
-
-[[packages.dependencies]]
-name = "httpcore"
-
-[[packages.dependencies]]
-name = "idna"
 
 [packages.sdist]
 name = "httpx-0.28.1.tar.gz"
@@ -2849,25 +2852,15 @@ name = "httpx2"
 version = "2.14.0"
 marker = "\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "anyio" },
+    { name = "h2" },
+    { name = "httpcore2" },
+    { name = "idna" },
+    { name = "truststore" },
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "anyio"
-
-[[packages.dependencies]]
-name = "h2"
-
-[[packages.dependencies]]
-name = "httpcore2"
-
-[[packages.dependencies]]
-name = "idna"
-
-[[packages.dependencies]]
-name = "truststore"
-
-[[packages.dependencies]]
-name = "typing-extensions"
 
 [packages.sdist]
 name = "httpx2-2.14.0.tar.gz"
@@ -2942,13 +2935,11 @@ name = "hypothesis"
 version = "6.168.5"
 marker = "(\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"types\" in dependency_groups) and python_version == \"3.10\""
 requires-python = ">=3.10"
+dependencies = [
+    { name = "exceptiongroup" },
+    { name = "sortedcontainers" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "exceptiongroup"
-
-[[packages.dependencies]]
-name = "sortedcontainers"
 
 [packages.sdist]
 name = "hypothesis-6.168.5.tar.gz"
@@ -3054,10 +3045,10 @@ name = "hypothesis"
 version = "6.170.12"
 marker = "(\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"types\" in dependency_groups) and (python_version == \"3.11\" or python_version == \"3.12\" or python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\")"
 requires-python = ">=3.11"
+dependencies = [
+    { name = "sortedcontainers" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "sortedcontainers"
 
 [packages.sdist]
 name = "hypothesis-6.170.12.tar.gz"
@@ -3388,18 +3379,12 @@ name = "hypothesis-crosshair"
 version = "0.0.31"
 marker = "\"crosshair\" in dependency_groups"
 requires-python = ">=3.9"
+dependencies = [
+    { name = "crosshair-tool" },
+    { name = "hypothesis", version = "6.168.5" },
+    { name = "hypothesis", version = "6.170.12" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "crosshair-tool"
-
-[[packages.dependencies]]
-name = "hypothesis"
-version = "6.168.5"
-
-[[packages.dependencies]]
-name = "hypothesis"
-version = "6.170.12"
 
 [packages.sdist]
 name = "hypothesis_crosshair-0.0.31.tar.gz"
@@ -3424,10 +3409,10 @@ name = "id"
 version = "1.6.1"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.9"
+dependencies = [
+    { name = "urllib3" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "urllib3"
 
 [packages.sdist]
 name = "id-1.6.1.tar.gz"
@@ -3527,10 +3512,10 @@ name = "importlib-metadata"
 version = "9.0.1"
 marker = "(\"release\" in dependency_groups and python_version == \"3.10\") or (\"release\" in dependency_groups and python_version == \"3.11\") or python_full_version < \"3.10.2\""
 requires-python = ">=3.10"
+dependencies = [
+    { name = "zipp" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "zipp"
 
 [packages.sdist]
 name = "importlib_metadata-9.0.1.tar.gz"
@@ -3629,10 +3614,10 @@ name = "jaraco-classes"
 version = "3.4.0"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.8"
+dependencies = [
+    { name = "more-itertools" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "more-itertools"
 
 [packages.sdist]
 name = "jaraco.classes-3.4.0.tar.gz"
@@ -3657,10 +3642,10 @@ name = "jaraco-context"
 version = "6.1.2"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "backports-tarfile" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "backports-tarfile"
 
 [packages.sdist]
 name = "jaraco_context-6.1.2.tar.gz"
@@ -3685,10 +3670,10 @@ name = "jaraco-functools"
 version = "4.6.0"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "more-itertools" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "more-itertools"
 
 [packages.sdist]
 name = "jaraco_functools-4.6.0.tar.gz"
@@ -3738,10 +3723,10 @@ name = "jinja2"
 version = "3.1.6"
 marker = "(\"docs\" in dependency_groups or \"docs-live\" in dependency_groups) and (python_version == \"3.12\" or python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\")"
 requires-python = ">=3.7"
+dependencies = [
+    { name = "markupsafe" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "markupsafe"
 
 [packages.sdist]
 name = "jinja2-3.1.6.tar.gz"
@@ -3766,28 +3751,16 @@ name = "keyring"
 version = "25.7.0"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.9"
+dependencies = [
+    { name = "importlib-metadata" },
+    { name = "jaraco-classes" },
+    { name = "jaraco-context" },
+    { name = "jaraco-functools" },
+    { name = "jeepney" },
+    { name = "pywin32-ctypes" },
+    { name = "secretstorage" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "importlib-metadata"
-
-[[packages.dependencies]]
-name = "jaraco-classes"
-
-[[packages.dependencies]]
-name = "jaraco-context"
-
-[[packages.dependencies]]
-name = "jaraco-functools"
-
-[[packages.dependencies]]
-name = "jeepney"
-
-[[packages.dependencies]]
-name = "pywin32-ctypes"
-
-[[packages.dependencies]]
-name = "secretstorage"
 
 [packages.sdist]
 name = "keyring-25.7.0.tar.gz"
@@ -4213,13 +4186,11 @@ name = "lsprotocol"
 version = "2025.0.0"
 marker = "\"crosshair\" in dependency_groups"
 requires-python = ">=3.8"
+dependencies = [
+    { name = "attrs" },
+    { name = "cattrs" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "attrs"
-
-[[packages.dependencies]]
-name = "cattrs"
 
 [packages.sdist]
 name = "lsprotocol-2025.0.0.tar.gz"
@@ -4244,10 +4215,10 @@ name = "markdown-it-py"
 version = "4.2.0"
 marker = "(\"docs\" in dependency_groups and python_version == \"3.12\") or (\"docs\" in dependency_groups and python_version == \"3.13\") or (\"docs\" in dependency_groups and python_version == \"3.14\") or (\"docs\" in dependency_groups and python_version == \"3.15\") or (\"docs-live\" in dependency_groups and python_version == \"3.12\") or (\"docs-live\" in dependency_groups and python_version == \"3.13\") or (\"docs-live\" in dependency_groups and python_version == \"3.14\") or (\"docs-live\" in dependency_groups and python_version == \"3.15\") or \"lint\" in dependency_groups or \"release\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "mdurl" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "mdurl"
 
 [packages.sdist]
 name = "markdown_it_py-4.2.0.tar.gz"
@@ -4558,13 +4529,11 @@ name = "mdformat"
 version = "1.0.0"
 marker = "\"lint\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "markdown-it-py" },
+    { name = "tomli" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "markdown-it-py"
-
-[[packages.dependencies]]
-name = "tomli"
 
 [packages.sdist]
 name = "mdformat-1.0.0.tar.gz"
@@ -4589,13 +4558,11 @@ name = "mdformat-deflist"
 version = "0.1.4"
 marker = "\"lint\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "mdformat" },
+    { name = "mdit-py-plugins" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "mdformat"
-
-[[packages.dependencies]]
-name = "mdit-py-plugins"
 
 [packages.sdist]
 name = "mdformat_deflist-0.1.4.tar.gz"
@@ -4620,13 +4587,11 @@ name = "mdformat-footnote"
 version = "0.1.3"
 marker = "\"lint\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "mdformat" },
+    { name = "mdit-py-plugins" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "mdformat"
-
-[[packages.dependencies]]
-name = "mdit-py-plugins"
 
 [packages.sdist]
 name = "mdformat_footnote-0.1.3.tar.gz"
@@ -4651,19 +4616,13 @@ name = "mdformat-front-matters"
 version = "2.0.0"
 marker = "\"lint\" in dependency_groups"
 requires-python = ">=3.10.0"
+dependencies = [
+    { name = "mdformat" },
+    { name = "mdit-py-plugins" },
+    { name = "ruamel-yaml" },
+    { name = "toml" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "mdformat"
-
-[[packages.dependencies]]
-name = "mdit-py-plugins"
-
-[[packages.dependencies]]
-name = "ruamel-yaml"
-
-[[packages.dependencies]]
-name = "toml"
 
 [packages.sdist]
 name = "mdformat_front_matters-2.0.0.tar.gz"
@@ -4688,19 +4647,13 @@ name = "mdformat-gfm"
 version = "1.0.0"
 marker = "\"lint\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "markdown-it-py" },
+    { name = "mdformat" },
+    { name = "mdit-py-plugins" },
+    { name = "wcwidth" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "markdown-it-py"
-
-[[packages.dependencies]]
-name = "mdformat"
-
-[[packages.dependencies]]
-name = "mdit-py-plugins"
-
-[[packages.dependencies]]
-name = "wcwidth"
 
 [packages.sdist]
 name = "mdformat_gfm-1.0.0.tar.gz"
@@ -4725,13 +4678,11 @@ name = "mdformat-gfm-alerts"
 version = "2.1.0"
 marker = "\"lint\" in dependency_groups"
 requires-python = ">=3.10.0"
+dependencies = [
+    { name = "mdformat" },
+    { name = "mdit-py-plugins" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "mdformat"
-
-[[packages.dependencies]]
-name = "mdit-py-plugins"
 
 [packages.sdist]
 name = "mdformat_gfm_alerts-2.1.0.tar.gz"
@@ -4756,25 +4707,15 @@ name = "mdformat-myst"
 version = "0.3.0"
 marker = "\"lint\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "mdformat" },
+    { name = "mdformat-footnote" },
+    { name = "mdformat-front-matters" },
+    { name = "mdformat-gfm" },
+    { name = "mdit-py-plugins" },
+    { name = "ruamel-yaml" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "mdformat"
-
-[[packages.dependencies]]
-name = "mdformat-footnote"
-
-[[packages.dependencies]]
-name = "mdformat-front-matters"
-
-[[packages.dependencies]]
-name = "mdformat-gfm"
-
-[[packages.dependencies]]
-name = "mdit-py-plugins"
-
-[[packages.dependencies]]
-name = "ruamel-yaml"
 
 [packages.sdist]
 name = "mdformat_myst-0.3.0.tar.gz"
@@ -4799,10 +4740,10 @@ name = "mdit-py-plugins"
 version = "0.6.1"
 marker = "(\"docs\" in dependency_groups and python_version == \"3.12\") or (\"docs\" in dependency_groups and python_version == \"3.13\") or (\"docs\" in dependency_groups and python_version == \"3.14\") or (\"docs\" in dependency_groups and python_version == \"3.15\") or (\"docs-live\" in dependency_groups and python_version == \"3.12\") or (\"docs-live\" in dependency_groups and python_version == \"3.13\") or (\"docs-live\" in dependency_groups and python_version == \"3.14\") or (\"docs-live\" in dependency_groups and python_version == \"3.15\") or \"lint\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "markdown-it-py" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "markdown-it-py"
 
 [packages.sdist]
 name = "mdit_py_plugins-0.6.1.tar.gz"
@@ -4877,25 +4818,15 @@ name = "mypy"
 version = "2.4.0"
 marker = "\"mypy\" in dependency_groups or \"types\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "ast-serialize" },
+    { name = "librt" },
+    { name = "mypy-extensions" },
+    { name = "pathspec" },
+    { name = "tomli" },
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "ast-serialize"
-
-[[packages.dependencies]]
-name = "librt"
-
-[[packages.dependencies]]
-name = "mypy-extensions"
-
-[[packages.dependencies]]
-name = "pathspec"
-
-[[packages.dependencies]]
-name = "tomli"
-
-[[packages.dependencies]]
-name = "typing-extensions"
 
 [packages.sdist]
 name = "mypy-2.4.0.tar.gz"
@@ -5233,26 +5164,15 @@ name = "myst-parser"
 version = "5.1.0"
 marker = "(\"docs\" in dependency_groups or \"docs-live\" in dependency_groups) and (python_version == \"3.12\" or python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\")"
 requires-python = ">=3.11"
+dependencies = [
+    { name = "docutils", version = "0.22.4" },
+    { name = "jinja2" },
+    { name = "markdown-it-py" },
+    { name = "mdit-py-plugins" },
+    { name = "pyyaml" },
+    { name = "sphinx" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "docutils"
-version = "0.22.4"
-
-[[packages.dependencies]]
-name = "jinja2"
-
-[[packages.dependencies]]
-name = "markdown-it-py"
-
-[[packages.dependencies]]
-name = "mdit-py-plugins"
-
-[[packages.dependencies]]
-name = "pyyaml"
-
-[[packages.dependencies]]
-name = "sphinx"
 
 [packages.sdist]
 name = "myst_parser-5.1.0.tar.gz"
@@ -5381,37 +5301,19 @@ name = "nox"
 version = "2026.10.20"
 marker = "\"nox\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "argcomplete" },
+    { name = "attrs" },
+    { name = "colorlog" },
+    { name = "dependency-groups" },
+    { name = "humanize" },
+    { name = "packaging" },
+    { name = "platformdirs" },
+    { name = "python-discovery" },
+    { name = "tomli" },
+    { name = "virtualenv" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "argcomplete"
-
-[[packages.dependencies]]
-name = "attrs"
-
-[[packages.dependencies]]
-name = "colorlog"
-
-[[packages.dependencies]]
-name = "dependency-groups"
-
-[[packages.dependencies]]
-name = "humanize"
-
-[[packages.dependencies]]
-name = "packaging"
-
-[[packages.dependencies]]
-name = "platformdirs"
-
-[[packages.dependencies]]
-name = "python-discovery"
-
-[[packages.dependencies]]
-name = "tomli"
-
-[[packages.dependencies]]
-name = "virtualenv"
 
 [packages.sdist]
 name = "nox-2026.10.20.tar.gz"
@@ -5535,22 +5437,14 @@ name = "pre-commit"
 version = "4.6.2"
 marker = "\"pre-commit\" in dependency_groups and python_version == \"3.10\""
 requires-python = ">=3.10"
+dependencies = [
+    { name = "cfgv" },
+    { name = "identify" },
+    { name = "nodeenv" },
+    { name = "pyyaml" },
+    { name = "virtualenv" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "cfgv"
-
-[[packages.dependencies]]
-name = "identify"
-
-[[packages.dependencies]]
-name = "nodeenv"
-
-[[packages.dependencies]]
-name = "pyyaml"
-
-[[packages.dependencies]]
-name = "virtualenv"
 
 [packages.sdist]
 name = "pre_commit-4.6.2.tar.gz"
@@ -5575,22 +5469,14 @@ name = "pre-commit"
 version = "4.7.0"
 marker = "\"pre-commit\" in dependency_groups and (python_version == \"3.11\" or python_version == \"3.12\" or python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\")"
 requires-python = ">=3.11"
+dependencies = [
+    { name = "cfgv" },
+    { name = "identify" },
+    { name = "nodeenv" },
+    { name = "pyyaml" },
+    { name = "virtualenv" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "cfgv"
-
-[[packages.dependencies]]
-name = "identify"
-
-[[packages.dependencies]]
-name = "nodeenv"
-
-[[packages.dependencies]]
-name = "pyyaml"
-
-[[packages.dependencies]]
-name = "virtualenv"
 
 [packages.sdist]
 name = "pre_commit-4.7.0.tar.gz"
@@ -5665,22 +5551,14 @@ name = "pydantic"
 version = "2.14.1"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "annotated-types" },
+    { name = "email-validator" },
+    { name = "pydantic-core" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "annotated-types"
-
-[[packages.dependencies]]
-name = "email-validator"
-
-[[packages.dependencies]]
-name = "pydantic-core"
-
-[[packages.dependencies]]
-name = "typing-extensions"
-
-[[packages.dependencies]]
-name = "typing-inspection"
 
 [packages.sdist]
 name = "pydantic-2.14.1.tar.gz"
@@ -5705,10 +5583,10 @@ name = "pydantic-core"
 version = "2.50.1"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "typing-extensions"
 
 [packages.sdist]
 name = "pydantic_core-2.50.1.tar.gz"
@@ -6084,16 +5962,12 @@ name = "pygls"
 version = "2.1.1"
 marker = "\"crosshair\" in dependency_groups"
 requires-python = ">=3.9"
+dependencies = [
+    { name = "attrs" },
+    { name = "cattrs" },
+    { name = "lsprotocol" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "attrs"
-
-[[packages.dependencies]]
-name = "cattrs"
-
-[[packages.dependencies]]
-name = "lsprotocol"
 
 [packages.sdist]
 name = "pygls-2.1.1.tar.gz"
@@ -6143,10 +6017,10 @@ name = "pyjwt"
 version = "2.15.1"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.9"
+dependencies = [
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "typing-extensions"
 
 [packages.sdist]
 name = "pyjwt-2.15.1.tar.gz"
@@ -6171,31 +6045,17 @@ name = "pypi-attestations"
 version = "0.0.30"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "cryptography" },
+    { name = "packaging" },
+    { name = "pyasn1" },
+    { name = "pydantic" },
+    { name = "requests" },
+    { name = "rfc3986" },
+    { name = "sigstore" },
+    { name = "sigstore-models" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "cryptography"
-
-[[packages.dependencies]]
-name = "packaging"
-
-[[packages.dependencies]]
-name = "pyasn1"
-
-[[packages.dependencies]]
-name = "pydantic"
-
-[[packages.dependencies]]
-name = "requests"
-
-[[packages.dependencies]]
-name = "rfc3986"
-
-[[packages.dependencies]]
-name = "sigstore"
-
-[[packages.dependencies]]
-name = "sigstore-models"
 
 [packages.sdist]
 name = "pypi_attestations-0.0.30.tar.gz"
@@ -6305,13 +6165,11 @@ name = "pyright"
 version = "1.1.414"
 marker = "\"pyright\" in dependency_groups or \"types\" in dependency_groups"
 requires-python = ">=3.7"
+dependencies = [
+    { name = "nodeenv" },
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "nodeenv"
-
-[[packages.dependencies]]
-name = "typing-extensions"
 
 [packages.sdist]
 name = "pyright-1.1.414.tar.gz"
@@ -6336,28 +6194,16 @@ name = "pytest"
 version = "9.1.1"
 marker = "\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"types\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "colorama" },
+    { name = "exceptiongroup" },
+    { name = "iniconfig" },
+    { name = "packaging" },
+    { name = "pluggy" },
+    { name = "pygments" },
+    { name = "tomli" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "colorama"
-
-[[packages.dependencies]]
-name = "exceptiongroup"
-
-[[packages.dependencies]]
-name = "iniconfig"
-
-[[packages.dependencies]]
-name = "packaging"
-
-[[packages.dependencies]]
-name = "pluggy"
-
-[[packages.dependencies]]
-name = "pygments"
-
-[[packages.dependencies]]
-name = "tomli"
 
 [packages.sdist]
 name = "pytest-9.1.1.tar.gz"
@@ -6382,16 +6228,12 @@ name = "pytest-cov"
 version = "7.1.0"
 marker = "\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"types\" in dependency_groups"
 requires-python = ">=3.9"
+dependencies = [
+    { name = "coverage" },
+    { name = "pluggy" },
+    { name = "pytest" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "coverage"
-
-[[packages.dependencies]]
-name = "pluggy"
-
-[[packages.dependencies]]
-name = "pytest"
 
 [packages.sdist]
 name = "pytest_cov-7.1.0.tar.gz"
@@ -6416,10 +6258,10 @@ name = "pytest-mock"
 version = "3.17.0"
 marker = "\"hatch-test\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "pytest" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "pytest"
 
 [packages.sdist]
 name = "pytest_mock-3.17.0.tar.gz"
@@ -6444,10 +6286,10 @@ name = "pytest-randomly"
 version = "3.16.0"
 marker = "\"hatch-test\" in dependency_groups"
 requires-python = ">=3.9"
+dependencies = [
+    { name = "pytest" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "pytest"
 
 [packages.sdist]
 name = "pytest_randomly-3.16.0.tar.gz"
@@ -6472,13 +6314,11 @@ name = "pytest-rerunfailures"
 version = "14.0"
 marker = "\"hatch-test\" in dependency_groups"
 requires-python = ">=3.8"
+dependencies = [
+    { name = "packaging" },
+    { name = "pytest" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "packaging"
-
-[[packages.dependencies]]
-name = "pytest"
 
 [packages.sdist]
 name = "pytest-rerunfailures-14.0.tar.gz"
@@ -6503,10 +6343,10 @@ name = "pytest-timeout"
 version = "2.4.0"
 marker = "\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"types\" in dependency_groups"
 requires-python = ">=3.7"
+dependencies = [
+    { name = "pytest" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "pytest"
 
 [packages.sdist]
 name = "pytest_timeout-2.4.0.tar.gz"
@@ -6531,13 +6371,11 @@ name = "pytest-xdist"
 version = "3.8.0"
 marker = "\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"types\" in dependency_groups"
 requires-python = ">=3.9"
+dependencies = [
+    { name = "execnet" },
+    { name = "pytest" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "execnet"
-
-[[packages.dependencies]]
-name = "pytest"
 
 [packages.sdist]
 name = "pytest_xdist-3.8.0.tar.gz"
@@ -6562,10 +6400,10 @@ name = "python-discovery"
 version = "1.6.4"
 marker = "\"nox\" in dependency_groups or \"pre-commit\" in dependency_groups"
 requires-python = ">=3.9"
+dependencies = [
+    { name = "filelock" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "filelock"
 
 [packages.sdist]
 name = "python_discovery-1.6.4.tar.gz"
@@ -6901,21 +6739,13 @@ name = "readme-renderer"
 version = "46.0"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "docutils", version = "0.22.4" },
+    { name = "docutils", version = "0.23" },
+    { name = "nh3" },
+    { name = "pygments" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "docutils"
-version = "0.22.4"
-
-[[packages.dependencies]]
-name = "docutils"
-version = "0.23"
-
-[[packages.dependencies]]
-name = "nh3"
-
-[[packages.dependencies]]
-name = "pygments"
 
 [packages.sdist]
 name = "readme_renderer-46.0.tar.gz"
@@ -6940,19 +6770,13 @@ name = "requests"
 version = "2.34.2"
 marker = "(\"docs\" in dependency_groups and python_version == \"3.12\") or (\"docs\" in dependency_groups and python_version == \"3.13\") or (\"docs\" in dependency_groups and python_version == \"3.14\") or (\"docs\" in dependency_groups and python_version == \"3.15\") or (\"docs-live\" in dependency_groups and python_version == \"3.12\") or (\"docs-live\" in dependency_groups and python_version == \"3.13\") or (\"docs-live\" in dependency_groups and python_version == \"3.14\") or (\"docs-live\" in dependency_groups and python_version == \"3.15\") or \"release\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "certifi" },
+    { name = "charset-normalizer" },
+    { name = "idna" },
+    { name = "urllib3" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "certifi"
-
-[[packages.dependencies]]
-name = "charset-normalizer"
-
-[[packages.dependencies]]
-name = "idna"
-
-[[packages.dependencies]]
-name = "urllib3"
 
 [packages.sdist]
 name = "requests-2.34.2.tar.gz"
@@ -6977,10 +6801,10 @@ name = "requests-toolbelt"
 version = "1.0.0"
 marker = "\"release\" in dependency_groups"
 requires-python = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,>=2.7"
+dependencies = [
+    { name = "requests" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "requests"
 
 [packages.sdist]
 name = "requests-toolbelt-1.0.0.tar.gz"
@@ -7005,10 +6829,10 @@ name = "respx"
 version = "0.23.1"
 marker = "\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"types\" in dependency_groups"
 requires-python = ">=3.8"
+dependencies = [
+    { name = "httpx" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "httpx"
 
 [packages.sdist]
 name = "respx-0.23.1.tar.gz"
@@ -7033,10 +6857,10 @@ name = "rfc3161-client"
 version = "1.0.9"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.9"
+dependencies = [
+    { name = "cryptography" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "cryptography"
 
 [packages.sdist]
 name = "rfc3161_client-1.0.9.tar.gz"
@@ -7147,13 +6971,11 @@ name = "rich"
 version = "15.0.0"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.9.0"
+dependencies = [
+    { name = "markdown-it-py" },
+    { name = "pygments" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "markdown-it-py"
-
-[[packages.dependencies]]
-name = "pygments"
 
 [packages.sdist]
 name = "rich-15.0.0.tar.gz"
@@ -7289,13 +7111,11 @@ name = "secretstorage"
 version = "3.5.0"
 marker = "\"release\" in dependency_groups and sys_platform == \"linux\""
 requires-python = ">=3.10"
+dependencies = [
+    { name = "cryptography" },
+    { name = "jeepney" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "cryptography"
-
-[[packages.dependencies]]
-name = "jeepney"
 
 [packages.sdist]
 name = "secretstorage-3.5.0.tar.gz"
@@ -7345,46 +7165,22 @@ name = "sigstore"
 version = "4.5.1"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "cryptography" },
+    { name = "id" },
+    { name = "importlib-resources" },
+    { name = "platformdirs" },
+    { name = "pydantic" },
+    { name = "pyjwt" },
+    { name = "requests" },
+    { name = "rfc3161-client" },
+    { name = "rfc8785" },
+    { name = "rich" },
+    { name = "sigstore-models" },
+    { name = "sigstore-rekor-types" },
+    { name = "tuf" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "cryptography"
-
-[[packages.dependencies]]
-name = "id"
-
-[[packages.dependencies]]
-name = "importlib-resources"
-
-[[packages.dependencies]]
-name = "platformdirs"
-
-[[packages.dependencies]]
-name = "pydantic"
-
-[[packages.dependencies]]
-name = "pyjwt"
-
-[[packages.dependencies]]
-name = "requests"
-
-[[packages.dependencies]]
-name = "rfc3161-client"
-
-[[packages.dependencies]]
-name = "rfc8785"
-
-[[packages.dependencies]]
-name = "rich"
-
-[[packages.dependencies]]
-name = "sigstore-models"
-
-[[packages.dependencies]]
-name = "sigstore-rekor-types"
-
-[[packages.dependencies]]
-name = "tuf"
 
 [packages.sdist]
 name = "sigstore-4.5.1.tar.gz"
@@ -7409,13 +7205,11 @@ name = "sigstore-models"
 version = "0.0.6"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "pydantic" },
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "pydantic"
-
-[[packages.dependencies]]
-name = "typing-extensions"
 
 [packages.sdist]
 name = "sigstore_models-0.0.6.tar.gz"
@@ -7440,10 +7234,10 @@ name = "sigstore-rekor-types"
 version = "0.0.18"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.8"
+dependencies = [
+    { name = "pydantic" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "pydantic"
 
 [packages.sdist]
 name = "sigstore_rekor_types-0.0.18.tar.gz"
@@ -7542,59 +7336,26 @@ name = "sphinx"
 version = "9.1.1"
 marker = "(\"docs\" in dependency_groups or \"docs-live\" in dependency_groups) and (python_version == \"3.12\" or python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\")"
 requires-python = ">=3.12"
+dependencies = [
+    { name = "alabaster" },
+    { name = "babel" },
+    { name = "colorama" },
+    { name = "docutils", version = "0.22.4" },
+    { name = "imagesize" },
+    { name = "jinja2" },
+    { name = "packaging" },
+    { name = "pygments" },
+    { name = "requests" },
+    { name = "roman-numerals" },
+    { name = "snowballstemmer" },
+    { name = "sphinxcontrib-applehelp" },
+    { name = "sphinxcontrib-devhelp" },
+    { name = "sphinxcontrib-htmlhelp" },
+    { name = "sphinxcontrib-jsmath" },
+    { name = "sphinxcontrib-qthelp" },
+    { name = "sphinxcontrib-serializinghtml" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "alabaster"
-
-[[packages.dependencies]]
-name = "babel"
-
-[[packages.dependencies]]
-name = "colorama"
-
-[[packages.dependencies]]
-name = "docutils"
-version = "0.22.4"
-
-[[packages.dependencies]]
-name = "imagesize"
-
-[[packages.dependencies]]
-name = "jinja2"
-
-[[packages.dependencies]]
-name = "packaging"
-
-[[packages.dependencies]]
-name = "pygments"
-
-[[packages.dependencies]]
-name = "requests"
-
-[[packages.dependencies]]
-name = "roman-numerals"
-
-[[packages.dependencies]]
-name = "snowballstemmer"
-
-[[packages.dependencies]]
-name = "sphinxcontrib-applehelp"
-
-[[packages.dependencies]]
-name = "sphinxcontrib-devhelp"
-
-[[packages.dependencies]]
-name = "sphinxcontrib-htmlhelp"
-
-[[packages.dependencies]]
-name = "sphinxcontrib-jsmath"
-
-[[packages.dependencies]]
-name = "sphinxcontrib-qthelp"
-
-[[packages.dependencies]]
-name = "sphinxcontrib-serializinghtml"
 
 [packages.sdist]
 name = "sphinx-9.1.1.tar.gz"
@@ -7619,25 +7380,15 @@ name = "sphinx-autobuild"
 version = "2025.8.25"
 marker = "\"docs-live\" in dependency_groups and (python_version == \"3.12\" or python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\")"
 requires-python = ">=3.11"
+dependencies = [
+    { name = "colorama" },
+    { name = "sphinx" },
+    { name = "starlette" },
+    { name = "uvicorn" },
+    { name = "watchfiles" },
+    { name = "websockets" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "colorama"
-
-[[packages.dependencies]]
-name = "sphinx"
-
-[[packages.dependencies]]
-name = "starlette"
-
-[[packages.dependencies]]
-name = "uvicorn"
-
-[[packages.dependencies]]
-name = "watchfiles"
-
-[[packages.dependencies]]
-name = "websockets"
 
 [packages.sdist]
 name = "sphinx_autobuild-2025.8.25.tar.gz"
@@ -7662,10 +7413,10 @@ name = "sphinx-basic-ng"
 version = "1.0.0b2"
 marker = "(\"docs\" in dependency_groups or \"docs-live\" in dependency_groups) and (python_version == \"3.12\" or python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\")"
 requires-python = ">=3.7"
+dependencies = [
+    { name = "sphinx" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "sphinx"
 
 [packages.sdist]
 name = "sphinx_basic_ng-1.0.0b2.tar.gz"
@@ -7690,10 +7441,10 @@ name = "sphinx-copybutton"
 version = "0.5.2"
 marker = "(\"docs\" in dependency_groups or \"docs-live\" in dependency_groups) and (python_version == \"3.12\" or python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\")"
 requires-python = ">=3.7"
+dependencies = [
+    { name = "sphinx" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "sphinx"
 
 [packages.sdist]
 name = "sphinx-copybutton-0.5.2.tar.gz"
@@ -7718,10 +7469,10 @@ name = "sphinx-design"
 version = "0.7.0"
 marker = "(\"docs\" in dependency_groups or \"docs-live\" in dependency_groups) and (python_version == \"3.12\" or python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\")"
 requires-python = ">=3.11"
+dependencies = [
+    { name = "sphinx" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "sphinx"
 
 [packages.sdist]
 name = "sphinx_design-0.7.0.tar.gz"
@@ -7896,13 +7647,11 @@ name = "starlette"
 version = "1.10.0"
 marker = "\"docs-live\" in dependency_groups and (python_version == \"3.12\" or python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\")"
 requires-python = ">=3.11"
+dependencies = [
+    { name = "anyio" },
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "anyio"
-
-[[packages.dependencies]]
-name = "typing-extensions"
 
 [packages.sdist]
 name = "starlette-1.10.0.tar.gz"
@@ -8340,13 +8089,11 @@ name = "tuf"
 version = "7.0.1"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "securesystemslib" },
+    { name = "urllib3" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "securesystemslib"
-
-[[packages.dependencies]]
-name = "urllib3"
 
 [packages.sdist]
 name = "tuf-7.0.1.tar.gz"
@@ -8371,34 +8118,18 @@ name = "twine"
 version = "7.0.0"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "id" },
+    { name = "keyring" },
+    { name = "packaging" },
+    { name = "readme-renderer" },
+    { name = "requests" },
+    { name = "requests-toolbelt" },
+    { name = "rfc3986" },
+    { name = "rich" },
+    { name = "urllib3" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "id"
-
-[[packages.dependencies]]
-name = "keyring"
-
-[[packages.dependencies]]
-name = "packaging"
-
-[[packages.dependencies]]
-name = "readme-renderer"
-
-[[packages.dependencies]]
-name = "requests"
-
-[[packages.dependencies]]
-name = "requests-toolbelt"
-
-[[packages.dependencies]]
-name = "rfc3986"
-
-[[packages.dependencies]]
-name = "rich"
-
-[[packages.dependencies]]
-name = "urllib3"
 
 [packages.sdist]
 name = "twine-7.0.0.tar.gz"
@@ -8484,10 +8215,10 @@ name = "typeshed-client"
 version = "2.14.0"
 marker = "\"crosshair\" in dependency_groups"
 requires-python = ">=3.9"
+dependencies = [
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "typing-extensions"
 
 [packages.sdist]
 name = "typeshed_client-2.14.0.tar.gz"
@@ -8535,13 +8266,11 @@ sha256 = "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
 name = "typing-inspect"
 version = "0.9.0"
 marker = "\"crosshair\" in dependency_groups"
+dependencies = [
+    { name = "mypy-extensions" },
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "mypy-extensions"
-
-[[packages.dependencies]]
-name = "typing-extensions"
 
 [packages.sdist]
 name = "typing_inspect-0.9.0.tar.gz"
@@ -8566,10 +8295,10 @@ name = "typing-inspection"
 version = "0.4.4"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "typing-extensions"
 
 [packages.sdist]
 name = "typing_inspection-0.4.4.tar.gz"
@@ -8618,13 +8347,11 @@ name = "uvicorn"
 version = "0.54.0"
 marker = "\"docs-live\" in dependency_groups and (python_version == \"3.12\" or python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\")"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "click" },
+    { name = "h11" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "click"
-
-[[packages.dependencies]]
-name = "h11"
 
 [packages.sdist]
 name = "uvicorn-0.54.0.tar.gz"
@@ -8649,25 +8376,15 @@ name = "virtualenv"
 version = "21.14.13"
 marker = "\"nox\" in dependency_groups or \"pre-commit\" in dependency_groups"
 requires-python = ">=3.9"
+dependencies = [
+    { name = "distlib" },
+    { name = "filelock" },
+    { name = "packaging" },
+    { name = "platformdirs" },
+    { name = "python-discovery" },
+    { name = "typing-extensions" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "distlib"
-
-[[packages.dependencies]]
-name = "filelock"
-
-[[packages.dependencies]]
-name = "packaging"
-
-[[packages.dependencies]]
-name = "platformdirs"
-
-[[packages.dependencies]]
-name = "python-discovery"
-
-[[packages.dependencies]]
-name = "typing-extensions"
 
 [packages.sdist]
 name = "virtualenv-21.14.13.tar.gz"
@@ -8692,10 +8409,10 @@ name = "watchfiles"
 version = "1.3.0"
 marker = "\"docs-live\" in dependency_groups and (python_version == \"3.12\" or python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\")"
 requires-python = ">=3.10"
+dependencies = [
+    { name = "anyio" },
+]
 index = "https://pypi.org/simple/"
-
-[[packages.dependencies]]
-name = "anyio"
 
 [packages.sdist]
 name = "watchfiles-1.3.0.tar.gz"
@@ -9447,11 +9164,24 @@ sha256 = "e74ce348967d83360c9212a1082358bb3bc5b65ced55d17017715a90abb18f28"
 [tool.nab]
 nab-version = "0.0.26.dev0"
 created-at = 2026-11-03T02:05:57.036486+00:00
-command-line = ["nab", "lock", "--all-groups", "--no-emit-workspace", "--output", "pylock.dev.toml"]
+command-line = [
+    "nab",
+    "lock",
+    "--all-groups",
+    "--no-emit-workspace",
+    "--output",
+    "pylock.dev.toml",
+]
 input-path = "pyproject.toml"
 mode = "universal"
 python-specifier = ">=3.10,<3.16"
-platforms = ["linux_x86_64", "linux_aarch64", "macos_arm64", "macos_x86_64", "windows_amd64"]
+platforms = [
+    "linux_x86_64",
+    "linux_aarch64",
+    "macos_arm64",
+    "macos_x86_64",
+    "windows_amd64",
+]
 
 [tool.nab.validation]
 version = 1
