@@ -88,8 +88,19 @@ An override can replace `python`, `platforms` or `free-threaded`; it does not en
 implementation. Inactive overrides are still validated. An explicit PyPy `include`, by contrast,
 remains active when the CLI narrows the base implementations to CPython.
 
-When both apply, precedence is shared defaults, implementation override, then explicit include
-values. Declare overrides and includes in `pyproject.toml` or the project-directory `nab.toml`.
+For an include entry, apply settings in this order:
+
+```text
+shared defaults
+      |
+      v
+implementation override (if selected)
+      |
+      v
+explicit include values (highest priority)
+```
+
+Declare overrides and includes in `pyproject.toml` or the project-directory `nab.toml`.
 
 ## Order targets and pin patch releases
 

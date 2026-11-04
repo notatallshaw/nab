@@ -12,9 +12,24 @@ python = ">=3.11,<3.14"
 platforms = ["linux_x86_64", "macos_arm64"]
 ```
 
-Nab resolves these six targets with the same engine used for a single environment. Targets share
-index fetches and metadata; successful pins become preferences for later targets. The results merge
-into one `pylock.toml`, with markers for dependencies that differ between environments.
+```text
+base matrix + include groups
+             |
+             v
+expand and deduplicate targets
+             |
+             v
+resolve each target, sharing fetches
+             |
+             v
+merge pins and environment markers
+             |
+             v
+         pylock.toml
+```
+
+These six targets use the single-environment resolver. Listings and metadata are shared; earlier
+pins become preferences for later targets.
 
 The matrix declares coverage. Dependency markers do not add targets. See
 [Lock for multiple environments](../how-to/lock-multiple-environments.md) for commands.
@@ -123,8 +138,17 @@ python = "==3.11"
 platforms = ["linux_x86_64"]
 ```
 
-Nab starts with 3.11.0 as the representative version, then splits at the marker boundary. The lock
-gets two environment declarations:
+Nab starts at 3.11.0, then splits at the marker boundary:
+
+```text
+Python 3.11 minor
+    |
+    +-- < 3.11.4         backport required
+    |
+    +-- >= 3.11.4.dev0   backport absent
+```
+
+The lock records each slice in `environments`:
 
 ```toml
 environments = [
@@ -133,7 +157,7 @@ environments = [
 ]
 ```
 
-Only the lower slice needs the backport:
+The backport's package marker selects the lower slice:
 
 ```toml
 [[packages]]
