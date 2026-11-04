@@ -135,7 +135,7 @@ def _collection(value: object, base: Path) -> Any:
     if isinstance(value, Mapping):
         return {
             str(key): _value(item, base)
-            for key, item in sorted(value.items())
+            for key, item in value.items()
             if item is not None
         }
     if isinstance(value, (set, frozenset)):

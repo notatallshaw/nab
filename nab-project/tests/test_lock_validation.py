@@ -248,6 +248,14 @@ def test_scalar_subclass_without_url_is_retained(tmp_path: Path) -> None:
     assert _value(text, tmp_path) is text
 
 
+def test_nested_mapping_order_does_not_change_fingerprints(tmp_path: Path) -> None:
+    first = {"z": {"b": 2, "a": 1}, "a": [{"d": 4, "c": 3}]}
+    second = {"a": [{"c": 3, "d": 4}], "z": {"a": 1, "b": 2}}
+    assert validation_digest(_value(first, tmp_path)) == validation_digest(
+        _value(second, tmp_path)
+    )
+
+
 @pytest.mark.parametrize("microsecond", [0, 1, 123456])
 def test_content_datetime_fingerprint_is_reproducible(microsecond: int) -> None:
     timestamp = datetime(2026, 1, 2, 3, 4, 5, microsecond, tzinfo=timezone.utc)
