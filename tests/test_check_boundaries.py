@@ -145,6 +145,31 @@ def test_the_published_table_resolves_against_its_own_package() -> None:
     assert check_boundaries.unresolved_rows(resolver) == []
 
 
+@pytest.mark.parametrize(("module", "status"), [("toml_writer", 0), ("lockfile", 1)])
+def test_generated_writer_uses_its_supported_module(
+    workspace: FakeWorkspace,
+    capsys: pytest.CaptureFixture[str],
+    module: str,
+    status: int,
+) -> None:
+    workspace.add(
+        "nab-project",
+        docstring="Generated TOML.\n\nSupported imports:\n\n    nab_project.toml_writer  dumps\n",
+        toml_writer="def dumps(value):\n    return str(value)\n",
+        lockfile="from .toml_writer import dumps\n",
+    )
+    workspace.add(
+        "writer-consumer",
+        requires=("nab-project",),
+        use=f"from nab_project.{module} import dumps\n",
+    )
+    workspace.publishes_supported_paths("nab_project")
+
+    assert check_boundaries.main() == status
+    if status:
+        assert "supports dumps at nab_project.toml_writer" in capsys.readouterr().err
+
+
 def test_clean_tree_passes(
     workspace: FakeWorkspace, capsys: pytest.CaptureFixture[str]
 ) -> None:

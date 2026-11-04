@@ -8,9 +8,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-import tomli_w
 
 from nab.cli import run
+from nab_project import toml_writer
 from nab_project.build_backend import extract_static_metadata
 from nab_provider.policy import SourceMaterialization
 from nab_provider.testing import make_coordinator
@@ -40,7 +40,7 @@ def test_duplicate_vcs_policy_repair_resolves(
 
     pyproject = project_dir / "pyproject.toml"
     pyproject.write_text(
-        tomli_w.dumps(
+        toml_writer.dumps(
             {
                 "project": {
                     "name": "app",
@@ -53,7 +53,7 @@ def test_duplicate_vcs_policy_repair_resolves(
         encoding="utf-8",
     )
     nab_toml = project_dir / "nab.toml"
-    nab_toml.write_text(tomli_w.dumps(nab_options), encoding="utf-8")
+    nab_toml.write_text(toml_writer.dumps(nab_options), encoding="utf-8")
     args = [
         "lock",
         str(pyproject),

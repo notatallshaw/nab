@@ -32,7 +32,7 @@ __lazy_modules__ = (
     "nab_provider.marker_holds",
     "os",
     "pathlib",
-    "tomli_w",
+    "nab_project.toml_writer",
 )
 
 import os
@@ -43,8 +43,6 @@ from functools import lru_cache, reduce
 from itertools import product
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
-
-import tomli_w
 
 from nab_index.atomic import atomic_write_text
 from nab_markersets.conversions import PreparedMarkerSets
@@ -71,6 +69,7 @@ from nab_provider.conflict_kind import KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 from nab_provider.marker_holds import intractable_as_error
 from nab_provider.value import FACTORY, FactoryDefault, Record, factory_value, replace
 
+from .. import toml_writer
 from ..conflicts import conflict_exclusion_groups, conflict_member_groups
 from ..lock_validation import make_validation_record
 from .builder import require_artifact_hashes, validate_artifact_hashes
@@ -569,7 +568,7 @@ def render_lock(lock_input: LockInput, *, lock_dir: Path | None = None) -> str:
             document, lock_input.validation_inputs
         )
         document["tool"] = {"nab": nab}
-    return tomli_w.dumps(document)
+    return toml_writer.dumps(document)
 
 
 def _index_only(lock_input: LockInput) -> bool:

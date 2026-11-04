@@ -42,13 +42,12 @@ __lazy_modules__ = (
     "nab_provider.pep508",
     "nab_provider.target",
     "tomli",
-    "tomli_w",
+    "nab_project.toml_writer",
 )
 
 from typing import TYPE_CHECKING, Final
 
 import tomli
-import tomli_w
 
 from nab_provider._vendor.packaging.markers import UndefinedEnvironmentName
 from nab_provider._vendor.packaging.pylock import Pylock, PylockValidationError
@@ -64,7 +63,7 @@ from nab_provider.pep508 import parse_requirement
 from nab_provider.target import NonIntervalMarkerError, micro_boundary_points
 from nab_provider.value import HashableRecord
 
-from .. import toml_io
+from .. import toml_io, toml_writer
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -140,7 +139,7 @@ def resolve_dependency_references(lock: Pylock) -> dict[int, frozenset[int]]:
     The Pylock must already be schema-valid. References match the serialized
     standard fields, including nested source tables and arrays.
     """
-    packages = toml_io.loads(tomli_w.dumps(lock.to_dict()))["packages"]
+    packages = toml_io.loads(toml_writer.dumps(lock.to_dict()))["packages"]
     by_name: dict[str, list[int]] = {}
     for index, package in enumerate(packages):
         by_name.setdefault(package["name"], []).append(index)

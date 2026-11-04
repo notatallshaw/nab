@@ -11,4 +11,5 @@ Supported imports:
     nab_project.lock_check  check_saved_lock, LockConsistencyError
     nab_project.lockfile  resolve_dependency_references
     nab_project.resolve  plan_project_inputs
+    nab_project.toml_writer  dumps
 """

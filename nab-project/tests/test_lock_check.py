@@ -9,9 +9,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import tomli_w
 
-from nab_project import toml_io
+from nab_project import toml_io, toml_writer
 from nab_project._resolve.engine import InstallContexts
 from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.inputs import ResolveInputs
@@ -138,7 +137,7 @@ def test_constraints_cover_active_packages_and_micro_slices(
 
 def _replace_record(lock: Path, document: dict[str, Any]) -> None:
     """Write edited machine data to exercise standard field checks."""
-    lock.write_text(tomli_w.dumps(document))
+    lock.write_text(toml_writer.dumps(document))
 
 
 @pytest.mark.parametrize(
