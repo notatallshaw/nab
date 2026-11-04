@@ -24,7 +24,16 @@ python = "==3.11"
 implementations = ["pypy"]
 ```
 
-Or add free-threaded CPython 3.15:
+For both CPython builds from 3.14 onward, use a feature list in the base matrix:
+
+```toml
+[tool.nab.matrix]
+python = ">=3.14,<3.18"
+platforms = ["linux_x86_64", "windows_amd64"]
+free-threaded = [false, true]
+```
+
+To keep the original Python range and add free-threaded CPython only for 3.15:
 
 ```toml
 [[tool.nab.matrix.include]]
@@ -32,9 +41,10 @@ python = "==3.15"
 free-threaded = true
 ```
 
-Both entries can coexist. Omitted settings inherit the shared defaults. The project's
-`requires-python` must admit every selected minor, including 3.11 in the PyPy example. See
-[Target matrix](../reference/target-matrix.md) for conditional overrides and patch pins.
+The PyPy and version-specific free-threaded include entries can coexist. Omitted settings inherit
+the shared defaults. The project's `requires-python` must admit every selected minor, including 3.11
+in the PyPy example. See [Target matrix](../reference/target-matrix.md) for conditional overrides
+and patch pins.
 
 ## Change defaults for one run
 

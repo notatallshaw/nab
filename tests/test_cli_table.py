@@ -290,7 +290,7 @@ class TestTheDeclaredTable:
         """
         negatable = [row for row in ALL if row.kind in _BOOL_KINDS]
 
-        assert len(negatable) == 16
+        assert len(negatable) == 15
 
         for row in negatable:
             assert row.negatable is not row.name.startswith("no-"), row.name

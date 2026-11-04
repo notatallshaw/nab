@@ -98,8 +98,9 @@ nab lock --project-matrix-implementations cpython
 
 An override does not enable its implementation. An explicit PyPy include remains active when the CLI
 selects only CPython for the base matrix. When both mechanisms apply, explicit include values take
-precedence over implementation overrides, which take precedence over shared defaults. See
-[Target matrix](../reference/target-matrix.md) for all settings and free-threaded examples.
+precedence over implementation overrides, which take precedence over shared defaults. Use
+`free-threaded = [false, true]` to expand both builds within a group. See
+[Target matrix](../reference/target-matrix.md) for version-specific free-threaded examples.
 
 ## Where metadata comes from
 

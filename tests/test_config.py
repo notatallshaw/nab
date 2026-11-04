@@ -103,7 +103,7 @@ _TABLE_PARAMS: dict[str, object] = {
     "project_matrix_python": None,
     "project_matrix_platforms": (),
     "project_matrix_implementations": (),
-    "project_matrix_free_threaded": None,
+    "project_matrix_free_threaded": (),
     "project_matrix_python_order": None,
     "project_matrix_python_patches": (),
     "project_environment_python": None,
@@ -5500,12 +5500,67 @@ class TestMatrix:
             "py315-linux_x86_64" + ("-ft" if threaded else "")
         ]
 
-    @pytest.mark.parametrize("value", ['"true"', "1", "[]"])
+    @pytest.mark.parametrize("value", ['"true"', "1", "[0]", '[false, "true"]'])
     def test_invalid_matrix_feature_flag(self, tmp_path: Path, value: str) -> None:
         with pytest.raises(ConfigError, match="free-threaded must be a boolean"):
             read_pyproject_config(
                 write(tmp_path, self._matrix_body(**{"free-threaded": value}))
             )
+
+    @pytest.mark.parametrize("value", ["[]", "[false, false]"])
+    def test_empty_or_repeated_feature_values_are_rejected(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        with pytest.raises(
+            ConfigError, match="at least one boolean without duplicates"
+        ):
+            read_pyproject_config(
+                write(tmp_path, self._matrix_body(**{"free-threaded": value}))
+            )
+
+    @pytest.mark.parametrize(
+        "value", ["[false]", "[true]", "[false, true]", "[true, false]"]
+    )
+    def test_feature_lists_expand_in_declared_order(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        body = '[tool.nab.matrix]\npython="==3.15"\nplatforms=["linux_x86_64"]\n'
+        config = read_pyproject_config(
+            write(tmp_path, body + f"free-threaded={value}\n")
+        )
+        expected = {
+            "[false]": ["py315-linux_x86_64"],
+            "[true]": ["py315-linux_x86_64-ft"],
+            "[false, true]": ["py315-linux_x86_64", "py315-linux_x86_64-ft"],
+            "[true, false]": ["py315-linux_x86_64-ft", "py315-linux_x86_64"],
+        }
+        assert [target.label for target in plan_targets(config)] == expected[value]
+
+    @pytest.mark.parametrize("threaded", [False, True])
+    @pytest.mark.parametrize("where", ["base", "override", "include"])
+    def test_scalar_and_singleton_list_share_one_setting(
+        self, tmp_path: Path, threaded: bool, where: str
+    ) -> None:
+        value = str(threaded).lower()
+        header = {
+            "base": "",
+            "override": "[tool.nab.matrix.overrides.implementations.cpython]\n",
+            "include": "[[tool.nab.matrix.include]]\n",
+        }[where]
+        body = '[tool.nab.matrix]\npython="==3.15"\nplatforms=["linux_x86_64"]\n'
+        path = write(tmp_path, body + header + f"free-threaded={value}\n")
+        initial = read_pyproject_config(path)
+
+        # Same-precedence files must agree after shorthand normalization.
+        (tmp_path / "nab.toml").write_text(
+            (body + header + f"free-threaded=[{value}]\n").replace(
+                "tool.nab.matrix", "matrix"
+            ),
+            encoding="utf-8",
+        )
+        combined = read_pyproject_config(path)
+        assert combined.matrix == initial.matrix
+        assert plan_targets(combined) == plan_targets(initial)
 
     def test_windows_arm64_and_linux_i686_are_known_ids(self, tmp_path: Path) -> None:
         path = write(

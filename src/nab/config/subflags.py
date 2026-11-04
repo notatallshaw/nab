@@ -60,7 +60,7 @@ class CliKey:
 
     @property
     def written(self) -> str:
-        """Render the recorded value for this table key."""
+        """Return the tokens as typed."""
         return " ".join(self.tokens)
 
 
@@ -106,10 +106,7 @@ def _cli_keys(
         raw = locals_by_param[param]
         if not _written(row, raw):
             continue
-        if isinstance(raw, bool):
-            tokens = ("true" if raw else "false",)
-        else:
-            tokens = (raw,) if row.tokens is Tokens.SCALAR else tuple(raw)
+        tokens = (raw,) if row.tokens is Tokens.SCALAR else tuple(raw)
         keys.append(
             CliKey(
                 key=row.name,
@@ -201,8 +198,8 @@ def _table_value(row: Opt, raw: Any) -> Any:
     if row.tokens is Tokens.PAIRS:
         return _pairs(row, raw)
     if row.tokens is Tokens.LIST:
-        return [_scalar(value=token) for token in raw]
-    return _scalar(value=raw)
+        return [_scalar(token) for token in raw]
+    return _scalar(raw)
 
 
 def _one_item(row: Opt, tokens: Sequence[str]) -> dict[str, Any]:
@@ -224,9 +221,9 @@ def _items(row: Opt, tokens: Sequence[str]) -> list[dict[str, Any]]:
     for token in tokens:
         key, sep, value = token.partition("=")
         if not sep:
-            items.append({row.opened_by: _scalar(value=token)})
+            items.append({row.opened_by: _scalar(token)})
         elif key == row.opened_by:
-            items.append({row.opened_by: _scalar(value=value)})
+            items.append({row.opened_by: _scalar(value)})
         elif not items:
             report = DiagnosticMessage(
                 (
@@ -240,7 +237,7 @@ def _items(row: Opt, tokens: Sequence[str]) -> list[dict[str, Any]]:
             msg = f"{row.cli_flag} sets {key!r} twice on {items[-1][row.opened_by]!r}"
             raise CliTableError(msg)
         else:
-            items[-1][key] = _scalar(value=value)
+            items[-1][key] = _scalar(value)
     return items
 
 
@@ -255,14 +252,12 @@ def _pairs(row: Opt, tokens: Sequence[str]) -> dict[str, Any]:
         if key in table:
             msg = f"{row.cli_flag} sets {key!r} twice"
             raise CliTableError(msg)
-        table[key] = _scalar(value=value)
+        table[key] = _scalar(value)
     return table
 
 
-def _scalar(*, value: str | bool) -> object:
+def _scalar(text: str) -> object:
     """Read TOML booleans and leave other tokens as text."""
-    if isinstance(value, bool):
-        return value
-    if value in _BOOLEANS:
-        return value == "true"
-    return value
+    if text in _BOOLEANS:
+        return text == "true"
+    return text

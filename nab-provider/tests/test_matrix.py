@@ -735,6 +735,110 @@ class TestImplementationOverrides:
         assert not Marker(pypy.environment_marker_string).evaluate(cpython.marker_env)
 
 
+class TestFeatureSelections:
+    @pytest.mark.parametrize(
+        "choices", [(False,), (True,), (False, True), (True, False)]
+    )
+    def test_build_choices_expand_for_every_version_and_platform(
+        self, choices: tuple[bool, ...]
+    ) -> None:
+        targets = Matrix(
+            ">=3.14,<3.16",
+            (PlatformSpec("linux_x86_64"), PlatformSpec("windows_amd64")),
+            free_threaded=choices,
+        ).expand()
+        expected = [
+            f"py{minor}-{platform}" + ("-ft" if threaded else "")
+            for minor in ("314", "315")
+            for platform in ("linux_x86_64", "windows_amd64")
+            for threaded in choices
+        ]
+        assert [target.label for target in targets] == expected
+
+        # Labels and native wheel eligibility must agree for each build.
+        for target in targets:
+            assert target.platform_spec is not None
+            abi = "cp" + target.python_version.replace(".", "")
+            if target.platform_spec.free_threaded:
+                abi += "t"
+            platform_tag = (
+                "win_amd64"
+                if target.platform_id == "windows_amd64"
+                else "manylinux_2_17_x86_64"
+            )
+            interpreter = "cp" + target.python_version.replace(".", "")
+            assert target.tags.accepts(f"demo-1-{interpreter}-{abi}-{platform_tag}.whl")
+
+    def test_lists_follow_override_and_include_precedence(self) -> None:
+        targets = Matrix(
+            "==3.15",
+            (PlatformSpec("linux_x86_64"),),
+            free_threaded=(False, True),
+            implementation_overrides={
+                "cpython": ImplementationOverride(free_threaded=False)
+            },
+            include=(
+                MatrixInclude(
+                    platforms=(PlatformSpec("windows_amd64"),),
+                    free_threaded=(True, False),
+                ),
+            ),
+        ).expand()
+        assert [target.label for target in targets] == [
+            "py315-linux_x86_64",
+            "py315-windows_amd64-ft",
+            "py315-windows_amd64",
+        ]
+
+    def test_implementation_override_can_select_both(self) -> None:
+        targets = Matrix(
+            "==3.15",
+            (PlatformSpec("linux_x86_64"),),
+            implementation_overrides={
+                "cpython": ImplementationOverride(free_threaded=(False, True))
+            },
+        ).expand()
+        assert [target.label for target in targets] == [
+            "py315-linux_x86_64",
+            "py315-linux_x86_64-ft",
+        ]
+
+    @pytest.mark.parametrize("choices", [(), (True, True)])
+    @pytest.mark.parametrize("where", ["base", "override", "include"])
+    def test_empty_or_repeated_feature_choices_are_rejected(
+        self, choices: tuple[bool, ...], where: str
+    ) -> None:
+        matrix = Matrix(
+            "==3.15",
+            (PlatformSpec("linux_x86_64"),),
+            free_threaded=choices if where == "base" else None,
+            implementation_overrides={
+                "pypy": ImplementationOverride(free_threaded=choices)
+            }
+            if where == "override"
+            else None,
+            include=(MatrixInclude(free_threaded=choices),)
+            if where == "include"
+            else (),
+        )
+        with pytest.raises(ValueError, match="at least one boolean without duplicates"):
+            matrix.expand()
+
+    @pytest.mark.parametrize(
+        ("python", "implementation"), [("==3.12", "cpython"), ("==3.15", "pypy")]
+    )
+    def test_every_selected_build_must_be_supported(
+        self, python: str, implementation: str
+    ) -> None:
+        with pytest.raises(ValueError, match="free-threaded platform needs CPython"):
+            Matrix(
+                python,
+                (PlatformSpec("linux_x86_64"),),
+                implementations=(implementation,),
+                free_threaded=(False, True),
+            ).expand()
+
+
 class TestMatrixIncludes:
     def test_include_inherits_the_selected_implementation_override(self) -> None:
         targets = Matrix(

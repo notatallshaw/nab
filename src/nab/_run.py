@@ -252,7 +252,7 @@ def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a reg
     cli_matrix_python: str | None = None,
     cli_matrix_platforms: tuple[str, ...] = (),
     cli_matrix_implementations: tuple[str, ...] = (),
-    cli_matrix_free_threaded: bool | None = None,
+    cli_matrix_free_threaded: tuple[str, ...] = (),
     cli_matrix_python_order: str | None = None,
     cli_matrix_python_patches: tuple[str, ...] = (),
     cli_python: str | None = None,

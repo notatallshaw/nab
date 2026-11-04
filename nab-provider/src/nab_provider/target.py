@@ -1284,14 +1284,14 @@ class ImplementationOverride(Record):
 
     python: str | None
     platforms: tuple[PlatformSpec, ...] | None
-    free_threaded: bool | None
+    free_threaded: bool | tuple[bool, ...] | None
 
     def __init__(
         self,
         python: str | None = None,
         platforms: tuple[PlatformSpec, ...] | None = None,
         *,
-        free_threaded: bool | None = None,
+        free_threaded: bool | tuple[bool, ...] | None = None,
     ) -> None:
         """Replace only the supplied interpreter-axis defaults."""
         self.python = python
@@ -1307,7 +1307,7 @@ class MatrixInclude(Record):
     python: str | None
     platforms: tuple[PlatformSpec, ...] | None
     implementations: tuple[str, ...] | None
-    free_threaded: bool | None
+    free_threaded: bool | tuple[bool, ...] | None
 
     def __init__(
         self,
@@ -1315,7 +1315,7 @@ class MatrixInclude(Record):
         platforms: tuple[PlatformSpec, ...] | None = None,
         implementations: tuple[str, ...] | None = None,
         *,
-        free_threaded: bool | None = None,
+        free_threaded: bool | tuple[bool, ...] | None = None,
     ) -> None:
         """Record explicit axes; omitted values inherit from the base entry."""
         self.python = python
@@ -1378,7 +1378,7 @@ class Matrix(Record):
     python_patches: dict[str, str] | None
     implementations: tuple[str, ...]
     implementation_overrides: Mapping[str, ImplementationOverride] | None
-    free_threaded: bool | None
+    free_threaded: bool | tuple[bool, ...] | None
     include: tuple[MatrixInclude, ...]
 
     def __init__(
@@ -1390,7 +1390,7 @@ class Matrix(Record):
         implementations: tuple[str, ...] = ("cpython",),
         implementation_overrides: Mapping[str, ImplementationOverride] | None = None,
         *,
-        free_threaded: bool | None = None,
+        free_threaded: bool | tuple[bool, ...] | None = None,
         include: tuple[MatrixInclude, ...] = (),
     ) -> None:
         """Declare base axes, global ordering and independent target groups."""
@@ -1469,12 +1469,17 @@ class Matrix(Record):
             msg = f"Unknown implementations: {unknown!r}"
             raise ValueError(msg)
 
+        if self.free_threaded is not None:
+            _free_threaded_values(selection=self.free_threaded)
+
         # Validate range syntax even when implementation overrides replace it.
         tuple(_pythons_in_range(self.python))
         for impl, override in (self.implementation_overrides or {}).items():
             if impl not in IMPLEMENTATION_MARKERS:
                 msg = f"Unknown implementation_overrides implementations: {[impl]!r}"
                 raise ValueError(msg)
+            if override.free_threaded is not None:
+                _free_threaded_values(selection=override.free_threaded)
             if override.python is not None:
                 tuple(_pythons_in_range(override.python))
             if override.platforms is not None:
@@ -1565,8 +1570,12 @@ class Matrix(Record):
             self.free_threaded if entry.free_threaded is None else entry.free_threaded
         )
         if threaded is not None:
+            # Keep build variants adjacent within each platform.
+            choices = _free_threaded_values(selection=threaded)
             platforms = tuple(
-                replace(spec, free_threaded=threaded) for spec in platforms
+                replace(spec, free_threaded=selected)
+                for spec in platforms
+                for selected in choices
             )
 
         unknown = [
@@ -1600,6 +1609,16 @@ class Matrix(Record):
             raise ValueError(msg)
 
         return _MatrixAxes(versions, platforms, implementation)
+
+
+def _free_threaded_values(*, selection: bool | tuple[bool, ...]) -> tuple[bool, ...]:
+    """Normalize a scalar feature selection and reject empty or repeated values."""
+    if isinstance(selection, bool):
+        return (selection,)
+    if not selection or len(set(selection)) != len(selection):
+        msg = "free_threaded must select at least one boolean without duplicates"
+        raise ValueError(msg)
+    return selection
 
 
 def _validate_override_platforms(

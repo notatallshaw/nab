@@ -192,7 +192,7 @@ class MatrixConfig(ValueType):
     python_patches: Mapping[str, str] | None
     implementations: tuple[str, ...]
     implementation_overrides: Mapping[str, ImplementationOverride] | None
-    free_threaded: bool | None
+    free_threaded: bool | tuple[bool, ...] | None
     include: tuple[MatrixInclude, ...]
 
     def __init__(
@@ -204,7 +204,7 @@ class MatrixConfig(ValueType):
         implementations: tuple[str, ...] = ("cpython",),
         implementation_overrides: Mapping[str, ImplementationOverride] | None = None,
         *,
-        free_threaded: bool | None = None,
+        free_threaded: bool | tuple[bool, ...] | None = None,
         include: tuple[MatrixInclude, ...] = (),
     ) -> None:
         """Keep explicit feature settings separate from inherited defaults."""
@@ -2301,17 +2301,35 @@ def _parse_matrix_include_body(
     )
 
 
-def _parse_matrix_free_threaded(body: Mapping[str, object], where: str) -> bool | None:
-    """Preserve an omitted feature flag separately from an explicit false."""
+def _parse_matrix_free_threaded(
+    body: Mapping[str, object], where: str
+) -> bool | tuple[bool, ...] | None:
+    """Read a feature axis, preserving omitted settings for inheritance."""
     if "free-threaded" not in body:
         return None
 
     value = body["free-threaded"]
-    if not isinstance(value, bool):
-        msg = f"{where}.free-threaded must be a boolean"
+    if isinstance(value, bool):
+        return value
+    msg = f"{where}.free-threaded must be a boolean or a list of booleans"
+    if not isinstance(value, list):
         raise SourceConfigError(msg)
 
-    return value
+    choices: list[bool] = []
+    for item in value:
+        if not isinstance(item, bool):
+            raise SourceConfigError(msg)
+        choices.append(item)
+
+    if not choices or len(set(choices)) != len(choices):
+        msg = (
+            f"{where}.free-threaded must select at least one boolean without duplicates"
+        )
+        raise SourceConfigError(msg)
+
+    if len(choices) == 1:
+        return choices[0]
+    return tuple(choices)
 
 
 def _validate_matrix_axes(config: MatrixConfig, where: str) -> None:

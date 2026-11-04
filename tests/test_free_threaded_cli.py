@@ -22,15 +22,20 @@ if TYPE_CHECKING:
 
 
 def _project(
-    tmp_path: Path, *, declaration: str = "pyproject", include_threaded: bool = True
+    tmp_path: Path,
+    *,
+    declaration: str = "pyproject",
+    include_threaded: bool = True,
+    free_threaded: str | None = None,
 ) -> Path:
-    """Declare a local wheel index and an opt-in matrix on the requested surface."""
+    """Declare a local index and build selections on the requested config surface."""
     project = tmp_path / "pyproject.toml"
-    matrix = '[tool.nab.matrix]\npython = "==3.14"\nplatforms = ["linux_x86_64"]\n' + (
-        "[[tool.nab.matrix.include]]\nfree-threaded = true\n"
-        if include_threaded
-        else ""
-    )
+    matrix = '[tool.nab.matrix]\npython = "==3.14"\nplatforms = ["linux_x86_64"]\n'
+    if free_threaded is not None:
+        matrix += f"free-threaded = {free_threaded}\n"
+    if include_threaded:
+        matrix += "[[tool.nab.matrix.include]]\nfree-threaded = true\n"
+
     project.write_text(
         '[project]\nname = "example"\nversion = "1.0"\ndependencies = []\n'
         '[dependency-groups]\ndev = ["demo"]\n'
@@ -139,12 +144,32 @@ def test_locked_reads_current_local_dependency_bounds(tmp_path: Path) -> None:
     assert (tmp_path / "pylock.toml").read_bytes() == committed
 
 
-@pytest.mark.parametrize("declaration", ["pyproject", "nab.toml"])
+@pytest.mark.parametrize("declaration", ["pyproject", "nab.toml", "cli", "include"])
 def test_one_lock_selects_both_wheel_abis(tmp_path: Path, declaration: str) -> None:
     regular = _publish(tmp_path, "1.0", "cp314")
     threaded = _publish(tmp_path, "1.0", "cp314t")
-    project = _project(tmp_path, declaration=declaration)
-    assert _lock(project) == 0
+    project = _project(
+        tmp_path,
+        declaration="pyproject" if declaration == "include" else declaration,
+        include_threaded=declaration == "include",
+        free_threaded="[false, true]"
+        if declaration in {"pyproject", "nab.toml"}
+        else None,
+    )
+    flags = (
+        (
+            "--project-matrix-python",
+            "==3.14",
+            "--project-matrix-platforms",
+            "linux_x86_64",
+            "--project-matrix-free-threaded",
+            "false",
+            "true",
+        )
+        if declaration == "cli"
+        else ()
+    )
+    assert _lock(project, *flags) == 0
 
     document = loads(project.with_name("pylock.toml").read_text(encoding="utf-8"))
     lock = Pylock.from_dict(document)
@@ -178,12 +203,7 @@ def test_cli_can_replace_the_base_feature_flag(
     project = _project(tmp_path, include_threaded=False)
     with project.open("a", encoding="utf-8") as stream:
         stream.write(f"free-threaded = {str(not threaded).lower()}\n")
-    flag = (
-        "--project-matrix-free-threaded"
-        if threaded
-        else "--no-project-matrix-free-threaded"
-    )
-    assert _lock(project, flag) == 0
+    assert _lock(project, "--project-matrix-free-threaded", str(threaded).lower()) == 0
     document = loads(project.with_name("pylock.toml").read_text(encoding="utf-8"))
     assert [wheel["name"] for wheel in document["packages"][0]["wheels"]] == [regular]
 
@@ -227,6 +247,28 @@ def test_config_reports_an_explicit_base_feature(
         stream.write(f"free-threaded = {str(threaded).lower()}\n")
     assert run(("config", "get", "matrix", "--path", str(project))) == 0
     assert f"free-threaded={threaded}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("where", ["base", "override", "include"])
+def test_config_reports_feature_lists(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], where: str
+) -> None:
+    project = _project(tmp_path, include_threaded=False)
+    table = {
+        "base": "",
+        "override": "[tool.nab.matrix.overrides.implementations.cpython]\n",
+        "include": "[[tool.nab.matrix.include]]\n",
+    }[where]
+    with project.open("a", encoding="utf-8") as stream:
+        stream.write(table + "free-threaded = [false, true]\n")
+    assert run(("config", "get", "matrix", "--path", str(project))) == 0
+    output = capsys.readouterr().out
+    expected = (
+        "free-threaded=[False, True]"
+        if where == "base"
+        else "'free-threaded': [False, True]"
+    )
+    assert expected in output
 
 
 def test_a_missing_free_threaded_wheel_refuses_the_lock(tmp_path: Path) -> None:

@@ -37,28 +37,38 @@ different platform settings remain distinct.
 
 (matrix-free-threaded)=
 
-## Add free-threaded builds
+## Select Python builds
 
-Keep non-free-threaded CPython 3.10 through 3.15, and add free-threaded 3.15:
+Select both ABI values across the Python range:
+
+```toml
+[tool.nab.matrix]
+python = ">=3.14,<3.18"
+platforms = ["linux_x86_64", "windows_amd64"]
+free-threaded = [false, true]
+```
+
+Use `false` for non-free-threaded only, or `true` for free-threaded only. Scalars are shorthand for
+one-element lists. Every selected combination must be supported: free-threaded targets require
+CPython 3.13 or newer. Empty or repeated selections are errors.
+
+When the builds need different Python ranges, use `include`:
 
 ```toml
 [tool.nab.matrix]
 python = ">=3.10,<3.16"
 platforms = ["linux_x86_64", "macos_arm64", "windows_amd64"]
 
-# Inherit platforms and CPython; narrow the added builds to 3.15.
+# Add free-threaded builds only for 3.15.
 [[tool.nab.matrix.include]]
 python = "==3.15"
 free-threaded = true
 ```
 
-For free-threaded builds only, set `free-threaded = true` in the base matrix. They require CPython
-3.13 or newer. The flag selects the compiled ABI, regardless of the runtime GIL setting, and
-replaces any platform-level flag. Explicit `false` selects the non-free-threaded ABI.
-
-Both builds must share package selections and pins: PEP 508 has no threading marker. Nab rejects
-incompatible selections instead of writing an ambiguous lock. Installers choose the compatible
-wheel. The former `python-builds` list and CLI flag are replaced by `free-threaded` and `include`.
+`free-threaded` selects the compiled ABI, regardless of runtime GIL settings, and replaces any
+platform-level flag. Both builds must share package selections and pins: PEP 508 has no threading
+marker. Nab rejects incompatible selections; installers choose the compatible wheel. The former
+`python-builds` list is replaced by this boolean axis.
 
 ## Specialize selected implementations with `overrides`
 
@@ -129,8 +139,18 @@ nab lock \
 ```
 
 Each flag replaces one shared key. Overrides and explicit include values retain precedence. Without
-a file matrix, the Python and platform flags are required. `--project-matrix-free-threaded` sets the
-base flag to true; its `--no-` form sets it to false.
+a file matrix, the Python and platform flags are required. Select builds with boolean tokens:
+
+```bash
+# Both ABI values.
+nab lock --project-matrix-free-threaded false true
+
+# One ABI value.
+nab lock --project-matrix-free-threaded true
+nab lock --project-matrix-free-threaded false
+```
+
+Omitting the flag keeps the configured selection.
 
 ## Choose a mode
 
@@ -145,16 +165,16 @@ targets at the same precedence; a higher-precedence CLI flag suppresses the file
 
 ## Settings
 
-| Key               | Default           | Meaning                                                                             |
-| ----------------- | ----------------- | ----------------------------------------------------------------------------------- |
-| `python`          | required          | PEP 440 range over known Python minors                                              |
-| `platforms`       | required          | Platform ids or [compatibility tables](platform-tags.md)                            |
-| `implementations` | `["cpython"]`     | `"cpython"`, `"pypy"`, or both                                                      |
-| `free-threaded`   | platform settings | Select the free-threaded ABI with `true`, or the non-free-threaded ABI with `false` |
-| `include`         | `[]`              | Additional groups inheriting omitted settings                                       |
-| `overrides`       | none              | Conditional replacements under `implementations.<name>`                             |
-| `python-order`    | `"asc"`           | Older minors first; `"desc"` means newer first                                      |
-| `python-patches`  | none              | Map a minor to one full Python version                                              |
+| Key               | Default           | Meaning                                                    |
+| ----------------- | ----------------- | ---------------------------------------------------------- |
+| `python`          | required          | PEP 440 range over known Python minors                     |
+| `platforms`       | required          | Platform ids or [compatibility tables](platform-tags.md)   |
+| `implementations` | `["cpython"]`     | `"cpython"`, `"pypy"`, or both                             |
+| `free-threaded`   | platform settings | ABI values to include: `false`, `true`, or `[false, true]` |
+| `include`         | `[]`              | Additional groups inheriting omitted settings              |
+| `overrides`       | none              | Conditional replacements under `implementations.<name>`    |
+| `python-order`    | `"asc"`           | Older minors first; `"desc"` means newer first             |
+| `python-patches`  | none              | Map a minor to one full Python version                     |
 
 Ranges select language minors: use `==3.11`, not `==3.11.4`. Put patch pins in `python-patches`.
 Full Python versions accept up to three release components and prerelease, development and local

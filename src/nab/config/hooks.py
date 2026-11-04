@@ -251,7 +251,7 @@ def render_matrix(value: MatrixConfig | None) -> str:
     platforms = [platform.label for platform in value.platforms]
     rendered = f"python={value.python}, platforms={platforms}"
     if value.free_threaded is not None:
-        rendered += f", free-threaded={value.free_threaded}"
+        rendered += f", free-threaded={_feature_value(value=value.free_threaded)}"
     if bool(value.implementation_overrides) or value.include:
         rendered += f", implementations={list(value.implementations)}"
 
@@ -266,30 +266,35 @@ def render_matrix(value: MatrixConfig | None) -> str:
     return rendered
 
 
+def _feature_value(*, value: bool | tuple[bool, ...]) -> bool | list[bool]:
+    """Render multiple feature selections as a list."""
+    return list(value) if isinstance(value, tuple) else value
+
+
 def _implementation_values(
     overrides: Mapping[str, ImplementationOverride],
-) -> dict[str, dict[str, str | bool | list[str]]]:
+) -> dict[str, dict[str, str | bool | list[str] | list[bool]]]:
     """Render only the axes each implementation explicitly overrides."""
-    bodies: dict[str, dict[str, str | bool | list[str]]] = {}
+    bodies: dict[str, dict[str, str | bool | list[str] | list[bool]]] = {}
     for implementation, override in overrides.items():
-        body: dict[str, str | bool | list[str]] = {}
+        body: dict[str, str | bool | list[str] | list[bool]] = {}
         if override.python is not None:
             body["python"] = override.python
         if override.platforms is not None:
             body["platforms"] = [platform.label for platform in override.platforms]
         if override.free_threaded is not None:
-            body["free-threaded"] = override.free_threaded
+            body["free-threaded"] = _feature_value(value=override.free_threaded)
         bodies[implementation] = body
     return bodies
 
 
 def _matrix_include_values(
     entries: Sequence[MatrixInclude],
-) -> list[dict[str, str | bool | list[str]]]:
+) -> list[dict[str, str | bool | list[str] | list[bool]]]:
     """Keep omitted axes distinct from explicit values in configuration output."""
-    bodies: list[dict[str, str | bool | list[str]]] = []
+    bodies: list[dict[str, str | bool | list[str] | list[bool]]] = []
     for entry in entries:
-        body: dict[str, str | bool | list[str]] = {}
+        body: dict[str, str | bool | list[str] | list[bool]] = {}
         if entry.python is not None:
             body["python"] = entry.python
         if entry.platforms is not None:
@@ -297,7 +302,7 @@ def _matrix_include_values(
         if entry.implementations is not None:
             body["implementations"] = list(entry.implementations)
         if entry.free_threaded is not None:
-            body["free-threaded"] = entry.free_threaded
+            body["free-threaded"] = _feature_value(value=entry.free_threaded)
         bodies.append(body)
     return bodies
 

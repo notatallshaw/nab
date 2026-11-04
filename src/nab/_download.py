@@ -90,7 +90,7 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     project_matrix_python: str | None = None,
     project_matrix_platforms: tuple[str, ...] = (),
     project_matrix_implementations: tuple[str, ...] = (),
-    project_matrix_free_threaded: bool | None = None,
+    project_matrix_free_threaded: tuple[str, ...] = (),
     project_matrix_python_order: MatrixOrderFlag | None = None,
     project_matrix_python_patches: tuple[str, ...] = (),
     project_environment_python: str | None = None,
