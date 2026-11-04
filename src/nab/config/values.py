@@ -83,7 +83,12 @@ from nab_provider.tags import (
     PlatformSpec,
     platform_kind,
 )
-from nab_provider.target import PLATFORM_MARKERS, ImplementationOverride, Matrix
+from nab_provider.target import (
+    PLATFORM_MARKERS,
+    ImplementationOverride,
+    Matrix,
+    MatrixInclude,
+)
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
@@ -168,7 +173,7 @@ _VERSION_MARKER_VARIABLES = frozenset({"python_version", "python_full_version"})
 
 
 class MatrixConfig(ValueType):
-    """User-declared Python, platform and interpreter targets."""
+    """Shared matrix defaults and independently expanded include entries."""
 
     __slots__ = __match_args__ = (
         "python",
@@ -177,7 +182,8 @@ class MatrixConfig(ValueType):
         "python_patches",
         "implementations",
         "implementation_overrides",
-        "python_builds",
+        "free_threaded",
+        "include",
     )
 
     python: str
@@ -186,7 +192,8 @@ class MatrixConfig(ValueType):
     python_patches: Mapping[str, str] | None
     implementations: tuple[str, ...]
     implementation_overrides: Mapping[str, ImplementationOverride] | None
-    python_builds: tuple[str, ...] | None
+    free_threaded: bool | tuple[bool, ...] | None
+    include: tuple[MatrixInclude, ...]
 
     def __init__(
         self,
@@ -197,20 +204,22 @@ class MatrixConfig(ValueType):
         implementations: tuple[str, ...] = ("cpython",),
         implementation_overrides: Mapping[str, ImplementationOverride] | None = None,
         *,
-        python_builds: tuple[str, ...] | None = None,
+        free_threaded: bool | tuple[bool, ...] | None = None,
+        include: tuple[MatrixInclude, ...] = (),
     ) -> None:
-        """Record the axes ``[tool.nab.matrix]`` declared."""
+        """Keep explicit feature settings separate from inherited defaults."""
         self.python = python
         self.platforms = platforms
         self.python_order = python_order
         self.python_patches = python_patches
         self.implementations = implementations
         self.implementation_overrides = implementation_overrides
-        self.python_builds = python_builds
+        self.free_threaded = free_threaded
+        self.include = include
 
 
 def matrix_from_config(matrix: MatrixConfig) -> Matrix:
-    """Build the expandable :class:`Matrix` from its parsed config table."""
+    """Build the expandable matrix from its parsed declaration."""
     return Matrix(
         python=matrix.python,
         platforms=matrix.platforms,
@@ -220,7 +229,8 @@ def matrix_from_config(matrix: MatrixConfig) -> Matrix:
         ),
         implementations=matrix.implementations,
         implementation_overrides=matrix.implementation_overrides,
-        python_builds=matrix.python_builds,
+        free_threaded=matrix.free_threaded,
+        include=matrix.include,
     )
 
 
@@ -2077,8 +2087,9 @@ _MATRIX_KEYS = frozenset(
         "python-order",
         "python-patches",
         "implementations",
+        "include",
+        "free-threaded",
         "overrides",
-        "python-builds",
     }
 )
 
@@ -2118,17 +2129,18 @@ def parse_matrix(
         raise SourceConfigError(msg)
     patches = _parse_python_patches(value.get("python-patches"), where)
     implementations = _parse_implementations(value.get("implementations"), where)
-    implementation_overrides = _parse_matrix_overrides(
-        value.get("overrides"), where, table
-    )
+    include = _parse_matrix_include(value.get("include"), where, table)
     config = MatrixConfig(
         python=python,
         platforms=platforms,
         python_order=python_order,
         python_patches=patches,
         implementations=implementations,
-        implementation_overrides=implementation_overrides,
-        python_builds=_parse_python_builds(value, where),
+        implementation_overrides=_parse_matrix_overrides(
+            value.get("overrides"), where, table
+        ),
+        free_threaded=_parse_matrix_free_threaded(value, where),
+        include=include,
     )
     _validate_matrix_axes(config, where)
     return config
@@ -2194,11 +2206,11 @@ def _parse_implementation_body(
     body: Mapping[str, object], label: str, where: str, table: str, implementation: str
 ) -> ImplementationOverride:
     """Parse the axes one implementation replaces; omitted axes remain unset."""
-    unknown = sorted(set(body) - {"python", "platforms", "python-builds"})
+    unknown = sorted(set(body) - {"python", "platforms", "free-threaded"})
     if unknown:
         msg = (
             f"{label} has unknown keys: {unknown!r};"
-            " expected ['platforms', 'python', 'python-builds']"
+            " expected ['free-threaded', 'platforms', 'python']"
         )
         raise SourceConfigError(msg)
 
@@ -2224,16 +2236,100 @@ def _parse_implementation_body(
     return ImplementationOverride(
         python=python,
         platforms=platforms,
-        python_builds=_parse_python_builds(body, label),
+        free_threaded=_parse_matrix_free_threaded(body, label),
     )
 
 
-def _parse_python_builds(
+def _parse_matrix_include(
+    value: object, where: str, table: str
+) -> tuple[MatrixInclude, ...]:
+    """Parse independently expanded target groups with optional inherited axes."""
+    if value is None:
+        return ()
+
+    label = f"{where}.include"
+    if not isinstance(value, list):
+        msg = f"{label} must be an array of tables"
+        raise SourceConfigError(msg)
+
+    entries = []
+    for index, body in enumerate(value):
+        item_label = f"{label}[{index}]"
+        if not isinstance(body, dict):
+            msg = f"{item_label} must be a table"
+            raise SourceConfigError(msg)
+        entries.append(_parse_matrix_include_body(body, where, table, index))
+
+    return tuple(entries)
+
+
+def _parse_matrix_include_body(
+    body: Mapping[str, object], where: str, table: str, index: int
+) -> MatrixInclude:
+    """Read only the axes the entry explicitly replaces."""
+    label = f"{where}.include[{index}]"
+    keys = {"python", "platforms", "implementations", "free-threaded"}
+    unknown = sorted(set(body) - keys)
+    if unknown:
+        msg = f"{label} has unknown keys: {unknown!r}; expected {sorted(keys)!r}"
+        raise SourceConfigError(msg)
+
+    python: str | None = None
+    if "python" in body:
+        raw_python = body["python"]
+        if not isinstance(raw_python, str):
+            msg = f"{label}.python must be a string PEP 440 specifier"
+            raise SourceConfigError(msg)
+        python = raw_python
+        _validate_matrix_python(python, where, table, key=f"include[{index}].python")
+
+    platforms = (
+        _parse_matrix_platform_axis(body["platforms"], label)
+        if "platforms" in body
+        else None
+    )
+    implementations = (
+        _parse_implementations(body["implementations"], label)
+        if "implementations" in body
+        else None
+    )
+    return MatrixInclude(
+        python=python,
+        platforms=platforms,
+        implementations=implementations,
+        free_threaded=_parse_matrix_free_threaded(body, label),
+    )
+
+
+def _parse_matrix_free_threaded(
     body: Mapping[str, object], where: str
-) -> tuple[str, ...] | None:
-    if "python-builds" not in body:
+) -> bool | tuple[bool, ...] | None:
+    """Read a feature axis, preserving omitted settings for inheritance."""
+    if "free-threaded" not in body:
         return None
-    return parse_string_list(body["python-builds"], f"{where}.python-builds")
+
+    value = body["free-threaded"]
+    if isinstance(value, bool):
+        return value
+    msg = f"{where}.free-threaded must be a boolean or a list of booleans"
+    if not isinstance(value, list):
+        raise SourceConfigError(msg)
+
+    choices: list[bool] = []
+    for item in value:
+        if not isinstance(item, bool):
+            raise SourceConfigError(msg)
+        choices.append(item)
+
+    if not choices or len(set(choices)) != len(choices):
+        msg = (
+            f"{where}.free-threaded must select at least one boolean without duplicates"
+        )
+        raise SourceConfigError(msg)
+
+    if len(choices) == 1:
+        return choices[0]
+    return tuple(choices)
 
 
 def _validate_matrix_axes(config: MatrixConfig, where: str) -> None:

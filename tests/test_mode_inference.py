@@ -108,20 +108,18 @@ def test_project_python_support_does_not_enable_universal_mode(
             id="implementations",
         ),
         pytest.param(
-            'python = "==3.11"\nplatforms = ["linux_x86_64"]\n'
-            '[overrides.implementations.pypy]\npython = ">=3.11,<3.13"\n'
-            'platforms = ["linux_x86_64", "windows_amd64"]\n',
+            'python = "==3.11"\nplatforms = ["linux_x86_64"]\n[[include]]\n',
             ResolveMode.SPECIFIC,
             1,
-            id="disabled-override",
+            id="duplicate-include",
         ),
         pytest.param(
-            'python = ">=3.10,<3.15"\nplatforms = ["linux_x86_64", "windows_amd64"]\n'
-            'implementations = ["pypy"]\n[overrides.implementations.pypy]\n'
+            'python = "==3.12"\nplatforms = ["linux_x86_64"]\n'
+            '[[include]]\nimplementations = ["pypy"]\n'
             'python = "==3.11"\nplatforms = ["windows_amd64"]\n',
-            ResolveMode.SPECIFIC,
-            1,
-            id="enabled-override-narrows-all-axes",
+            ResolveMode.UNIVERSAL,
+            2,
+            id="include-adds-a-different-target",
         ),
         pytest.param(
             'python = "==3.11"\nplatforms = ["linux_x86_64"]\n'
@@ -216,11 +214,10 @@ def test_explicit_specific_file_mode_rejects_multiple_targets(tmp_path: Path) ->
             id="multiple-minors",
         ),
         pytest.param(
-            'python = ">=3.11,<3.13"\nplatforms = ["linux_x86_64"]\n'
-            'implementations = ["pypy"]\n[overrides.implementations.pypy]\n'
-            'python = "==3.11"\n',
+            'python = "==3.11"\nplatforms = ["linux_x86_64"]\n'
+            '[[include]]\npython = "==3.11"\n',
             "specific",
-            id="enabled-override-narrows-python",
+            id="duplicate-include-keeps-specific-mode",
         ),
     ],
 )

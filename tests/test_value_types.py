@@ -62,7 +62,7 @@ from nab_provider.policy import (
 )
 from nab_provider.records import IndexConfig
 from nab_provider.tags import PlatformSpec
-from nab_provider.target import ImplementationOverride
+from nab_provider.target import ImplementationOverride, MatrixInclude
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy
 
 
@@ -171,7 +171,8 @@ CASES = [
             "python_patches": None,
             "implementations": ("cpython",),
             "implementation_overrides": None,
-            "python_builds": None,
+            "free_threaded": None,
+            "include": (),
         },
         {
             "python": "3.13",
@@ -182,7 +183,8 @@ CASES = [
             "implementation_overrides": {
                 "pypy": ImplementationOverride(python="==3.12")
             },
-            "python_builds": ("standard", "free-threaded"),
+            "free_threaded": True,
+            "include": (MatrixInclude(python="==3.12"),),
         },
         positional=False,
     ),
@@ -565,8 +567,8 @@ DEFAULTS = [
             "python_order": "asc",
             "python_patches": None,
             "implementations": ("cpython",),
-            "implementation_overrides": None,
-            "python_builds": None,
+            "free_threaded": None,
+            "include": (),
         },
     ),
     (ConflictSet, {"members": ()}, {"policy": ConflictPolicy.AT_MOST_ONE}),
@@ -808,9 +810,10 @@ def test_a_conflict_set_renders_its_policy_and_members() -> None:
     assert str(ConflictSet(members)) == "at-most-one (extra 'cpu', extra 'gpu')"
 
 
-def test_matrix_config_keeps_its_previous_positional_arguments() -> None:
+def test_matrix_config_accepts_positional_shared_axes() -> None:
     matrix = MatrixConfig(
-        "3.12", (PlatformSpec("linux_x86_64"),), "asc", None, ("cpython",), None
+        "3.12", (PlatformSpec("linux_x86_64"),), "asc", None, ("cpython",)
     )
     assert matrix == MATRIX
-    assert matrix.python_builds is None
+    assert matrix.free_threaded is None
+    assert matrix.include == ()

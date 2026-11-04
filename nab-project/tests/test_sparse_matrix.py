@@ -14,7 +14,7 @@ from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.tags import Tag
 from nab_provider.provider import BuildPolicy
 from nab_provider.tags import PlatformSpec
-from nab_provider.target import ImplementationOverride, Matrix, ResolveTarget
+from nab_provider.target import Matrix, MatrixInclude, ResolveTarget
 from nab_provider.testing import make_metadata, make_wheel
 
 HASHES = (("sha256", "a" * 64),)
@@ -62,8 +62,11 @@ def test_sparse_lock_selects_only_declared_interpreters(cpython_range: str) -> N
     targets = Matrix(
         python=cpython_range,
         platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("windows_amd64")),
-        implementations=("cpython", "pypy"),
-        implementation_overrides={"pypy": ImplementationOverride(python="==3.11.*")},
+        include=(
+            MatrixInclude(
+                implementations=("pypy",), free_threaded=False, python="==3.11.*"
+            ),
+        ),
     ).expand()
     inputs = ResolveInputs(build_policy=BuildPolicy.NEVER)
     result = resolve_with_coordinator(
@@ -113,12 +116,14 @@ def test_sparse_lock_restricts_implementations_with_identical_pins() -> None:
     targets = Matrix(
         python="==3.12.*",
         platforms=(PlatformSpec("linux_x86_64"),),
-        implementations=("cpython", "pypy"),
-        implementation_overrides={
-            "pypy": ImplementationOverride(
-                python="==3.11.*", platforms=(PlatformSpec("windows_amd64"),)
-            )
-        },
+        include=(
+            MatrixInclude(
+                implementations=("pypy",),
+                free_threaded=False,
+                python="==3.11.*",
+                platforms=(PlatformSpec("windows_amd64"),),
+            ),
+        ),
     ).expand()
     coordinator = make_coordinator(
         listings={"base": [make_wheel("1.0", package="base", hashes=HASHES)]},
@@ -181,12 +186,14 @@ def test_platform_override_keeps_native_wheel_eligibility() -> None:
     targets = Matrix(
         python="==3.13.*",
         platforms=(PlatformSpec("linux_x86_64", free_threaded=True),),
-        implementations=("cpython", "pypy"),
-        implementation_overrides={
-            "pypy": ImplementationOverride(
-                python="==3.11.*", platforms=(PlatformSpec("windows_amd64"),)
-            )
-        },
+        include=(
+            MatrixInclude(
+                implementations=("pypy",),
+                free_threaded=False,
+                python="==3.11.*",
+                platforms=(PlatformSpec("windows_amd64"),),
+            ),
+        ),
     ).expand()
     inputs = ResolveInputs(build_policy=BuildPolicy.NEVER)
     result = resolve_with_coordinator(
@@ -234,15 +241,16 @@ def test_platform_override_replaces_libc_for_same_platform_id() -> None:
     targets = Matrix(
         python="==3.12.*",
         platforms=(PlatformSpec("linux_x86_64", runs_on_libc=(2, 17)),),
-        implementations=("cpython", "pypy"),
-        implementation_overrides={
-            "pypy": ImplementationOverride(
+        include=(
+            MatrixInclude(
+                implementations=("pypy",),
+                free_threaded=False,
                 python="==3.11.*",
                 platforms=(
                     PlatformSpec("linux_x86_64", libc="musl", runs_on_libc=(1, 2)),
                 ),
-            )
-        },
+            ),
+        ),
     ).expand()
     inputs = ResolveInputs(build_policy=BuildPolicy.NEVER)
     result = resolve_with_coordinator(

@@ -1,15 +1,9 @@
 # Change a universal lock's targets
 
-Start with the project in [Your first universal lock](../tutorial/getting-started.md) and change its
-matrix to match your deployments. With `mode` omitted, nab chooses universal mode when the matrix
-contains multiple targets.
+Start with [Your first universal lock](../tutorial/getting-started.md). Edit the matrix, then run
+`nab lock` to replace `pylock.toml`.
 
-nab resolves the Python versions and platforms listed in the matrix, using CPython unless you select
-other implementations. See {ref}`how nab chooses coverage <explicit-is-better-than-implicit>`.
-
-## Change the project matrix
-
-For Python 3.12, 3.13, 3.14 and 3.15 on Linux x86-64 and Windows x86-64:
+## Select Python versions and platforms
 
 ```toml
 [tool.nab.matrix]
@@ -17,22 +11,49 @@ python = ">=3.12,<3.16"
 platforms = ["linux_x86_64", "windows_amd64"]
 ```
 
-Run `nab lock` again to write one `pylock.toml` for those targets. See
-[Target matrix](../reference/target-matrix.md) for implementation overrides and patch-release pins,
-and [Platform tags](../reference/platform-tags.md) for minimum system versions.
+This selects CPython 3.12 through 3.15 on Linux and Windows. Multiple targets select universal mode
+automatically. Nab covers the declared combinations; dependency markers do not add targets.
 
-## Override targets for one run
+## Add another implementation or build
 
-Replace the platform list without editing the project:
+Add this after the matrix above to include PyPy 3.11 on the same platforms:
+
+```toml
+[[tool.nab.matrix.include]]
+python = "==3.11"
+implementations = ["pypy"]
+```
+
+For both CPython builds from 3.14 onward, use a feature list in the base matrix:
+
+```toml
+[tool.nab.matrix]
+python = ">=3.14,<3.18"
+platforms = ["linux_x86_64", "windows_amd64"]
+free-threaded = [false, true]
+```
+
+To keep the original Python range and add free-threaded CPython only for 3.15:
+
+```toml
+[[tool.nab.matrix.include]]
+python = "==3.15"
+free-threaded = true
+```
+
+The PyPy and version-specific free-threaded include entries can coexist. Omitted settings inherit
+the shared defaults. The project's `requires-python` must admit every selected minor, including 3.11
+in the PyPy example. See [Target matrix](../reference/target-matrix.md) for conditional overrides
+and patch pins.
+
+## Change defaults for one run
 
 ```bash
 nab lock --project-matrix-platforms macos_arm64
 ```
 
-Other matrix keys keep their configured values. An implementation-specific override still takes
-precedence over the shared platform list.
-
-For a project without a configured matrix, supply the Python versions and platforms:
+This replaces the shared platform list. Explicit platform lists in overrides or includes retain
+precedence. For a project without a matrix, supply both required settings:
 
 ```bash
 nab lock \
@@ -42,24 +63,19 @@ nab lock \
 
 ## Inspect or write per-target requirements
 
-Print each target's pins in a labelled block:
-
 ```bash
+# Print each target's pins in a labelled block.
 nab lock --format requirements-without-hashes --output -
-```
 
-This performs a fresh resolve; it does not export the existing lock. The combined output is for
-inspection. To install from requirements, write a separate file for each target:
-
-```bash
+# Write an installable file for each Python/platform combination.
 nab lock --format requirements \
   --output 'requirements-{python_version}-{platform_id}.txt'
 ```
 
-The template must distinguish every target. [Output formats](../reference/formats.md) covers
-conflict selections, template collisions and matrices whose implementation or ABI differences cannot
-be represented in filenames.
+These commands resolve again; they do not export the saved lock. The combined stdout format is for
+inspection. File templates must distinguish every target, so use the second command with the base
+matrix only. See [Output formats](../reference/formats.md) for implementation/ABI collisions and
+conflict selections.
 
-For one shared file, keep pylock output and follow [Use a lock](use-the-lock.md). If any target
-fails, Nab writes no new lock or requirements output; see
-[Resolution failures](../reference/diagnostics.md).
+For one shared installable file, keep pylock output and follow [Use a lock](use-the-lock.md). If any
+target fails, Nab writes no new output; see [Resolution failures](../reference/diagnostics.md).

@@ -80,6 +80,7 @@ from nab_provider.serialization import SimpleSerialization
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import (
     ImplementationOverride,
+    MatrixInclude,
     ResolveTarget,
     declared_range_marker,
     host_environment,
@@ -102,7 +103,7 @@ _TABLE_PARAMS: dict[str, object] = {
     "project_matrix_python": None,
     "project_matrix_platforms": (),
     "project_matrix_implementations": (),
-    "project_matrix_python_builds": (),
+    "project_matrix_free_threaded": (),
     "project_matrix_python_order": None,
     "project_matrix_python_patches": (),
     "project_environment_python": None,
@@ -1653,6 +1654,25 @@ class TestRequiresPython:
                 write(tmp_path, body + 'python = "==3.12"\n')
             )
         assert [target.python_version for target in plan_targets(rescued)] == ["3.12"]
+
+    def test_included_python_outside_requires_python_can_be_rescued(
+        self, tmp_path: Path
+    ) -> None:
+        body = (
+            '[tool.nab]\nmode = "universal"\nrequires-python = ">=3.12"\n'
+            '[tool.nab.matrix]\npython = "==3.12"\nplatforms = ["linux_x86_64"]\n'
+            '[[tool.nab.matrix.include]]\nimplementations = ["pypy"]\n'
+        )
+        path = write(tmp_path, body + 'python = "==3.11"\n')
+        with pytest.raises(ConfigError) as exc:
+            plan_targets(read_pyproject_config(path))
+        assert "include entries" in str(exc.value)
+        assert "Python 3.11" in str(exc.value)
+        rescued = read_pyproject_config(write(tmp_path, body + 'python = "==3.12"\n'))
+        assert [target.python_version for target in plan_targets(rescued)] == [
+            "3.12",
+            "3.12",
+        ]
 
     def test_a_micro_floor_admits_the_whole_matrix_minor(self, tmp_path: Path) -> None:
         """A micro Requires-Python floor admits the language minor it names.
@@ -5238,15 +5258,83 @@ class TestMatrix:
             target.marker_env["implementation_name"] for target in plan_targets(config)
         } == {"cpython"}
 
-    def test_former_singular_implementation_table_is_rejected(
+    def test_include_adds_explicit_axes_with_shared_defaults(
         self, tmp_path: Path
     ) -> None:
         body = self._matrix_body(
-            implementations='["cpython", "pypy"]',
-            implementation='{ pypy = { python = "==3.11" } }',
+            include='[{python = "==3.10", implementations = ["pypy"]}]'
         )
-        with pytest.raises(ConfigError, match="unknown keys.*implementation"):
-            read_pyproject_config(write(tmp_path, body))
+        config = read_pyproject_config(write(tmp_path, body))
+        assert config.matrix is not None
+        assert config.matrix.include == (
+            MatrixInclude(python="==3.10", implementations=("pypy",)),
+        )
+        assert [target.label for target in plan_targets(config)] == [
+            "pp310-linux_x86_64",
+            "pp310-macos_arm64",
+            "py311-linux_x86_64",
+            "py311-macos_arm64",
+            "py312-linux_x86_64",
+            "py312-macos_arm64",
+            "py313-linux_x86_64",
+            "py313-macos_arm64",
+        ]
+
+    @pytest.mark.parametrize("include", ["[]", "[{}]", '[{python = ">=3.11,<3.14"}]'])
+    def test_overlapping_include_entries_keep_one_target_each(
+        self, tmp_path: Path, include: str
+    ) -> None:
+        config = read_pyproject_config(
+            write(tmp_path, self._matrix_body(include=include))
+        )
+        assert len(plan_targets(config)) == 6
+
+    @pytest.mark.parametrize(
+        ("include", "message"),
+        [
+            ('"pypy"', "must be an array of tables"),
+            ("{}", "must be an array of tables"),
+            ("[1]", "must be a table"),
+            ('[{unknown = "x"}]', "unknown keys"),
+            ("[{python = 311}]", "must be a string PEP 440 specifier"),
+            ('[{python = "bad"}]', "must be a PEP 440 specifier"),
+            ('[{python = "===bad"}]', "not a valid version"),
+            ('[{python = ">=3.11.4"}]', "language .* version only"),
+            ('[{python = "==4.0"}]', "No known Python versions"),
+            ("[{platforms = []}]", "at least one platform"),
+            ('[{platforms = "linux_x86_64"}]', "must be a list"),
+            ('[{platforms = ["unknown"]}]', "Unknown platform"),
+            ('[{platforms = ["linux_x86_64", "linux_x86_64"]}]', "duplicate entry"),
+            ('[{implementations = ["unknown"]}]', "unknown entries"),
+            ("[{implementations = []}]", "at least one implementation"),
+            ('[{free-threaded = "true"}]', "must be a boolean"),
+        ],
+    )
+    def test_invalid_include_entry_is_rejected(
+        self, tmp_path: Path, include: str, message: str
+    ) -> None:
+        with pytest.raises(ConfigError, match=message):
+            read_pyproject_config(write(tmp_path, self._matrix_body(include=include)))
+
+    def test_cli_changes_defaults_but_preserves_explicit_include_axes(
+        self, tmp_path: Path
+    ) -> None:
+        body = self._matrix_body(
+            include='[{python = "==3.10", implementations = ["pypy"]}]'
+        )
+        config = read_pyproject_config(
+            write(tmp_path, body),
+            cli_overrides={"matrix": _cli_matrix(implementations=("cpython",))},
+        )
+        assert {target.implementation for target in plan_targets(config)} == {
+            "cpython",
+            "pypy",
+        }
+
+    @pytest.mark.parametrize("key", ["implementation", "python-builds"])
+    def test_removed_matrix_syntax_is_rejected(self, tmp_path: Path, key: str) -> None:
+        with pytest.raises(ConfigError, match="unknown keys"):
+            read_pyproject_config(write(tmp_path, self._matrix_body(**{key: "{}"})))
 
     @pytest.mark.parametrize(
         ("overrides", "message"),
@@ -5398,54 +5486,81 @@ class TestMatrix:
             PlatformSpec("linux_x86_64", libc="musl", runs_on_libc=(1, 2)),
         )
 
-    @pytest.mark.parametrize(
-        "builds", [("standard",), ("free-threaded",), ("standard", "free-threaded")]
-    )
-    def test_python_builds(self, tmp_path: Path, builds: tuple[str, ...]) -> None:
-        value = ", ".join(f'"{build}"' for build in builds)
+    @pytest.mark.parametrize("threaded", [False, True])
+    def test_matrix_free_threaded_flag(self, tmp_path: Path, threaded: bool) -> None:
         path = write(
             tmp_path,
-            '[tool.nab.matrix]\npython = "==3.14"\nplatforms = ["linux_x86_64"]\n'
-            f"python-builds = [{value}]\n",
+            '[tool.nab.matrix]\npython = "==3.15"\nplatforms = ["linux_x86_64"]\n'
+            f"free-threaded = {str(threaded).lower()}\n",
         )
         config = read_pyproject_config(path)
         assert config.matrix is not None
-        assert config.matrix.python_builds == builds
-        targets = plan_targets(config)
-        assert len(targets) == len(builds)
-        assert [target.label.endswith("-ft") for target in targets] == [
-            build == "free-threaded" for build in builds
+        assert config.matrix.free_threaded is threaded
+        assert [target.label for target in plan_targets(config)] == [
+            "py315-linux_x86_64" + ("-ft" if threaded else "")
         ]
 
-    @pytest.mark.parametrize(
-        "value",
-        [
-            '"standard"',
-            "true",
-            "1",
-            "[1]",
-            "[]",
-            '["unknown"]',
-            '["standard", "standard"]',
-        ],
-    )
-    def test_invalid_python_builds(self, tmp_path: Path, value: str) -> None:
-        path = write(
-            tmp_path,
-            '[tool.nab.matrix]\npython = "==3.14"\nplatforms = ["linux_x86_64"]\n'
-            f"python-builds = {value}\n",
-        )
-        with pytest.raises(ConfigError, match="python.builds"):
-            read_pyproject_config(path)
+    @pytest.mark.parametrize("value", ['"true"', "1", "[0]", '[false, "true"]'])
+    def test_invalid_matrix_feature_flag(self, tmp_path: Path, value: str) -> None:
+        with pytest.raises(ConfigError, match="free-threaded must be a boolean"):
+            read_pyproject_config(
+                write(tmp_path, self._matrix_body(**{"free-threaded": value}))
+            )
 
-    def test_implementation_python_build_override(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[tool.nab.matrix]\npython = "==3.14"\nplatforms = ["linux_x86_64"]\nimplementations = ["cpython", "pypy"]\npython-builds = ["free-threaded"]\n[tool.nab.matrix.overrides.implementations.pypy]\npython-builds = ["standard"]\n',
+    @pytest.mark.parametrize("value", ["[]", "[false, false]"])
+    def test_empty_or_repeated_feature_values_are_rejected(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        with pytest.raises(
+            ConfigError, match="at least one boolean without duplicates"
+        ):
+            read_pyproject_config(
+                write(tmp_path, self._matrix_body(**{"free-threaded": value}))
+            )
+
+    @pytest.mark.parametrize(
+        "value", ["[false]", "[true]", "[false, true]", "[true, false]"]
+    )
+    def test_feature_lists_expand_in_declared_order(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        body = '[tool.nab.matrix]\npython="==3.15"\nplatforms=["linux_x86_64"]\n'
+        config = read_pyproject_config(
+            write(tmp_path, body + f"free-threaded={value}\n")
         )
-        assert [
-            target.label for target in plan_targets(read_pyproject_config(path))
-        ] == ["py314-linux_x86_64-ft", "pp314-linux_x86_64"]
+        expected = {
+            "[false]": ["py315-linux_x86_64"],
+            "[true]": ["py315-linux_x86_64-ft"],
+            "[false, true]": ["py315-linux_x86_64", "py315-linux_x86_64-ft"],
+            "[true, false]": ["py315-linux_x86_64-ft", "py315-linux_x86_64"],
+        }
+        assert [target.label for target in plan_targets(config)] == expected[value]
+
+    @pytest.mark.parametrize("threaded", [False, True])
+    @pytest.mark.parametrize("where", ["base", "override", "include"])
+    def test_scalar_and_singleton_list_share_one_setting(
+        self, tmp_path: Path, threaded: bool, where: str
+    ) -> None:
+        value = str(threaded).lower()
+        header = {
+            "base": "",
+            "override": "[tool.nab.matrix.overrides.implementations.cpython]\n",
+            "include": "[[tool.nab.matrix.include]]\n",
+        }[where]
+        body = '[tool.nab.matrix]\npython="==3.15"\nplatforms=["linux_x86_64"]\n'
+        path = write(tmp_path, body + header + f"free-threaded={value}\n")
+        initial = read_pyproject_config(path)
+
+        # Same-precedence files must agree after shorthand normalization.
+        (tmp_path / "nab.toml").write_text(
+            (body + header + f"free-threaded=[{value}]\n").replace(
+                "tool.nab.matrix", "matrix"
+            ),
+            encoding="utf-8",
+        )
+        combined = read_pyproject_config(path)
+        assert combined.matrix == initial.matrix
+        assert plan_targets(combined) == plan_targets(initial)
 
     def test_windows_arm64_and_linux_i686_are_known_ids(self, tmp_path: Path) -> None:
         path = write(

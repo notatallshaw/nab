@@ -41,7 +41,7 @@ from nab_provider.overrides import PackageOverride
 from nab_provider.pep508 import parse_requirement
 from nab_provider.policy import LocalSource
 from nab_provider.tags import PlatformSpec
-from nab_provider.target import Matrix, ResolveTarget
+from nab_provider.target import Matrix, MatrixInclude, ResolveTarget
 from nab_provider.testing import make_metadata, make_wheel
 
 
@@ -57,7 +57,7 @@ def _saved(
     targets = Matrix(
         python="==3.14",
         platforms=(PlatformSpec("linux_x86_64"),),
-        python_builds=("standard", "free-threaded"),
+        include=(MatrixInclude(free_threaded=True),),
     ).expand()
     forks, base = plan_project_inputs(path, inputs, targets)
     wheel = make_wheel("1", package="demo", hashes=(("sha256", "a" * 64),))
@@ -276,7 +276,15 @@ def test_repeated_paths_check_every_declared_hash(
 
 @pytest.mark.parametrize(
     "change",
-    ["contents", "missing", "version", "legacy-schema", "tool", "missing-field"],
+    [
+        "contents",
+        "missing",
+        "version",
+        "previous-version",
+        "legacy-schema",
+        "tool",
+        "missing-field",
+    ],
 )
 def test_invalid_evidence_is_refused(tmp_path: Path, change: str) -> None:
     case = _saved(tmp_path)
@@ -288,6 +296,8 @@ def test_invalid_evidence_is_refused(tmp_path: Path, change: str) -> None:
         del document["tool"]["nab"]["validation"]
     elif change == "version":
         record["version"] = 999
+    elif change == "previous-version":
+        record["version"] = 3
     elif change == "legacy-schema":
         record["version"] = 2
         record["inputs-sha256"] = record.pop("all-inputs-sha256")
@@ -298,6 +308,18 @@ def test_invalid_evidence_is_refused(tmp_path: Path, change: str) -> None:
         del record["all-inputs-sha256"]
     _replace_record(case[0], document)
     with pytest.raises(LockConsistencyError):
+        _check(case)
+
+
+@pytest.mark.parametrize("version", [True, 1.0, "1"])
+def test_validation_version_requires_an_integer(
+    tmp_path: Path, version: object
+) -> None:
+    case = _saved(tmp_path)
+    document = toml_io.load_path(case[0])
+    document["tool"]["nab"]["validation"]["version"] = version
+    _replace_record(case[0], document)
+    with pytest.raises(LockConsistencyError, match="no supported validation record"):
         _check(case)
 
 
