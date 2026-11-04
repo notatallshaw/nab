@@ -37,7 +37,8 @@ import tomli
 
 from nab_markersets.python_versions import validate_python_version
 from nab_project import toml_io
-from nab_project.paths import PathState, path_state
+from nab_project.input_source import InputFormat
+from nab_project.paths import PathState, path_state, realpath
 from nab_provider.policy import ResolveMode
 from nab_provider.value import Record
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
@@ -51,6 +52,7 @@ from .config.ladder import (
     RejectedLayer,
     Scope,
     SourceKind,
+    SourceRoots,
     build_cli_layer,
     build_cli_overrides,
     config_search_roots,
@@ -70,7 +72,9 @@ if TYPE_CHECKING:
     from nab_provider.provider import ResolutionStrategy
 
 
-def require_pyproject_file(path: Path) -> None:
+def require_pyproject_file(
+    path: Path, *, input_format: InputFormat = InputFormat.PROJECT
+) -> None:
     """Exit 1 for a missing, non-file, or pylock project path.
 
     Stat and read failures pass through so the config reader reports the
@@ -91,13 +95,24 @@ def require_pyproject_file(path: Path) -> None:
         sys.exit(1)
 
     if _is_pylock(path):
+        expected = (
+            "a Python script" if input_format is InputFormat.SCRIPT else "a pyproject"
+        )
+        remedy = (
+            "pass the Python script instead."
+            if input_format is InputFormat.SCRIPT
+            else "pass the pyproject.toml instead."
+        )
+        declarations = (
+            "script inputs" if input_format is InputFormat.SCRIPT else "project inputs"
+        )
         printer().error(
             DiagnosticMessage(
                 (
-                    f"{path} is a PEP 751 lockfile, not a pyproject.  nab resolves "
-                    "from project inputs"
+                    f"{path} is a PEP 751 lockfile, not {expected}.  nab resolves "
+                    f"from {declarations}"
                 ),
-                suggestions=(Suggestion("pass the pyproject.toml instead."),),
+                suggestions=(Suggestion(remedy),),
             )
         )
         sys.exit(1)
@@ -126,6 +141,7 @@ def effective_config(
     collect_rejected: bool = False,
     rejected_out: list[RejectedLayer] | None = None,
     read_pyproject: bool = True,
+    input_format: InputFormat = InputFormat.PROJECT,
 ) -> dict[str, EffectiveValue]:
     """Resolve config layers for the project at ``path``.
 
@@ -140,6 +156,15 @@ def effective_config(
     reading a USER-scope key that pyproject may not set.
     """
     roots = config_search_roots(path)
+    if input_format is InputFormat.SCRIPT:
+        directory = realpath(path.parent)
+        roots = SourceRoots(
+            system_toml=roots.system_toml,
+            user_toml=roots.user_toml,
+            project_dir=directory,
+            pyproject=directory / path.name,
+            input_format=input_format,
+        )
     rejected: list[RejectedLayer] = []
     sink = rejected if collect_rejected else None
     # Pin one ``now`` for the pass so identical relative ``P<n>D`` override
@@ -158,7 +183,12 @@ ConfigLadder = dict[str, EffectiveValue] | SourceConfigError
 """One read of the layered config: the effective map, or the error it raised."""
 
 
-def read_config_ladder(path: Path, cli_overrides: Mapping[str, object]) -> ConfigLadder:
+def read_config_ladder(
+    path: Path,
+    cli_overrides: Mapping[str, object],
+    *,
+    input_format: InputFormat = InputFormat.PROJECT,
+) -> ConfigLadder:
     """Read the layered config once for a run and hold what came back.
 
     A command builds one of these and threads it, so the environment is
@@ -167,9 +197,47 @@ def read_config_ladder(path: Path, cli_overrides: Mapping[str, object]) -> Confi
     lock anchor tolerates one and the run-settings fold exits on it.
     """
     try:
-        return effective_config(path, cli_overrides=cli_overrides)
+        return effective_config(
+            path, cli_overrides=cli_overrides, input_format=input_format
+        )
     except SourceConfigError as exc:
         return exc
+
+
+def select_input(path: Path, script: Path | None) -> tuple[Path, InputFormat]:
+    """Select one source while retaining the default project operand."""
+    if script is None:
+        return path, InputFormat.PROJECT
+    if path != Path("pyproject.toml"):
+        printer().error("a project path and --script cannot be combined")
+        sys.exit(1)
+    return script, InputFormat.SCRIPT
+
+
+def check_script_options(
+    input_format: InputFormat,
+    *,
+    groups: tuple[str, ...],
+    all_groups: bool,
+    extras: tuple[str, ...],
+    all_extras: bool,
+    build_requirements: bool = False,
+    no_emit_workspace: bool = False,
+) -> None:
+    """Reject project selectors before trying to expand them against a script."""
+    if input_format is InputFormat.SCRIPT and (
+        groups
+        or all_groups
+        or extras
+        or all_extras
+        or build_requirements
+        or no_emit_workspace
+    ):
+        printer().error(
+            "--script cannot select project groups, extras, build requirements "
+            "or workspace pins"
+        )
+        sys.exit(1)
 
 
 def lock_anchor(ladder: ConfigLadder) -> datetime | None:

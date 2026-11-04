@@ -307,7 +307,7 @@ class ProjectKeys(
     indexes = Key(
         Layer[tuple[IndexConfig, ...]](
             rdefault=(IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),),
-            parse=values.parse_indexes,
+            parse=hooks.parse_indexes,
             render=hooks.render_index_list,
             label="array-of-tables(name,url,serialization)",
         ),
@@ -579,6 +579,12 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
     ``include-rejected`` belongs to ``nab config`` and sits here because
     body order is help order and it prints after everything above it.
     """
+
+    script = Value[Path | None](
+        help="read dependencies and configuration from a PEP 723 Python script",
+        docs="how-to/scripts.md",
+        on=_LAYERED,
+    )
 
     output = Value[Path](
         default=Path("wheels"),

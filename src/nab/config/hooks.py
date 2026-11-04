@@ -17,7 +17,10 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
+from nab_index.file_urls import parse_file_url
+from nab_provider.records import IndexConfig
 from nab_provider.serialization import SimpleSerialization
 
 from . import values
@@ -32,7 +35,6 @@ if TYPE_CHECKING:
         LocalSource,
         VcsSource,
     )
-    from nab_provider.records import IndexConfig
     from nab_provider.target import ImplementationOverride, MatrixInclude
 
     from .values import MatrixConfig
@@ -42,6 +44,7 @@ __all__ = [
     "inspector_anchor",
     "key_prefix",
     "parse_index_overrides",
+    "parse_indexes",
     "parse_local_sources",
     "parse_matrix",
     "parse_package_rules",
@@ -175,13 +178,35 @@ def parse_local_sources(value: Any, where: str) -> tuple[LocalSource, ...]:
     )
 
 
+def parse_indexes(value: object, where: str) -> tuple[IndexConfig, ...]:
+    """Anchor relative file-index URLs at their declaring configuration file."""
+    indexes = values.parse_indexes(value, where)
+    result = []
+    for index in indexes:
+        try:
+            parsed = urlsplit(index.url)
+        except ValueError:
+            result.append(index)
+            continue
+        configured = index
+        if parsed.scheme == "file" and not parsed.netloc:
+            try:
+                path = parse_file_url(index.url)
+            except ValueError as exc:
+                message = f"{where}: invalid file-index URL: {exc}"
+                raise SourceConfigError(message) from exc
+            if not path.is_absolute():
+                url = (_current_declaring_dir() / path).resolve().as_uri()
+                configured = IndexConfig(index.name, url, index.serialization)
+        result.append(configured)
+    return tuple(result)
+
+
 def _current_declaring_dir() -> Path:
-    # local-sources is a file-only row (no CLI/env), so its per-layer parse
-    # is only ever reached from a TOML layer, which sets _DECLARING_DIR to
-    # the file's directory.  Paths in the file resolve relative to it.
+    """Return the directory set while parsing a file's relative locations."""
     base = _DECLARING_DIR.get()
     if base is None:  # pragma: no cover - per-layer parse always sets it
-        msg = "local-sources parsed without a declaring directory"
+        msg = "relative location parsed without a declaring directory"
         raise SourceConfigError(msg)
     return base
 

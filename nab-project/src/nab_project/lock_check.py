@@ -22,6 +22,7 @@ from nab_provider.target import micro_boundary_points, slices_from_points
 
 from . import toml_io
 from .build_backend import project_metadata
+from .input_source import InputFormat
 from .lock_validation import (
     VALIDATION_VERSION,
     content_digest,
@@ -303,7 +304,7 @@ def _pylock_environment(environment: Mapping[str, str]) -> Environment:
     }
 
 
-def _check_changed_bounds(
+def _check_changed_bounds(  # noqa: PLR0913 - explicit saved-lock input and selector keywords
     lock: Pylock,
     path: Path,
     current: Mapping[str, Any],
@@ -313,6 +314,7 @@ def _check_changed_bounds(
     groups: Sequence[str],
     extras: Sequence[str],
     build_requirements: bool,
+    input_format: InputFormat,
 ) -> None:
     """Validate compatible input edits using the standard package selections."""
     local = _current_local_metadata(current, inputs)
@@ -323,6 +325,7 @@ def _check_changed_bounds(
         groups=groups,
         extras=extras,
         build_requirements=build_requirements,
+        input_format=input_format,
     )
     constraints = [parse_requirement(text) for text in current["constraints"]]
     local_requirements = [
@@ -355,7 +358,7 @@ def _check_changed_bounds(
                 )
 
 
-def check_saved_lock(
+def check_saved_lock(  # noqa: PLR0913 - public keyword API for independent lock inputs and selections
     lockfile: Path,
     path: Path,
     current: Mapping[str, Any],
@@ -365,6 +368,7 @@ def check_saved_lock(
     groups: Sequence[str] = (),
     extras: Sequence[str] = (),
     build_requirements: bool = False,
+    input_format: InputFormat = InputFormat.PROJECT,
 ) -> None:
     """Validate saved pins without version discovery or a resolver transport."""
     if not lockfile.exists():
@@ -392,6 +396,7 @@ def check_saved_lock(
             groups=groups,
             extras=extras,
             build_requirements=build_requirements,
+            input_format=input_format,
         )
     except (
         PylockValidationError,

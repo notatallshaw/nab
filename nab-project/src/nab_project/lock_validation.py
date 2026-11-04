@@ -33,6 +33,7 @@ from nab_provider.vcs_admission import VcsPolicy
 from . import toml_io
 from ._lockfile.builder import strip_userinfo
 from .conflicts import ConflictKind, ConflictPolicy
+from .input_source import InputFormat, read_input_document
 from .pyproject_files import (
     build_system_requires,
     dependency_groups,
@@ -270,10 +271,11 @@ def snapshot_inputs(
     extras: Sequence[str] = (),
     build_requirements: bool = False,
     exclude: frozenset[str] = frozenset(),
+    input_format: InputFormat = InputFormat.PROJECT,
 ) -> dict[str, Any]:
     """Capture declarations, admission policy, targets and local metadata."""
     base = path.resolve().parent
-    data = toml_io.load_path(path)
+    data = read_input_document(path, input_format=input_format)
     roots: dict[str, list[str]] = {}
     if build_requirements:
         roots["build"] = _requirements(build_system_requires(data, path), base)

@@ -6,6 +6,7 @@ project.
 ## Choose dependencies and targets
 
 - [Select requirements, markers, extras and groups](choose-dependencies.md).
+- [Lock a standalone Python script](scripts.md).
 - [Change Python versions and platforms](lock-multiple-environments.md).
 - [Lock incompatible extras and groups](../explanation/conflicts.md).
 - [Choose version preferences and constraints](../reference/resolution-settings.md).
@@ -41,6 +42,7 @@ hidden:
 ---
 install
 choose-dependencies
+scripts
 lock-multiple-environments
 multi-index
 local-sources

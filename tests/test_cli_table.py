@@ -91,6 +91,7 @@ _PAGES = (
     ("action", "reference/cache.md"),
     ("path", "reference/cli.md"),
     ("output", "reference/formats.md"),
+    ("script", "how-to/scripts.md"),
     ("output", "reference/cli.md"),
     ("format", "reference/formats.md"),
     ("cache", "reference/cache.md"),
@@ -183,8 +184,8 @@ class TestTheDeclaredTable:
         command = [row for row in ALL if row.commands and not row.is_global]
         file_only = [row for row in ALL if not row.commands]
 
-        assert (len(root), len(command), len(file_only)) == (7, 48, 13)
-        assert len(root) + len(command) + len(file_only) == len(ALL) == 68
+        assert (len(root), len(command), len(file_only)) == (7, 49, 13)
+        assert len(root) + len(command) + len(file_only) == len(ALL) == 69
 
         keyed = [row for row in ALL if row.key]
 

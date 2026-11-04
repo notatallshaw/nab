@@ -319,7 +319,7 @@ OPTIONS: tuple[Opt, ...] = (
         "indexes",
         scope=Scope.PROJECT,
         rdefault=(IndexConfig(name="pypi", url="https://pypi.org/simple/"),),
-        parse=values.parse_indexes,
+        parse=hooks.parse_indexes,
         render=hooks.render_index_list,
         type_label="array-of-tables(name,url,serialization)",
         help="the package indexes, consulted in the order declared",

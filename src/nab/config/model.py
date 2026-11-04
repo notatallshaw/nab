@@ -34,7 +34,6 @@ from typing import TYPE_CHECKING, Any
 
 import tomli
 
-from nab_project import toml_io
 from nab_project.build_policy import enforce_build_policy_for_targets
 from nab_project.conflicts import (
     MIN_ENGAGED_MEMBERS,
@@ -42,6 +41,11 @@ from nab_project.conflicts import (
     ConflictPolicy,
     ConflictSet,
     conflict_exclusion_groups,
+)
+from nab_project.input_source import (
+    InputFormat,
+    ScriptMetadataError,
+    read_input_document,
 )
 from nab_project.inputs import ResolveInputs
 from nab_project.paths import realpath
@@ -325,6 +329,7 @@ def read_pyproject_config(
     discover_workspace: bool = True,
     anchor: datetime | None = None,
     cli_overrides: Mapping[str, Any] | None = None,
+    input_format: InputFormat = InputFormat.PROJECT,
 ) -> NabProjectConfig:
     """Read the project's effective :class:`NabProjectConfig`.
 
@@ -350,29 +355,69 @@ def read_pyproject_config(
     if anchor is None:
         anchor = datetime.now(timezone.utc)
     pyproject_dir = realpath(path.parent)
-    document = _read_pyproject_document(path)
-    _reject_unknown_pyproject_keys(document)
+    document = _read_pyproject_document(path, input_format=input_format)
+    _reject_unknown_pyproject_keys(
+        document,
+        kind=SourceKind.SCRIPT
+        if input_format is InputFormat.SCRIPT
+        else SourceKind.PYPROJECT,
+    )
     project_requires_python = _read_project_requires_python(document)
     # Point the pyproject root at ``pyproject_dir / path.name`` (not
     # ``realpath(path)``) so the registry's declaring directory is the
     # symlink's own directory, which is what a relative local-source path
     # and the project-dir nab.toml lookup resolve against.  ``open`` still
     # follows the symlink, so the same file is read.
-    roots = SourceRoots(project_dir=pyproject_dir, pyproject=pyproject_dir / path.name)
+    roots = SourceRoots(
+        project_dir=pyproject_dir,
+        pyproject=pyproject_dir / path.name,
+        input_format=input_format,
+    )
     with resolve_anchor(anchor):
         layers = discover_layers(roots)
         cli_layer = build_cli_layer(cli_overrides or {})
         effective = resolve_config(layers, read_env_layer({}), cli_layer)
+    if input_format is InputFormat.SCRIPT and any(
+        effective[key].value
+        for key in (
+            "default-groups",
+            "base-group",
+            "build-group",
+            "conflicts",
+            "workspace",
+        )
+    ):
+        message = (
+            "script inputs have no project groups, extras, build requirements "
+            "or workspace"
+        )
+        raise ConfigError(message)
     config = _config_from_effective(
         effective,
         anchor=anchor,
         pyproject_dir=pyproject_dir,
         project_requires_python=project_requires_python,
+        input_format=input_format,
     )
     _validate_configured_groups(
         effective["base-group"], effective["build-group"], document
     )
-    if discover_workspace:
+    if input_format is InputFormat.SCRIPT:
+        if project_requires_python is not None:
+            combined = str(
+                SpecifierSet(
+                    ",".join(
+                        value
+                        for value in (config.requires_python, project_requires_python)
+                        if value is not None
+                    )
+                )
+            )
+            config = config.replace(
+                requires_python=combined,
+                requires_python_source=f"{path}: PEP 723 requires-python",
+            )
+    elif discover_workspace:
         config = _apply_workspace_discovery(
             path, config, declared_in=effective["workspace"].origin.label
         )
@@ -385,6 +430,7 @@ def _config_from_effective(
     anchor: datetime,
     pyproject_dir: Path,
     project_requires_python: str | None = None,
+    input_format: InputFormat = InputFormat.PROJECT,
 ) -> NabProjectConfig:
     """Build a project config after single-option precedence is resolved.
 
@@ -400,31 +446,9 @@ def _config_from_effective(
     mode: ResolveMode = mode_value.value
     matrix: MatrixConfig | None = matrix_value.value
     if mode is ResolveMode.UNIVERSAL and matrix is None:
-        if mode_value.origin.kind is SourceKind.CLI:
-            report = DiagnosticMessage(
-                "--project-mode universal needs a matrix",
-                suggestions=(
-                    Suggestion(
-                        "pass --project-matrix-python and "
-                        "--project-matrix-platforms, add [tool.nab.matrix] to the "
-                        "project's pyproject.toml, or a top-level [matrix] table "
-                        "to the project's nab.toml, or drop --project-mode "
-                        "universal."
-                    ),
-                ),
-            )
-        else:
-            # PROJECT_TOML is the project-dir nab.toml, whose keys are top-level.
-            table = (
-                "top-level [matrix] table in nab.toml"
-                if mode_value.origin.kind is SourceKind.PROJECT_TOML
-                else "[tool.nab.matrix] table in pyproject.toml"
-            )
-            msg = (
-                f"mode = 'universal' requires a {table} declaring python and platforms"
-            )
-            raise ConfigError(msg)
-        raise ConfigError(report)
+        raise ConfigError(
+            _missing_matrix_message(mode_value, input_format=input_format)
+        )
 
     if mode is ResolveMode.SPECIFIC and matrix is not None:
         if mode_value.origin.outranks(matrix_value.origin):
@@ -530,6 +554,38 @@ def _declares(flags: tuple[str, ...]) -> str:
     return "declare" if len(flags) > 1 else "declares"
 
 
+def _missing_matrix_message(
+    mode_value: EffectiveValue, *, input_format: InputFormat
+) -> DiagnosticMessage | str:
+    """Explain where to declare a missing universal target matrix."""
+    if mode_value.origin.kind is SourceKind.CLI:
+        input_location = (
+            "script's metadata"
+            if input_format is InputFormat.SCRIPT
+            else "project's pyproject.toml"
+        )
+        return DiagnosticMessage(
+            "--project-mode universal needs a matrix",
+            suggestions=(
+                Suggestion(
+                    "pass --project-matrix-python and "
+                    "--project-matrix-platforms, add [tool.nab.matrix] to the "
+                    f"{input_location}, or a top-level [matrix] table "
+                    "to the project's nab.toml, or drop --project-mode "
+                    "universal."
+                ),
+            ),
+        )
+
+    if mode_value.origin.kind is SourceKind.PROJECT_TOML:
+        table = "top-level [matrix] table in nab.toml"
+    elif mode_value.origin.kind is SourceKind.SCRIPT:
+        table = "[tool.nab.matrix] table in the script's metadata"
+    else:
+        table = "[tool.nab.matrix] table in pyproject.toml"
+    return f"mode = 'universal' requires a {table} declaring python and platforms"
+
+
 def _specific_mode_message(matrix_value: EffectiveValue) -> DiagnosticMessage:
     """Explain why a multi-target matrix conflicts with explicit specific mode."""
     flags = _declared_by(matrix_value)
@@ -546,11 +602,12 @@ def _specific_mode_message(matrix_value: EffectiveValue) -> DiagnosticMessage:
                 ),
             ),
         )
-    declared = (
-        "[matrix] in nab.toml"
-        if matrix_value.origin.kind is SourceKind.PROJECT_TOML
-        else "[tool.nab.matrix] in pyproject.toml"
-    )
+    if matrix_value.origin.kind is SourceKind.PROJECT_TOML:
+        declared = "[matrix] in nab.toml"
+    elif matrix_value.origin.kind is SourceKind.SCRIPT:
+        declared = "[tool.nab.matrix] in the script's metadata"
+    else:
+        declared = "[tool.nab.matrix] in pyproject.toml"
     return DiagnosticMessage(
         (f"{declared} declares multiple targets but mode is 'specific'"),
         suggestions=(
@@ -675,10 +732,14 @@ def _apply_workspace_discovery(
     )
 
 
-def _read_pyproject_document(path: Path) -> dict[str, Any]:
+def _read_pyproject_document(
+    path: Path, *, input_format: InputFormat = InputFormat.PROJECT
+) -> dict[str, Any]:
     """Parse ``path``, reporting an unreadable or malformed file as ``ConfigError``."""
     try:
-        return toml_io.load_path(path)
+        return read_input_document(path, input_format=input_format)
+    except ScriptMetadataError as exc:
+        raise ConfigError(str(exc)) from exc
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
         msg = f"{path} is not valid TOML: {exc}"
         raise ConfigError(msg) from exc
@@ -687,7 +748,9 @@ def _read_pyproject_document(path: Path) -> dict[str, Any]:
         raise ConfigError(msg) from exc
 
 
-def _reject_unknown_pyproject_keys(document: Mapping[str, Any]) -> None:
+def _reject_unknown_pyproject_keys(
+    document: Mapping[str, Any], *, kind: SourceKind | None = None
+) -> None:
     """Reject a USER-scope or unknown key in pyproject ``[tool.nab]``.
 
     Run before the registry merge so the resolve reports a typo'd
@@ -703,7 +766,9 @@ def _reject_unknown_pyproject_keys(document: Mapping[str, Any]) -> None:
     # Parser fold: a USER-scope registry option in pyproject [tool.nab]
     # surfaces the registry category error before the generic unknown-key
     # error below.
-    reject_user_keys_in_pyproject(raw)
+    reject_user_keys_in_pyproject(
+        raw, kind=SourceKind.PYPROJECT if kind is None else kind
+    )
     known = pyproject_registry_keys()
     unknown = sorted(set(raw) - known)
     if unknown:
@@ -1214,10 +1279,15 @@ def _environment_from_effective(
         valid = sorted(PLATFORM_MARKERS)
         suggestion = f"add platform = one of {valid!r}."
         source_labels = {source.kind: source.label for source, _value in entry.stack}
-        if {SourceKind.PYPROJECT, SourceKind.PROJECT_TOML} <= source_labels.keys():
+        input_kind = (
+            SourceKind.SCRIPT
+            if SourceKind.SCRIPT in source_labels
+            else SourceKind.PYPROJECT
+        )
+        if {input_kind, SourceKind.PROJECT_TOML} <= source_labels.keys():
             suggestion += (
                 " Set the same platform in [tool.nab.environment] in"
-                f" {source_labels[SourceKind.PYPROJECT]} and [environment] in"
+                f" {source_labels[input_kind]} and [environment] in"
                 f" {source_labels[SourceKind.PROJECT_TOML]}."
             )
 
@@ -1317,7 +1387,12 @@ def _reject_vcs_sources_under_block(
     policy_tables = [
         project_key_path("vcs", origin.kind)
         for origin, _value in vcs.stack
-        if origin.kind in {SourceKind.PYPROJECT, SourceKind.PROJECT_TOML}
+        if origin.kind
+        in (
+            SourceKind.PYPROJECT,
+            SourceKind.SCRIPT,
+            SourceKind.PROJECT_TOML,
+        )
     ] or [vcs_table]
     policy_repair = " and ".join(
         f'[{table}].policy = "allow"' for table in policy_tables

@@ -32,6 +32,11 @@ from typing import TYPE_CHECKING, Any
 import tomli
 
 from nab_project import toml_io
+from nab_project.input_source import (
+    InputFormat,
+    ScriptMetadataError,
+    read_input_document,
+)
 from nab_project.paths import PathState, path_state, realpath
 from nab_project.value import ValueType
 from nab_provider.policy import ResolveMode
@@ -99,6 +104,7 @@ class SourceKind(enum.Enum):
     SYSTEM_TOML = "system"
     USER_TOML = "user"
     PYPROJECT = "pyproject"
+    SCRIPT = "script"
     PROJECT_TOML = "project"
     ENV = "env"
     CLI = "cli"
@@ -112,6 +118,7 @@ PRECEDENCE: dict[SourceKind, int] = {
     SourceKind.SYSTEM_TOML: 1,
     SourceKind.USER_TOML: 2,
     SourceKind.PYPROJECT: 3,
+    SourceKind.SCRIPT: 3,
     SourceKind.PROJECT_TOML: 3,
     SourceKind.ENV: 4,
     SourceKind.CLI: 5,
@@ -157,7 +164,9 @@ class Origin(ValueType):
 
 def scope_label(kind: SourceKind) -> str:
     """Return the source scope reported by ``nab config``."""
-    return "project" if kind is SourceKind.PYPROJECT else kind.value
+    return (
+        "project" if kind in (SourceKind.PYPROJECT, SourceKind.SCRIPT) else kind.value
+    )
 
 
 # A source that declared no table a sub-flag spells.
@@ -254,12 +263,14 @@ class SourceRoots(ValueType):
         "user_toml",
         "project_dir",
         "pyproject",
+        "input_format",
     )
 
     system_toml: Path | None
     user_toml: Path | None
     project_dir: Path | None
     pyproject: Path | None
+    input_format: InputFormat
 
     def __init__(
         self,
@@ -267,12 +278,14 @@ class SourceRoots(ValueType):
         user_toml: Path | None = None,
         project_dir: Path | None = None,
         pyproject: Path | None = None,
+        input_format: InputFormat = InputFormat.PROJECT,
     ) -> None:
         """Record the roots config discovery may read."""
         self.system_toml = system_toml
         self.user_toml = user_toml
         self.project_dir = project_dir
         self.pyproject = pyproject
+        self.input_format = input_format
 
 
 def build_cli_overrides(
@@ -309,14 +322,16 @@ def tool_nab_section(data: Mapping[str, Any]) -> Any:
     return tool.get("nab", missing_table) if isinstance(tool, dict) else missing_table
 
 
-def reject_user_keys_in_pyproject(raw: Mapping[str, Any]) -> None:
+def reject_user_keys_in_pyproject(
+    raw: Mapping[str, Any], *, kind: SourceKind = SourceKind.PYPROJECT
+) -> None:
     """Reject user-scope registry keys in pyproject ``[tool.nab]``."""
     for key in raw:
         spec = BY_KEY.get(key)
         if spec is None:
             continue
-        if not spec.allowed_in_toml(SourceKind.PYPROJECT):
-            raise SourceConfigError(_gate_reason(spec, SourceKind.PYPROJECT))
+        if not spec.allowed_in_toml(kind):
+            raise SourceConfigError(_gate_reason(spec, kind))
 
 
 def _load_toml_layer(
@@ -365,6 +380,8 @@ def _load_toml_layer(
 def _gate_reason(spec: Opt, kind: SourceKind) -> str:
     if kind is SourceKind.PYPROJECT:
         where = "pyproject [tool.nab] (project-scope only)"
+    elif kind is SourceKind.SCRIPT:
+        where = "script [tool.nab] (project-scope only)"
     else:
         where = f"a {scope_label(kind)} nab.toml"
     return (
@@ -376,15 +393,20 @@ def _gate_reason(spec: Opt, kind: SourceKind) -> str:
 def _read_raw_table(path: Path, kind: SourceKind) -> Mapping[str, Any]:
     # TOML is UTF-8, so a file that will not decode is invalid TOML.
     try:
-        with path.open("rb") as f:
-            data = toml_io.load(f)
+        if kind is SourceKind.SCRIPT:
+            data = read_input_document(path, input_format=InputFormat.SCRIPT)
+        else:
+            with path.open("rb") as f:
+                data = toml_io.load(f)
+    except ScriptMetadataError as exc:
+        raise SourceConfigError(str(exc)) from exc
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
         msg = f"{path} is not valid TOML: {exc}"
         raise SourceConfigError(msg) from exc
     except OSError as exc:
         msg = f"cannot read {path}: {exc}"
         raise SourceConfigError(msg) from exc
-    if kind is SourceKind.PYPROJECT:
+    if kind in (SourceKind.PYPROJECT, SourceKind.SCRIPT):
         section = tool_nab_section(data)
         # A non-table [tool.nab] is malformed, not an empty config.
         if not isinstance(section, dict):
@@ -582,7 +604,12 @@ def discover_layers(
     plan: list[tuple[Path | None, SourceKind]] = [
         (roots.system_toml, SourceKind.SYSTEM_TOML),
         (roots.user_toml, SourceKind.USER_TOML),
-        (pyproject_path, SourceKind.PYPROJECT),
+        (
+            pyproject_path,
+            SourceKind.SCRIPT
+            if roots.input_format is InputFormat.SCRIPT
+            else SourceKind.PYPROJECT,
+        ),
         (
             None if roots.project_dir is None else roots.project_dir / "nab.toml",
             SourceKind.PROJECT_TOML,
@@ -729,15 +756,18 @@ def _check_project_file_conflict(
 ) -> None:
     """Reject a key set differently in both project files."""
     by_kind = {origin.kind: value for origin, value in found}
-    if SourceKind.PYPROJECT not in by_kind or SourceKind.PROJECT_TOML not in by_kind:
+    input_kind = (
+        SourceKind.SCRIPT if SourceKind.SCRIPT in by_kind else SourceKind.PYPROJECT
+    )
+    if input_kind not in by_kind or SourceKind.PROJECT_TOML not in by_kind:
         return
-    pyproject_value = by_kind[SourceKind.PYPROJECT]
+    pyproject_value = by_kind[input_kind]
     project_value = by_kind[SourceKind.PROJECT_TOML]
     if pyproject_value == project_value:
         return
     report = DiagnosticMessage(
         (
-            f"config {spec.name!r} is set to conflicting values in pyproject "
+            f"config {spec.name!r} is set to conflicting values in {input_kind.value} "
             f"[tool.nab] ({spec.render(pyproject_value)!r}) and project-dir nab.toml ("
             f"{spec.render(project_value)!r}).  Both files sit at the same precedence "
             "level"

@@ -139,7 +139,7 @@ class Parsed:
     root flags the line had reached, unconverted.
     """
 
-    __slots__ = ("command", "eager", "options", "prog", "values")
+    __slots__ = ("command", "eager", "options", "prog", "supplied", "values")
 
     def __init__(
         self,
@@ -148,12 +148,15 @@ class Parsed:
         options: dict[str, object],
         prog: str,
         eager: str = "",
+        *,
+        supplied: frozenset[str] = frozenset(),
     ) -> None:
         self.command = command
         self.values = values
         self.options = options
         self.prog = prog
         self.eager = eager
+        self.supplied = supplied
 
 
 # One occurrence of a row: the row it was, and what it stored.
@@ -530,7 +533,13 @@ def _finish(
     _bind(table.operands, operands, values, pending_command, prog)
     _convert(pending_command, values, prog)
 
-    return Parsed(command, values, options, prog)
+    return Parsed(
+        command,
+        values,
+        options,
+        prog,
+        supplied=frozenset(dest for _row, dest in pending_command),
+    )
 
 
 def _require(rows: tuple[Row, ...], seen: dict[str, list[_Hit]], prog: str) -> None:

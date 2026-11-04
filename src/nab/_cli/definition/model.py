@@ -121,7 +121,7 @@ _SAMPLED_VTYPES = frozenset({VType.STR, VType.PATH, VType.INT})
 # The TOML sources that may set a row of each scope, by the
 # value of the SourceKind member naming them.
 _ALLOWED_TOML_SOURCES = {
-    Scope.PROJECT: frozenset({"pyproject", "project"}),
+    Scope.PROJECT: frozenset({"pyproject", "script", "project"}),
     Scope.USER: frozenset({"project", "user", "system"}),
 }
 

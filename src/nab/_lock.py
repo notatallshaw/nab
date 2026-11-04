@@ -52,6 +52,11 @@ import tomli
 
 from nab._version import __version__
 from nab_project import toml_io
+from nab_project.input_source import (
+    InputFormat,
+    ScriptMetadataError,
+    read_input_document,
+)
 from nab_project.lock_check import check_saved_lock
 from nab_project.lock_validation import snapshot_inputs
 from nab_project.lockfile import (
@@ -79,11 +84,15 @@ from nab_project.lockfile import (
 )
 from nab_project.paths import PathState, path_state
 from nab_project.pyproject_files import (
-    read_pyproject_build_requires,
-    read_pyproject_dependencies,
-    read_pyproject_groups,
-    read_pyproject_name,
-    read_pyproject_optional_dependencies,
+    build_system_requires,
+    project_dependencies,
+    project_optional_dependencies,
+)
+from nab_project.pyproject_files import (
+    dependency_groups as input_dependency_groups,
+)
+from nab_project.pyproject_files import (
+    project_name as input_project_name,
 )
 from nab_project.resolve import (
     active_group_names,
@@ -116,10 +125,12 @@ from ._run import (
     _project_cli_overrides_or_exit,
     _reject_python_flag_in_universal,
     _resolve_effective_cache_dir,
+    check_script_options,
     lock_anchor,
     project_config_overrides,
     project_override_arguments,
     read_config_ladder,
+    select_input,
 )
 from .config.model import NabProjectConfig, ResolveMode, plan_targets
 from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
@@ -178,6 +189,7 @@ def _print_lock(text: str) -> None:
 def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     path: Path = _DEFAULT_PROJECT_PATH,
     *,
+    script: Path | None = None,
     output: Path | None = None,
     format: LockFormat = "pylock",  # noqa: A002 - shadows builtin by convention
     http_backend: HttpBackend | None = None,
@@ -247,6 +259,18 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     ``--locked`` checks the saved solution without resolving or writing.
     ``--reproduce`` resolves afresh and checks that the output is identical.
     """
+    path, input_format = select_input(path, script)
+    check_script_options(
+        input_format,
+        groups=groups,
+        all_groups=all_groups,
+        extras=extras,
+        all_extras=all_extras,
+        build_requirements=build_requirements,
+        no_emit_workspace=no_emit_workspace,
+    )
+    if input_format is InputFormat.SCRIPT and output is None:
+        output = _script_output_path(path, format_name=format)
     _validate_pylock_output_name(output=output, format=format)
     if locked and (upgrade or reproduce):
         printer().error("--locked cannot be combined with --upgrade or --reproduce.")
@@ -299,7 +323,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     project_overrides = project_config_overrides(overrides)
     _project_cli_overrides_or_exit(project_overrides)
 
-    ladder = read_config_ladder(path, overrides)
+    ladder = read_config_ladder(path, overrides, input_format=input_format)
     _reject_python_flag_in_universal(ladder, python)
     anchor = _determine_lock_anchor(
         ladder,
@@ -314,6 +338,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         discover_workspace=workspace_discovery,
         anchor=anchor,
         cli_overrides=project_overrides,
+        input_format=input_format,
     )
     inputs = config.resolve_inputs()
 
@@ -361,6 +386,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         no_emit_workspace=no_emit_workspace,
         cli_overrides=overrides,
         upgrade=upgrade,
+        input_format=input_format,
     )
 
     if locked:
@@ -390,6 +416,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         groups=selected_groups,
         extras=selected_extras,
         build_requirements=build_requirements,
+        input_format=input_format,
         resolution_strategy=settings.resolution,
         progress=ProgressReporter(printer()),
         max_concurrency=settings.max_concurrency,
@@ -426,6 +453,19 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
             build_requirements=build_requirements,
         )
     )
+
+
+def _script_output_path(path: Path, *, format_name: str) -> Path:
+    """Put a script's default lock beside it using a standard output filename."""
+    if format_name != "pylock":
+        return path.with_name(path.name + ".requirements.txt")
+    stem = path.stem
+    if not stem or "." in stem:
+        printer().error(
+            "this script name needs --output with a valid pylock.<name>.toml filename"
+        )
+        sys.exit(1)
+    return path.with_name(f"pylock.{stem}.toml")
 
 
 def _emit(
@@ -570,6 +610,7 @@ class _LockRun(Record):
         "no_emit_workspace",
         "cli_overrides",
         "upgrade",
+        "input_format",
     )
 
     path: Path
@@ -584,6 +625,7 @@ class _LockRun(Record):
     no_emit_workspace: bool
     cli_overrides: Mapping[str, object]
     upgrade: bool
+    input_format: InputFormat
 
     def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
@@ -600,6 +642,7 @@ class _LockRun(Record):
         no_emit_workspace: bool,
         cli_overrides: Mapping[str, object],
         upgrade: bool,
+        input_format: InputFormat = InputFormat.PROJECT,
     ) -> None:
         self.path = path
         self.output = output
@@ -613,6 +656,7 @@ class _LockRun(Record):
         self.no_emit_workspace = no_emit_workspace
         self.cli_overrides = cli_overrides
         self.upgrade = upgrade
+        self.input_format = input_format
 
     def refresh_command(self) -> str:
         """Render this run without ``--locked``, ready to paste into a shell."""
@@ -625,6 +669,8 @@ class _LockRun(Record):
         A path the parser would read as an option is only a path after
         ``--``, which ends the options, so it goes last.
         """
+        if self.input_format is InputFormat.SCRIPT:
+            return [*option_tokens("--script", (str(self.path),)), *options]
         if self.path == _DEFAULT_PROJECT_PATH:
             return options
 
@@ -699,6 +745,7 @@ def _check_saved(
             extras=run.extras,
             build_requirements=run.build_requirements,
             exclude=exclude,
+            input_format=run.input_format,
         )
         check_saved_lock(
             target,
@@ -709,6 +756,7 @@ def _check_saved(
             groups=run.groups,
             extras=run.extras,
             build_requirements=run.build_requirements,
+            input_format=run.input_format,
         )
     except (OSError, ValueError, LookupError, RecursionError) as exc:
         printer().error(
@@ -720,7 +768,8 @@ def _check_saved(
             )
         )
         sys.exit(1)
-    printer().done(f"{target} is consistent with the project")
+    kind = "script" if run.input_format is InputFormat.SCRIPT else "project"
+    printer().done(f"{target} is consistent with the {kind}")
 
 
 def _fast_fail_reproduction(
@@ -753,9 +802,11 @@ def _fast_fail_reproduction(
             default_groups=inputs.default_groups,
             base_group=inputs.base_group,
             build_requirements=run.build_requirements,
+            input_format=run.input_format,
             build_group=inputs.build_group,
         )
     except (
+        ScriptMetadataError,
         InvalidProjectTableError,
         InvalidProjectRequirementError,
         LookupError,
@@ -847,8 +898,10 @@ def _lock_snapshot(
             extras=run.extras,
             build_requirements=run.build_requirements,
             exclude=exclude,
+            input_format=run.input_format,
         )
     except (
+        ScriptMetadataError,
         InvalidProjectTableError,
         InvalidProjectRequirementError,
         LookupError,
@@ -875,7 +928,8 @@ def _attach_validation_inputs(
     if snapshot is None:
         return
     if _lock_snapshot(run, config, inputs, exclude) != snapshot:
-        printer().error("project inputs changed while locking; re-run nab lock")
+        kind = "script" if run.input_format is InputFormat.SCRIPT else "project"
+        printer().error(f"{kind} inputs changed while locking; re-run nab lock")
         sys.exit(1)
     lock_input.validation_inputs = snapshot
 
@@ -889,6 +943,7 @@ def _active_root_requirements(
     base_group: str | None = None,
     build_requirements: bool = False,
     build_group: str | None = None,
+    input_format: InputFormat = InputFormat.PROJECT,
 ) -> list[RootRequirement]:
     """Collect this run's active direct requirements with their source clause.
 
@@ -903,20 +958,26 @@ def _active_root_requirements(
     appended as their own source rather than routed through the group
     table, which does not hold the configured name.
     """
+    document = read_input_document(path, input_format=input_format)
     if build_requirements:
         return [
             RootRequirement(requirement=req, source="[build-system].requires")
-            for req in read_pyproject_build_requires(path)
+            for req in build_system_requires(document, path)
         ]
 
+    dependency_source = (
+        "PEP 723 dependencies"
+        if input_format is InputFormat.SCRIPT
+        else "[project].dependencies"
+    )
     roots = [
-        RootRequirement(requirement=req, source="[project].dependencies")
-        for req in read_pyproject_dependencies(path)
+        RootRequirement(requirement=req, source=dependency_source)
+        for req in project_dependencies(document)
     ]
 
     if extras:
-        optional = read_pyproject_optional_dependencies(path)
-        project_name = read_pyproject_name(path)
+        optional = project_optional_dependencies(document)
+        project_name = input_project_name(document)
         for extra in extras:
             roots.extend(
                 RootRequirement(requirement=req, source=f"the {extra!r} extra")
@@ -927,7 +988,7 @@ def _active_root_requirements(
         active_group_names(groups, default_groups, base_group, build_group)
     )
     if effective_groups:
-        table = read_pyproject_groups(path)
+        table = input_dependency_groups(document)
         for group in effective_groups:
             requirements = resolve_groups_to_requirements(table, [group])
             if group not in groups:
@@ -942,7 +1003,7 @@ def _active_root_requirements(
     if build_group is not None:
         roots.extend(
             RootRequirement(requirement=req, source="[build-system].requires")
-            for req in read_pyproject_build_requires(path)
+            for req in build_system_requires(document, path)
         )
 
     return roots

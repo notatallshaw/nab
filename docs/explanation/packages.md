@@ -35,6 +35,11 @@ versions when embedding them.
 | `nab-project`    | Fetch coordination, workspaces, PEP 517 builds, locks, downloads and resolve orchestration                   |
 | `nab`            | Configuration, CLI commands and output                                                                       |
 
+`nab-project` reads project files and PEP 723 script metadata into the declaration view used by
+resolution and saved-lock validation. The CLI selects the input format and applies configuration
+layers, including a script's inline `[tool.nab]`. Script parsing never imports the script, and
+selecting a script does not discover an enclosing workspace.
+
 ### Matrix ownership
 
 ```python

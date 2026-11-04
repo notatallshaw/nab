@@ -28,7 +28,7 @@ from nab.config.ladder import (
 from nab.config.model import EnvironmentConfig, NabProjectConfig
 from nab.config.subflags import CliKey, CliTable
 from nab.config.values import MatrixConfig
-from nab_project import conflicts, inputs, lockfile
+from nab_project import conflicts, inputs, lockfile, script_metadata
 from nab_project.conflicts import (
     ConflictFork,
     ConflictKind,
@@ -36,6 +36,7 @@ from nab_project.conflicts import (
     ConflictPolicy,
     ConflictSet,
 )
+from nab_project.input_source import InputFormat
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import (
     ArchivePin,
@@ -46,6 +47,7 @@ from nab_project.lockfile import (
     VcsPin,
     WheelArtifact,
 )
+from nab_project.script_metadata import ScriptMetadata
 from nab_project.value import ValueType
 from nab_project.workspace import WorkspaceConfig
 from nab_provider._vendor.packaging.requirements import Requirement
@@ -406,13 +408,25 @@ CASES = [
             "user_toml": Path("/u/nab.toml"),
             "project_dir": Path("/p"),
             "pyproject": Path("/p/pyproject.toml"),
+            "input_format": InputFormat.PROJECT,
         },
         {
             "system_toml": None,
             "user_toml": None,
             "project_dir": Path("/q"),
             "pyproject": None,
+            "input_format": InputFormat.SCRIPT,
         },
+    ),
+    Case(
+        ScriptMetadata,
+        {
+            "dependencies": (Requirement("demo>=1"),),
+            "requires_python": ">=3.11",
+            "tool": {"nab": {"dist-policy": "wheel-only"}},
+        },
+        {"dependencies": (), "requires_python": None, "tool": {}},
+        hashable=False,
     ),
     Case(
         WheelArtifact,
@@ -633,6 +647,7 @@ DEFAULTS = [
             "user_toml": None,
             "project_dir": None,
             "pyproject": None,
+            "input_format": InputFormat.PROJECT,
         },
     ),
 ]
@@ -642,7 +657,16 @@ def test_the_cases_cover_every_value_type() -> None:
     """A subclass these modules name and ``CASES`` omits would go unchecked."""
     declared = {
         obj
-        for module in (hooks, ladder, model, values, conflicts, inputs, lockfile)
+        for module in (
+            hooks,
+            ladder,
+            model,
+            values,
+            conflicts,
+            inputs,
+            lockfile,
+            script_metadata,
+        )
         for obj in vars(module).values()
         if isinstance(obj, type) and issubclass(obj, ValueType) and obj is not ValueType
     }

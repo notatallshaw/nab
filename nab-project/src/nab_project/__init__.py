@@ -2,6 +2,8 @@
 
 Supported imports:
 
+    nab_project.input_source  InputFormat, ScriptMetadataError, read_input_document
+    nab_project.script_metadata  ScriptMetadata, read_script_metadata
     nab_project.build_backend  project_metadata
     nab_project.diagnostics  ResolutionMessage
     nab_project.lock_validation  snapshot_inputs, selection_inputs_digest,
