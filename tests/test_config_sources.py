@@ -1604,6 +1604,7 @@ class TestRegistryShape:
             SourceKind.SYSTEM_TOML: "system",
             SourceKind.USER_TOML: "user",
             SourceKind.PYPROJECT: "project",
+            SourceKind.SCRIPT: "project",
             SourceKind.PROJECT_TOML: "project",
             SourceKind.ENV: "env",
             SourceKind.CLI: "cli",

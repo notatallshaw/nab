@@ -63,6 +63,7 @@ from nab_provider.marker_holds import DependencyMarkerEvaluator, dependency_mark
 from nab_provider.pep508 import parse_requirement
 from nab_provider.provider import ListingFilterCache
 from nab_provider.requirements_file import (
+    InvalidProjectRequirementError,
     expand_extra_requirements,
     expand_group_includes,
     expand_self_extras,
@@ -90,7 +91,7 @@ from nab_provider.value import (
 )
 from nab_resolver.errors import ResolutionError
 
-from . import pyproject_files, toml_io
+from . import pyproject_files
 from ._resolve.engine import (
     EnvSignature,
     InstallContexts,
@@ -117,6 +118,7 @@ from .fetch import (
     index_cache_floors,
     index_routes,
 )
+from .input_source import InputFormat, read_input_document
 from .inputs import ResolveInputs
 from .lockfile import LockInput, TargetLock
 
@@ -173,6 +175,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     *,
     targets: Sequence[ResolveTarget],
     inputs: ResolveInputs | None = None,
+    input_format: InputFormat = InputFormat.PROJECT,
     cache_dir: Path | None = None,
     offline: bool = False,
     groups: Sequence[str] = (),
@@ -224,6 +227,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
             groups=groups,
             extras=extras,
             build_requirements=build_requirements,
+            input_format=input_format,
         )
 
         coordinator_context = FetchCoordinator(
@@ -276,13 +280,28 @@ def plan_project_inputs(
     groups: Sequence[str] = (),
     extras: Sequence[str] = (),
     build_requirements: bool = False,
+    input_format: InputFormat = InputFormat.PROJECT,
 ) -> tuple[list[ResolveFork], list[Requirement] | None]:
     """Plan the same project contexts for resolution and saved-solution checks."""
+    if input_format is InputFormat.SCRIPT and (
+        groups
+        or extras
+        or build_requirements
+        or inputs.default_groups
+        or inputs.base_group is not None
+        or inputs.build_group is not None
+        or inputs.conflicts
+    ):
+        message = "script inputs have no project groups, extras or build requirements"
+        raise InvalidProjectRequirementError(message)
     if build_requirements:
         _validate_build_selection(groups, extras)
         inputs = inputs_for_build_requirements(inputs)
     tables = _project_tables(
-        path, build_group=inputs.build_group, build_requirements=build_requirements
+        path,
+        build_group=inputs.build_group,
+        build_requirements=build_requirements,
+        input_format=input_format,
     )
     effective_groups = active_group_names(
         groups, inputs.default_groups, inputs.base_group, inputs.build_group
@@ -598,14 +617,18 @@ def _carried_by(
 
 
 def _project_tables(
-    path: Path, *, build_group: str | None, build_requirements: bool
+    path: Path,
+    *,
+    build_group: str | None,
+    build_requirements: bool,
+    input_format: InputFormat = InputFormat.PROJECT,
 ) -> _ProjectTables:
     """Read every table the resolve needs off one parse of ``path``.
 
     The document is not returned, so the resolve holds the tables it reads
     rather than the whole file.
     """
-    document = toml_io.load_path(path)
+    document = read_input_document(path, input_format=input_format)
     if build_requirements:
         return _tables_for_build_requires(document, path)
     return _ProjectTables(

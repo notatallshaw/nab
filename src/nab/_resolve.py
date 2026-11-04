@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING
 import tomli
 
 from nab_index.transport import prefetch_settings_for_backend
+from nab_project.input_source import InputFormat, ScriptMetadataError
 from nab_project.lockfile import MissingHashError, MissingSdistError
 from nab_project.pyproject_files import (
     read_pyproject_groups,
@@ -262,8 +263,9 @@ def _load_config(
     discover_workspace: bool = True,
     anchor: datetime | None = None,
     cli_overrides: Mapping[str, object] | None = None,
+    input_format: InputFormat = InputFormat.PROJECT,
 ) -> NabProjectConfig:
-    require_pyproject_file(path)
+    require_pyproject_file(path, input_format=input_format)
 
     try:
         return read_pyproject_config(
@@ -271,6 +273,7 @@ def _load_config(
             discover_workspace=discover_workspace,
             anchor=anchor,
             cli_overrides=cli_overrides,
+            input_format=input_format,
         )
     except ConfigError as exc:
         printer().error(exc)
@@ -330,6 +333,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     groups: tuple[str, ...] = (),
     extras: tuple[str, ...] = (),
     build_requirements: bool = False,
+    input_format: InputFormat = InputFormat.PROJECT,
     resolution_strategy: ResolutionStrategy | None = None,
     progress: ProgressReporter | None = None,
     max_concurrency: int,
@@ -361,6 +365,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
                     groups=groups,
                     extras=extras,
                     build_requirements=build_requirements,
+                    input_format=input_format,
                     resolution_strategy=resolution_strategy,
                     progress=progress,
                     max_concurrency=max_concurrency,
@@ -372,6 +377,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
         printer().error(f"resolution failed: {_error_text(e)}")
         sys.exit(1)
     except (
+        ScriptMetadataError,
         UnsupportedVcsError,
         MissingExtraError,
         SiblingMetadataDivergenceError,

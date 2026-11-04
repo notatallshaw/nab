@@ -25,6 +25,7 @@ from ._run import (
     _fail_config,
     effective_config,
     require_pyproject_file,
+    select_input,
 )
 from .config.ladder import (
     project_cli_override_notice,
@@ -54,6 +55,7 @@ def config_command(  # noqa: PLR0913 - one keyword per flag is the public surfac
     key: str = "",
     *,
     path: Path = Path("pyproject.toml"),
+    script: Path | None = None,
     project_resolution: ResolutionFlag | None = None,
     offline: bool | None = None,
     cache_dir: Path | None = None,
@@ -100,7 +102,8 @@ def config_command(  # noqa: PLR0913 - one keyword per flag is the public surfac
     commands.
     """
     # Reject an invalid path before discovery can treat it as an absent source.
-    require_pyproject_file(path)
+    path, input_format = select_input(path, script)
+    require_pyproject_file(path, input_format=input_format)
 
     cli_overrides = _cli_overrides(
         cli_resolution=project_resolution,
@@ -139,6 +142,7 @@ def config_command(  # noqa: PLR0913 - one keyword per flag is the public surfac
             cli_overrides=cli_overrides,
             collect_rejected=include_rejected,
             rejected_out=rejected,
+            input_format=input_format,
         )
     except SourceConfigError as exc:
         _fail_config(exc)

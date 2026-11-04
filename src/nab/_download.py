@@ -42,8 +42,10 @@ from ._run import (
     _project_cli_overrides_or_exit,
     _reject_python_flag_in_universal,
     _resolve_effective_cache_dir,
+    check_script_options,
     project_config_overrides,
     read_config_ladder,
+    select_input,
 )
 from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,
@@ -61,6 +63,7 @@ from .output import ProgressReporter, printer
 def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     path: Path = Path("pyproject.toml"),
     *,
+    script: Path | None = None,
     output: Path = Path("wheels"),
     http_backend: HttpBackend | None = None,
     cache_dir: Path | None = None,
@@ -119,6 +122,14 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     system/user/project ``nab.toml`` is read for ``nab download`` as for
     ``nab lock``.
     """
+    path, input_format = select_input(path, script)
+    check_script_options(
+        input_format,
+        groups=groups,
+        all_groups=all_groups,
+        extras=extras,
+        all_extras=all_extras,
+    )
     selected_groups = resolve_group_selection(
         path, groups=groups, all_groups=all_groups
     )
@@ -159,13 +170,14 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     project_overrides = project_config_overrides(overrides)
     _project_cli_overrides_or_exit(project_overrides)
 
-    ladder = read_config_ladder(path, overrides)
+    ladder = read_config_ladder(path, overrides, input_format=input_format)
     _reject_python_flag_in_universal(ladder, python)
 
     config = _load_config(
         path,
         discover_workspace=workspace_discovery,
         cli_overrides=project_overrides,
+        input_format=input_format,
     )
 
     settings = _layered_run_settings_or_exit(ladder, produces_lock=False)
@@ -183,6 +195,7 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
         failure_prefix="cannot download",
         groups=selected_groups,
         extras=selected_extras,
+        input_format=input_format,
         resolution_strategy=settings.resolution,
         progress=ProgressReporter(printer()),
         max_concurrency=settings.max_concurrency,

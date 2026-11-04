@@ -32,9 +32,9 @@ _USAGE_STATUS = 2
 _FAILED_STATUS = 1
 
 _FILE_DESTS = {
-    "config": ("path",),
-    "lock": ("path", "output"),
-    "download": ("path",),
+    "config": ("path", "script"),
+    "lock": ("path", "script", "output"),
+    "download": ("path", "script"),
 }
 
 
@@ -69,10 +69,14 @@ def dispatch(
     command = getattr(module, function_name)
 
     values = dict(parsed.values)
+    if values.get("script") is not None and "path" in parsed.supplied:
+        return _USAGE_STATUS, "error: a project path and --script cannot be combined"
     file_dests = _FILE_DESTS.get(parsed.command, ())
     for dest in path_dests.get(parsed.command, ()):
         value = values[dest]
         if isinstance(value, str):
+            if dest == "script" and value.startswith(("http://", "https://")):
+                return _USAGE_STATUS, "error: --script requires a local file path"
             # Path discards trailing separators and "." components.
             if dest in file_dests and basename(value) in ("", "."):  # noqa: PTH119
                 return _FAILED_STATUS, (

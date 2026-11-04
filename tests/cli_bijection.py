@@ -33,7 +33,7 @@ def _cache_command() -> None:
 
 
 def _config_command() -> None:
-    """``nab config``: 31 parameters."""
+    """``nab config``: 32 parameters."""
     config_command(
         ConfigWords.action,
         ConfigWords.key,
@@ -65,12 +65,13 @@ def _config_command() -> None:
         http_backend=UserKeys.http_backend,
         max_concurrency=UserKeys.max_concurrency,
         path=CacheWords.path,
+        script=RunFlags.script,
         include_rejected=RunFlags.include_rejected,
     )
 
 
 def _lock() -> None:
-    """``nab lock``: 41 parameters."""
+    """``nab lock``: 42 parameters."""
     lock(
         ConfigWords.path,
         project_resolution=ProjectKeys.resolution,
@@ -100,6 +101,7 @@ def _lock() -> None:
         cache_dir=UserKeys.cache_dir,
         http_backend=UserKeys.http_backend,
         output=CacheWords.output,
+        script=RunFlags.script,
         format=RunFlags.format,
         cache=RunFlags.cache,
         python=RunFlags.python,
@@ -117,7 +119,7 @@ def _lock() -> None:
 
 
 def _download() -> None:
-    """``nab download``: 36 parameters."""
+    """``nab download``: 37 parameters."""
     download(
         ConfigWords.path,
         project_resolution=ProjectKeys.resolution,
@@ -147,6 +149,7 @@ def _download() -> None:
         cache_dir=UserKeys.cache_dir,
         http_backend=UserKeys.http_backend,
         max_concurrency=UserKeys.max_concurrency,
+        script=RunFlags.script,
         output=RunFlags.output,
         cache=RunFlags.cache,
         python=RunFlags.python,
