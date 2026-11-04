@@ -1,79 +1,62 @@
 # Platform tags
 
-These settings control Nab's wheel filtering. The
-[platform compatibility tags specification](https://packaging.python.org/en/latest/specifications/platform-compatibility-tags/)
-defines the tag formats.
-
-## Configure a platform
-
-A `platforms` entry is either a bare platform id, which takes that platform's defaults, or a table
-declaring wheel compatibility settings:
-
 ```toml
 [tool.nab.matrix]
-python = ">=3.11,<3.14"
+python = "==3.15"
 platforms = [
     "windows_amd64",
     { id = "linux_x86_64", libc = "musl", runs-on-libc = "1.2" },
     { id = "macos_arm64", runs-on-macos = "14.0" },
-    { id = "linux_aarch64", platform-release = "5.15.0" },
 ]
 ```
 
+A bare platform id uses its defaults. A table adds wheel compatibility settings; each table requires
+`id`. See the
+[tag specification](https://packaging.python.org/en/latest/specifications/platform-compatibility-tags/)
+for filename formats.
+
 ## Supported platforms
 
-- Linux: `linux_x86_64`, `linux_aarch64`, `linux_i686`, `linux_armv7l`.
-- macOS: `macos_arm64`, `macos_x86_64`.
-- Windows: `windows_amd64`, `windows_arm64`.
-
-Each platform table requires `id`. Use only settings for that platform; see the sections below.
+| System  | IDs                                                           |
+| ------- | ------------------------------------------------------------- |
+| Linux   | `linux_x86_64`, `linux_aarch64`, `linux_i686`, `linux_armv7l` |
+| macOS   | `macos_arm64`, `macos_x86_64`                                 |
+| Windows | `windows_amd64`, `windows_arm64`                              |
 
 ## Linux libc
 
-`libc` defaults to `"glibc"` for manylinux wheels. Select `"musl"` for musllinux wheels. A target
-accepts one family.
-
-Within `[tool.nab.matrix]`, set the oldest supported libc version:
+Within `[tool.nab.matrix]`:
 
 ```toml
 platforms = [{ id = "linux_x86_64", libc = "glibc", runs-on-libc = "2.28" }]
 ```
 
-Unset, `runs-on-libc` accepts wheels of any libc level and leaves compatibility to installation. The
-configured major must be glibc `2` or musl `1`.
+This accepts `manylinux_2_17` and `manylinux_2_28` wheels and rejects `manylinux_2_34`. Use
+`libc = "musl"` for musllinux wheels. One target accepts one libc family; glibc is the default.
 
-For a glibc 2.28 target:
-
-- `manylinux_2_17` and `manylinux_2_28` wheels run there and are accepted.
-- a `manylinux_2_34` wheel cannot run there and is dropped: it needs a newer glibc.
-
-Raising `runs-on-libc` accepts wheels requiring newer libc; it does not exclude older compatible
-wheels.
+With no `runs-on-libc`, Nab retains every libc level and leaves compatibility to installation. The
+configured major must be glibc `2` or musl `1`. Raising the floor admits newer wheels without
+excluding older compatible wheels. These settings apply only to Linux.
 
 ## macOS version
 
-`runs-on-macos` is unset by default and accepts wheels of any macOS level. Within
-`[tool.nab.matrix]`, declare the oldest supported macOS:
+Within `[tool.nab.matrix]`:
 
 ```toml
 platforms = [{ id = "macos_arm64", runs-on-macos = "14.0" }]
 ```
 
-With `runs-on-macos = "14.0"`, wheels requiring macOS 15 are excluded. A value below 10.4 on x86-64
-or 11.0 on Apple Silicon is a config error.
+Wheels requiring macOS 15 are excluded. With no floor, all macOS levels remain eligible. The minimum
+is 10.4 on x86-64 or 11.0 on Apple Silicon. `runs-on-macos` applies only to macOS.
 
 ## PyPy ABI
-
-PyPy ABIs are independent of the Python language version. Leave `pypy-abi` unset to retain wheels
-for any native PyPy ABI of the declared Python minor, deferring ABI compatibility to installation.
-To target one ABI in a mixed matrix, declare the suffix in a PyPy include entry:
 
 ```toml
 [tool.nab.matrix]
 python = ">=3.10,<3.13"
 platforms = ["windows_amd64", "macos_arm64"]
 
-# Add PyPy with its native ABI on the same platforms.
+# Add PyPy with a specific native ABI.
 [[tool.nab.matrix.include]]
 python = "==3.11"
 implementations = ["pypy"]
@@ -83,45 +66,59 @@ platforms = [
 ]
 ```
 
-Here `pp80` selects `pypy311_pp80` native wheels and excludes `pypy311_pp73`; pure-Python wheels
-remain eligible. The same setting works in `environment.platform` and as `pypy-abi=pp80` after a CLI
-platform ID. An explicit ABI requires every target using that platform table to be PyPy. ABI
-variants cannot be separate matrix targets for the same platform because PEP 508 markers cannot
-distinguish them. A host resolve uses the running interpreter's actual ABI.
+`pp80` accepts `pypy311_pp80` native wheels and excludes `pypy311_pp73`; pure Python wheels remain
+eligible. Without `pypy-abi`, Nab retains all native ABIs for that Python minor. A host resolve uses
+the running interpreter's ABI.
+
+The setting also works in `environment.platform` or after a CLI platform ID as `pypy-abi=pp80`.
+Every target using it must be PyPy. ABI variants cannot be separate targets for the same platform:
+PEP 508 cannot distinguish them.
 
 ## Free-threaded CPython
 
-`free-threaded` defaults to `false`. Setting it to `true` selects the `cp3XXt` ABI, excluding
-ordinary `cp3XX` and `abi3` wheels. Every target using that platform setting must be CPython 3.13 or
-newer. An older Python or another implementation is a config error in either a matrix or
-`[tool.nab.environment]`.
+For one declared target:
 
 ```toml
-[tool.nab]
-build-policy = "never"
-
 [tool.nab.environment]
-python = "3.13"
+python = "3.15"
 platform = { id = "linux_x86_64", free-threaded = true }
 ```
 
+`free-threaded = true` selects the `cp3XXt` ABI and excludes ordinary `cp3XX` and `abi3` wheels. It
+requires CPython 3.13 or newer; the default is `false`. Runtime GIL settings do not change the ABI.
+For both builds in one matrix, use an {ref}`include entry <matrix-free-threaded>`.
+
 ## Kernel marker values
 
-`platform-release` and `platform-version` set PEP 508 marker values and do not affect wheel-tag
-selection. Both default to `""`; every comparison against an empty value evaluates False, so a
-dependency selected by `platform_release >= "5.10"` (or on any other comparison) is dropped. A
-target that does run that kernel has to say so.
+```toml
+[tool.nab.matrix]
+python = "==3.15"
+platforms = [
+    { id = "linux_x86_64", platform-release = "5.15.0", platform-version = "custom" },
+]
+```
 
-## Matrix restrictions
+`platform-release` and `platform-version` set PEP 508 markers without changing wheel tags. Both
+default to `""`; comparisons against an empty value evaluate false. For example, a dependency
+requiring `platform_release >= "5.10"` is dropped unless the target declares a matching kernel.
 
-nab rejects settings for the wrong platform: `libc` and `runs-on-libc` apply only to Linux, and
-`runs-on-macos` applies only to macOS.
+## Multiple variants and builds
 
-Each entry's platform list may name an id once. Add a separate {ref}`include entry <matrix-include>`
-for another build or platform variant. PEP 508 cannot distinguish libc families or threading
-variants; entries with the same marker environment must share package selections and pins. Nab
-refuses incompatible selections instead of emitting overlapping lock rows.
+For glibc and musl targets sharing a lock:
 
-For declared platform targets, including singleton matrices, `build-policy` defaults to `never`.
-Host metadata builds require an `assume-universal-deps` assertion and an explicit build policy. See
-[Build policy](build-policy.md).
+```toml
+[tool.nab.matrix]
+python = "==3.15"
+platforms = [{ id = "linux_x86_64", libc = "glibc", runs-on-libc = "2.28" }]
+
+# Add musl without repeating an ID within one platform list.
+[[tool.nab.matrix.include]]
+platforms = [{ id = "linux_x86_64", libc = "musl", runs-on-libc = "1.2" }]
+```
+
+Each entry may name a platform id once. PEP 508 cannot distinguish libc families or threading
+variants, so targets sharing a marker environment must agree on package selections and pins. Nab
+rejects incompatible selections.
+
+Declared platform targets default to `build-policy = "never"`. Host metadata builds require both an
+`assume-universal-deps` assertion and an explicit [build policy](build-policy.md).

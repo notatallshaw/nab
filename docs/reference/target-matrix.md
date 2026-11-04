@@ -1,112 +1,68 @@
 # Target matrix
 
-For a complete workflow, see
-[Lock for multiple environments](../how-to/lock-multiple-environments.md).
-
-The matrix declares Python versions, platforms, implementations and build features. Nab resolves
-only the declared targets and reuses index listings and metadata across them. The multi-target
-lockfile format is experimental.
+Resolve CPython 3.10 through 3.15 on Linux and macOS into one lock:
 
 ```toml
 [tool.nab.matrix]
-python = ">=3.11,<3.14"
+python = ">=3.10,<3.16"
 platforms = ["linux_x86_64", "macos_arm64"]
-implementations = ["cpython", "pypy"]
-python-order = "asc"
-python-patches = { "3.11" = "3.11.4" }
 ```
 
-The base entry resolves the cross product of its Python versions, platforms and implementations.
-
-## Shared defaults
-
-`python` and `platforms` are required. `implementations` defaults to `["cpython"]`. Nab uses the
-documented defaults for omitted platform settings; it does not infer additional targets. See
-{ref}`how Nab chooses coverage <explicit-is-better-than-implicit>`.
-
-| Key               | Default           | Meaning                                                                                 |
-| ----------------- | ----------------- | --------------------------------------------------------------------------------------- |
-| `python`          | required          | A PEP 440 range, expanded into one target per known minor                               |
-| `platforms`       | required          | Platform ids or tables of [wheel compatibility settings](platform-tags.md)              |
-| `implementations` | `["cpython"]`     | Interpreter implementations: `"cpython"` or `"pypy"`                                    |
-| `free-threaded`   | platform settings | Select the free-threaded ABI with `true`, or the non-free-threaded ABI with `false`     |
-| `overrides`       | none              | Specialize enabled implementations; prefer include entries for additional target groups |
-| `include`         | `[]`              | Additional target groups inheriting omitted axes from this base entry                   |
-| `python-order`    | `"asc"`           | Resolve older minors first; `"desc"` resolves newer minors first                        |
-| `python-patches`  | none              | Pin a minor to one patch release instead of resolving its micro-version slices          |
+Nab resolves every Python/platform combination. CPython is the default implementation; targets must
+satisfy the project's `requires-python`. The multi-target lockfile format is experimental. For
+commands and output formats, see
+[Lock for multiple environments](../how-to/lock-multiple-environments.md).
 
 (matrix-include)=
 
-## Additional target groups
+## Add target groups with `include`
 
-Prefer `include` for new configurations that declare additional target combinations. Each
-`[[tool.nab.matrix.include]]` table adds a target group. It may replace `python`, `platforms`,
-`implementations` or `free-threaded`. Omitted values inherit the shared defaults, specialized by any
-override for the selected implementation. An entry's explicit values take precedence over those
-defaults. Entries do not inherit from one another or modify the base entry.
-
-For CPython 3.10 through 3.15 and PyPy 3.11 on Windows:
+Prefer `include` for additional combinations, such as PyPy 3.11 on Windows:
 
 ```toml
 [tool.nab.matrix]
 python = ">=3.10,<3.16"
 platforms = ["linux_x86_64", "macos_arm64"]
 
-# Add PyPy 3.11 on Windows.
+# Add a group outside the base Python/platform combinations.
 [[tool.nab.matrix.include]]
 python = "==3.11"
 platforms = ["windows_amd64"]
 implementations = ["pypy"]
 ```
 
-An explicit range or platform list replaces the whole inherited value, so an entry can declare
-versions or platforms outside the base entry. Every resulting Python target must still satisfy the
-project's `requires-python`.
-
-Overlapping entries emit each exact target once. Different platform settings remain distinct
-targets, even when their platform id is the same. Each entry must independently describe a supported
-interpreter/ABI combination; unsupported combinations are errors.
-
-Global `python-order` and `python-patches` apply to every entry. Within one Python minor, the base
-targets precede additional entries in declaration order. Each group retains its platform and
-implementation ordering.
+Each entry inherits omitted settings and replaces supplied values in full. Entries expand
+independently; they do not modify the base or one another. Exact duplicate targets merge, while
+different platform settings remain distinct.
 
 (matrix-free-threaded)=
 
-## Free-threaded builds
+## Add free-threaded builds
 
-Use an include entry to add free-threaded CPython only for the versions you support:
+Keep non-free-threaded CPython 3.10 through 3.15, and add free-threaded 3.15:
 
 ```toml
 [tool.nab.matrix]
 python = ">=3.10,<3.16"
 platforms = ["linux_x86_64", "macos_arm64", "windows_amd64"]
 
-# Add the free-threaded ABI only for Python 3.15.
+# Inherit platforms and CPython; narrow the added builds to 3.15.
 [[tool.nab.matrix.include]]
-python = ">=3.15,<3.16"
+python = "==3.15"
 free-threaded = true
 ```
 
-This selects the non-free-threaded CPython builds across the base range, plus free-threaded CPython
-3.15. To select only free-threaded builds, put `free-threaded = true` in the base entry and use a
-Python range starting at 3.13 or later. A free-threaded entry must select CPython.
+For free-threaded builds only, set `free-threaded = true` in the base matrix. They require CPython
+3.13 or newer. The flag selects the compiled ABI, regardless of the runtime GIL setting, and
+replaces any platform-level flag. Explicit `false` selects the non-free-threaded ABI.
 
-`free-threaded` describes the compiled ABI, not whether the GIL is enabled at runtime. It overrides
-the entry's platform build settings when supplied; otherwise their settings apply. An include entry
-with `free-threaded = false` can select the non-free-threaded ABI even when the base flag is true.
+Both builds must share package selections and pins: PEP 508 has no threading marker. Nab rejects
+incompatible selections instead of writing an ambiguous lock. Installers choose the compatible
+wheel. The former `python-builds` list and CLI flag are replaced by `free-threaded` and `include`.
 
-Both builds resolve their own wheel tags and metadata. Matching pins merge, and pip selects the
-compatible wheel. Because PEP 508 has no threading marker, entries sharing an environment must agree
-on package selections and pins; Nab refuses a shared lock when they cannot.
+## Specialize selected implementations with `overrides`
 
-The named `python-builds` list has been replaced by explicit feature flags and include entries.
-
-## Conditional implementation overrides
-
-`overrides.implementations` specializes implementations selected by the base matrix or an include
-entry. A body may replace `python`, `platforms` or `free-threaded`; omitted values keep the shared
-defaults. Declaring an override does not itself enable an implementation.
+Use an override when the specialization should follow CLI implementation selection:
 
 ```toml
 [tool.nab.matrix]
@@ -114,34 +70,45 @@ python = ">=3.10,<3.16"
 platforms = ["linux_x86_64", "macos_arm64"]
 implementations = ["cpython", "pypy"]
 
+# Apply only while PyPy is selected.
 [tool.nab.matrix.overrides.implementations.pypy]
 python = "==3.11"
 platforms = ["linux_x86_64"]
 ```
 
-This preserves the CLI selection workflow: `--project-matrix-implementations cpython` selects only
-the base CPython targets and leaves the PyPy override inactive. Selecting PyPy applies its declared
-Python and platform replacements. Dormant bodies are still validated.
+```bash
+# Resolve CPython on both platforms; leave the PyPy override inactive.
+nab lock --project-matrix-implementations cpython
 
-Use `include` for additional, independently declared target groups. Keep an override when its
-specialization should follow the implementations selected for a run. An explicit PyPy include
-remains active when a CLI flag narrows only the base defaults, so converting an override to an
-include is not behavior-preserving for every workflow.
+# Resolve only PyPy 3.11 on Linux.
+nab lock --project-matrix-implementations pypy
+```
 
-When both mechanisms apply, the order is shared defaults, implementation override, then explicit
-include fields. An include that selects PyPy can inherit its override; explicit Python, platform or
-feature values in that entry take precedence.
+An override can replace `python`, `platforms` or `free-threaded`; it does not enable an
+implementation. Inactive overrides are still validated. An explicit PyPy `include`, by contrast,
+remains active when the CLI narrows the base implementations to CPython.
 
-## Mode selection
+When both apply, precedence is shared defaults, implementation override, then explicit include
+values. Declare overrides and includes in `pyproject.toml` or the project-directory `nab.toml`.
 
-With `mode` omitted, Nab uses `specific` for one distinct target and `universal` for multiple
-targets. The count includes all entries after deduplication.
+## Order targets and pin patch releases
 
-A singleton matrix selects its declared environment. Explicit `mode = "universal"` forces universal
-behavior even with one target. Explicit `specific` rejects multiple targets at the same precedence;
-a higher-precedence `--project-mode specific` suppresses the file matrix for that run.
+Resolve newer Python minors first, and resolve 3.11 as exactly 3.11.4:
 
-## Declaring shared defaults on the command line
+```toml
+[tool.nab.matrix]
+python = ">=3.11,<3.14"
+platforms = ["linux_x86_64"]
+python-order = "desc"
+python-patches = { "3.11" = "3.11.4" }
+```
+
+Successful pins become preferences for later targets. Order and patch pins apply to all entries.
+Within a minor, base targets precede includes in declaration order. Groups retain platform and
+implementation order; overrides retain shared platform-ID order before adding new IDs. Without a
+patch pin, Nab can [split a minor at dependency-marker boundaries](../explanation/universal.md).
+
+## Set shared defaults for one run
 
 ```bash
 nab lock \
@@ -150,19 +117,35 @@ nab lock \
   --project-matrix-python-patches 3.11=3.11.4
 ```
 
-Each flag replaces one shared key. Explicit values in include entries retain precedence over
-inherited values. Declare the entries in `pyproject.toml` or the project-directory `nab.toml`.
+Each flag replaces one shared key. Overrides and explicit include values retain precedence. Without
+a file matrix, the Python and platform flags are required. `--project-matrix-free-threaded` sets the
+base flag to true; its `--no-` form sets it to false.
 
-`--project-matrix-free-threaded` sets the base flag to true; `--no-project-matrix-free-threaded`
-sets it to false. `--project-matrix-implementations` takes interpreter names, and
-`--project-matrix-python-patches` takes `MINOR=FULL` tokens.
+## Choose a mode
 
-Without a file matrix, `--project-matrix-python` and `--project-matrix-platforms` are required.
-Other shared keys use their defaults.
+```bash
+# Resolve the host environment instead of a file's matrix.
+nab lock --project-mode specific
+```
 
-## Accepted Python versions
+With no explicit mode, one distinct matrix target selects `specific`; multiple targets select
+`universal`. `mode = "universal"` also permits a singleton. `mode = "specific"` rejects multiple
+targets at the same precedence; a higher-precedence CLI flag suppresses the file matrix.
 
-Python target values accept up to three release components with optional prerelease, development and
-local suffixes. Nonzero epochs and post releases are rejected in `environment.python`,
-`marker-environment` Python values and `matrix.python-patches`. Matrix ranges, including ranges in
-include entries, select language minors; patch pins belong in `python-patches`.
+## Settings
+
+| Key               | Default           | Meaning                                                                             |
+| ----------------- | ----------------- | ----------------------------------------------------------------------------------- |
+| `python`          | required          | PEP 440 range over known Python minors                                              |
+| `platforms`       | required          | Platform ids or [compatibility tables](platform-tags.md)                            |
+| `implementations` | `["cpython"]`     | `"cpython"`, `"pypy"`, or both                                                      |
+| `free-threaded`   | platform settings | Select the free-threaded ABI with `true`, or the non-free-threaded ABI with `false` |
+| `include`         | `[]`              | Additional groups inheriting omitted settings                                       |
+| `overrides`       | none              | Conditional replacements under `implementations.<name>`                             |
+| `python-order`    | `"asc"`           | Older minors first; `"desc"` means newer first                                      |
+| `python-patches`  | none              | Map a minor to one full Python version                                              |
+
+Ranges select language minors: use `==3.11`, not `==3.11.4`. Put patch pins in `python-patches`.
+Full Python versions accept up to three release components and prerelease, development and local
+suffixes; nonzero epochs and post releases are rejected. Empty effective ranges, unknown platforms
+or implementations, and unsupported interpreter/ABI combinations are errors.
