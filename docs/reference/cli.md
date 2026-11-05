@@ -29,14 +29,14 @@ Choose `pylock` (default), `requirements`, or `requirements-without-hashes`. See
 
 Write to `PATH`, or stdout with `-`. Single-environment defaults are `pylock.toml` or
 `requirements.txt`. Universal requirements go to stdout unless you provide an
-{ref}`output template <output>`.
+[output template](formats.md#--output).
 
 ### `--locked`
 
 Check the saved solution without resolving or writing. New releases do not invalidate it. Exit `1`
 if the lock is missing or cannot satisfy or verify the current inputs. Requires pylock output to a
 file; cannot combine with `--upgrade` or `--reproduce`. See
-{ref}`Checking a lock <checking-the-lock-in-ci>`.
+[Checking a lock](reproducibility.md#checking-the-lock-in-ci).
 
 ### `--reproduce`
 
@@ -52,12 +52,12 @@ timestamp.
 
 Lock `[build-system].requires` instead of project dependencies. Defaults to `pylock.build.toml` or
 `build-requirements.txt`. Cannot be combined with group or extra selection. See
-{ref}`Build requirements <build-requirements>`.
+[Build requirements](selection.md#build-requirements).
 
 ### `--no-emit-workspace`
 
 Omit workspace members from the output while still using them during resolution. Install those
-members separately. See {ref}`Workspace flags <workspace-flags>`.
+members separately. See [Workspace flags](selection.md#workspace-flags).
 
 ## `nab download`
 
@@ -125,7 +125,8 @@ Enable or disable cache reads and writes for `lock` and `download`. Enabled by d
 
 These flags override `[tool.nab]` settings for one `lock`, `download`, or `config` invocation.
 Scalar and list flags replace the configured value; matrix and environment flags replace only their
-named key. See {ref}`Configuration <cli-overrides>` for accepted values and examples.
+named key. See [Configuration](configuration-sources.md#cli-overrides) for accepted values and
+examples.
 
 - `--project-resolution`: prefer highest, lowest, or lowest-direct versions.
 - `--project-decision-order`: use arrival or stable decision order.
@@ -216,8 +217,8 @@ Requested output goes to stdout; diagnostics and status go to stderr. See
 - `XDG_CACHE_HOME`: default cache base directory; relative paths are ignored.
 - `XDG_CONFIG_HOME`: default configuration base directory; relative paths are ignored.
 
-See {ref}`Configuration sources <layered-configuration-sources>` for `nab.toml` locations and other
-`NAB_*` variables.
+See [Configuration sources](configuration-sources.md#configuration-sources) for `nab.toml` locations
+and other `NAB_*` variables.
 
 ## Exit codes
 

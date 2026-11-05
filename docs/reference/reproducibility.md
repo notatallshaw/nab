@@ -1,4 +1,4 @@
-(reproducibility)=
+<a name="reproducibility"></a>
 
 # Reproducible locks
 
@@ -36,8 +36,6 @@ uploaded-prior-to = "P7D"
 A relative `P<n>D` cutoff is measured from `created-at`. Re-locking reuses the existing lock's
 timestamp; `--upgrade` moves the window. A first lock, stdout, requirements output, or a pylock
 without `created-at` anchors to the run time.
-
-(checking-the-lock-in-ci)=
 
 ## Checking the lock in CI
 

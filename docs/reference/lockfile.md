@@ -23,8 +23,6 @@ locations and hashes.
 Index digests come from the listing; nab does not fetch every index artifact to re-hash it. A direct
 archive's digest comes from its configured URL and is verified before metadata is read.
 
-(metadata-selection)=
-
 ### Metadata selection
 
 Nab reads the compatible wheel whose PEP 425 tags rank highest. Among equally ranked wheels, it

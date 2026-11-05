@@ -45,7 +45,7 @@ ISO 8601 string or TOML datetime with an explicit timezone, or a `P<n>D` duratio
 resolve anchor.
 
 A cutoff excludes files without upload times, except local `file://` and find-links artifacts. An
-HTML index may lack upload times; see {ref}`Index serialization <index-serialization>`.
+HTML index may lack upload times; see [Index serialization](indexes.md#serialization).
 [Reproducible locks](reproducibility.md) explains the anchor and the limits of a cutoff.
 
 ## Prereleases and yanked files

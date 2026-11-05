@@ -59,7 +59,7 @@ The Python running nab can differ from those targets. nab computes their depende
 wheel compatibility without launching each target interpreter. You can generate that matrix on Linux
 without a Mac.
 
-(explicit-is-better-than-implicit)=
+<a name="explicit-is-better-than-implicit"></a>
 
 ## How nab chooses the lock's coverage
 

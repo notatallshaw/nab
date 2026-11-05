@@ -40,14 +40,14 @@ Nab reads these sources before considering a backend:
 
 For PEP 643 sdists, `Requires-Dist` and `Provides-Extra` must not be listed in `Dynamic`.
 Pre-PEP-643 `PKG-INFO` dependencies need
-{ref}`an explicit trust setting <trusting-older-source-metadata>`.
+[an explicit trust setting](distribution-policy.md#trusting-older-source-metadata).
 
 Local and declared-source metadata may need a backend when `[project]` is missing or when `version`,
 `requires-python`, `dependencies` or `optional-dependencies` are dynamic.
 
 The default source archive format is `.tar.gz`. Legacy `.zip` sdists require
-{ref}`allow-zip-sdists <legacy-zip-sdists>`. VCS repositories are cloned and direct archives are
-hash-verified before their metadata is read.
+[allow-zip-sdists](distribution-policy.md#supported-source-archives). VCS repositories are cloned
+and direct archives are hash-verified before their metadata is read.
 
 ### When metadata is unavailable
 
@@ -58,7 +58,7 @@ A declared local, VCS, archive or workspace source is the only source for its pa
 cannot be obtained, the command fails; there is no alternate index release to try.
 
 A [dependency override](metadata-overrides.md) can supply known dependencies without a build.
-{ref}`assume-universal-deps <assuming-dependencies-are-universal>` can reuse same-version wheel
+[assume-universal-deps](#assuming-dependencies-are-universal) can reuse same-version wheel
 dependencies for a dynamic sdist.
 
 ## Build requirements
@@ -118,8 +118,6 @@ a 1.0 -> b 2.0 -> a 1.0
 
 Two different versions of a package in one chain are allowed.
 
-(declared-targets-and-host-builds)=
-
 ## Declared targets and host builds
 
 A backend runs on the host and reports the host's metadata. Target declarations change the default
@@ -136,8 +134,6 @@ resolved in `specific` mode. Without the dependency assumption, an explicit non-
 for a declared target is a configuration error.
 
 For a Python-only retarget, use `build-policy = "never"` to forbid host builds.
-
-(assuming-dependencies-are-universal)=
 
 ## Assuming dependencies are universal
 

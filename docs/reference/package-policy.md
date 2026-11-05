@@ -33,7 +33,7 @@ Package overrides accept these fields:
 | `metadata-policy`       | Choose `match-artifact` or `prefer-wheel` metadata selection                                     |
 | `build-policy`          | Permit or forbid metadata builds                                                                 |
 | `assume-universal-deps` | Allow dependency declarations to be reused across targets                                        |
-| `allow-zip-sdists`      | Admit or refuse {ref}`legacy ZIP sdists <legacy-zip-sdists>`                                     |
+| `allow-zip-sdists`      | Admit or refuse [legacy ZIP sdists](distribution-policy.md#supported-source-archives)            |
 | `uploaded-prior-to`     | Set a timezone-aware datetime or `P<n>D` cooldown; `false` removes the cutoff                    |
 | `index`                 | Route the package to one declared index; no other index is consulted                             |
 | `dependencies`          | Replace runtime dependency declarations with a list of PEP 508 requirements                      |
@@ -82,7 +82,7 @@ dist-policy = "wheel-only"
 Different fields can overlap. A rule may choose source installation while another chooses its
 metadata source.
 
-(per-index-policy)=
+<a name="per-index-policy"></a>
 
 ## Index overrides
 
@@ -143,4 +143,4 @@ uploaded-prior-to = false
 ```
 
 PyPI keeps the cooldown. Whenever a cutoff applies, files without upload times are excluded; see
-{ref}`Index serialization <index-serialization>`.
+[Index serialization](indexes.md#serialization).

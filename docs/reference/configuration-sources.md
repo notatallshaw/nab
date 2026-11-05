@@ -1,4 +1,4 @@
-(layered-configuration-sources)=
+<a name="layered-configuration-sources"></a>
 
 # Configuration sources
 
@@ -64,8 +64,6 @@ Only user settings have `NAB_*` bindings:
 
 Unknown `NAB_*` names produce a warning. `-qq` and `NAB_VERBOSITY=silent` suppress it.
 `NAB_VERBOSITY` and `NAB_NO_PROGRESS` are [output settings](cli.md).
-
-(cli-overrides)=
 
 ## CLI overrides
 

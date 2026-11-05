@@ -64,8 +64,6 @@ nab adds a `'X' in extras` or `'X' in dependency_groups` marker to a package nee
 selected extra or group. An installer omits that package when the selection is inactive; see
 [Lockfiles](lockfile.md).
 
-(build-requirements)=
-
 ## Build requirements
 
 - `--build-requirements` locks the project's `[build-system].requires` instead of its dependencies,
@@ -92,8 +90,6 @@ selected extra or group. An installer omits that package when the selection is i
 - `[tool.nab].build-group` adds a selection marker to its packages. The two requirements formats
   cannot carry it, so they render build requirements as ordinary pins. Use `pylock` output, or this
   flag, when the two sets have to stay apart.
-
-(workspace-flags)=
 
 ## Workspace flags
 

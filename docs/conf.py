@@ -23,6 +23,8 @@ myst_enable_extensions = [
     "tasklist",
 ]
 
+myst_heading_anchors = 6
+
 exclude_patterns = ["_build"]
 
 intersphinx_mapping = {

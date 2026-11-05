@@ -41,7 +41,7 @@ The metadata policy determines which artifact supplies dependencies:
 
 When sources are allowed and no usable wheel remains, Nab reads source metadata. Dynamic metadata
 may need a [permitted build](build-policy.md). Wheel metadata can come from a
-{ref}`sidecar, range request or full download <metadata-selection>`.
+[sidecar, range request or full download](lockfile.md#metadata-selection).
 
 ## Include sdists only when needed
 
@@ -70,7 +70,7 @@ yanking rules. Nab keeps the sdist if wheel tags are unknown or coverage cannot 
 Wheels must also cover the target's Python range. A wheel requiring Python 3.12.4 or newer leaves a
 gap in a Python 3.12 target, so Nab keeps the sdist.
 
-(legacy-zip-sdists)=
+<a name="legacy-zip-sdists"></a>
 
 ## Supported source archives
 
@@ -89,7 +89,7 @@ Set `allow-zip-sdists` globally, per package or per index. A scoped `false` canc
 The CLI overrides are `--project-allow-zip-sdists` and `--no-project-allow-zip-sdists`.
 
 Dynamic ZIP metadata needs the same build permissions as other sdists. Declared targets also need
-{ref}`assume-universal-deps <assuming-dependencies-are-universal>` for host builds. Direct
+[assume-universal-deps](build-policy.md#assuming-dependencies-are-universal) for host builds. Direct
 `archive-sources` accept only `.tar.gz`.
 
 ## Migrating combined policies
@@ -114,8 +114,6 @@ Python callers pair `DistPolicy.WHEEL_OR_SDIST` or `DistPolicy.SDIST_ONLY` with
 `MetadataPolicy.PREFER_WHEEL`. Existing `wheel-only`, `wheel-or-sdist` and `sdist-only` settings
 keep their behavior. Run `nab lock` to refresh existing locks with the new metadata-policy input.
 
-(trusting-older-source-metadata)=
-
 ## Trusting older source metadata
 
 Set `trust-unverified-deps = true` to accept dependencies in a pre-PEP-643 sdist's `PKG-INFO`
@@ -128,4 +126,4 @@ dist-policy = { policy = "wheel-or-sdist", trust-unverified-deps = true }
 
 Explicitly dynamic dependency fields still need another metadata source or a permitted build. To
 reuse a same-version wheel's dependencies for a dynamic sdist, see
-{ref}`assume-universal-deps <assuming-dependencies-are-universal>`.
+[assume-universal-deps](build-policy.md#assuming-dependencies-are-universal).

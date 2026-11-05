@@ -87,7 +87,7 @@ platform = { id = "linux_x86_64", free-threaded = true }
 `free-threaded = true` selects the `cp3XXt` ABI and excludes ordinary `cp3XX` and `abi3` wheels. It
 requires CPython 3.13 or newer; the default is `false`. Runtime GIL settings do not change the ABI.
 For both builds in one matrix, set
-{ref}`matrix.free-threaded = [false, true] <matrix-free-threaded>`.
+[matrix.free-threaded = [false, true]](target-matrix.md#select-python-builds).
 
 ## Kernel marker values
 

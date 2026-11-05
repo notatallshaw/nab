@@ -12,7 +12,7 @@ platforms = ["linux_x86_64", "macos_arm64"]
 
 nab resolves eight CPython targets from this matrix. It includes other platforms or interpreter
 implementations only when you configure them; see
-{ref}`how nab chooses coverage <explicit-is-better-than-implicit>`.
+[how nab chooses coverage](explanation/locking.md#how-nab-chooses-the-locks-coverage).
 
 An installer such as pip uses the lock to install packages for its current environment. nab resolves
 and records dependencies; it does not install them or manage virtual environments. Both nab and its
