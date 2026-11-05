@@ -53,3 +53,32 @@ def test_solve_without_project_or_marker_algebra() -> None:
     subprocess.run(  # noqa: S603 - fixed interpreter and probe
         [sys.executable, "-c", _PROBE], check=True
     )
+
+
+def test_preference_core_needs_only_the_solver() -> None:
+    """Keep the supported preference subset independent of native Python policy."""
+    probe = """
+import sys
+
+for name in (
+    "packaging",
+    "nab_markersets",
+    "nab_provider._vendor",
+    "nab_provider.provider",
+    "nab_provider.target",
+    "nab_provider.marker_holds",
+    "nab_provider.yank_candidates",
+    "nab_provider.yank_preference",
+):
+    sys.modules[name] = None
+
+from nab_provider.preference import PreferenceScope, PreferenceSearch
+scope = PreferenceScope()
+assert scope.fixed == frozenset()
+assert scope.live == frozenset()
+assert isinstance(hash(scope), int)
+assert callable(PreferenceSearch.run)
+"""
+    subprocess.run(  # noqa: S603 - fixed interpreter and import probe
+        [sys.executable, "-c", probe], check=True
+    )

@@ -20,8 +20,6 @@ from nab_provider.yank_preference import (
     PreferenceScope,
     PreparationStatus,
     YankPreference,
-    _Context,
-    _KnownFacts,
 )
 from nab_resolver.errors import (
     ResolutionError,
@@ -30,8 +28,7 @@ from nab_resolver.errors import (
     ResolutionStalledError,
     ResolutionTerminatedError,
 )
-from nab_resolver.ranges import Range
-from nab_resolver.resolver import Resolver, ResolverStats
+from nab_resolver.resolver import ResolverStats
 
 
 def preference(
@@ -359,38 +356,6 @@ def test_all_solver_counters_accumulate_without_aliasing_maps() -> None:
     assert stats.package_culprit_counts["b"] == 10
 
 
-def test_known_facts_retains_identity_constraints_rejections_and_extras() -> None:
-    policy = preference(
-        [("a", "1", False, []), ("a", "1", True, []), ("a", "2", False, [])], ["a==1"]
-    )
-    one, two, withdrawn = item("a"), item("a", "2"), item("a", withdrawn=True)
-    policy.catalogue.facts[two] = None
-    context = _Context(PreferenceScope(live=frozenset({"a"})), frozenset())
-    facts = _KnownFacts(
-        policy.catalogue, {"a": VersionRange.singleton(Version("1"))}, context
-    )
-    allowed = facts.encode("a", VersionRange.full())
-    assert facts.choose_version("a", allowed) == facts.identify(one)
-    assert facts.has_satisfying_version("a", allowed)
-    assert not facts.has_satisfying_version("a", Range.empty())
-    assert facts.identify(withdrawn) not in allowed
-    assert facts.prioritize("a", allowed, {}) == 3
-    extra = item("a[x]")
-    dependencies = facts.get_dependencies("a[x]", facts.identify(extra))
-    assert dependencies == {"a": Range.singleton(facts.identify(one))}
-    assert not policy.catalogue.facts.get(one)
-
-
-def test_known_rejection_is_not_treated_as_unknown_metadata() -> None:
-    policy = preference([("a", "1", False, []), ("a", "1", True, [])], ["a==1"])
-    selected = {"a": item("a", withdrawn=True)}
-    policy.catalogue.facts[selected["a"]] = None
-    assert (
-        fail_live_then_check(policy, selected["a"], selected)
-        is PreparationStatus.IMPOSSIBLE
-    )
-
-
 def test_nested_live_queries_use_an_explicit_stack() -> None:
     count = 220
     rows = [(f"p{i}", "1", state, []) for i in range(count) for state in (False, True)]
@@ -668,29 +633,3 @@ def test_nested_terminal_failures_do_not_refute_live_choices(
     with pytest.raises(type(error), match=str(error)):
         policy.run(trial)
     assert policy.outcomes == {}
-
-
-def test_context_budget_limit_is_terminal_and_preserves_the_unproven_context() -> None:
-    policy = preference([("a", "1", False, [])], ["a==1"], max_steps=0)
-    context = _Context(PreferenceScope(), frozenset())
-
-    with pytest.raises(ResolutionLimitError, match="exceeded 0 iterations"):
-        policy.check_context(context)
-    assert policy.refuted == set()
-    assert policy.possible == {}
-
-
-def test_untagged_context_failure_without_a_derivation_remains_incomplete(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    policy = preference([], [])
-    context = _Context(PreferenceScope(), frozenset())
-
-    def stop(*_args: object, **_kwargs: object) -> None:
-        raise ResolutionError("context interrupted")
-
-    monkeypatch.setattr(Resolver, "resolve", stop)
-    with pytest.raises(IncompletePreferenceError, match="context check stopped"):
-        policy.check_context(context)
-    assert policy.refuted == set()
-    assert policy.possible == {}

@@ -190,6 +190,28 @@ satisfying `RangeProtocol`, a `root_version` to decide the virtual root at, whic
 `range_type.singleton()` has to accept, and a `format_range` unless that type's `str` already reads
 as a constraint. nab drives the resolver this way, with a PEP 440 range type.
 
+## Reuse scoped artifact preference
+
+`nab-provider` supplies `nab_provider.preference.PreferenceSearch` for hosts that prefer working
+non-yanked artifacts before admitting a permitted yanked artifact. It shares the ancestor proofs,
+scoped queries and known-metadata checks used by nab's Python provider. The module's runtime imports
+require only the standard library and `nab-resolver`; the host retains metadata preparation and
+acquisition policy.
+
+Implement `PreferenceCatalogue` for your candidate identities, dependency facts, version ranges and
+original pin declarations. Candidate listings and identities stay fixed during a search. Prepared
+facts are immutable and the cache may only gain entries. With `refresh_incomplete=True`, a larger
+cache permits rechecking an incomplete proof. Record missing listings before returning their
+queries.
+
+Subclass `PreferenceSearch` to expose your catalogue and retain solver statistics, then call `run`
+with a callback that resolves one `PreferenceScope`. Before preparing a yanked artifact, call
+`check` with that candidate and the selected assignment. Its result either allows preparation, rules
+out that assignment, or reports an incomplete proof. `run` schedules prerequisite queries and shares
+their work budget. Terminal resolver errors retain their classification. After resolution, `explain`
+identifies the selected input or dependency pins permitting each yank; the host constructs its own
+final result and diagnostics.
+
 ## The supported API
 
 These module paths will not move without a major version bump:
