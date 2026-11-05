@@ -20,6 +20,7 @@ from nab_provider.policy import (
     BuildPolicy,
     DecisionOrder,
     DistPolicy,
+    MetadataPolicy,
     ResolutionStrategy,
 )
 from nab_provider.requirements_file import (
@@ -111,6 +112,7 @@ def _value(value: object, base: Path) -> Any:
             BuildPolicy,
             DecisionOrder,
             DistPolicy,
+            MetadataPolicy,
             ResolutionStrategy,
             SimpleSerialization,
             VcsPolicy,

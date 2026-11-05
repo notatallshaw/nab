@@ -9,8 +9,12 @@ LockFormat = Literal["pylock", "requirements", "requirements-without-hashes"]
 ResolutionFlag = Literal["highest", "lowest", "lowest-direct"]
 ModeFlag = Literal["specific", "universal"]
 DistPolicyFlag = Literal[
-    "wheel-only", "prefer-wheel", "wheel-or-sdist", "sdist-only", "sdist-install"
+    "wheel-only",
+    "wheel-or-sdist",
+    "sdist-if-needed",
+    "sdist-only",
 ]
+MetadataPolicyFlag = Literal["match-artifact", "prefer-wheel"]
 BuildPolicyFlag = Literal["never", "build-local", "build-remote"]
 DecisionOrderFlag = Literal["arrival", "stable"]
 MatrixOrderFlag = Literal["asc", "desc"]

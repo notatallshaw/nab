@@ -103,7 +103,7 @@ FILTER_KEYS: dict[Cause, str] = {
     DropCause.UPLOAD_TIME_AFTER_CUTOFF: "uploaded-prior-to",
     DropCause.DIST_POLICY: "dist-policy",
     DropCause.ZIP_SDIST: "allow-zip-sdists",
-    DropCause.SDIST_INSTALL_NO_SDIST: "dist-policy",
+    DropCause.SDIST_REQUIRED_NO_SDIST: "dist-policy",
     DropCause.REQUIRES_PYTHON: "requires-python",
     # No configuration turns the tag pass on, so this is a description
     # rather than a key.  It appears only where it shares a line with one.
@@ -121,7 +121,7 @@ UPLOAD_TIME_CAUSES = frozenset(
 )
 
 DIST_POLICY_CAUSES = frozenset(
-    {DropCause.DIST_POLICY, DropCause.SDIST_INSTALL_NO_SDIST}
+    {DropCause.DIST_POLICY, DropCause.SDIST_REQUIRED_NO_SDIST}
 )
 
 
@@ -490,10 +490,10 @@ def walk_listing(provider: Provider, normalized: str) -> ListingDiagnosis | None
         return None
 
     policy = _listing.listing_policy(provider, normalized)
-    dropped, survivors, sdist_install = _shared_base_pass(
+    dropped, survivors, sdist_required = _shared_base_pass(
         provider, normalized, files, policy
     )
-    tag_dropped, kept = _tag_pass(provider, survivors, sdist_install)
+    tag_dropped, kept = _tag_pass(provider, survivors, sdist_required)
 
     filtered = provider.versions_cache.get(normalized) or []
     return ListingDiagnosis(
@@ -544,11 +544,11 @@ def _base_pass(
     """Partition ``files`` by every rung that runs before the wheel-tag pass.
 
     Returns the refusals, the survivors in listing order, and the versions
-    the dist-policy rung judged SDIST_INSTALL, which the tag pass needs.
+    the dist-policy rung judged SDIST_ONLY, which the tag pass needs.
     """
     dropped: list[DroppedFile] = []
     survivors: list[tuple[Version, DistFile]] = []
-    sdist_install: set[Version] = set()
+    sdist_required: set[Version] = set()
 
     for dist in files:
         version = _listing.parsed_version(dist.version)
@@ -563,14 +563,18 @@ def _base_pass(
         else:
             effective = policy.default_dist_policy
 
-        if _listing.excluded_by_dist_policy(dist, effective):
+        if _listing.excluded_by_dist_policy(
+            dist,
+            effective,
+            provider.effective_metadata_policy(normalized, version, policy.index_name),
+        ):
             dropped.append(
                 DroppedFile(dist, version, DropCause.DIST_POLICY, effective.value)
             )
             continue
 
-        if effective is DistPolicy.SDIST_INSTALL:
-            sdist_install.add(version)
+        if effective is DistPolicy.SDIST_ONLY:
+            sdist_required.add(version)
 
         cause = python_or_time_verdict(provider, normalized, version, dist, policy)
         if cause is not None:
@@ -585,16 +589,16 @@ def _base_pass(
 
         survivors.append((version, dist))
 
-    return dropped, survivors, sdist_install
+    return dropped, survivors, sdist_required
 
 
 def _tag_pass(
     provider: Provider,
     survivors: Sequence[tuple[Version, DistFile]],
-    sdist_install: set[Version],
+    sdist_required: set[Version],
 ) -> tuple[list[DroppedFile], set[Version]]:
     """Partition the base pass's survivors by the two whole-target rungs."""
-    no_sdist = _listing.sdist_install_wheel_only(list(survivors), sdist_install)
+    no_sdist = _listing.sdist_required_wheel_only(list(survivors), sdist_required)
     tags = provider.wheel_tags
 
     dropped: list[DroppedFile] = []
@@ -605,8 +609,8 @@ def _tag_pass(
                 DroppedFile(
                     dist,
                     version,
-                    DropCause.SDIST_INSTALL_NO_SDIST,
-                    DistPolicy.SDIST_INSTALL.value,
+                    DropCause.SDIST_REQUIRED_NO_SDIST,
+                    DistPolicy.SDIST_ONLY.value,
                 )
             )
             continue
@@ -687,7 +691,7 @@ _SHORT_EMPTY: dict[Cause, str] = {
     DropCause.UPLOAD_TIME_AFTER_CUTOFF: "uploaded-prior-to excluded every file",
     DropCause.DIST_POLICY: "{subject} excluded every file",
     DropCause.ZIP_SDIST: "legacy ZIP sdists require allow-zip-sdists = true",
-    DropCause.SDIST_INSTALL_NO_SDIST: "{subject} excluded every version",
+    DropCause.SDIST_REQUIRED_NO_SDIST: "{subject} excluded every version",
     DropCause.REQUIRES_PYTHON: "no file supports Python {py}",
     DropCause.WHEEL_TAGS: "no wheel matches this platform or Python",
     DropCause.INVALID_VERSION: "every file carries a version PEP 440 cannot parse",
@@ -730,7 +734,8 @@ def empty_listing_diagnostic(
         clauses.append(_render(None, diagnosis.unexplained))
 
     if not diagnosis.published_sdist and not any(
-        record.cause == DropCause.SDIST_INSTALL_NO_SDIST for record in diagnosis.dropped
+        record.cause == DropCause.SDIST_REQUIRED_NO_SDIST
+        for record in diagnosis.dropped
     ):
         clauses.append(_NO_SDIST_TAIL)
 
@@ -841,9 +846,8 @@ def _subject(cause: Cause, record: DroppedFile) -> str:
 def _subject_value(cause: Cause, record: DroppedFile) -> str | None:
     """Return the value a key carries into a line, where it carries one.
 
-    ``sdist-only`` and ``sdist-install`` fail for different reasons, so a
-    dist-policy line without its value leaves the reader guessing which of
-    the two they wrote.  No other key has a value worth the room.
+    Distribution policies exclude different artifact kinds, so their
+    values identify which restriction the user needs to revise.
     """
     if cause in DIST_POLICY_CAUSES:
         return f'"{record.detail}"'
@@ -931,7 +935,7 @@ _CLAUSE_TEMPLATES: dict[Cause | None, str] = {
     DropCause.DIST_POLICY: (
         'dist-policy = "{detail}" excluded {n} [{kind} ({v})|{kind}s (newest: {v})]'
     ),
-    DropCause.SDIST_INSTALL_NO_SDIST: (
+    DropCause.SDIST_REQUIRED_NO_SDIST: (
         'dist-policy = "{detail}" excluded {n} [version|versions]'
         " with no admissible sdist ([|newest: ]{v})"
     ),
@@ -1013,7 +1017,7 @@ def _clause(
     likely wanted is the one named.  An unparseable version has none to
     rank by, so that cause quotes the first file it refused.
     """
-    if cause == DropCause.SDIST_INSTALL_NO_SDIST:
+    if cause == DropCause.SDIST_REQUIRED_NO_SDIST:
         count = len({record.version for record in records})
     else:
         count = len(records)
@@ -1136,7 +1140,7 @@ _REMEDY_FIELDS: dict[Cause, tuple[Field, str]] = {
     DropCause.UPLOAD_TIME_NAIVE: ("uploaded-prior-to", "cutoff"),
     DropCause.UPLOAD_TIME_AFTER_CUTOFF: ("uploaded-prior-to", "cutoff"),
     DropCause.DIST_POLICY: ("dist-policy", "detail"),
-    DropCause.SDIST_INSTALL_NO_SDIST: ("dist-policy", "detail"),
+    DropCause.SDIST_REQUIRED_NO_SDIST: ("dist-policy", "detail"),
 }
 
 

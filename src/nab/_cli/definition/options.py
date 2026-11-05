@@ -20,6 +20,7 @@ from nab_provider.policy import (
     DecisionOrder,
     DistPolicy,
     LocalSource,
+    MetadataPolicy,
     ResolutionStrategy,
     ResolveMode,
     VcsSource,
@@ -37,6 +38,7 @@ from ...flagtypes import (
     ImplementationFlag,
     LockFormat,
     MatrixOrderFlag,
+    MetadataPolicyFlag,
     ModeFlag,
     ResolutionFlag,
 )
@@ -218,6 +220,17 @@ class ProjectKeys(
             render=hooks.render_dist_policy,
         ),
         help="which distribution kinds the resolve may pin",
+        docs="reference/distribution-policy.md",
+    )
+
+    metadata_policy = Value[MetadataPolicyFlag | None](
+        mirrors=MetadataPolicy,
+        key=Layer[MetadataPolicy](
+            rdefault=MetadataPolicy.MATCH_ARTIFACT,
+            parse=values.parse_metadata_policy,
+            render=hooks.render_enum_value,
+        ),
+        help="which artifact supplies dependency metadata",
         docs="reference/distribution-policy.md",
     )
 

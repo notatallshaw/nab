@@ -636,29 +636,14 @@ def pick_dist(
     target: ResolveTarget | None = None,
     wheels: list[WheelFile] | None = None,
 ) -> DistFile:
-    """Pick the dist of one version whose metadata answers for the target.
+    """Choose metadata from a non-empty sequence of one release's artifacts.
 
-    ``dists`` are the artifacts of a single version, and must be non-empty.
-    ``wheels`` is those dists' wheels in listing order, for a caller that
-    already holds them; they are selected from ``dists`` otherwise.
+    Rank wheels by the target's tags and build tag; prefer a sidecar among
+    ties. With no admitted wheel, prefer a gzip-tar sdist over a ZIP.
 
-    Sibling wheels of one version can declare different dependencies, so
-    the wheel the ``tags`` rank most specific wins: :pep:`425` is what an
-    installer picks by, so that wheel's METADATA is the one the pin has to
-    satisfy.  ``tags`` is ``None`` when there is no tag axis to rank by,
-    either because nothing said which machine the resolve is for or because
-    a marker overlay moved the target off its tags.  ``target`` still names
-    the Python, so wheels built for another interpreter drop out
-    (:func:`_python_axis_narrowed`): reading a release's dependencies out of a
-    wheel the target could never install is the unsoundness
-    :func:`check_sibling_metadata_divergence` guards against, one layer
-    earlier.
-
-    Among the wheels that remain the cheapest metadata source wins: a wheel
-    with a :pep:`658` ``metadata_url``, then any wheel.  Only a version
-    publishing no wheel is read from its sdist, which lets
-    :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL` keep wheels in the
-    listing purely as a metadata source.
+    Without known tags, use wheels matching the target's Python and
+    implementation when available. Check fetched siblings that tie the chosen
+    wheel with :func:`check_sibling_metadata_divergence`.
     """
     if len(dists) == 1:
         return dists[0]

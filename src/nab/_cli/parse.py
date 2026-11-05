@@ -6,6 +6,10 @@ conversion.
 
 from __future__ import annotations
 
+__lazy_modules__ = ("nab.policy_migrations",)
+
+from nab.policy_migrations import DIST_POLICY_REPLACEMENTS
+
 __all__ = [
     "Parsed",
     "Row",
@@ -724,6 +728,18 @@ def _bad_choice(
     prog: str, row: Row, value: str, choices: tuple[str, ...]
 ) -> UsageError:
     """Refuse a value outside ``choices``, which the message lists."""
+    if row.long == "--project-dist-policy" and value in DIST_POLICY_REPLACEMENTS:
+        replacement = DIST_POLICY_REPLACEMENTS[value]
+        return UsageError(
+            prog,
+            f"dist-policy {_quote(value)} was removed",
+            suggestions=(
+                (
+                    f"use --project-dist-policy {replacement}"
+                    " --project-metadata-policy prefer-wheel"
+                ),
+            ),
+        )
     message = f"invalid value {_quote(value)} for {_quote(_option_name(row))}"
     return UsageError(prog, message, suggestions=(f"choose from {', '.join(choices)}",))
 

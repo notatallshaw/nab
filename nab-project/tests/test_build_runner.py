@@ -83,6 +83,7 @@ from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.overrides import IndexOverride, PackageOverride
+from nab_provider.policy import MetadataPolicy
 from nab_provider.provider import (
     BuildPolicy,
     DecisionOrder,
@@ -3242,18 +3243,25 @@ class TestRefusalNamesTheDistPolicyThatBarsTheWheels:
         return str(excinfo.value)
 
     @pytest.mark.parametrize(
-        "policy",
-        [DistPolicy.SDIST_ONLY, DistPolicy.SDIST_INSTALL],
-        ids=["sdist-only", "sdist-install"],
+        "metadata_policy",
+        list(MetadataPolicy),
     )
-    def test_a_package_override_is_named_as_the_cause(self, policy: DistPolicy) -> None:
+    def test_a_package_override_is_named_as_the_cause(
+        self, metadata_policy: MetadataPolicy
+    ) -> None:
         """The key the user set is what the message points at."""
         message = self._refusal(
-            package_overrides=(pkg_override(self.NAME, dist_policy=policy),)
+            package_overrides=(
+                pkg_override(
+                    self.NAME,
+                    dist_policy=DistPolicy.SDIST_ONLY,
+                    metadata_policy=metadata_policy,
+                ),
+            )
         )
 
         assert (
-            f"demo 1.0 has dist-policy '{policy.value}', which admits"
+            "demo 1.0 has dist-policy 'sdist-only', which admits"
             " no wheel into the build env" in message
         )
         assert "publishes no wheel" not in message
@@ -3316,7 +3324,11 @@ class TestRefusalNamesTheDistPolicyThatBarsTheWheels:
         [
             pkg_override("other", dist_policy=DistPolicy.SDIST_ONLY),
             pkg_override("demo>2", dist_policy=DistPolicy.SDIST_ONLY),
-            pkg_override("demo", dist_policy=DistPolicy.PREFER_WHEEL),
+            pkg_override(
+                "demo",
+                dist_policy=DistPolicy.WHEEL_OR_SDIST,
+                metadata_policy=MetadataPolicy.PREFER_WHEEL,
+            ),
         ],
         ids=["another-package", "outside-the-range", "admits-wheels"],
     )

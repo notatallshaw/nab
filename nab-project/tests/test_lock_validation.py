@@ -33,6 +33,7 @@ from nab_provider.policy import (
     DecisionOrder,
     DistPolicy,
     LocalSource,
+    MetadataPolicy,
     ResolutionStrategy,
 )
 from nab_provider.records import IndexConfig
@@ -125,6 +126,15 @@ def test_local_metadata_is_read_fresh_and_credentials_are_removed(
     assert snapshot_inputs(path, inputs, _targets())["local"]["local"]["dynamic"] == [
         "metadata"
     ]
+
+
+def test_metadata_policy_changes_the_selection_fingerprint(tmp_path: Path) -> None:
+    path = _project(tmp_path)
+    first = snapshot_inputs(path, ResolveInputs(), _targets())
+    second = snapshot_inputs(
+        path, ResolveInputs(metadata_policy=MetadataPolicy.PREFER_WHEEL), _targets()
+    )
+    assert selection_inputs_digest(first) != selection_inputs_digest(second)
 
 
 def test_dynamic_local_metadata_does_not_claim_static_inputs(tmp_path: Path) -> None:
@@ -222,10 +232,16 @@ def test_known_input_types_are_serializable(value: object, tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize(
-    "value", [BuildPolicy.NEVER, DecisionOrder.STABLE, DistPolicy.WHEEL_ONLY]
+    "value",
+    [
+        BuildPolicy.NEVER,
+        DecisionOrder.STABLE,
+        DistPolicy.WHEEL_ONLY,
+        MetadataPolicy.PREFER_WHEEL,
+    ],
 )
 def test_policy_values_are_encoded_as_plain_strings(
-    value: BuildPolicy | DecisionOrder | DistPolicy, tmp_path: Path
+    value: BuildPolicy | DecisionOrder | DistPolicy | MetadataPolicy, tmp_path: Path
 ) -> None:
     encoded = _value(value, tmp_path)
     assert type(encoded) is str

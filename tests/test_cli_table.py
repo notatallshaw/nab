@@ -55,6 +55,7 @@ _PAGES = (
     ("requires-python", "reference/resolution-settings.md"),
     ("uploaded-prior-to", "reference/resolution-settings.md"),
     ("dist-policy", "reference/distribution-policy.md"),
+    ("metadata-policy", "reference/distribution-policy.md"),
     ("assume-universal-deps", "reference/build-policy.md"),
     ("allow-zip-sdists", "reference/distribution-policy.md"),
     ("build-policy", "reference/build-policy.md"),
@@ -184,13 +185,13 @@ class TestTheDeclaredTable:
         command = [row for row in ALL if row.commands and not row.is_global]
         file_only = [row for row in ALL if not row.commands]
 
-        assert (len(root), len(command), len(file_only)) == (7, 49, 13)
-        assert len(root) + len(command) + len(file_only) == len(ALL) == 69
+        assert (len(root), len(command), len(file_only)) == (7, 50, 13)
+        assert len(root) + len(command) + len(file_only) == len(ALL) == 70
 
         keyed = [row for row in ALL if row.key]
 
-        assert len(keyed) == 31
-        assert sum(1 for row in keyed if row.cli_flag) == 18
+        assert len(keyed) == 32
+        assert sum(1 for row in keyed if row.cli_flag) == 19
         assert sum(1 for row in keyed if not row.commands) == 13
 
     def test_the_sub_rows_spell_the_two_tables(self) -> None:
@@ -218,7 +219,7 @@ class TestTheDeclaredTable:
     def test_the_layered_rows_split_by_scope_as_the_registry_does(self) -> None:
         keyed = [row for row in ALL if row.key]
 
-        assert sum(row.scope is Scope.PROJECT for row in keyed) == 27
+        assert sum(row.scope is Scope.PROJECT for row in keyed) == 28
         assert sum(row.scope is Scope.USER for row in keyed) == 4
 
     def test_the_environment_names_are_the_four_user_keys(self) -> None:
@@ -321,7 +322,7 @@ class TestTheEnumBackedChoiceRows:
     written out, so nothing but ``mirrors=`` ties the copy to its original.
     """
 
-    def test_the_rows_that_mirror_an_enum_are_the_five_that_carry_one(self) -> None:
+    def test_the_enum_backed_rows_are_accounted_for(self) -> None:
         declared = {
             row.name: row.mirrors.__name__
             for row in _DECLARED
@@ -333,11 +334,12 @@ class TestTheEnumBackedChoiceRows:
             "decision-order": "DecisionOrder",
             "mode": "ResolveMode",
             "dist-policy": "DistPolicy",
+            "metadata-policy": "MetadataPolicy",
             "build-policy": "BuildPolicy",
         }
 
     def test_a_row_whose_tokens_are_a_policy_enums_names_that_enum(self) -> None:
-        """A sixth row copied from one has to say so, like the five above."""
+        """A copied enum-backed row must declare the enum it mirrors."""
         by_tokens = {
             tuple(str(member.value) for member in candidate): candidate.__name__
             for candidate in vars(policy).values()

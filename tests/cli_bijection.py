@@ -33,7 +33,7 @@ def _cache_command() -> None:
 
 
 def _config_command() -> None:
-    """``nab config``: 32 parameters."""
+    """``nab config``: 33 parameters."""
     config_command(
         ConfigWords.action,
         ConfigWords.key,
@@ -47,6 +47,7 @@ def _config_command() -> None:
         project_requires_python=ProjectKeys.requires_python,
         project_uploaded_prior_to=ProjectKeys.uploaded_prior_to,
         project_dist_policy=ProjectKeys.dist_policy,
+        project_metadata_policy=ProjectKeys.metadata_policy,
         project_assume_universal_deps=ProjectKeys.assume_universal_deps,
         project_allow_zip_sdists=ProjectKeys.allow_zip_sdists,
         project_build_policy=ProjectKeys.build_policy,
@@ -71,7 +72,7 @@ def _config_command() -> None:
 
 
 def _lock() -> None:
-    """``nab lock``: 42 parameters."""
+    """``nab lock``: 43 parameters."""
     lock(
         ConfigWords.path,
         project_resolution=ProjectKeys.resolution,
@@ -84,6 +85,7 @@ def _lock() -> None:
         project_requires_python=ProjectKeys.requires_python,
         project_uploaded_prior_to=ProjectKeys.uploaded_prior_to,
         project_dist_policy=ProjectKeys.dist_policy,
+        project_metadata_policy=ProjectKeys.metadata_policy,
         project_assume_universal_deps=ProjectKeys.assume_universal_deps,
         project_allow_zip_sdists=ProjectKeys.allow_zip_sdists,
         project_build_policy=ProjectKeys.build_policy,
@@ -119,7 +121,7 @@ def _lock() -> None:
 
 
 def _download() -> None:
-    """``nab download``: 37 parameters."""
+    """``nab download``: 38 parameters."""
     download(
         ConfigWords.path,
         project_resolution=ProjectKeys.resolution,
@@ -132,6 +134,7 @@ def _download() -> None:
         project_requires_python=ProjectKeys.requires_python,
         project_uploaded_prior_to=ProjectKeys.uploaded_prior_to,
         project_dist_policy=ProjectKeys.dist_policy,
+        project_metadata_policy=ProjectKeys.metadata_policy,
         project_assume_universal_deps=ProjectKeys.assume_universal_deps,
         project_allow_zip_sdists=ProjectKeys.allow_zip_sdists,
         project_build_policy=ProjectKeys.build_policy,

@@ -35,7 +35,7 @@ from ..errors import (
 )
 from ..iso8601 import fast_iso_parser, parse_iso_datetime
 from ..metadata import intern_version as _intern_version
-from ..policy import DistPolicy
+from ..policy import DistPolicy, MetadataPolicy
 from ..tags import TagSet
 from ..value import HashableRecord
 from ..vcs_admission import UnsupportedVcsError
@@ -68,7 +68,7 @@ if TYPE_CHECKING:
         "upload-time-after-cutoff",
         "dist-policy",
         "zip-sdist",
-        "sdist-install-no-sdist",
+        "sdist-required-no-sdist",
         "requires-python",
         "wheel-tags",
         "invalid-version",
@@ -97,7 +97,7 @@ class DropCause:
     the order the filter applies.  A file is refused at the first rung that
     objects, and the rungs run in this order: ``INVALID_VERSION``,
     ``DIST_POLICY``, ``REQUIRES_PYTHON``, the four ``UPLOAD_TIME_*``, ``ZIP_SDIST``,
-    ``SDIST_INSTALL_NO_SDIST``, ``WHEEL_TAGS``.
+    ``SDIST_REQUIRED_NO_SDIST``, ``WHEEL_TAGS``.
     """
 
     UPLOAD_TIME_MISSING: Final = "upload-time-missing"
@@ -106,7 +106,7 @@ class DropCause:
     UPLOAD_TIME_AFTER_CUTOFF: Final = "upload-time-after-cutoff"
     DIST_POLICY: Final = "dist-policy"
     ZIP_SDIST: Final = "zip-sdist"
-    SDIST_INSTALL_NO_SDIST: Final = "sdist-install-no-sdist"
+    SDIST_REQUIRED_NO_SDIST: Final = "sdist-required-no-sdist"
     REQUIRES_PYTHON: Final = "requires-python"
     WHEEL_TAGS: Final = "wheel-tags"
     INVALID_VERSION: Final = "invalid-version"
@@ -118,7 +118,7 @@ class DropCause:
         UPLOAD_TIME_AFTER_CUTOFF,
         DIST_POLICY,
         ZIP_SDIST,
-        SDIST_INSTALL_NO_SDIST,
+        SDIST_REQUIRED_NO_SDIST,
         REQUIRES_PYTHON,
         WHEEL_TAGS,
         INVALID_VERSION,
@@ -353,10 +353,8 @@ def filter_distributions(
     cutoffs, and equal-version ordering before the target-specific wheel-tag
     pass. Package and index overrides are evaluated for each candidate version.
 
-    Under ``PREFER_WHEEL`` and ``SDIST_INSTALL``, wheels sort before sdists of
-    the same version as the cheaper metadata source. ``SDIST_INSTALL`` keeps a
-    version only when it has a surviving sdist; its wheels remain metadata
-    candidates and are removed during lock construction.
+    Metadata policy can retain wheels as a metadata source for source-only
+    installation. Those releases still require a surviving sdist.
     """
     base = base_distributions(provider, normalized, files)
     return _apply_wheel_tags(provider, normalized, base)
@@ -381,22 +379,15 @@ def base_distributions(
 
 
 class ListingPolicy(HashableRecord):
-    """The policy config one listing's files are judged under.
-
-    ``overridden`` is true when a per-package or per-index override can
-    vary an answer by version, so the per-candidate lookups have to run.
-    Without one, the defaults here answer for every file in the listing:
-    ``default_drops_wheels`` and ``default_drops_sdists`` are
-    ``default_dist_policy``'s artifact-kind verdict, taken once.
-    """
+    """Resolve-wide defaults and override flags for filtering one listing."""
 
     __slots__ = __match_args__ = (
         "index_name",
         "overridden",
         "default_dist_policy",
+        "default_metadata_policy",
         "default_cutoff",
         "time_filter_active",
-        "default_drops_wheels",
         "default_drops_sdists",
         "default_allow_zip_sdists",
     )
@@ -404,9 +395,9 @@ class ListingPolicy(HashableRecord):
     index_name: Final[str | None]
     overridden: Final[bool]
     default_dist_policy: Final[DistPolicy]
+    default_metadata_policy: Final[MetadataPolicy]
     default_cutoff: Final[datetime | None]
     time_filter_active: Final[bool]
-    default_drops_wheels: Final[bool]
     default_drops_sdists: Final[bool]
     default_allow_zip_sdists: Final[bool]
 
@@ -418,16 +409,16 @@ class ListingPolicy(HashableRecord):
         default_dist_policy: DistPolicy,
         default_cutoff: datetime | None,
         time_filter_active: bool,
-        default_drops_wheels: bool,
         default_drops_sdists: bool,
         default_allow_zip_sdists: bool,
+        default_metadata_policy: MetadataPolicy,
     ) -> None:
         self.index_name = index_name
         self.overridden = overridden
         self.default_dist_policy = default_dist_policy
+        self.default_metadata_policy = default_metadata_policy
         self.default_cutoff = default_cutoff
         self.time_filter_active = time_filter_active
-        self.default_drops_wheels = default_drops_wheels
         self.default_drops_sdists = default_drops_sdists
         self.default_allow_zip_sdists = default_allow_zip_sdists
 
@@ -439,11 +430,11 @@ def listing_policy(provider: Provider, normalized: str) -> ListingPolicy:
         index_name=provider.serving_index(normalized),
         overridden=provider.has_overrides,
         default_dist_policy=default_dist_policy,
+        default_metadata_policy=provider.metadata_policy,
         default_cutoff=provider.uploaded_prior_to,
         time_filter_active=(
             provider.uploaded_prior_to is not None or provider.overrides_set_time
         ),
-        default_drops_wheels=default_dist_policy == DistPolicy.SDIST_ONLY,
         default_drops_sdists=default_dist_policy == DistPolicy.WHEEL_ONLY,
         default_allow_zip_sdists=provider.allow_zip_sdists,
     )
@@ -454,26 +445,17 @@ def _filter_base(
     normalized: str,
     files: Sequence[WheelFile | SdistFile],
 ) -> list[tuple[Version, DistFile]]:
-    """Filter and sort the listing by everything but the target's wheel tags.
+    """Filter by policy, Python and upload time before matching wheel tags.
 
-    Reads only the listing, the resolve-wide policy config, and the
-    target Python, so two targets that differ only by platform get the
-    same list back.  Canonicalized here, ahead of the tag pass, so the
-    representative version of an equal group is picked from the whole
-    listing and does not vary with what a target's tags keep.
-
-    The :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL` drop of a
-    wheel-only version belongs here rather than in the tag pass: it asks
-    whether the version publishes an installable source, and an sdist
-    carries no tags, so no target can lose the sdist that keeps the
-    version alive.  The answer is the same for every target that shares
-    the listing and the policy config, which is what the memo assumes.
+    The result depends on the target Python, not its platform tags.
+    Source-only releases are checked here because wheel tags cannot
+    remove an admitted sdist.
     """
     policy = listing_policy(provider, normalized)
 
     cache = provider.listing_filter_cache
     if cache is None or not cache.shares_pythons:
-        result, sdist_install_versions, sort_with_wheel_first = _prepare_listing(
+        result, sdist_required_versions, sort_with_wheel_first = _prepare_listing(
             provider,
             normalized,
             files,
@@ -481,7 +463,7 @@ def _filter_base(
             target_drops=True,
         )
     else:
-        parsed, sdist_install_versions, sort_with_wheel_first, time_causes = (
+        parsed, sdist_required_versions, sort_with_wheel_first, time_causes = (
             cache.prepared(
                 normalized,
                 provider.stats,
@@ -490,7 +472,7 @@ def _filter_base(
         )
         result = _apply_target_drops(provider, normalized, policy, parsed, time_causes)
 
-    result = _drop_sdist_install_wheel_only(result, sdist_install_versions)
+    result = _drop_sdist_required_wheel_only(result, sdist_required_versions)
 
     _sort_listing(
         result,
@@ -541,7 +523,7 @@ def _prepare_shared(
     The table starts empty: :func:`_python_or_shared_time_cause` fills it
     as it reaches each file, so a file no target admits is never dated.
     """
-    parsed, sdist_install_versions, sort_with_wheel_first = _prepare_listing(
+    parsed, sdist_required_versions, sort_with_wheel_first = _prepare_listing(
         provider, normalized, files, policy, target_drops=False
     )
 
@@ -549,7 +531,7 @@ def _prepare_shared(
     if policy.time_filter_active:
         time_causes = {}
 
-    return parsed, sdist_install_versions, sort_with_wheel_first, time_causes
+    return parsed, sdist_required_versions, sort_with_wheel_first, time_causes
 
 
 def _apply_target_drops(
@@ -600,7 +582,7 @@ def _prepare_listing(
 
     Returns the surviving (version, file) pairs in listing order, the
     versions the dist-policy pass judged
-    :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL`, and whether
+    :attr:`~nab_provider.policy.DistPolicy.SDIST_ONLY`, and whether
     any version's policy wants wheels sorted ahead of sdists.
     """
     if target_drops and not policy.overridden:
@@ -609,7 +591,7 @@ def _prepare_listing(
     result: list[tuple[Version, DistFile]] = []
     sort_with_wheel_first = False
     overridden = policy.overridden
-    sdist_install_versions: set[Version] = set()
+    sdist_required_versions: set[Version] = set()
     wheels_walked = 0
     sdists_walked = 0
     try:
@@ -634,14 +616,20 @@ def _prepare_listing(
             else:
                 effective_dist_policy = policy.default_dist_policy
 
-            if excluded_by_dist_policy(dist, effective_dist_policy):
+            metadata_policy = (
+                provider.effective_metadata_policy(
+                    normalized, version, policy.index_name
+                )
+                if overridden
+                else policy.default_metadata_policy
+            )
+            if excluded_by_dist_policy(dist, effective_dist_policy, metadata_policy):
                 provider.stats.excluded_by_dist_policy += 1
                 continue
 
-            if effective_dist_policy is DistPolicy.SDIST_INSTALL:
-                sdist_install_versions.add(version)
-                sort_with_wheel_first = True
-            elif effective_dist_policy is DistPolicy.PREFER_WHEEL:
+            if effective_dist_policy is DistPolicy.SDIST_ONLY:
+                sdist_required_versions.add(version)
+            if metadata_policy is MetadataPolicy.PREFER_WHEEL:
                 sort_with_wheel_first = True
 
             if target_drops and (
@@ -654,7 +642,7 @@ def _prepare_listing(
     finally:
         _count_files_seen(provider.stats, wheels_walked, sdists_walked)
 
-    return result, sdist_install_versions, sort_with_wheel_first
+    return result, sdist_required_versions, sort_with_wheel_first
 
 
 def _prepare_listing_defaults(
@@ -680,17 +668,22 @@ def _prepare_listing_defaults(
     """
     stats = provider.stats
     requires_python_cache = provider.requires_python_cache
-    drops_wheels = policy.default_drops_wheels
+    drops_wheels = (
+        policy.default_dist_policy is DistPolicy.SDIST_ONLY
+        and policy.default_metadata_policy is MetadataPolicy.MATCH_ARTIFACT
+    )
     drops_sdists = policy.default_drops_sdists
     time_filter_active = policy.time_filter_active
     cutoff = policy.default_cutoff
 
     dist_policy = policy.default_dist_policy
-    sdist_install = dist_policy is DistPolicy.SDIST_INSTALL
-    sort_with_wheel_first = sdist_install or dist_policy is DistPolicy.PREFER_WHEEL
+    sdist_required = dist_policy is DistPolicy.SDIST_ONLY
+    sort_with_wheel_first = (
+        policy.default_metadata_policy is MetadataPolicy.PREFER_WHEEL
+    )
 
     result: list[tuple[Version, DistFile]] = []
-    sdist_install_versions: set[Version] = set()
+    sdist_required_versions: set[Version] = set()
     wheels_walked = 0
     sdists_walked = 0
     try:
@@ -713,8 +706,8 @@ def _prepare_listing_defaults(
                 stats.excluded_by_dist_policy += 1
                 continue
 
-            if sdist_install:
-                sdist_install_versions.add(version)
+            if sdist_required:
+                sdist_required_versions.add(version)
 
             requires_python = dist.requires_python
             excluded = (
@@ -739,7 +732,7 @@ def _prepare_listing_defaults(
     finally:
         _count_files_seen(stats, wheels_walked, sdists_walked)
 
-    return result, sdist_install_versions, sort_with_wheel_first
+    return result, sdist_required_versions, sort_with_wheel_first
 
 
 def _prepared_tag_result(
@@ -1006,31 +999,31 @@ def dropped_release_in_range(
     return any(version_range.filter(dropped))
 
 
-def sdist_install_wheel_only(
+def sdist_required_wheel_only(
     result: list[tuple[Version, DistFile]],
-    sdist_install_versions: set[Version],
+    sdist_required_versions: set[Version],
 ) -> set[Version]:
-    """Return the SDIST_INSTALL versions of ``result`` whose artifacts are all wheels.
+    """Return the source-only versions of ``result`` whose artifacts are all wheels.
 
     Shared with the diagnosis walk, so both read this rung from one body.
     """
-    if not sdist_install_versions:
+    if not sdist_required_versions:
         return set()
 
     versions_with_sdist = {v for v, d in result if isinstance(d, SdistFile)}
-    return sdist_install_versions - versions_with_sdist
+    return sdist_required_versions - versions_with_sdist
 
 
-def _drop_sdist_install_wheel_only(
+def _drop_sdist_required_wheel_only(
     result: list[tuple[Version, DistFile]],
-    sdist_install_versions: set[Version],
+    sdist_required_versions: set[Version],
 ) -> list[tuple[Version, DistFile]]:
-    """Drop SDIST_INSTALL versions whose surviving artifacts are all wheels.
+    """Drop source-only versions whose surviving artifacts are all wheels.
 
     Such a version has no source to install, so it must not reach the
     resolver even though its wheels stay as a cheap metadata source.
     """
-    drop = sdist_install_wheel_only(result, sdist_install_versions)
+    drop = sdist_required_wheel_only(result, sdist_required_versions)
     if not drop:
         return result
     return [pair for pair in result if pair[0] not in drop]
@@ -1074,17 +1067,24 @@ def _canonicalize_equal_versions(
     return [(representative[version], dist) for version, dist in result]
 
 
-def excluded_by_dist_policy(dist: DistFile, policy: object) -> bool:
+def excluded_by_dist_policy(
+    dist: DistFile,
+    policy: object,
+    metadata_policy: MetadataPolicy | None = None,
+) -> bool:
     """Return True when ``policy`` rejects ``dist``'s artifact kind.
 
     ``WHEEL_ONLY`` drops sdists and ``SDIST_ONLY`` drops wheels; the
-    other policies admit both kinds here (``SDIST_INSTALL`` keeps wheels
-    as a metadata source and prunes them at lock-construction time).
+    other policies admit both kinds here (metadata policy can retain
+    wheels for source-only installation until lock construction).
     """
     if policy == DistPolicy.WHEEL_ONLY:
         return not isinstance(dist, WheelFile)
     if policy == DistPolicy.SDIST_ONLY:
-        return isinstance(dist, WheelFile)
+        return (
+            isinstance(dist, WheelFile)
+            and metadata_policy is not MetadataPolicy.PREFER_WHEEL
+        )
     return False
 
 

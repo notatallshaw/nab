@@ -1,234 +1,169 @@
 # Build policy
 
-Some Python packages publish
-[dependency metadata](https://packaging.python.org/en/latest/specifications/core-metadata/) that nab
-can read without running any code; others require invoking a PEP 517 build backend.
-`[tool.nab].build-policy` controls which sources nab may run a build backend for.
+`build-policy` controls where Nab may run a PEP 517 backend to obtain
+[dependency metadata](https://packaging.python.org/en/latest/specifications/core-metadata/). Nab
+first tries to read static metadata.
 
-nab first tries to read static metadata. When that metadata is unavailable, the three levels below
-determine whether nab may invoke a backend.
+## Build permissions
 
-## Defaults and supported archives
+A source's effective policy determines which metadata builds are allowed:
 
-An sdist below means a `.tar.gz`, or a legacy `.zip` when `allow-zip-sdists` is enabled. Allowing
-ZIP sdists does not change build permission or metadata trust; see
-{ref}`Legacy ZIP sdists <legacy-zip-sdists>`.
+| `build-policy` | Sources whose backend may run                               |
+| -------------- | ----------------------------------------------------------- |
+| `never`        | None                                                        |
+| `build-local`  | Local checkouts and workspace members                       |
+| `build-remote` | Local sources, index sdists, VCS clones and direct archives |
 
-The host-specific default is `build-local`: local checkouts and workspace members may invoke a
-backend, but remote sources (PyPI sdists, VCS clones, archive sources) are read statically only. For
-declared platforms, including universal mode, nab defaults to `never`. Host metadata builds require
-an {ref}`explicit dependency assumption <assuming-dependencies-are-universal>` and build policy.
+The host-specific default is `build-local`. Declared platforms, including universal mode, default to
+`never`; [host builds for declared targets](#declared-targets-and-host-builds) need an additional
+opt-in.
 
-## `never`
-
-Static metadata only, from any source:
-
-- Wheels: always fine; their `METADATA` is static by definition.
-- PEP 643 (Metadata 2.2+) sdists: fine when `Dynamic:` lists neither `Requires-Dist` nor
-  `Provides-Extra`; the resolver reads the static `Requires-Dist` lines from `PKG-INFO`.
-- Other sdists: nab reads the bundled `pyproject.toml` when `[project].dynamic` leaves dependencies
-  and optional dependencies static. Otherwise look-ahead skips the candidate unless
-  `assume-universal-deps` obtains dependency metadata from a same-version wheel.
-  `trust-unverified-deps` instead trusts pre-2.2 `PKG-INFO`; see
-  [Distribution policy](distribution-policy.md).
-- Local checkouts declared via `[[tool.nab.local-sources]]`: the directory's `pyproject.toml` is
-  read statically. A missing or malformed `[project]`, or a `dynamic` list covering `version`,
-  `requires-python`, `dependencies`, or `optional-dependencies`, ends the resolve.
-- VCS clones declared via `[[tool.nab.vcs-sources]]`: the clone is fetched and its `pyproject.toml`
-  is read statically. Missing or dynamic metadata ends the resolve.
-- Archive sources declared via `[[tool.nab.archive-sources]]`: the `.tar.gz` is downloaded,
-  hash-verified, and extracted, then its `pyproject.toml` is read statically. Missing or dynamic
-  metadata ends the resolve.
-
-`never` runs no build backend unless a per-package or per-index override raises the policy. It still
-reads configured indexes and source files.
-
-## `build-local` (default)
-
-Adds PEP 517 backend invocation for `[[tool.nab.local-sources]]` and workspace members. When static
-metadata is unavailable, the project's backend runs in an isolated environment and nab reads the
-resulting wheel metadata.
-
-Static metadata is unavailable when `[project]` is missing or malformed, or when `[project].dynamic`
-names `version`, `requires-python`, `dependencies`, or `optional-dependencies`. Remote PyPI sdists,
-VCS clones, and archives remain static-only.
-
-## `build-remote`
-
-Builds extend to VCS clones, archive sources, and remote PyPI sdists. On top of `build-local`:
-
-- VCS-cloned trees with dynamic deps have the backend invoked on the clone.
-- Archive sources declared via `[[tool.nab.archive-sources]]` with dynamic deps have the backend
-  invoked on the extracted tree; the bytes are network-fetched, so they count as remote.
-- PyPI sdists are downloaded, extracted to a temp directory, and built when their `PKG-INFO` deps
-  are not PEP 643 static and the bundled `pyproject.toml` offers no static fallback.
-
-A backend failure surfaces as `UnsupportedSdistError`. For a PyPI sdist, the resolver rejects that
-version and tries another candidate; if none works, the diagnostic includes the build failures. A
-VCS or archive source ends the resolve instead because it is the only candidate for its name.
-
-## A source that cannot be read ends the resolve
-
-A declared local, VCS, archive, or workspace source is the only candidate for its name. If its
-required build is forbidden or fails, nab names the source and exits non-zero. No candidate was
-formed, so there is no no-version diagnostic.
-
-A PyPI sdist is one candidate among many, read at look-ahead, so a forbidden or failed build rejects
-that version alone and the resolver moves on to the next.
-
-## Choosing a level
-
-The default `build-local` handles a local checkout with dynamic metadata without running backends
-for remote sources. Use global `never` to make backend execution opt-in through per-package or
-per-index overrides.
-
-For transitive dependencies that only publish a dynamic sdist (native or CUDA-heavy wheels are the
-usual offenders), prefer a per-package override rather than raising the global to `build-remote`:
+To permit a metadata build for one package:
 
 ```toml
 [tool.nab.packages.deepspeed]
 build-policy = "build-remote"
 ```
 
-The override permits a backend only for that package. If its dependencies are known, a
-`dependencies` metadata override can avoid the build instead; see
-[Metadata overrides](metadata-overrides.md).
+A global `build-policy = "never"` can still be overridden per package or index. See
+[Package and index policy](package-policy.md) for those forms and their conflict rules.
 
-## Building a build requirement
+## Static metadata
 
-nab installs `[build-system].requires` as wheels in an isolated build environment. If a selected
-build requirement has no compatible wheel, nab must build it from an sdist first.
-`build-requires-depth` limits these nested build environments:
+Nab reads these sources before considering a backend:
+
+| Source                                                        | Static metadata                                                                                                   |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Wheel                                                         | `METADATA`, from a sidecar, range request or full download                                                        |
+| Index sdist                                                   | PEP 643 static dependency fields in `PKG-INFO`, or static dependency declarations in the bundled `pyproject.toml` |
+| Local checkout, workspace member, VCS clone or direct archive | Static `[project]` fields in `pyproject.toml`                                                                     |
+
+For PEP 643 sdists, `Requires-Dist` and `Provides-Extra` must not be listed in `Dynamic`.
+Pre-PEP-643 `PKG-INFO` dependencies need
+{ref}`an explicit trust setting <trusting-older-source-metadata>`.
+
+Local and declared-source metadata may need a backend when `[project]` is missing or when `version`,
+`requires-python`, `dependencies` or `optional-dependencies` are dynamic.
+
+The default source archive format is `.tar.gz`. Legacy `.zip` sdists require
+{ref}`allow-zip-sdists <legacy-zip-sdists>`. VCS repositories are cloned and direct archives are
+hash-verified before their metadata is read.
+
+### When metadata is unavailable
+
+An index sdist is one candidate release. If its required build is forbidden or fails, Nab rejects
+that release and can try another. If no release works, the resolution error includes the failures.
+
+A declared local, VCS, archive or workspace source is the only source for its package. If metadata
+cannot be obtained, the command fails; there is no alternate index release to try.
+
+A [dependency override](metadata-overrides.md) can supply known dependencies without a build.
+{ref}`assume-universal-deps <assuming-dependencies-are-universal>` can reuse same-version wheel
+dependencies for a dynamic sdist.
+
+## Build requirements
+
+A backend runs in an isolated environment containing `[build-system].requires`. Nab installs these
+requirements as wheels. A requirement available only as an sdist needs its own build first.
+
+Set the permitted nesting depth with:
 
 ```toml
 [tool.nab]
-build-requires-depth = 0   # the default
+build-requires-depth = 0
 ```
 
-### Nested build depth
+The depth counts build environments opened beneath the first build:
 
-The default depth `0` refuses a nested build and reports the requirement and its build chain. At
-depth `1`, nab may build it from an sdist; that build's own requirements must be wheels. A value `n`
-permits `n` nested build environments.
+| Depth         | Allowed nested builds                                                     |
+| ------------- | ------------------------------------------------------------------------- |
+| `0` (default) | None; report the requirement and build chain                              |
+| `1`           | Build a requirement from source; that build's requirements must be wheels |
+| `n`           | At most `n` nested build environments                                     |
 
-Build requirements are not restricted to releases with host-compatible wheels. If a selected release
-needs a build beyond `build-requires-depth`, nab refuses it and names the version.
+Nab resolves the requirement as written. It can select a release needing a source build even when an
+older release has wheels. The command fails if that build exceeds the depth limit.
 
-If a built wheel's `Requires-Python` excludes the host interpreter, nab records that restriction for
-the release and resolves the build requirements again. This can select an older release within the
-original requirement bounds. If no compatible solution remains, nab reports the built wheel's Python
-incompatibility.
-
-A per-package or per-index `dist-policy` narrows the resolve the other way. `sdist-only` and
-`sdist-install` keep a build requirement's wheels out of the environment even where the index
-publishes one this host installs, so satisfying it means building it, and the refusal names the
-policy rather than the listing.
-
-### Build outputs and cycles
-
-Build output must match the resolved release because its environment was chosen for that release. A
-wheel with another name or version is refused. PEP 440 treats `1.0` and `1.0.0` as one release, but
-not `1.0+local`.
-
-A build already in the chain cannot be re-entered:
-
-```text
-cyclic build requirement: a 1.0 -> b 2.0 -> a 1.0
-```
-
-Two versions of one package in a chain are not a cycle; that terminates.
+A package or index `dist-policy = "sdist-only"` also requires a source build.
+`metadata-policy = "prefer-wheel"` can supply wheel metadata, but installation still uses the source
+archive. The refusal names the distribution policy when it excluded an available wheel.
 
 ### Policy inside build environments
 
-A build environment reads its build requirements' metadata statically, so a per-package or per-index
-`build-policy` override may forbid a build there but never permit one. To keep a build requirement
-from being built, pin it to wheels:
+The inner resolve inherits package and index overrides. A `build-policy` override may forbid a
+metadata build there but cannot permit one. To require wheels for a build dependency:
 
 ```toml
 [tool.nab.packages.meson]
 dist-policy = "wheel-only"
 ```
 
-`build-requires-depth` has no effect when no backend can run. It applies to builds permitted by
-package or index overrides, even with a global `build-policy = "never"`.
+`build-requires-depth` also applies to builds permitted by overrides, even when the global
+`build-policy` is `never`.
 
-## Overrides
+### Build results and cycles
 
-A per-package override replaces the global build policy for its selected packages, in either
-direction. Key it by name:
+A built wheel must match the requested release. PEP 440 treats `1.0` and `1.0.0` as equal, but
+`1.0+local` is a different version.
 
-```toml
-[tool.nab]
-build-policy = "never"
+If its `Requires-Python` excludes the host, Nab records the restriction and resolves the build
+requirements again. This can select an older allowed release. If none works, the command fails with
+the Python incompatibility.
 
-[tool.nab.packages.deepspeed]
-build-policy = "build-remote"
+Nab refuses a build cycle such as:
+
+```text
+a 1.0 -> b 2.0 -> a 1.0
 ```
 
-Or list several packages in one `[[tool.nab.package-rules]]` entry:
+Two different versions of a package in one chain are allowed.
 
-```toml
-[[tool.nab.package-rules]]
-match = ["deepspeed", "flash-attn"]
-build-policy = "build-remote"
-```
+(declared-targets-and-host-builds)=
 
-Set the build policy for every package served from a given index with a per-index override instead:
+## Declared targets and host builds
 
-```toml
-[tool.nab.index.internal]
-build-policy = "build-remote"
-```
+A backend runs on the host and reports the host's metadata. Target declarations change the default
+permission:
 
-Declared local, VCS, and archive sources match only an override keyed by the bare name. Their
-version is unknown when the build is chosen, so version-scoped overrides do not apply. Per-index
-overrides also do not apply because a declared source has no serving index.
+| Target                                                  | Metadata builds                                                          |
+| ------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Host Python and platform                                | Apply the selected build policy                                          |
+| Different Python on the host platform                   | Apply the policy and warn that the host interpreter supplies metadata    |
+| Declared platform or implementation, including a matrix | Default to `never`; require `assume-universal-deps` and build permission |
 
-## Declared platforms and host builds
+The last row also applies when the declared platform matches the host, and to singleton matrices
+resolved in `specific` mode. Without the dependency assumption, an explicit non-`never` build policy
+for a declared target is a configuration error.
 
-A PEP 517 backend reports the host's dependencies. By default, any declared platform or
-implementation forbids host builds, even when it names the host.
-
-`build-policy` defaults to `never`; an explicit non-`never` value without an `assume-universal-deps`
-opt-in is a config error before resolution. This covers both ways to declare a machine:
-
-- `[tool.nab.environment]` with a `platform` or an `implementation`.
-- `[tool.nab.matrix]`, including a singleton matrix resolved in `specific` mode.
-
-This matches pip, which requires `--only-binary=:all:` under `--platform`, `--abi`, or
-`--implementation`.
-
-A retarget of the Python axis alone (`[tool.nab.environment].python`, or `--python X.Y`) is
-different: the machine is still the host. nab warns that a build would report the host interpreter's
-metadata, and permits it.
-
-Set `build-policy = "never"` to forbid it.
+For a Python-only retarget, use `build-policy = "never"` to forbid host builds.
 
 (assuming-dependencies-are-universal)=
 
 ## Assuming dependencies are universal
 
-`assume-universal-deps` lets a dynamic sdist reuse dependency declarations from a same-version
-wheel, even when that wheel cannot be installed on the target. Enable it only when you know those
-declarations apply across targets:
+Enable `assume-universal-deps` only when a release's dependency declarations apply across the
+selected targets:
 
 ```toml
 [tool.nab.packages."watchdog==6.0.0"]
 assume-universal-deps = true
 ```
 
-When the sdist has no static `pyproject.toml` fallback, nab reads the wheel's `Requires-Dist` and
-`Provides-Extra` and evaluates their markers for each target. The sdist remains the install
-artifact. The metadata source must satisfy upload cutoffs, distribution policy, withdrawal
-admission, metadata hashes and release identity. `sdist-only` forbids wheel metadata;
-`sdist-install` permits it.
+For a dynamic sdist with no static `pyproject.toml` fallback, Nab can read `Requires-Dist` and
+`Provides-Extra` from a same-version wheel. It evaluates their markers for each target. The wheel
+need not be installable there; the sdist remains the install artifact.
 
-The default is `false`. Set it globally with `[tool.nab].assume-universal-deps` or
-`--project-assume-universal-deps`, or use [package and index overrides](package-policy.md). A scoped
-`false` cancels a global `true`. Reusing metadata that omits target-dependent requirements can
-produce an incorrect lock. The setting does not make incomplete dynamic `PKG-INFO` authoritative.
+The metadata source must pass upload cutoffs, distribution and metadata policies, yanking rules,
+hash checks and release-identity checks. With source-only installation,
+`metadata-policy = "prefer-wheel"` must also permit the wheel read.
 
-If no wheel supplies metadata, also set `build-policy = "build-remote"` to permit a host metadata
-build. Declared targets require both settings explicitly; the host must be able to build the
-package. Declared local, VCS and archive sources need a bare-name override because their version is
+The default is `false`. Set it globally, per package or per index, or use
+`--project-assume-universal-deps`. A scoped `false` cancels a global `true`.
+
+An incorrect assumption can omit target-specific dependencies from the lock. It does not make
+incomplete dynamic `PKG-INFO` authoritative.
+
+If no wheel supplies metadata, `build-policy = "build-remote"` permits a host metadata build.
+Declared targets need both settings explicitly, and the host must be able to build the package. For
+declared local, VCS and archive sources, use a bare package name in the override: their version is
 unknown before metadata preparation.

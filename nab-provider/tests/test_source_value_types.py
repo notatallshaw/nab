@@ -29,6 +29,7 @@ from nab_provider.policy import (
     BuildPolicy,
     DistPolicy,
     LocalSource,
+    MetadataPolicy,
     SourceMaterialization,
     SourceRequest,
     VcsSource,
@@ -143,6 +144,7 @@ CASES = [
             "pkg",
             SELECTOR.specifier.to_range(),
             DistPolicy.WHEEL_ONLY,
+            MetadataPolicy.MATCH_ARTIFACT,
             False,
             False,
             BuildPolicy.NEVER,
@@ -161,6 +163,7 @@ CASES = [
             "other",
             OTHER_SELECTOR.specifier.to_range(),
             DistPolicy.SDIST_ONLY,
+            MetadataPolicy.PREFER_WHEEL,
             True,
             True,
             BuildPolicy.BUILD_REMOTE,
@@ -176,6 +179,7 @@ CASES = [
         ),
         {
             "dist_policy": None,
+            "metadata_policy": None,
             "dist_trust_unverified_deps": None,
             "assume_universal_deps": None,
             "build_policy": None,
@@ -197,6 +201,7 @@ CASES = [
         IndexOverride,
         (
             DistPolicy.WHEEL_ONLY,
+            MetadataPolicy.MATCH_ARTIFACT,
             False,
             False,
             BuildPolicy.NEVER,
@@ -207,6 +212,7 @@ CASES = [
         ),
         (
             DistPolicy.SDIST_ONLY,
+            MetadataPolicy.PREFER_WHEEL,
             True,
             True,
             BuildPolicy.BUILD_REMOTE,
@@ -217,6 +223,7 @@ CASES = [
         ),
         {
             "dist_policy": None,
+            "metadata_policy": None,
             "dist_trust_unverified_deps": None,
             "assume_universal_deps": None,
             "build_policy": None,

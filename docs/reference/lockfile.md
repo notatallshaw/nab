@@ -3,13 +3,13 @@
 nab resolves packages but does not install them. Its lock records the pinned versions, artifact
 locations, and digests for another tool to consume.
 
-`nab lock` writes one of three formats from the same in-memory result:
+Choose the output format with `--format`:
 
-- `--format pylock` (default): a [PEP 751] `pylock.toml`.
-- `--format requirements`: a pip-compatible `requirements.txt`, sorted by name. Index pins carry
-  recorded digests; local, VCS, and archive pins are URL lines.
-- `--format requirements-without-hashes`: the same output without separate `--hash` lines. An
-  archive URL still carries its digest.
+| Format                        | Output                                                                                |
+| ----------------------------- | ------------------------------------------------------------------------------------- |
+| `pylock` (default)            | A [PEP 751] `pylock.toml`                                                             |
+| `requirements`                | A pip-compatible requirements file with recorded hashes                               |
+| `requirements-without-hashes` | Requirements without separate `--hash` options; direct archive URLs keep their digest |
 
 Pass `--output -` to write to stdout instead of a file. See [Use a lock](../how-to/use-the-lock.md)
 for installation workflows.
@@ -23,21 +23,29 @@ locations and hashes.
 Index digests come from the listing; nab does not fetch every index artifact to re-hash it. A direct
 archive's digest comes from its configured URL and is verified before metadata is read.
 
+(metadata-selection)=
+
 ### Metadata selection
 
-When several wheels fit the target, nab reads the one whose PEP 425 tags rank highest. It prefers a
-[PEP 658] metadata sidecar, then reads the wheel itself through HTTP ranges or a full fetch. With no
-wheel, it reads the sdist; dynamic metadata may require a [permitted build](build-policy.md).
+Nab reads the compatible wheel whose PEP 425 tags rank highest. Among equally ranked wheels, it
+prefers one with a [PEP 658] metadata sidecar. Otherwise it reads `METADATA` with HTTP ranges or a
+full wheel download.
 
-Local wheels are read from disk; VCS and archive sources are materialised to read their metadata.
+With `dist-policy = "sdist-only"`, the default metadata source is the sdist. Set
+`metadata-policy = "prefer-wheel"` to allow wheel metadata instead. Source metadata may require a
+[permitted build](build-policy.md); see [Distribution policy](distribution-policy.md) for the
+choices.
 
-A wheel the target's PEP 425 tags reject was never a candidate, so it is not in the lock: a lock
-resolved on `linux_x86_64` carries no `win_amd64` wheels.
+Local wheels are read from disk. VCS repositories and direct archives are prepared before reading
+their metadata.
+
+Artifact filtering follows the declared targets. A universal lock can include Windows wheels when
+generated on Linux.
 
 ## PEP 751 `pylock.toml`
 
-The PEP 751 lockfile is the cross-tool format produced by `nab lock --format pylock` and checked by
-`nab lock --locked`. `nab download` does not consume it; that command resolves project inputs again.
+`nab lock --format pylock` writes the lock, and `nab lock --locked` checks it against project
+inputs. `nab download` resolves the project again; it does not read this file.
 
 Nab records the selected extras and groups, environment declarations, package sources and artifact
 digests. See the
@@ -76,10 +84,8 @@ starlette==0.35.1 \
     --hash=sha256:...
 ```
 
-Each recorded digest gets one `--hash` line. nab records `sha256`, `sha384`, and `sha512`, then
-sorts by algorithm and digest rather than artifact.
-
-Output therefore does not depend on discovery order. Continuation backslashes match pip-compile.
+Nab records `sha256`, `sha384` and `sha512` digests. Each gets a `--hash` option, sorted by
+algorithm and digest. Continuation backslashes match pip-compile.
 
 ### Source URL lines
 
@@ -132,14 +138,18 @@ reproducibility
 `tool.nab.validation` records compact input fingerprints bound to the standard lock contents.
 Package selections, environments and sources remain in the standard Pylock fields.
 
-For validation format 1, `contents-sha256` hashes the UTF-8 encoding of the lock's parsed contents
-with the top-level `tool` table removed. Encode the remaining data as JSON with keys sorted, no
-whitespace between items, and non-ASCII characters escaped. Datetime values use
-`YYYY-MM-DDTHH:MM:SS[.ffffff]` followed by their UTC offset when present. Emit exactly six
-fractional digits when microseconds are nonzero and omit the fractional part otherwise. Write UTC as
+For validation format 1, compute `contents-sha256` as follows:
+
+1. Remove the top-level `tool` table from the parsed lock.
+2. Encode the remaining data as JSON: sort keys, omit whitespace between items and escape non-ASCII
+   characters.
+3. Encode that JSON as UTF-8 and calculate its SHA-256 digest.
+
+Datetime values use `YYYY-MM-DDTHH:MM:SS[.ffffff]` followed by any UTC offset. Include six
+fractional digits when microseconds are nonzero; otherwise omit the fractional part. Write UTC as
 `+00:00`.
 
-For example, Python tools can use:
+On Python 3.11 or newer:
 
 ```python
 import hashlib
@@ -167,9 +177,6 @@ encoded = json.dumps(
 ).encode("utf-8")
 assert hashlib.sha256(encoded).hexdigest() == validation["contents-sha256"]
 ```
-
-Regenerate validation records created with the earlier datetime encoding before using
-`nab lock --locked`.
 
 [hash-checking]: https://pip.pypa.io/en/stable/topics/secure-installs/#hash-checking-mode
 [pep 658]: https://packaging.python.org/en/latest/specifications/simple-repository-api/

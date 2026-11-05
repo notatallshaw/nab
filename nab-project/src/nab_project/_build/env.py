@@ -877,7 +877,7 @@ def _wheel_barring_dist_policy(
     """Return the ``dist-policy`` in force for ``pin`` when it bars wheels.
 
     ``None`` when neither a per-package nor a per-index override sets
-    ``sdist-only`` or ``sdist-install``. Only those policies bar wheels
+    ``sdist-only`` or ``sdist-only``. Only those policies bar wheels
     here because the build env's own resolve runs at ``wheel-or-sdist``.
     Whether the index published a wheel to bar is
     not known here, so a returned policy says the env would have refused
@@ -904,7 +904,7 @@ def _wheel_barring_dist_policy(
     if policy is None:
         policy = _serving_index_dist_policy(inputs, pin.index)
 
-    if policy is DistPolicy.SDIST_ONLY or policy is DistPolicy.SDIST_INSTALL:
+    if policy is DistPolicy.SDIST_ONLY:
         return policy
     return None
 
@@ -983,6 +983,7 @@ def _inner_resolve_inputs(inputs: ResolveInputs) -> ResolveInputs:
         uploaded_prior_to=inputs.uploaded_prior_to,
         decision_order=inputs.decision_order,
         dist_policy=DistPolicy.WHEEL_OR_SDIST,
+        metadata_policy=inputs.metadata_policy,
         build_policy=BuildPolicy.NEVER,
     )
 

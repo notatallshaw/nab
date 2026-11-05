@@ -46,6 +46,56 @@ requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
 )
 
+
+class TestRequiresPythonCoverage:
+    @pytest.mark.parametrize(
+        ("specifiers", "covered"),
+        [
+            pytest.param((), False, id="no-wheels"),
+            pytest.param(("",), True, id="unrestricted"),
+            pytest.param((">=3.12",), True, id="whole-minor"),
+            pytest.param((">=3.12.4",), False, id="patch-floor"),
+            pytest.param(("!=3.12.4",), False, id="patch-hole"),
+            pytest.param(("!=3.12.4", "==3.12.4"), True, id="union-fills-hole"),
+            pytest.param((">=3.13",), False, id="different-minor"),
+            pytest.param(("==3.12.*",), True, id="wildcard"),
+        ],
+    )
+    def test_minor_range(self, specifiers: tuple[str, ...], covered: bool) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec("linux_x86_64")
+        )
+        assert (
+            target.covered_by_requires_python(
+                SpecifierSet(value) for value in specifiers
+            )
+            is covered
+        )
+
+    @pytest.mark.parametrize("clause", ["not a marker", 'sys_platform == "linux"'])
+    def test_unknown_slice_cannot_prove_coverage(self, clause: str) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec("linux_x86_64")
+        ).with_micro_slice("3.12.4", (clause,))
+        assert not target.covered_by_requires_python([SpecifierSet("")])
+
+    def test_split_range(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec("linux_x86_64")
+        ).with_micro_slice("3.12.4", ('python_full_version >= "3.12.4"',))
+        assert target.covered_by_requires_python([SpecifierSet(">=3.12.4")])
+        assert not target.covered_by_requires_python([SpecifierSet(">=3.12.5")])
+
+    def test_exact_patch(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.12",
+            python_full_version="3.12.4",
+            spec=PlatformSpec("linux_x86_64"),
+        )
+        assert target.covered_by_requires_python([SpecifierSet("==3.12.4")])
+        assert not target.covered_by_requires_python([SpecifierSet("!=3.12.4")])
+
+
 _HOST_ENV: dict[str, str] = {
     "implementation_name": "cpython",
     "implementation_version": "3.13.2",

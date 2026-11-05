@@ -23,7 +23,7 @@ from ._vendor.packaging.utils import canonicalize_name
 from .errors import MetadataError, MissingExtraError
 from .extra_keys import split_extra
 from .metadata import intern_version
-from .policy import DistPolicy, ExtrasMode
+from .policy import DistPolicy, ExtrasMode, MetadataPolicy
 from .records import SdistFile, WheelFile
 from .value import HashableRecord, Record, field_names
 
@@ -169,14 +169,14 @@ class YankCandidates:
         *,
         assume_sorted: bool = False,
     ) -> bool:
-        """Require an sdist for sdist-install; sorted inputs must be newest first."""
+        """Require an sdist for sdist-only; sorted inputs must be newest first."""
         if (
             self.provider.effective_dist_policy(
                 candidate.base,
                 candidate.version,
                 self.provider.serving_index(candidate.base),
             )
-            is not DistPolicy.SDIST_INSTALL
+            is not DistPolicy.SDIST_ONLY
         ):
             return True
         files = (
@@ -200,14 +200,20 @@ class YankCandidates:
             for file in files
         ):
             return self.provider
-        # Sdist-install can read metadata from an equivalent wheel without selecting it.
+        # Wheel metadata may use an equivalent version string.
         allow_equivalent_wheel_metadata = (
             self.provider.effective_dist_policy(
                 candidate.base,
                 candidate.version,
                 self.provider.serving_index(candidate.base),
             )
-            is DistPolicy.SDIST_INSTALL
+            is DistPolicy.SDIST_ONLY
+            and self.provider.effective_metadata_policy(
+                candidate.base,
+                candidate.version,
+                self.provider.serving_index(candidate.base),
+            )
+            is MetadataPolicy.PREFER_WHEEL
         )
         provider = self.factory()
         provider.versions_cache[candidate.base] = [

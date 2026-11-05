@@ -231,7 +231,7 @@ def test_script_lock_freshness(script_source: Path, change: str) -> None:
     elif change == "dependency":
         text = text.replace('["demo"]', '["child"]')
     else:
-        text = text.replace('dist-policy="wheel-only"', 'dist-policy="prefer-wheel"')
+        text = text.replace('dist-policy="wheel-only"', 'dist-policy="sdist-if-needed"')
     script_source.write_text(text)
     expected = 0 if change in ("body", "relaxed-bound") else 1
     assert (
@@ -409,7 +409,7 @@ def test_script_output_is_preserved_when_an_index_is_unavailable(
 def test_script_inline_and_directory_policies_conflict_explicitly(
     script_source: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    (script_source.parent / "nab.toml").write_text('dist-policy="prefer-wheel"\n')
+    (script_source.parent / "nab.toml").write_text('dist-policy="sdist-if-needed"\n')
     assert run(("lock", "--script", str(script_source))) == 1
     error = capsys.readouterr().err
     assert "conflicting values" in error

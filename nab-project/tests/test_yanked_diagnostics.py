@@ -11,7 +11,7 @@ from nab_project.diagnostics import ResolutionMessage
 from nab_project.resolve import resolve_with_coordinator
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider.marker_holds import dependency_marker_holds
-from nab_provider.policy import DistPolicy
+from nab_provider.policy import DistPolicy, MetadataPolicy
 from nab_provider.provider import Provider
 from nab_provider.records import SdistFile
 from nab_provider.resolver_inputs import build_resolver_inputs
@@ -222,7 +222,11 @@ def test_install_artifact_identity_failure_does_not_invent_a_listing_refusal() -
     requirements = [Requirement("leaf===1")]
     allowed = requirements[0].specifier.to_range()
     factory = partial(
-        Provider, port, defer_yanked=True, dist_policy=DistPolicy.SDIST_INSTALL
+        Provider,
+        port,
+        defer_yanked=True,
+        dist_policy=DistPolicy.SDIST_ONLY,
+        metadata_policy=MetadataPolicy.PREFER_WHEEL,
     )
     search = YankProxyProvider(
         factory(),

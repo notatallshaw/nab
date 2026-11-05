@@ -71,6 +71,7 @@ from nab_provider.errors import ConfigError
 from nab_provider.marker_holds import DependencyMarkerEvaluator, dependency_marker_holds
 from nab_provider.metadata import WheelMetadata
 from nab_provider.overrides import IndexOverride, PackageOverride
+from nab_provider.policy import MetadataPolicy
 from nab_provider.provider import (
     ArchiveSource,
     BuildPolicy,
@@ -1624,7 +1625,7 @@ class TestResolveOneTarget:
         with pytest.raises(MissingHashError, match="no acceptable hash"):
             write_requirements_with_hashes(lock_input)
 
-    def test_sdist_install_wheel_only_version_not_a_candidate(self) -> None:
+    def test_source_install_wheel_only_version_not_a_candidate(self) -> None:
         """A wheel-only version under sdist-install is never a candidate.
 
         pkg 1.0 publishes only a wheel, so under sdist-install it has no
@@ -1636,14 +1637,18 @@ class TestResolveOneTarget:
             listings={"pkg": [_make_wheel("1.0", package="pkg")]}, auto_metadata=True
         )
         settings = _settings(
-            coordinator, _no_build(dist_policy=DistPolicy.SDIST_INSTALL)
+            coordinator,
+            _no_build(
+                dist_policy=DistPolicy.SDIST_ONLY,
+                metadata_policy=MetadataPolicy.PREFER_WHEEL,
+            ),
         )
         tr = _resolve_one_target(_linux_311(), _reqs("pkg"), (), settings, {})
         assert not tr.success
         assert isinstance(tr.error, ResolutionError)
         assert tr.pins == {}
 
-    def test_sdist_install_yields_to_older_sdist_version(self) -> None:
+    def test_source_install_yields_to_older_sdist_version(self) -> None:
         """A wheel-only newest version yields to an older sdist release.
 
         foo 2.0 publishes only a wheel, so under sdist-install it has no
@@ -1662,7 +1667,11 @@ class TestResolveOneTarget:
             auto_metadata=True,
         )
         settings = _settings(
-            coordinator, _no_build(dist_policy=DistPolicy.SDIST_INSTALL)
+            coordinator,
+            _no_build(
+                dist_policy=DistPolicy.SDIST_ONLY,
+                metadata_policy=MetadataPolicy.PREFER_WHEEL,
+            ),
         )
         tr = _resolve_one_target(_linux_311(), _reqs("foo"), (), settings, {})
         assert tr.success

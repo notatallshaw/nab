@@ -141,6 +141,7 @@ from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runti
     ImplementationFlag,
     LockFormat,
     MatrixOrderFlag,
+    MetadataPolicyFlag,
     ModeFlag,
     ResolutionFlag,
 )
@@ -209,6 +210,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     project_requires_python: str | None = None,
     project_uploaded_prior_to: str | None = None,
     project_dist_policy: DistPolicyFlag | None = None,
+    project_metadata_policy: MetadataPolicyFlag | None = None,
     project_assume_universal_deps: bool | None = None,
     project_allow_zip_sdists: bool | None = None,
     project_build_policy: BuildPolicyFlag | None = None,
@@ -300,6 +302,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         cli_requires_python=project_requires_python,
         cli_uploaded_prior_to=project_uploaded_prior_to,
         cli_dist_policy=project_dist_policy,
+        cli_metadata_policy=project_metadata_policy,
         cli_assume_universal_deps=project_assume_universal_deps,
         cli_allow_zip_sdists=project_allow_zip_sdists,
         cli_build_policy=project_build_policy,

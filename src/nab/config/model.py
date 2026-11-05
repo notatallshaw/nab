@@ -67,6 +67,7 @@ from nab_provider.policy import (
     DecisionOrder,
     DistPolicy,
     LocalSource,
+    MetadataPolicy,
     ResolutionStrategy,
     ResolveMode,
     VcsSource,
@@ -174,6 +175,7 @@ class NabProjectConfig(ValueType):
         "requires_python_source",
         "uploaded_prior_to",
         "dist_policy",
+        "metadata_policy",
         "allow_zip_sdists",
         "build_policy",
         "build_requires_depth",
@@ -209,6 +211,7 @@ class NabProjectConfig(ValueType):
     requires_python_source: str
     uploaded_prior_to: datetime | None
     dist_policy: DistPolicy
+    metadata_policy: MetadataPolicy
     allow_zip_sdists: bool
     build_policy: BuildPolicy
     # How many build environments may be opened beneath the first one, to
@@ -258,6 +261,7 @@ class NabProjectConfig(ValueType):
         requires_python_source: str = _TOOL_NAB_REQUIRES_PYTHON,
         uploaded_prior_to: datetime | None = None,
         dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST,
+        metadata_policy: MetadataPolicy = MetadataPolicy.MATCH_ARTIFACT,
         allow_zip_sdists: bool = False,
         build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL,
         build_requires_depth: int = 0,
@@ -288,6 +292,7 @@ class NabProjectConfig(ValueType):
         self.requires_python_source = requires_python_source
         self.uploaded_prior_to = uploaded_prior_to
         self.dist_policy = dist_policy
+        self.metadata_policy = metadata_policy
         self.allow_zip_sdists = allow_zip_sdists
         self.build_policy = build_policy
         self.build_requires_depth = build_requires_depth
@@ -521,6 +526,7 @@ def _config_from_effective(
         requires_python_source=requires_python_source,
         uploaded_prior_to=effective["uploaded-prior-to"].value,
         dist_policy=dist_policy,
+        metadata_policy=effective["metadata-policy"].value,
         allow_zip_sdists=effective["allow-zip-sdists"].value,
         build_policy=build_policy,
         build_requires_depth=effective["build-requires-depth"].value,
