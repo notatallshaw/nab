@@ -190,6 +190,31 @@ satisfying `RangeProtocol`, a `root_version` to decide the virtual root at, whic
 `range_type.singleton()` has to accept, and a `format_range` unless that type's `str` already reads
 as a constraint. nab drives the resolver this way, with a PEP 440 range type.
 
+## Checking complete proposals
+
+Pass `solution_validator` to `solve` when a host rule needs the complete plan:
+
+```python
+solution = Resolver(NewestFirstProvider(graph)).solve(
+    {"app": Range.singleton(1)},
+    solution_validator=lambda proposed: proposed.pins["json"] == 1,
+)
+print(sorted(solution.pins.items()))
+```
+
+```text
+[('app', 1), ('http', 2), ('json', 1)]
+```
+
+Returning false excludes that complete combination and continues within the same iteration budget.
+This search does not enumerate unknown external sources.
+
+The verdict must remain false for those pins under the same roots and constraints throughout the
+solve. Candidate identities and dependencies must stay stable; changed metadata needs a new solve.
+
+The callback must leave its input unchanged. Raise for transient errors; exceptions propagate. A new
+solve clears previous rejections.
+
 ## The supported API
 
 These module paths will not move without a major version bump:
