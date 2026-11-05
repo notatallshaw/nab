@@ -9159,8 +9159,6 @@ size = 10734301
 [packages.wheels.hashes]
 sha256 = "e74ce348967d83360c9212a1082358bb3bc5b65ced55d17017715a90abb18f28"
 
-[tool]
-
 [tool.nab]
 nab-version = "0.0.26.dev0"
 created-at = 2026-11-03T02:05:57.036486+00:00

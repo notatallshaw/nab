@@ -98,8 +98,13 @@ def _assignment(key: str, value: object, output: list[str]) -> None:
 
 
 def _table(
-    values: Mapping[str, object], path: tuple[str, ...], output: list[str]
+    values: Mapping[str, object],
+    path: tuple[str, ...],
+    output: list[str],
+    *,
+    header: str = "",
 ) -> None:
+    """Emit values and child tables, omitting implicit parent headers."""
     children: list[
         tuple[str, Mapping[str, object] | Sequence[Mapping[str, object]]]
     ] = []
@@ -110,14 +115,19 @@ def _table(
         ):
             children.append((key, value))
         else:
+            if header:
+                output.append(header)
+                header = ""
             _assignment(key, value, output)
+
+    if not values and header:
+        output.append(header)
 
     for key, value in children:
         nested_path = (*path, _key(key))
         name = ".".join(nested_path)
         if isinstance(value, Mapping):
-            output.append("\n[" + name + "]\n")
-            _table(value, nested_path, output)
+            _table(value, nested_path, output, header="\n[" + name + "]\n")
         else:
             for row in value:
                 output.append("\n[[" + name + "]]\n")

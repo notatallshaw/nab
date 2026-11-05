@@ -41,6 +41,23 @@ def test_tuple_is_written_as_array() -> None:
     assert toml_io.loads(dumps({"values": (1, "text")})) == {"values": [1, "text"]}
 
 
+@pytest.mark.parametrize(
+    ("document", "expected"),
+    [
+        ({"tool": {"nab": {"version": "1"}}}, '[tool.nab]\nversion = "1"\n'),
+        ({"tool": {}}, "[tool]\n"),
+        ({"tool": {"nab": {}}}, "[tool.nab]\n"),
+        ({"tool": {"nab": {"rows": [{}]}}}, "[[tool.nab.rows]]\n"),
+    ],
+)
+def test_parent_headers_are_omitted_when_children_define_them(
+    document: dict[str, object], expected: str
+) -> None:
+    text = dumps(document)
+    assert text == expected
+    assert toml_io.loads(text) == document
+
+
 @pytest.mark.parametrize("key", ["environments", "command-line", "platforms"])
 def test_array_entries_are_on_separate_lines(key: str) -> None:
     text = dumps({key: ["first", "second"]})
