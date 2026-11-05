@@ -9160,7 +9160,7 @@ size = 10734301
 sha256 = "e74ce348967d83360c9212a1082358bb3bc5b65ced55d17017715a90abb18f28"
 
 [tool.nab]
-nab-version = "0.0.26.dev0"
+nab-version = "0.0.26"
 created-at = 2026-11-03T02:05:57.036486+00:00
 command-line = [
     "nab",
@@ -9183,6 +9183,6 @@ platforms = [
 
 [tool.nab.validation]
 version = 1
-all-inputs-sha256 = "ba57afe42f5a7c178319b5249ef88b90557c3494e5939250470e994aa59202b3"
+all-inputs-sha256 = "5d802adccc543a16551ae6180274d461d259744bee9d829a7fe3b8a5976ad7ad"
 selection-inputs-sha256 = "e9968d6a6c38264c6b82329d6f0129a30a78264f15c490217d603dfa045040d3"
 contents-sha256 = "d9d7f108911bdc464fdbbd13b3c0ab4dd3931fa896973940789c7f317d56a5d1"
