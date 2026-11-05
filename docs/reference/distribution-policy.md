@@ -1,89 +1,129 @@
 # Distribution policy
 
-`[tool.nab].dist-policy` controls which artifact kinds the resolver considers and which end up in
-the lockfile. The default `wheel-or-sdist` treats wheels and sdists symmetrically.
+Set `dist-policy` to choose installation artifacts and `metadata-policy` to choose dependency
+metadata. Put project defaults under `[tool.nab]`; use
+[package or index overrides](package-policy.md) for exceptions.
 
-| Value                      | Wheel admitted to resolve? | Sdist admitted to resolve? | What ends up in the lock |
-| -------------------------- | -------------------------- | -------------------------- | ------------------------ |
-| `wheel-only`               | yes                        | no                         | wheel                    |
-| `prefer-wheel`             | yes (preferred)            | yes (fallback)             | whichever was used       |
-| `wheel-or-sdist` (default) | yes                        | yes                        | both                     |
-| `sdist-only`               | no                         | yes                        | sdist                    |
-| `sdist-install`            | yes                        | yes                        | sdist                    |
+## Installation artifacts
 
-## Supported artifacts
+The distribution policy applies to index-served releases:
 
-nab admits `.tar.gz` sdists by default. Legacy `.zip` sdists require `allow-zip-sdists = true`;
-other sdist formats are unsupported. A release with only a refused `.zip` sdist has no usable sdist,
-so `sdist-only` and `sdist-install` skip it. A wheel-admitting policy may still select its wheels.
+| `dist-policy`              | Artifacts recorded in the lock                           |
+| -------------------------- | -------------------------------------------------------- |
+| `wheel-only`               | Wheels; skip releases without a compatible wheel         |
+| `wheel-or-sdist` (default) | Available wheels and sdist                               |
+| `sdist-if-needed`          | Wheels, plus the sdist when wheel coverage is incomplete |
+| `sdist-only`               | Sdist; skip releases without an admitted sdist           |
 
-`wheel-only` is the equivalent of pip's `--only-binary :all:` and `sdist-only` of
-`--no-binary :all:`, scoped per package or per index via an override.
+`resolution` chooses versions within these restrictions. With `sdist-if-needed`, a newer release
+needing a source build can still win over an older release with wheels.
 
-(legacy-zip-sdists)=
+For installation artifacts, `wheel-only` corresponds to pip's `--only-binary=:all:` and `sdist-only`
+to `--no-binary=:all:`.
 
-## Legacy ZIP sdists
+## Dependency metadata
 
-`allow-zip-sdists` defaults to `false`. Enable it for a package whose required release was published
-only as a ZIP sdist:
-
-```toml
-[tool.nab.packages."legacy-package == 1.0"]
-allow-zip-sdists = true
-```
-
-Set it globally under `[tool.nab]`, or use [package and index overrides](package-policy.md). A
-scoped `false` cancels a global `true`. For one command, use `--project-allow-zip-sdists` or
-`--no-project-allow-zip-sdists`.
-
-ZIP admission leaves build permission and metadata trust unchanged. A package that needs a backend
-still requires `build-policy = "build-remote"`; declared targets also require
-{ref}`assume-universal-deps <assuming-dependencies-are-universal>`. Direct `archive-sources` accept
-only `.tar.gz` archives.
-
-An index serving only ZIP sdists still owns the package under the first-index policy. Refusing those
-sdists does not fall through to another index. When a release has both archive formats, nab prefers
-`.tar.gz`.
-
-## Reading dependency metadata
-
-A wheel without a PEP 658 sidecar still resolves under any wheel-admitting policy. nab recovers its
-METADATA with an HTTP range read. If the index cannot serve usable ranges, nab downloads the whole
-wheel instead.
-
-## Lock an sdist for installation
-
-Use `sdist-install` when the lock must select an sdist, typically so an installer can link the
-package against system libraries.
-
-The lockfile pins only the sdist, so `pip install --require-hashes` materialises that archive.
-
-For resolution, nab prefers wheel metadata and falls back to the sdist when no wheel exists. Dynamic
-sdist metadata can still require a build allowed by `build-policy`.
-
-A version with no sdist is skipped, as under `sdist-only`. The resolver selects an allowed version
-that ships one.
-
-Scope the policy to a subset of packages with a per-package override:
+Metadata selection is separate from installation. For example, Nab can read wheel metadata while
+recording only the source archive:
 
 ```toml
-[[tool.nab.package-rules]]
-match = ["lxml", "xmlsec"]
-dist-policy = "sdist-install"
+[tool.nab.packages.lxml]
+dist-policy = "sdist-only"
+metadata-policy = "prefer-wheel"
 ```
 
-The same five values are accepted. Package names are canonicalised, so `Foo-Bar`, `foo_bar`, and
-`foo-bar` refer to the same package.
+The metadata policy determines which artifact supplies dependencies:
 
-## Trusting older sdist metadata
+| `metadata-policy`          | Metadata source                                                                  |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| `match-artifact` (default) | The target's preferred install artifact: a compatible wheel, otherwise the sdist |
+| `prefer-wheel`             | Prefer compatible wheel metadata even for source-only installation               |
 
-To trust dependencies in a pre-PEP-643 sdist's `PKG-INFO` without verification, use the table form.
-This flag defaults to `false`; see [Build policy](build-policy.md) for when a backend is needed.
+When sources are allowed and no usable wheel remains, Nab reads source metadata. Dynamic metadata
+may need a [permitted build](build-policy.md). Wheel metadata can come from a
+[sidecar, range request or full download](lockfile.md#metadata-selection).
+
+## Include sdists only when needed
+
+Use this setting to omit source archives when wheels cover the environments that need each selected
+release:
 
 ```toml
 [tool.nab]
-dist-policy = { policy = "wheel-or-sdist", trust-unverified-deps = false }
+dist-policy = "sdist-if-needed"
 ```
 
-To reuse same-version wheel dependencies for a dynamic sdist, use
-{ref}`assume-universal-deps <assuming-dependencies-are-universal>` instead.
+For a release needed on both Linux and Windows, the result depends on its admitted artifacts:
+
+| Available artifacts               | Recorded artifacts    |
+| --------------------------------- | --------------------- |
+| Linux wheel, Windows wheel, sdist | Both wheels           |
+| Linux wheel and sdist             | Linux wheel and sdist |
+| Sdist only                        | Sdist                 |
+
+Only targets selecting that release count. A Windows-only dependency needs wheel coverage only on
+Windows.
+
+Coverage follows the configured Python, implementation, ABI and platform settings, upload cutoff and
+yanking rules. Nab keeps the sdist if wheel tags are unknown or coverage cannot be proved.
+
+Wheels must also cover the target's Python range. A wheel requiring Python 3.12.4 or newer leaves a
+gap in a Python 3.12 target, so Nab keeps the sdist.
+
+<a name="legacy-zip-sdists"></a>
+
+## Supported source archives
+
+Nab accepts `.tar.gz` sdists. Enable legacy `.zip` sdists for a package that needs them:
+
+```toml
+[tool.nab.packages."legacy-package==1.0"]
+allow-zip-sdists = true
+```
+
+Other source archive formats are unsupported. When a release offers both `.tar.gz` and `.zip`, Nab
+prefers `.tar.gz`. An index serving only refused ZIP archives still owns the package under the
+[first-index policy](indexes.md); refusing those archives does not try another index.
+
+Set `allow-zip-sdists` globally, per package or per index. A scoped `false` cancels a global `true`.
+The CLI overrides are `--project-allow-zip-sdists` and `--no-project-allow-zip-sdists`.
+
+Dynamic ZIP metadata needs the same build permissions as other sdists. Declared targets also need
+[assume-universal-deps](build-policy.md#assuming-dependencies-are-universal) for host builds. Direct
+`archive-sources` accept only `.tar.gz`.
+
+## Migrating combined policies
+
+Replace the removed `dist-policy` values with two settings at the original scope:
+
+| Previous `dist-policy` | New `dist-policy` | New `metadata-policy` |
+| ---------------------- | ----------------- | --------------------- |
+| `prefer-wheel`         | `wheel-or-sdist`  | `prefer-wheel`        |
+| `sdist-install`        | `sdist-only`      | `prefer-wheel`        |
+
+For a table-form setting, replace its `policy` value and keep any `trust-unverified-deps` field. Add
+`metadata-policy` beside `dist-policy`, outside that table.
+
+The CLI form for source installation with wheel metadata is:
+
+```bash
+nab lock --project-dist-policy sdist-only --project-metadata-policy prefer-wheel
+```
+
+Python callers pair `DistPolicy.WHEEL_OR_SDIST` or `DistPolicy.SDIST_ONLY` with
+`MetadataPolicy.PREFER_WHEEL`. Existing `wheel-only`, `wheel-or-sdist` and `sdist-only` settings
+keep their behavior. Run `nab lock` to refresh existing locks with the new metadata-policy input.
+
+## Trusting older source metadata
+
+Set `trust-unverified-deps = true` to accept dependencies in a pre-PEP-643 sdist's `PKG-INFO`
+without verification. The default is `false`.
+
+```toml
+[tool.nab.packages."legacy-package==1.0"]
+dist-policy = { policy = "wheel-or-sdist", trust-unverified-deps = true }
+```
+
+Explicitly dynamic dependency fields still need another metadata source or a permitted build. To
+reuse a same-version wheel's dependencies for a dynamic sdist, see
+[assume-universal-deps](build-policy.md#assuming-dependencies-are-universal).

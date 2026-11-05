@@ -4,7 +4,8 @@
 installer reads those files to install the selected dependencies.
 
 Run installation commands in the project's virtual environment, using a Python and platform covered
-by the lock. See {ref}`Getting started <install-the-locked-dependencies>` for environment setup.
+by the lock. See [Getting started](../tutorial/getting-started.md#install-the-locked-dependencies)
+for environment setup.
 
 ## Install from `pylock.toml`
 
@@ -78,8 +79,6 @@ python -m pip install --no-index --find-links wheelhouse \
 
 This workflow does not cover local, VCS, or direct archive lines. Those lines name their source
 directly rather than selecting a wheel from `wheelhouse`.
-
-(check-a-committed-lock-in-ci)=
 
 ## Check a committed lock in CI
 

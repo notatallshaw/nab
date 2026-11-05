@@ -74,6 +74,7 @@ from nab_provider.errors import OverrideConflictError, YankAdmissionRequiredErro
 from nab_provider.marker_holds import UnevaluableMarkerError, dependency_marker_holds
 from nab_provider.metadata import WheelMetadata
 from nab_provider.overrides import IndexOverride, PackageOverride
+from nab_provider.policy import MetadataPolicy
 from nab_provider.provider import (
     BuildPolicy,
     DistPolicy,
@@ -8919,7 +8920,11 @@ class TestDistPolicy:
             [make_sdist("1.0"), make_wheel("1.0")],
             metadata_text="Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n",
         )
-        provider = Provider(coordinator, dist_policy=DistPolicy.PREFER_WHEEL)
+        provider = Provider(
+            coordinator,
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            metadata_policy=MetadataPolicy.PREFER_WHEEL,
+        )
         versions = provider.fetch_versions("pkg")
         assert len(versions) == 2
         assert isinstance(versions[0][1], WheelFile)
@@ -8933,7 +8938,8 @@ class TestDistPolicy:
         )
         provider = Provider(
             coordinator,
-            dist_policy=DistPolicy.PREFER_WHEEL,
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            metadata_policy=MetadataPolicy.PREFER_WHEEL,
             package_overrides=(pkg_override("pkg", provides_extra=("e",)),),
         )
         versions = provider.fetch_versions("pkg")
@@ -8941,8 +8947,8 @@ class TestDistPolicy:
         assert isinstance(versions[0][1], WheelFile)
         assert isinstance(versions[1][1], SdistFile)
 
-    def test_sdist_install_keeps_wheels_and_sorts_wheels_first(self) -> None:
-        """SDIST_INSTALL behaves like WHEEL_OR_SDIST for the listing.
+    def test_source_install_keeps_wheels_and_sorts_wheels_first(self) -> None:
+        """source-only installation with wheel metadata behaves like WHEEL_OR_SDIST for the listing.
 
         Wheels stay in the listing (the resolver reads metadata from
         them), but they sort before the sdist at the same version so
@@ -8953,14 +8959,18 @@ class TestDistPolicy:
             [make_sdist("1.0"), make_wheel("1.0")],
             metadata_text="Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n",
         )
-        provider = Provider(coordinator, dist_policy=DistPolicy.SDIST_INSTALL)
+        provider = Provider(
+            coordinator,
+            dist_policy=DistPolicy.SDIST_ONLY,
+            metadata_policy=MetadataPolicy.PREFER_WHEEL,
+        )
         versions = provider.fetch_versions("pkg")
         assert len(versions) == 2
         assert isinstance(versions[0][1], WheelFile)
         assert isinstance(versions[1][1], SdistFile)
 
-    def test_sdist_install_drops_wheel_only_version(self) -> None:
-        """A wheel-only version is not a candidate under SDIST_INSTALL.
+    def test_source_install_drops_wheel_only_version(self) -> None:
+        """A wheel-only version is not a candidate under source-only installation with wheel metadata.
 
         The newest release (2.0) publishes only a wheel, so it has no
         source to install and is dropped before the resolver sees it.
@@ -8971,18 +8981,22 @@ class TestDistPolicy:
             [make_wheel("2.0"), make_wheel("1.0"), make_sdist("1.0")],
             metadata_text="Metadata-Version: 2.1\nName: pkg\nVersion: 2.0\n",
         )
-        provider = Provider(coordinator, dist_policy=DistPolicy.SDIST_INSTALL)
+        provider = Provider(
+            coordinator,
+            dist_policy=DistPolicy.SDIST_ONLY,
+            metadata_policy=MetadataPolicy.PREFER_WHEEL,
+        )
         versions = provider.fetch_versions("pkg")
         assert [str(v) for v, _ in versions] == ["1.0", "1.0"]
         assert isinstance(versions[0][1], WheelFile)
         assert isinstance(versions[1][1], SdistFile)
 
-    def test_sdist_install_resolves_from_wheel_metadata(self) -> None:
+    def test_source_install_resolves_from_wheel_metadata(self) -> None:
         """A dynamic-deps sdist is not built when a wheel publishes the deps.
 
         The package ships both a wheel (with PEP 658 ``Requires-Dist:
         dep-a``) and an sdist whose PKG-INFO marks dependencies as
-        Dynamic.  Under SDIST_INSTALL the resolver should pick the
+        Dynamic.  Under source-only installation with wheel metadata the resolver should pick the
         wheel's metadata text and skip the sdist build entirely.
         """
         coordinator = make_coordinator(
@@ -8995,7 +9009,8 @@ class TestDistPolicy:
         provider = Provider(
             coordinator,
             target=_PY312,
-            dist_policy=DistPolicy.SDIST_INSTALL,
+            dist_policy=DistPolicy.SDIST_ONLY,
+            metadata_policy=MetadataPolicy.PREFER_WHEEL,
         )
         deps = provider.get_dependencies("pkg", V("1.0"))
         assert "dep-a" in deps
@@ -10606,7 +10621,7 @@ class TestPickDistForMetadata:
         Range-fetching ``METADATA`` from a wheel is cheaper than
         building an sdist, so the picker only falls back to the sdist
         when no wheel exists at the version.  This matters for
-        :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL`: those
+        ``sdist-only`` with ``metadata-policy = "prefer-wheel"``: those
         listings keep wheels purely so the resolver can read their
         metadata, and ``pick_dist_for_metadata`` must honour that.
         """

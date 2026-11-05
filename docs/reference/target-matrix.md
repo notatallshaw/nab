@@ -13,7 +13,7 @@ satisfy the project's `requires-python`. The multi-target lockfile format is exp
 commands and output formats, see
 [Lock for multiple environments](../how-to/lock-multiple-environments.md).
 
-(matrix-include)=
+<a name="matrix-include"></a>
 
 ## Add target groups with `include`
 
@@ -35,7 +35,7 @@ Each entry inherits omitted settings and replaces supplied values in full. Entri
 independently; they do not modify the base or one another. Exact duplicate targets merge, while
 different platform settings remain distinct.
 
-(matrix-free-threaded)=
+<a name="matrix-free-threaded"></a>
 
 ## Select Python builds
 

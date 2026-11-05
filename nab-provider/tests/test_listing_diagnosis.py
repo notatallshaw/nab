@@ -29,6 +29,7 @@ from nab_provider._vendor.packaging.version import Version
 from nab_provider.diagnostics import Diagnostic
 from nab_provider.errors import InvalidUploadTimeError
 from nab_provider.overrides import IndexOverride
+from nab_provider.policy import MetadataPolicy
 from nab_provider.provider import (
     DistPolicy,
     ListingFilterCache,
@@ -179,12 +180,17 @@ ORACLE_CONFIGS: dict[str, dict[str, object]] = {
         "uploaded_prior_to": CUTOFF,
         "dist_policy": DistPolicy.SDIST_ONLY,
     },
-    "sdist-install": {
+    "sdist-only-wheel-metadata": {
         "target": _LINUX312,
         "uploaded_prior_to": CUTOFF,
-        "dist_policy": DistPolicy.SDIST_INSTALL,
+        "dist_policy": DistPolicy.SDIST_ONLY,
+        "metadata_policy": MetadataPolicy.PREFER_WHEEL,
     },
-    "prefer-wheel": {"target": _LINUX312, "dist_policy": DistPolicy.PREFER_WHEEL},
+    "prefer-wheel": {
+        "target": _LINUX312,
+        "dist_policy": DistPolicy.WHEEL_OR_SDIST,
+        "metadata_policy": MetadataPolicy.PREFER_WHEEL,
+    },
     "no-tags": {"uploaded_prior_to": CUTOFF},
     "package-override": {
         "target": _LINUX312,
@@ -562,16 +568,20 @@ class TestClauseText:
             "applies; pkg==1.0 sets it over another version range."
         )
 
-    def test_sdist_install_without_an_sdist(self) -> None:
-        assert reason_for([wheel("1.0")], dist_policy=DistPolicy.SDIST_INSTALL) == (
-            'dist-policy = "sdist-install" excluded every version\ndist-policy '
-            '= "sdist-install" excluded 1 version with no admissible sdist '
+    def test_source_install_without_an_sdist(self) -> None:
+        assert reason_for(
+            [wheel("1.0")],
+            dist_policy=DistPolicy.SDIST_ONLY,
+            metadata_policy=MetadataPolicy.PREFER_WHEEL,
+        ) == (
+            'dist-policy = "sdist-only" excluded every version\ndist-policy '
+            '= "sdist-only" excluded 1 version with no admissible sdist '
             '(1.0)\ntry: set packages."pkg".dist-policy = '
             '"wheel-or-sdist"\n     The project-wide dist-policy setting '
             "rejected these files."
         )
 
-    def test_sdist_install_is_asked_before_the_wheel_tags(self) -> None:
+    def test_source_install_is_asked_before_the_wheel_tags(self) -> None:
         """The rung that refused the version first is the one the clause names.
 
         The filter drops a wheel-only ``sdist-install`` version in the base
@@ -581,10 +591,11 @@ class TestClauseText:
         assert reason_for(
             [wheel("1.0", tag="cp312-cp312-win_amd64")],
             target=_LINUX312,
-            dist_policy=DistPolicy.SDIST_INSTALL,
+            dist_policy=DistPolicy.SDIST_ONLY,
+            metadata_policy=MetadataPolicy.PREFER_WHEEL,
         ) == (
-            'dist-policy = "sdist-install" excluded every version\ndist-policy '
-            '= "sdist-install" excluded 1 version with no admissible sdist '
+            'dist-policy = "sdist-only" excluded every version\ndist-policy '
+            '= "sdist-only" excluded 1 version with no admissible sdist '
             '(1.0)\ntry: set packages."pkg".dist-policy = '
             '"wheel-or-sdist"\n     The project-wide dist-policy setting '
             "rejected these files."
@@ -593,21 +604,24 @@ class TestClauseText:
     def test_two_wheels_of_one_release_are_one_version(self) -> None:
         assert reason_for(
             [wheel("1.0"), wheel("1.0", tag="py2-none-any")],
-            dist_policy=DistPolicy.SDIST_INSTALL,
+            dist_policy=DistPolicy.SDIST_ONLY,
+            metadata_policy=MetadataPolicy.PREFER_WHEEL,
         ) == (
-            'dist-policy = "sdist-install" excluded every version\ndist-policy '
-            '= "sdist-install" excluded 1 version with no admissible sdist '
+            'dist-policy = "sdist-only" excluded every version\ndist-policy '
+            '= "sdist-only" excluded 1 version with no admissible sdist '
             '(1.0)\ntry: set packages."pkg".dist-policy = '
             '"wheel-or-sdist"\n     The project-wide dist-policy setting '
             "rejected these files."
         )
 
-    def test_sdist_install_without_an_sdist_plural(self) -> None:
+    def test_source_install_without_an_sdist_plural(self) -> None:
         assert (
-            'dist-policy = "sdist-install" excluded 2 versions with no admissible'
+            'dist-policy = "sdist-only" excluded 2 versions with no admissible'
             " sdist (newest: 2.0)"
         ) in reason_for(
-            [wheel("1.0"), wheel("2.0")], dist_policy=DistPolicy.SDIST_INSTALL
+            [wheel("1.0"), wheel("2.0")],
+            dist_policy=DistPolicy.SDIST_ONLY,
+            metadata_policy=MetadataPolicy.PREFER_WHEEL,
         )
 
     @pytest.mark.parametrize(
@@ -627,18 +641,19 @@ class TestClauseText:
             ),
         ],
     )
-    def test_sdist_install_with_a_filtered_sdist(
+    def test_source_install_with_a_filtered_sdist(
         self, source: SdistFile, filter_clause: str
     ) -> None:
         diagnostic = diagnostic_for(
             [wheel("1.0"), source],
             target=_LINUX312,
             uploaded_prior_to=CUTOFF,
-            dist_policy=DistPolicy.SDIST_INSTALL,
+            dist_policy=DistPolicy.SDIST_ONLY,
+            metadata_policy=MetadataPolicy.PREFER_WHEEL,
         )
 
         assert (
-            'dist-policy = "sdist-install" excluded 1 version with no admissible'
+            'dist-policy = "sdist-only" excluded 1 version with no admissible'
             " sdist (1.0)"
         ) in diagnostic.detail
         assert filter_clause in diagnostic.detail
@@ -1041,7 +1056,10 @@ class TestTheRemedyNamesTheLayer:
             [wheel("1.0", upload_time=AFTER)],
             uploaded_prior_to=CUTOFF,
             index_overrides={
-                "pypi": IndexOverride(dist_policy=DistPolicy.PREFER_WHEEL)
+                "pypi": IndexOverride(
+                    dist_policy=DistPolicy.WHEEL_OR_SDIST,
+                    metadata_policy=MetadataPolicy.PREFER_WHEEL,
+                )
             },
         ).endswith(
             '\ntry: set packages."pkg".uploaded-prior-to = false\n     The '
@@ -1315,17 +1333,19 @@ class TestTheTryLine:
         ) == ("add dist-policy = \"wheel-or-sdist\" to packages.'pkg'")
 
     @pytest.mark.parametrize(
-        "policy",
-        [DistPolicy.SDIST_ONLY, DistPolicy.SDIST_INSTALL],
-        ids=["sdist-only", "sdist-install"],
+        "metadata_policy",
+        list(MetadataPolicy),
     )
     def test_both_dist_policy_causes_offer_the_wider_policy(
-        self, policy: DistPolicy
+        self, metadata_policy: MetadataPolicy
     ) -> None:
         """Both causes are the one key, so both are lifted by the one setting."""
-        assert remedy_for([wheel("1.0")], dist_policy=policy, target=_LINUX312) == (
-            'set packages."pkg".dist-policy = "wheel-or-sdist"'
-        )
+        assert remedy_for(
+            [wheel("1.0")],
+            dist_policy=DistPolicy.SDIST_ONLY,
+            metadata_policy=metadata_policy,
+            target=_LINUX312,
+        ) == ('set packages."pkg".dist-policy = "wheel-or-sdist"')
 
     @pytest.mark.parametrize(
         ("source_label", "named"),
@@ -1995,8 +2015,10 @@ def every_shape() -> dict[str, Diagnostic]:
         "dist-policy": empty_entry(
             [wheel("1.0")], dist_policy=DistPolicy.SDIST_ONLY, target=_LINUX312
         ),
-        "sdist-install": empty_entry(
-            [wheel("1.0")], dist_policy=DistPolicy.SDIST_INSTALL
+        "sdist-only": empty_entry(
+            [wheel("1.0")],
+            dist_policy=DistPolicy.SDIST_ONLY,
+            metadata_policy=MetadataPolicy.PREFER_WHEEL,
         ),
         "requires-python": empty_entry(
             [wheel("1.0", requires_python=">=3.99")], target=_LINUX312

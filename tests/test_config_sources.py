@@ -1035,6 +1035,7 @@ class TestReproducibilityNotice:
                 "project_requires_python": None,
                 "project_uploaded_prior_to": None,
                 "project_dist_policy": "sdist-only",
+                "project_metadata_policy": "prefer-wheel",
                 "project_assume_universal_deps": None,
                 "project_allow_zip_sdists": None,
                 "project_build_policy": None,
@@ -1054,6 +1055,7 @@ class TestReproducibilityNotice:
             "cache-dir": Path("/c"),
             "max-concurrency": 16,
             "dist-policy": "sdist-only",
+            "metadata-policy": "prefer-wheel",
             "default-groups": ("dev",),
         }
 
@@ -1529,6 +1531,7 @@ class TestParserFoldHelpers:
                 "requires-python",
                 "uploaded-prior-to",
                 "dist-policy",
+                "metadata-policy",
                 "assume-universal-deps",
                 "allow-zip-sdists",
                 "build-policy",

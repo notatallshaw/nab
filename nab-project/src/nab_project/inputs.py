@@ -12,6 +12,7 @@ from nab_provider.policy import (
     BuildPolicy,
     DecisionOrder,
     DistPolicy,
+    MetadataPolicy,
     ResolutionStrategy,
 )
 from nab_provider.records import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexConfig
@@ -52,6 +53,7 @@ class ResolveInputs(ValueType):
         "decision_order",
         "default_groups",
         "dist_policy",
+        "metadata_policy",
         "index_overrides",
         "indexes",
         "local_sources",
@@ -76,6 +78,7 @@ class ResolveInputs(ValueType):
     decision_order: DecisionOrder
     default_groups: tuple[str, ...]
     dist_policy: DistPolicy
+    metadata_policy: MetadataPolicy
     index_overrides: Mapping[str, IndexOverride]
     indexes: tuple[IndexConfig, ...]
     local_sources: tuple[LocalSource, ...]
@@ -102,6 +105,7 @@ class ResolveInputs(ValueType):
         decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
         default_groups: tuple[str, ...] = (),
         dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST,
+        metadata_policy: MetadataPolicy = MetadataPolicy.MATCH_ARTIFACT,
         index_overrides: Mapping[str, IndexOverride] = _NO_INDEX_OVERRIDES,
         indexes: tuple[IndexConfig, ...] = _DEFAULT_INDEXES,
         local_sources: tuple[LocalSource, ...] = (),
@@ -126,6 +130,7 @@ class ResolveInputs(ValueType):
         self.decision_order = decision_order
         self.default_groups = default_groups
         self.dist_policy = dist_policy
+        self.metadata_policy = metadata_policy
         self.index_overrides = index_overrides
         self.indexes = indexes
         self.local_sources = local_sources

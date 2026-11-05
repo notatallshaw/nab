@@ -27,7 +27,7 @@ from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.overrides import PackageOverride
-from nab_provider.policy import BuildPolicy, DistPolicy, ExtrasMode
+from nab_provider.policy import BuildPolicy, DistPolicy, ExtrasMode, MetadataPolicy
 from nab_provider.priority import CONFLICT_THRESHOLD, CULPRIT_DEMOTE_THRESHOLD
 from nab_provider.provider import Provider, ResolutionStrategy
 from nab_provider.records import SdistFile
@@ -538,7 +538,7 @@ def test_unpinned_sdist_is_never_downloaded_or_built() -> None:
 
 
 @pytest.mark.parametrize(("root", "succeeds"), [("dep", False), ("dep==2", True)])
-def test_sdist_install_requires_permission_for_the_install_artifact(
+def test_source_install_requires_permission_for_the_install_artifact(
     root: str,
     succeeds: bool,
 ) -> None:
@@ -554,7 +554,10 @@ def test_sdist_install_requires_permission_for_the_install_artifact(
         port,
         [ResolveTarget.for_host()],
         [Requirement(root)],
-        inputs=ResolveInputs(dist_policy=DistPolicy.SDIST_INSTALL),
+        inputs=ResolveInputs(
+            dist_policy=DistPolicy.SDIST_ONLY,
+            metadata_policy=MetadataPolicy.PREFER_WHEEL,
+        ),
     )
     assert result.success is succeeds
     if succeeds:
@@ -570,7 +573,7 @@ def test_sdist_install_requires_permission_for_the_install_artifact(
         assert not port.calls_to("request_sdist_archive")
 
 
-def test_yanked_fallback_keeps_equivalent_wheel_metadata_for_sdist_install() -> None:
+def test_yanked_fallback_keeps_equivalent_wheel_metadata_for_source_install() -> None:
     port = graph_port([("pkg", "1", False, []), ("helper", "1", True, [])])
     files = port.index.get_listing("pkg")
     assert files is not None
@@ -583,7 +586,11 @@ def test_yanked_fallback_keeps_equivalent_wheel_metadata_for_sdist_install() -> 
         inputs=ResolveInputs(
             build_policy=BuildPolicy.NEVER,
             package_overrides=(
-                pkg_override("pkg", dist_policy=DistPolicy.SDIST_INSTALL),
+                pkg_override(
+                    "pkg",
+                    dist_policy=DistPolicy.SDIST_ONLY,
+                    metadata_policy=MetadataPolicy.PREFER_WHEEL,
+                ),
             ),
         ),
     )

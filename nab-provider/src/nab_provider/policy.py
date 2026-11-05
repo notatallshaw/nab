@@ -1,4 +1,4 @@
-"""The resolution policies a project declares and the provider applies."""
+"""Resolution policies and declared package sources."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ __all__ = [
     "DistPolicy",
     "ExtrasMode",
     "LocalSource",
+    "MetadataPolicy",
     "ResolutionStrategy",
     "ResolveMode",
     "SourceMaterialization",
@@ -54,28 +55,29 @@ class ResolveMode(enum.Enum):
 
 
 class DistPolicy(enum.Enum):
-    """How to admit wheels and sdists during resolution."""
+    """Installation artifacts for a selected release."""
 
     WHEEL_ONLY = "wheel-only"
     """Reject sdists; wheels only.  Mirrors pip's ``--only-binary <pkg>``."""
 
-    PREFER_WHEEL = "prefer-wheel"
-    """Try wheels first, fall back to sdists for versions without wheels."""
-
     WHEEL_OR_SDIST = "wheel-or-sdist"
-    """Admit both; newest version wins regardless of artifact kind (default)."""
+    """Record available wheels and the sdist for the selected release (default)."""
+
+    SDIST_IF_NEEDED = "sdist-if-needed"
+    """Keep an sdist unless compatible wheels cover the required targets."""
 
     SDIST_ONLY = "sdist-only"
-    """Reject wheels; sdists only.  Mirrors pip's ``--no-binary <pkg>``."""
+    """Require an sdist for installation; metadata policy controls wheel reads."""
 
-    SDIST_INSTALL = "sdist-install"
-    """Lock the sdist; resolve from whichever artifact is cheapest.
 
-    Pins only the sdist, as :attr:`SDIST_ONLY` does, but reads the deps from
-    the wheel's METADATA when the chosen version has one, and from the sdist's
-    PKG-INFO with the usual :pep:`643` and pyproject.toml fallbacks when it
-    does not.
-    """
+class MetadataPolicy(enum.Enum):
+    """Which artifact supplies dependency metadata for a selected release."""
+
+    MATCH_ARTIFACT = "match-artifact"
+    """Use the target's preferred install artifact, including source-only policy."""
+
+    PREFER_WHEEL = "prefer-wheel"
+    """Allow compatible wheel metadata when installation requires an sdist."""
 
 
 class BuildPolicy(enum.Enum):

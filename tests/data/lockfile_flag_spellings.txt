@@ -8,6 +8,7 @@
 --project-requires-python
 --project-uploaded-prior-to
 --project-dist-policy
+--project-metadata-policy
 --project-assume-universal-deps
 --project-allow-zip-sdists
 --project-build-policy

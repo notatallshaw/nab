@@ -78,8 +78,6 @@ Open the file and inspect:
 Compatible targets can share package entries. When targets need different versions, the lock can
 carry both with markers. If one target fails, nab reports the failure and does not write a new lock.
 
-(install-the-locked-dependencies)=
-
 ## Install the locked dependencies
 
 Use Python 3.12, 3.13, 3.14 or 3.15 on one of the two declared platforms. Check your Python, create

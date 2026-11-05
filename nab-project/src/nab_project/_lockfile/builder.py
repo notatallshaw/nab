@@ -216,9 +216,9 @@ class MissingHashError(ValueError):
 
 
 class MissingSdistError(ValueError):
-    """A ``sdist-install`` package's pinned version has no sdist.
+    """A ``sdist-only`` package's pinned version has no sdist.
 
-    Under :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL` the
+    Under :attr:`~nab_provider.provider.DistPolicy.SDIST_ONLY` the
     resolver may read a wheel's metadata but the lock must pin only the
     sdist.  When the pinned version publishes wheels but no sdist, the
     wheels are dropped and nothing is left to pin.  Surface the package
@@ -342,8 +342,8 @@ def build_target_lock(
     it does not stand in for ``None``: omitting it while passing selector
     roots raises.
 
-    Every wheel the target can install, plus the sdist, is recorded for
-    each pinned version.  ``artifacts`` is the :class:`ArtifactMemo` the
+    Artifacts follow each release's distribution policy.
+    ``artifacts`` is the :class:`ArtifactMemo` the
     run's targets share; a call without one gets a memo of its own.
     """
     from ..lockfile import LocalPin, TargetLock
@@ -400,7 +400,7 @@ def build_target_lock(
             continue
 
         lock_pins[canonical] = _index_pin_from_listing(
-            provider, canonical, version, indexes, artifacts
+            provider, target, canonical, version, indexes, artifacts
         )
 
     dependencies, base_dependencies = _forward_dependency_graph(
@@ -623,46 +623,31 @@ def _forward_dependency_graph(
 
 def _index_pin_from_listing(
     provider: LockInputProvider,
+    target: ResolveTarget,
     canonical: str,
     version: Version,
     indexes: Sequence[IndexConfig],
     artifacts: ArtifactMemo,
 ) -> IndexPin:
-    """Construct an :class:`IndexPin` for an index-served package.
+    """Build a pin with its serving index and effective Python requirement.
 
-    The recorded ``index`` is the URL of the configured index that
-    served the package's listing during the resolve, looked up from
-    the coordinator's :class:`InMemoryIndex` (which records the
-    serving index by name) and resolved against ``indexes`` for the
-    URL.  A pinned package's serving index is always recorded and is
-    one of ``indexes``, so the URL is always known.
-
-    Under :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL` the
-    package's wheels stayed in ``versions_cache`` as a possible
-    metadata source for the resolver; only the sdist is emitted
-    into the lock so installers download and build that archive.
-
-    A ``requires-python`` metadata override takes precedence over the
-    Simple-API value so the pin records the specifier the resolver
-    actually admitted against; a conforming :pep:`751` installer would
-    otherwise reject a widened pin whose lock still carried the narrow
-    artefact value.
+    Source-only policy records the sdist even when wheels supplied metadata.
+    A Requires-Python override replaces the index value in admission and output.
     """
     from ..fetch import DEFAULT_INDEX_URL
     from ..lockfile import IndexPin, SdistArtifact, WheelArtifact
 
     files = list(provider.dist_files_for(canonical, version))
     serving = provider.coordinator.index.get_listing_index(canonical)
-    if (
-        provider.effective_dist_policy(canonical, version, serving)
-        is DistPolicy.SDIST_INSTALL
-    ):
+    override_rp = provider.effective_requires_python(canonical, version)
+    dist_policy = provider.effective_dist_policy(canonical, version, serving)
+    if dist_policy is DistPolicy.SDIST_ONLY:
         files = [f for f in files if not isinstance(f, WheelFile)]
         if not any(isinstance(f, SdistFile) for f in files):
             report = DiagnosticMessage(
                 (
                     f"{canonical}=={version} has no sdist, but its dist-policy is "
-                    "'sdist-install'"
+                    "'sdist-only'"
                 ),
                 suggestions=(
                     Suggestion(
@@ -672,6 +657,23 @@ def _index_pin_from_listing(
                 ),
             )
             raise MissingSdistError(report)
+
+    elif dist_policy is DistPolicy.SDIST_IF_NEEDED and target.tags_faithful:
+        compatible_wheels = [f for f in files if isinstance(f, WheelFile)]
+        try:
+            covered = target.covered_by_requires_python(
+                SpecifierSet(
+                    override_rp
+                    if override_rp is not None
+                    else wheel.requires_python or ""
+                )
+                for wheel in compatible_wheels
+            )
+        except (RecursionError, ValueError):
+            # Keep the source archive when range comparison cannot finish.
+            covered = False
+        if covered:
+            files = list(compatible_wheels)
 
     wheels = tuple(
         _build_artifact(f, WheelArtifact, artifacts.wheels)
@@ -685,7 +687,6 @@ def _index_pin_from_listing(
         else None
     )
 
-    override_rp = provider.effective_requires_python(canonical, version)
     requires_python = (
         override_rp if override_rp is not None else _common_requires_python(files)
     )

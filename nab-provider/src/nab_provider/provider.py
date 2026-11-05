@@ -81,6 +81,7 @@ from .policy import (
     DistPolicy,
     ExtrasMode,
     LocalSource,
+    MetadataPolicy,
     ResolutionStrategy,
     SourceRequest,
     VcsSource,
@@ -125,6 +126,7 @@ __all__ = [
     "ListingFilterCache",
     "LocalSource",
     "MetadataError",
+    "MetadataPolicy",
     "MissingExtraError",
     "Provider",
     "ProviderStats",
@@ -497,6 +499,11 @@ def _dist_policy_value(override: PackageOverride | IndexOverride) -> object:
     return _unset_if_none(override.dist_policy)
 
 
+def _metadata_policy_value(override: PackageOverride | IndexOverride) -> object:
+    """Metadata policy value, retaining an explicitly selected default."""
+    return _unset_if_none(override.metadata_policy)
+
+
 def _allow_zip_sdists_value(override: PackageOverride | IndexOverride) -> object:
     """ZIP admission value, preserving an explicit refusal."""
     return _unset_if_none(override.allow_zip_sdists)
@@ -512,6 +519,7 @@ def _assume_universal_deps_value(override: PackageOverride | IndexOverride) -> o
 _SOURCE_VALUES: dict[str, Callable[[PackageOverride | IndexOverride], object]] = {
     "uploaded-prior-to": _uploaded_prior_to_value,
     "dist-policy": _dist_policy_value,
+    "metadata-policy": _metadata_policy_value,
     "allow-zip-sdists": _allow_zip_sdists_value,
     "assume-universal-deps": _assume_universal_deps_value,
     "build-policy": lambda override: _unset_if_none(override.build_policy),
@@ -696,6 +704,7 @@ class Provider:
         extras_mode: ExtrasMode = ExtrasMode.ERROR_USER,
         root_extras: set[tuple[str, str]] | None = None,
         dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST,
+        metadata_policy: MetadataPolicy = MetadataPolicy.MATCH_ARTIFACT,
         build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL,
         package_overrides: Sequence[PackageOverride] = (),
         index_overrides: Mapping[str, IndexOverride] | None = None,
@@ -754,6 +763,7 @@ class Provider:
         self.extras_mode = extras_mode
         self.root_extras = root_extras or set()
         self.dist_policy = dist_policy
+        self.metadata_policy = metadata_policy
         self.build_policy = build_policy
         # Opt-out: trust a pre-2.2 sdist's PKG-INFO deps as final instead of
         # routing through the dynamic path. Off by default (strict PEP 643).
@@ -1177,6 +1187,27 @@ class Provider:
         if result is _UNSET:
             return self.dist_policy
         assert isinstance(result, DistPolicy)
+        return result
+
+    def effective_metadata_policy(
+        self,
+        canonical_name: str,
+        version: Version,
+        index_name: str | None = None,
+    ) -> MetadataPolicy:
+        """Return the metadata source policy for this indexed release."""
+        if not self.has_overrides:
+            return self.metadata_policy
+        result = self._effective_field(
+            canonical_name,
+            version,
+            index_name,
+            field="metadata-policy",
+            value=_metadata_policy_value,
+        )
+        if result is _UNSET:
+            return self.metadata_policy
+        assert isinstance(result, MetadataPolicy)
         return result
 
     def effective_allow_zip_sdists(
@@ -3316,7 +3347,7 @@ class Provider:
             self.effective_dist_policy(
                 normalized, version, self.serving_index(normalized)
             )
-            is DistPolicy.SDIST_INSTALL
+            is DistPolicy.SDIST_ONLY
             and not any(isinstance(file, SdistFile) for file in live)
         ):
             raise YankAdmissionRequiredError(normalized, version)

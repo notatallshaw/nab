@@ -1024,8 +1024,7 @@ _DISPATCH_PROBE = {"probe": ("", "", "a table written by a test")}
 
 # The widest option form nab declares: 87 characters with five choices.
 _WIDEST_SPELLING = (
-    "  --project-dist-policy "
-    "{wheel-only,prefer-wheel,wheel-or-sdist,sdist-only,sdist-install}"
+    "  --project-dist-policy {wheel-only,wheel-or-sdist,sdist-if-needed,sdist-only}"
 )
 
 

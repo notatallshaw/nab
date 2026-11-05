@@ -23,6 +23,7 @@ __lazy_modules__ = (
     "nab_markersets.markersets",
     "nab_markersets.python_versions",
     "nab_provider._vendor.packaging.specifiers",
+    "nab_provider._vendor.packaging.ranges",
     "nab_provider._vendor.packaging.version",
     "nab_provider.conflict_kind",
     "nab_provider.environment",
@@ -38,6 +39,7 @@ from nab_markersets.markersets import variable_names
 from nab_markersets.python_versions import validate_python_version
 from nab_provider._vendor.packaging import tags as ptags
 from nab_provider._vendor.packaging.markers import Marker, default_environment
+from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import (
     InvalidSpecifier,
     Specifier,
@@ -991,6 +993,29 @@ class ResolveTarget(HashableRecord):
         bare minor, a patch-level pin, or the running host.
         """
         return _language_level(spec).contains(self.python_version)
+
+    def covered_by_requires_python(self, specifiers: Iterable[SpecifierSet]) -> bool:
+        """Prove that the specifiers cover this target's version range."""
+        if self.is_minor_interval:
+            constraints = [f">={self.python_version}.0", f"=={self.python_version}.*"]
+            for clause in self.micro_clauses:
+                atom = _MARKER_CLAUSE_RE.fullmatch(clause)
+                if atom is None:
+                    return False
+                parsed = _clause_interval_literal(
+                    _clause_parts(atom), frozenset({"python_full_version"}), self
+                )
+                if parsed is None:
+                    return False
+                constraints.append(str(parsed[1]))
+        else:
+            constraints = [f"=={self.python_full_version}"]
+        required = SpecifierSet(",".join(constraints), prereleases=True).to_range()
+
+        covered = VersionRange.empty(prereleases=True)
+        for specifier in specifiers:
+            covered |= SpecifierSet(str(specifier), prereleases=True).to_range()
+        return required.is_subset(covered)
 
     @property
     def implementation(self) -> str:

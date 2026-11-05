@@ -648,7 +648,7 @@ def test_assumption_relaxes_only_wheel_tags(restriction: str) -> None:
         assume_universal_deps=True,
         dist_policy=DistPolicy.SDIST_ONLY
         if restriction == "sdist-only"
-        else DistPolicy.PREFER_WHEEL,
+        else DistPolicy.WHEEL_OR_SDIST,
         uploaded_prior_to=(
             datetime(2026, 1, 1, tzinfo=timezone.utc)
             if restriction == "cutoff"

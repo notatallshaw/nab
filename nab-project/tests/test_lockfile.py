@@ -17,6 +17,7 @@ import pytest
 
 from nab_markersets._compat import get_int_max_str_digits
 from nab_project._testing.artifacts import make_sdist_artifact, make_wheel_artifact
+from nab_provider.policy import MetadataPolicy
 from nab_provider.value import replace
 
 if sys.version_info >= (3, 11):
@@ -3293,7 +3294,10 @@ class TestBuildTargetLock:
         Both versions ship a wheel and an sdist.  ``foo <= 2`` is pinned to its
         sdist so an installer builds that archive; 3.0 keeps its wheel.
         """
-        provider = _range_override_provider(dist_policy=DistPolicy.SDIST_INSTALL)
+        provider = _range_override_provider(
+            dist_policy=DistPolicy.SDIST_ONLY,
+            metadata_policy=MetadataPolicy.PREFER_WHEEL,
+        )
 
         selected = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
         unselected = build_target_lock(provider, _HOST, {"foo": Version("3.0")})
@@ -3499,19 +3503,8 @@ class TestBuildTargetLock:
         assert isinstance(pin, IndexPin)
         assert pin.wheels[0].local_path == wheel_path
 
-    def test_index_pin_sdist_install_drops_wheels(self) -> None:
-        """Wheels seen during resolution stay out of the pin under sdist-install.
-
-        The listing carried both a wheel and an sdist so the resolver
-        could read the wheel's METADATA, but the lockfile must pin
-        only the sdist so an installer downloads (and builds) that
-        archive.  Mirrors what
-        :attr:`nab_provider.provider.DistPolicy.SDIST_INSTALL` is for.
-
-        The policy comes from the index that served the listing, so
-        ``foo`` loses its wheel under ``internal`` while ``bar`` keeps
-        its own under the default index.
-        """
+    def test_index_pin_source_install_drops_wheels(self) -> None:
+        """A serving index can require sources while allowing wheel metadata."""
         coordinator = make_coordinator(
             listings={
                 "foo": [_wheel_file(), _sdist_file()],
@@ -3524,7 +3517,10 @@ class TestBuildTargetLock:
             coordinator,
             target=_HOST,
             index_overrides={
-                "internal": IndexOverride(dist_policy=DistPolicy.SDIST_INSTALL)
+                "internal": IndexOverride(
+                    dist_policy=DistPolicy.SDIST_ONLY,
+                    metadata_policy=MetadataPolicy.PREFER_WHEEL,
+                )
             },
         )
         provider.fetch_versions("foo")
@@ -3551,14 +3547,12 @@ class TestBuildTargetLock:
         assert isinstance(bar_pin, IndexPin)
         assert [w.filename for w in bar_pin.wheels] == ["bar-1.0-py3-none-any.whl"]
 
-    def test_index_pin_sdist_install_without_sdist_raises(self) -> None:
+    def test_index_pin_source_install_without_sdist_raises(self) -> None:
         """A wheel-only version under sdist-install has nothing to pin."""
         provider = _FakeProvider(
             listings={"foo": [(Version("1.0"), _wheel_file())]},
             listing_indexes={"foo": "internal"},
-            dist_policies={
-                ("foo", "internal", Version("1.0")): DistPolicy.SDIST_INSTALL
-            },
+            dist_policies={("foo", "internal", Version("1.0")): DistPolicy.SDIST_ONLY},
         )
         with pytest.raises(MissingSdistError, match="foo==1.0 has no sdist"):
             build_target_lock(provider, _HOST, {"foo": Version("1.0")})

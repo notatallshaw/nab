@@ -22,7 +22,7 @@ serialization = "html"   # "negotiate" (default) | "json" | "html"
 
 When `[[tool.nab.indexes]]` is omitted entirely, nab defaults to a single PyPI entry.
 
-(index-serialization)=
+<a name="index-serialization"></a>
 
 ## Serialization
 

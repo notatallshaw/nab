@@ -67,7 +67,7 @@ there is no route. Policies from other indexes do not apply to that package.
 
 A mirror that stamps its listings short-lived makes nab revalidate them once per package on every
 warm run. Set `assume-fresh-seconds` on that index to skip those round trips; see the
-{ref}`Per-index policy <per-index-policy>`.
+[Per-index policy](../reference/package-policy.md#index-overrides).
 
 ## Conflicting package and index policies
 

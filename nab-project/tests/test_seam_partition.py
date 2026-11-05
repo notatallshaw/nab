@@ -22,6 +22,7 @@ from nab_provider.policy import (
     DecisionOrder,
     DistPolicy,
     LocalSource,
+    MetadataPolicy,
     ResolutionStrategy,
     VcsSource,
 )
@@ -41,6 +42,7 @@ _INNER_FORWARDS = frozenset(
         "decision_order",
         "index_overrides",
         "indexes",
+        "metadata_policy",
         "package_overrides",
         "uploaded_prior_to",
     }
@@ -94,6 +96,7 @@ def _inputs_off_every_default(tmp_path: Path) -> ResolveInputs:
         decision_order=DecisionOrder.STABLE,
         default_groups=("dev",),
         dist_policy=DistPolicy.SDIST_ONLY,
+        metadata_policy=MetadataPolicy.PREFER_WHEEL,
         index_overrides={
             "internal": IndexOverride(
                 uploaded_prior_to=_CUTOFF, build_policy=BuildPolicy.BUILD_REMOTE

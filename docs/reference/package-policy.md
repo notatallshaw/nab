@@ -1,132 +1,117 @@
 # Package and index policy
 
-nab applies overrides by package name and version (`[tool.nab.packages.<name>]` or
-`[[tool.nab.package-rules]]`), or by serving index (`[tool.nab.index.<name>]`). Each overridden
-field replaces the global setting for matching packages. Fields with no override keep their global
-defaults.
+Overrides set policy for a package name and version, or for every package served by an index. Each
+field replaces its global setting independently. Omitted fields keep the global value.
 
-## Per-package overrides
+## Package selectors
 
-A per-package override sets policy for matching package names and versions. Both forms below may
-appear in one file.
-
-Use a name-keyed table for one package:
+Use a name-keyed table for one package, or a rule for several packages:
 
 ```toml
-# Build lxml from source and trust its (pre-PEP-643) PKG-INFO deps.
-[tool.nab.packages.lxml]
-dist-policy = { policy = "sdist-only", trust-unverified-deps = true }
-
-# Quote the key to carry a version specifier on the requirement.
-[tool.nab.packages."numpy > 2"]
+[tool.nab.packages."numpy>2"]
 dist-policy = "wheel-only"
+
+[[tool.nab.package-rules]]
+match = ["lxml", "xmlsec"]
+dist-policy = "sdist-only"
+metadata-policy = "prefer-wheel"
 ```
 
-`[[tool.nab.package-rules]]` is an array whose `match` selector lists the requirements one body
-applies to. The same overrides written as rules:
+Both forms can appear in one file. A selector is a package name with an optional PEP 508 version
+specifier. Extras, markers and URLs are not accepted.
+
+Names are canonicalised: `Foo-Bar`, `foo_bar` and `foo-bar` identify the same package. Quote a table
+key containing a specifier.
+
+## Override fields
+
+Package overrides accept these fields:
+
+| Field                   | Effect                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------ |
+| `dist-policy`           | Choose installation artifacts; also accepts the \`{ policy = "...", trust-unverified-deps = true |
+| `metadata-policy`       | Choose `match-artifact` or `prefer-wheel` metadata selection                                     |
+| `build-policy`          | Permit or forbid metadata builds                                                                 |
+| `assume-universal-deps` | Allow dependency declarations to be reused across targets                                        |
+| `allow-zip-sdists`      | Admit or refuse [legacy ZIP sdists](distribution-policy.md#supported-source-archives)            |
+| `uploaded-prior-to`     | Set a timezone-aware datetime or `P<n>D` cooldown; `false` removes the cutoff                    |
+| `index`                 | Route the package to one declared index; no other index is consulted                             |
+| `dependencies`          | Replace runtime dependency declarations with a list of PEP 508 requirements                      |
+| `requires-python`       | Replace the Python requirement with a PEP 440 specifier                                          |
+| `provides-extra`        | Replace the list of declared extra names                                                         |
+
+See [Distribution policy](distribution-policy.md), [Build policy](build-policy.md) and
+[Metadata overrides](metadata-overrides.md) for the value formats. An explicit scoped `false`
+cancels a global `true` for boolean settings.
+
+Index routing requires a bare package name. Nab must choose the index before it knows any release
+versions:
 
 ```toml
 [[tool.nab.package-rules]]
-match = ["lxml"]
-dist-policy = { policy = "sdist-only", trust-unverified-deps = true }
-
-# A match entry takes the same name-plus-specifier requirement.
-[[tool.nab.package-rules]]
-match = ["numpy > 2"]
-dist-policy = "wheel-only"
-```
-
-A rule is the form to reach for when one body covers several packages at once, most often routing a
-set of internal packages to one index:
-
-```toml
-[[tool.nab.package-rules]]
-match = ["acme-core", "acme-plugins", "acme-utils"]
+match = ["acme-core", "acme-plugins"]
 index = "internal"
 ```
 
-To scope an override to a range of versions, put a PEP 508 specifier in the (quoted) table key or in
-a `match` entry. Two non-overlapping ranges for one package are two entries, in either form:
+The `internal` index must be declared in `[[tool.nab.indexes]]`.
+
+## Version ranges and conflicts
+
+Two entries for the same package may set the same field only over disjoint version ranges:
 
 ```toml
-# Both forms take specifiers and mix in one file: old numpy as sdists,
-# newer numpy as wheels.
-[tool.nab.packages."numpy <= 1.21"]
+[tool.nab.packages."numpy<=1.21"]
 dist-policy = "sdist-only"
 
 [[tool.nab.package-rules]]
-match = ["numpy >= 1.22"]
+match = ["numpy>=1.22"]
 dist-policy = "wheel-only"
 ```
 
-A body sets any combination of:
-
-- `dist-policy`: an enum string, or `{ policy = "...", trust-unverified-deps = true|false }`.
-- `allow-zip-sdists`: a boolean admitting or refusing {ref}`legacy ZIP sdists <legacy-zip-sdists>`.
-- `build-policy`: an enum string.
-- `assume-universal-deps`: a boolean permitting dependency metadata to be reused across targets (see
-  {ref}`Build policy <assuming-dependencies-are-universal>`). An explicit `false` cancels a global
-  `true`.
-- `uploaded-prior-to`: a datetime with an explicit timezone offset, a `P<n>D` duration, or `false`
-  (no cutoff for the selected versions).
-- `index`: route the selected packages to this declared index (a strict pin: only that index is
-  consulted). Routing requires bare-name selectors, because the routing decision happens before any
-  version is known; a version specifier alongside `index` is rejected.
-- `dependencies`: a list of PEP 508 requirement strings that replaces the package's declared runtime
-  dependencies (see [Metadata overrides](metadata-overrides.md)).
-- `requires-python`: a PEP 440 specifier that replaces the package's declared Python requirement for
-  the selected versions (see [Metadata overrides](metadata-overrides.md)).
-- `provides-extra`: a list of extra names that replaces the package's declared extras for the
-  selected versions (see [Metadata overrides](metadata-overrides.md)).
-
-A selector is a name plus an optional version specifier, with no extras, marker, or URL. Package
-names are canonicalised, so `Foo-Bar`, `foo_bar`, and `foo-bar` refer to the same package; two
-entries that set the same field for it are an overlap error (below).
-
-The version ranges of two per-package entries (from either form) that set the **same field** for the
-**same package** must not overlap. Overlapping ranges are a parse-time error:
+An overlap is a parse-time error. These entries conflict because both set `dist-policy` for
+`lxml==2`:
 
 ```toml
-# ERROR: <= 2 and >= 1 overlap on [1, 2], and both set dist-policy.
-[tool.nab.packages."lxml <= 2"]
+[tool.nab.packages."lxml<=2"]
 dist-policy = "sdist-only"
 
-[tool.nab.packages."lxml >= 1"]
+[tool.nab.packages."lxml>=1"]
 dist-policy = "wheel-only"
 ```
 
-A package can have at most one index route, because routing requires a bare-name selector.
+Different fields can overlap. A rule may choose source installation while another chooses its
+metadata source.
 
-(per-index-policy)=
+<a name="per-index-policy"></a>
 
-## Per-index overrides
+## Index overrides
 
-`[tool.nab.index.<name>]` is keyed by a declared index name. Each entry sets policy only
-(`dist-policy`, `allow-zip-sdists`, `assume-universal-deps`, `build-policy`, `uploaded-prior-to`,
-`assume-fresh-seconds`) and applies to every package served from that index. Routing and version
-selectors are per-package settings.
+`[tool.nab.index.<name>]` applies to every package served by a declared index:
 
 ```toml
-# Everything served from PyPI is wheel-only.
 [tool.nab.index.pypi]
 dist-policy = "wheel-only"
 
 [tool.nab.index.internal]
 build-policy = "build-remote"
 uploaded-prior-to = "2026-05-01T00:00:00Z"
-# Trust this index's package listings as fresh for an hour.
 assume-fresh-seconds = 3600
 ```
 
-`assume-fresh-seconds` extends a cached listing's freshness window. A release published inside that
-window stays hidden until it lapses. The setting never affects metadata or artifacts cached by hash.
+Index overrides accept `dist-policy`, `metadata-policy`, `build-policy`, `assume-universal-deps`,
+`allow-zip-sdists`, `uploaded-prior-to` and `assume-fresh-seconds`. Routing, version selectors and
+metadata replacements are package-only settings.
+
+`assume-fresh-seconds` extends a cached listing's freshness window. A release published during that
+window stays hidden until it expires. Metadata and artifacts cached by hash are unaffected.
+
+Package and index overrides have equal precedence. If both set a field for a candidate version, the
+resolve fails. Remove one setting. Outside the package selector's version range, only the index
+setting applies.
 
 ## Cooldown exceptions
 
-### Allow a recently uploaded release
-
-Keep a seven-day cooldown, but admit the original files for
-[`certifi` 2026.10.19](https://pypi.org/project/certifi/2026.10.19/):
+A version-scoped cutoff can admit a reviewed release while other packages keep a seven-day cooldown:
 
 ```toml
 [tool.nab]
@@ -136,13 +121,10 @@ uploaded-prior-to = "P7D"
 uploaded-prior-to = "2026-10-20T02:24:17Z"
 ```
 
-The fixed timestamp admits that release's original wheel and sdist. Nab still excludes later uploads
-of the same version. Other versions and packages keep the seven-day cooldown.
+This timestamp admits that release's original files. Later uploads of the same version remain
+excluded.
 
-### Use an index without upload times
-
-For a hypothetical internal index that does not publish upload times, disable the cutoff only for
-that index:
+For an index without upload times, disable the cutoff only there:
 
 ```toml
 [tool.nab]
@@ -160,15 +142,5 @@ url = "https://pypi.org/simple/"
 uploaded-prior-to = false
 ```
 
-PyPI keeps the seven-day cooldown. Files without upload times are excluded whenever a cutoff
-applies; see {ref}`Index serialization <index-serialization>`.
-
-## Conflicts between package and index overrides
-
-Per-package and per-index overrides have equal precedence. If both set the same field for a
-candidate version, the resolve fails instead of choosing one. Remove one setting.
-
-The same package at a version *outside* the per-package range is governed only by the per-index
-entry, with no conflict.
-
-When no override sets a field, the flat global value (then the built-in default) applies.
+PyPI keeps the cooldown. Whenever a cutoff applies, files without upload times are excluded; see
+[Index serialization](indexes.md#serialization).

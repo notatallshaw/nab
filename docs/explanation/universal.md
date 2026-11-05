@@ -117,8 +117,8 @@ archive URL; index listings are fetched once per package.
 
 If equally ranked wheels already fetched disagree on dependencies, Nab reports an error. It compares
 only fetched siblings, so it may not detect every disagreement. For a dynamic sdist without static
-metadata, {ref}`assume-universal-deps <assuming-dependencies-are-universal>` explicitly permits
-reusing dependency declarations from a same-version wheel.
+metadata, [assume-universal-deps](../reference/build-policy.md#assuming-dependencies-are-universal)
+explicitly permits reusing dependency declarations from a same-version wheel.
 
 ## Patch-release markers
 

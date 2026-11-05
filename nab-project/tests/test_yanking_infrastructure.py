@@ -17,7 +17,7 @@ from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import YankAdmissionRequiredError
-from nab_provider.policy import DistPolicy, ExtrasMode
+from nab_provider.policy import DistPolicy, ExtrasMode, MetadataPolicy
 from nab_provider.provider import Provider, ResolutionStrategy
 from nab_provider.records import SdistFile
 from nab_provider.target import ResolveTarget
@@ -212,9 +212,10 @@ def test_fact_ordering_preserves_preferences_and_strategy(
     assert facts.ordered("dep", VersionRange.empty()) == []
 
 
-def test_sdist_install_requires_a_source_in_the_selected_file_class() -> None:
+def test_source_install_requires_a_source_in_the_selected_file_class() -> None:
     facts = catalogue([("dep", "2", False, [])])
-    facts.provider.dist_policy = DistPolicy.SDIST_INSTALL
+    facts.provider.dist_policy = DistPolicy.SDIST_ONLY
+    facts.provider.metadata_policy = MetadataPolicy.PREFER_WHEEL
     source = withdrawn_sdist()
     version = Version("2")
     files = [(version, source)]
@@ -226,9 +227,10 @@ def test_sdist_install_requires_a_source_in_the_selected_file_class() -> None:
     )
 
 
-def test_sdist_install_accepts_unordered_files() -> None:
+def test_source_install_accepts_unordered_files() -> None:
     facts = catalogue([("dep", "2", False, [])])
-    facts.provider.dist_policy = DistPolicy.SDIST_INSTALL
+    facts.provider.dist_policy = DistPolicy.SDIST_ONLY
+    facts.provider.metadata_policy = MetadataPolicy.PREFER_WHEEL
     files = [
         (Version("1"), withdrawn_sdist("1")),
         (Version("2"), withdrawn_sdist()),
@@ -237,7 +239,7 @@ def test_sdist_install_accepts_unordered_files() -> None:
     assert facts.installable(Candidate("dep", Version("2"), withdrawn=True), files)
 
 
-def sdist_install_port(release_count: int) -> FakeFetchPort:
+def source_install_port(release_count: int) -> FakeFetchPort:
     """Serve wheel/sdist pairs with only the newest release withdrawn."""
     port = graph_port(
         [
@@ -273,7 +275,7 @@ def test_yanked_sdist_resolution_bounds_version_comparisons(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     release_count = 64
-    port = sdist_install_port(release_count)
+    port = source_install_port(release_count)
     comparisons = 0
     original_equal = Version.__eq__
     original_less = Version.__lt__
@@ -295,7 +297,10 @@ def test_yanked_sdist_resolution_bounds_version_comparisons(
         port,
         [ResolveTarget.for_host()],
         [Requirement(f"dep=={release_count}")],
-        inputs=ResolveInputs(dist_policy=DistPolicy.SDIST_INSTALL),
+        inputs=ResolveInputs(
+            dist_policy=DistPolicy.SDIST_ONLY,
+            metadata_policy=MetadataPolicy.PREFER_WHEEL,
+        ),
     )
     assert result.success
     outcome = result.target_results[0]
@@ -358,7 +363,12 @@ def test_artifact_view_cannot_supply_a_withdrawn_install_source(
     port.index.store_listing(
         "dep", [*(port.index.get_listing("dep") or []), withdrawn_sdist()]
     )
-    provider = Provider(port, defer_yanked=True, dist_policy=DistPolicy.SDIST_INSTALL)
+    provider = Provider(
+        port,
+        defer_yanked=True,
+        dist_policy=DistPolicy.SDIST_ONLY,
+        metadata_policy=MetadataPolicy.PREFER_WHEEL,
+    )
     provider.fetch_versions("dep")
     with pytest.raises(YankAdmissionRequiredError):
         provider.dist_files_for("dep", Version("2"))

@@ -1959,10 +1959,9 @@ class TestPolicies:
     def test_each_dist_value_round_trips(self, tmp_path: Path) -> None:
         for value, expected in (
             ("wheel-only", DistPolicy.WHEEL_ONLY),
-            ("prefer-wheel", DistPolicy.PREFER_WHEEL),
             ("wheel-or-sdist", DistPolicy.WHEEL_OR_SDIST),
+            ("sdist-if-needed", DistPolicy.SDIST_IF_NEEDED),
             ("sdist-only", DistPolicy.SDIST_ONLY),
-            ("sdist-install", DistPolicy.SDIST_INSTALL),
         ):
             path = write(tmp_path, f'[tool.nab]\ndist-policy = "{value}"\n')
             assert read_pyproject_config(path).dist_policy is expected
