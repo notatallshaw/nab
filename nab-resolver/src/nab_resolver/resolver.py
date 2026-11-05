@@ -798,6 +798,9 @@ class Resolver(Generic[PackageType, VersionType]):
         requirements: Mapping[PackageType, RangeProtocol[VersionType]]
         | Sequence[RootRequirement[PackageType, VersionType]],
         constraints: Mapping[PackageType, RangeProtocol[VersionType]] | None = None,
+        *,
+        solution_validator: Callable[[Solution[PackageType, VersionType]], bool]
+        | None = None,
     ) -> Solution[PackageType, VersionType]:
         """Resolve requirements and return the pins, roots, and edges.
 
@@ -814,6 +817,12 @@ class Resolver(Generic[PackageType, VersionType]):
         A supplied range equal to ``range_type.full()`` is recorded as
         ``~range_type.empty()``, which may be strictly narrower; see
         :class:`~nab_resolver.types.RangeProtocol`.
+
+        ``solution_validator`` may reject a complete proposal by returning false.
+        Search then continues within the original iteration budget. A rejection
+        must stay valid for the same pins, roots and constraints throughout this
+        solve; candidate identities and dependencies must remain stable. The
+        callback must not mutate its input. Callback errors propagate.
 
         Raises ``ResolutionError`` if no solution exists.
         """
@@ -855,12 +864,54 @@ class Resolver(Generic[PackageType, VersionType]):
             if next_package is None:
                 # All packages decided; the spec requires filtering out
                 # any unreachable extras before returning.
-                return self._build_result()
+                result = self._build_result()
+                if solution_validator is None or self._validate_solution(
+                    result, solution_validator
+                ):
+                    return result
+
+                changed_package = self._reject_solution(result)
+                continue
 
             changed_package = self._decide_next(next_package)
 
         exceeded_message = f"Resolution exceeded {self.max_iterations} iterations"
         raise ResolutionLimitError(exceeded_message)
+
+    def _validate_solution(
+        self,
+        solution: Solution[PackageType, VersionType],
+        validator: Callable[[Solution[PackageType, VersionType]], bool],
+    ) -> bool:
+        """Check host policy without allowing the callback to rewrite its input."""
+        original = Solution(dict(solution.pins), solution.edges, solution.roots)
+        accepted = validator(solution)
+
+        # Both returned pins and learned clauses must describe the solver's proposal.
+        if solution != original:
+            message = "solution_validator must not mutate the proposed solution"
+            raise ValueError(message)
+
+        return accepted
+
+    def _reject_solution(
+        self, solution: Solution[PackageType, VersionType]
+    ) -> PackageType:
+        """Exclude the complete assignment rejected by stable host policy."""
+        if not solution.pins:
+            message = "The host rejected the empty solution"
+            raise ResolutionError(message)
+
+        # A single rejected pin could also occur in an accepted combination.
+        terms = [
+            Term(package, self.range_type.singleton(version), positive=True)
+            for package, version in solution.pins.items()
+        ]
+        incompat_index.add_incompatibility(
+            self,
+            Incompatibility(terms, cause=IncompatibilityCause.SOLUTION_REJECTED),
+        )
+        return terms[0].package
 
     def try_resolve_preferred(
         self,

@@ -380,6 +380,9 @@ class IncompatibilityCause(enum.Enum):
     See: https://github.com/dart-lang/pub/blob/master/doc/solver.md#conflict-resolution
     """
 
+    SOLUTION_REJECTED = enum.auto()
+    """A complete assignment violates stable host policy."""
+
 
 class Incompatibility(Generic[PackageType, VersionType]):
     """A set of terms that cannot all be true simultaneously.
