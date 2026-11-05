@@ -202,9 +202,37 @@ nab_resolver.ranges     Range
 nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,
                         ResolverObserver, ResolverProvider, Solution
 nab_resolver.root       ROOT
+nab_resolver.testing    ProviderScenario, check_provider, check_provider_scenarios
 nab_resolver.types      Incompatibility, IncompatibilityCause,
                         RangeProtocol, RootRequirement, Term
 ```
 
 The package root binds no names, so importing `nab_resolver` pulls in no submodules. Anything else
 is internal and may move in any release.
+
+## Checking a provider
+
+`check_provider_scenarios` runs reusable checks with a factory that builds your provider from each
+scenario's graph and requirements:
+
+```python
+from nab_resolver.testing import check_provider_scenarios
+
+check_provider_scenarios(
+    lambda scenario: NewestFirstProvider(scenario.graph),
+    packages=("a", "b", "c"),
+    versions=(1, 2),
+    range_type=Range,
+)
+```
+
+The suite checks conflicts, cycles, constraints and backtracking. It repeats metadata queries,
+changes root order and tries every combination in each small fixture to check both solutions and
+failures.
+
+Supply three distinct package keys, two distinct version keys and your range class. `check_provider`
+accepts custom fixtures and an explicit search budget. The fixture must list all available versions
+and their unchanging dependencies.
+
+Use `probe_state` to return an independent snapshot of decision state around
+`has_satisfying_version`. Exclude caches and diagnostics from that snapshot.
