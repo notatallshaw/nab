@@ -349,6 +349,9 @@ def _render_prefix_line(
         IncompatibilityCause.DEPENDENCY: "because",
         IncompatibilityCause.NO_VERSIONS: "because no versions of",
         IncompatibilityCause.DERIVED: "so",
+        IncompatibilityCause.SOLUTION_REJECTED: (
+            "because host rules reject the selection"
+        ),
     }.get(cause, "")
     render = _format_requirement if cause in _REQUIREMENT_PREFIX_CAUSES else format_term
     body = " and ".join(render(term, format_range) for term in stated)

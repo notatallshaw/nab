@@ -311,6 +311,28 @@ caches are reused. A validated plan can select different versions from a normal 
 raises `ResolutionLimitError` without proving unsatisfiability. This limit counts solver iterations
 and does not interrupt a blocked provider operation.
 
+## Checking complete proposals
+
+Pass `solution_validator` to `solve` when a host rule needs the complete plan:
+
+```python
+solution = Resolver(NewestFirstProvider(graph)).solve(
+    {"app": Range.singleton(1)},
+    solution_validator=lambda proposed: proposed.pins["json"] == 1,
+)
+print(sorted(solution.pins.items()))
+```
+
+```text
+[('app', 1), ('http', 2), ('json', 1)]
+```
+
+Returning false excludes that complete combination and continues within the same iteration budget.
+The verdict must remain false for those pins under the same roots and constraints throughout the
+solve. Candidate identities and dependencies must stay stable; changed metadata needs a new solve.
+The callback must leave its input unchanged. Raise for transient errors; exceptions propagate. A new
+solve clears previous rejections. This search does not enumerate unknown external sources.
+
 ## The supported API
 
 These module paths will not move without a major version bump:

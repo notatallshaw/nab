@@ -381,6 +381,9 @@ class IncompatibilityCause(enum.Enum):
     CONTEXTUAL_NO_VERSIONS = enum.auto()
     """No candidate exists while the decisions after the first term remain selected."""
 
+    SOLUTION_REJECTED = enum.auto()
+    """A complete assignment violates stable host policy."""
+
 
 class Incompatibility(Generic[PackageType, VersionType]):
     """A set of terms that cannot all be true simultaneously.
