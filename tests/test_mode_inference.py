@@ -6,11 +6,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 import tomli
-import tomli_w
 
 from nab.cli import run
 from nab.config.model import plan_targets, read_pyproject_config
 from nab.config.subflags import BY_PARENT, build_cli_tables
+from nab_project import toml_writer
 from nab_provider._vendor.packaging.markers import Environment
 from nab_provider._vendor.packaging.pylock import Pylock, PylockSelectError
 from nab_provider.errors import ConfigError
@@ -38,8 +38,10 @@ def _project(
     if declaration == "pyproject":
         project["tool"] = {"nab": settings}
     else:
-        (directory / "nab.toml").write_text(tomli_w.dumps(settings), encoding="utf-8")
-    path.write_text(tomli_w.dumps(project), encoding="utf-8")
+        (directory / "nab.toml").write_text(
+            toml_writer.dumps(settings), encoding="utf-8"
+        )
+    path.write_text(toml_writer.dumps(project), encoding="utf-8")
     return path
 
 

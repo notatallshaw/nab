@@ -56,7 +56,7 @@ __lazy_modules__ = (
     "subprocess",
     "sys",
     "tempfile",
-    "tomli_w",
+    "nab_project.toml_writer",
     "venv",
 )
 
@@ -75,7 +75,6 @@ from email import message_from_string
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import tomli_w
 from installer import install as installer_install
 from installer.destinations import SchemeDictionaryDestination
 from installer.sources import WheelFile
@@ -109,6 +108,7 @@ from nab_provider.value import Record, replace
 from nab_provider.vcs_admission import UnsupportedVcsError
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 
+from .. import toml_writer
 from .._compat import override
 from ..download import DownloadError, download_lock
 from ..inputs import ResolveInputs
@@ -1128,7 +1128,7 @@ def _render_synthetic_pyproject(requires: list[str]) -> str:
     version make the inner resolver happy without depending on the
     outer project's name/version.
     """
-    return tomli_w.dumps(
+    return toml_writer.dumps(
         {
             "project": {
                 "name": "_nab_build_env",

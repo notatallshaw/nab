@@ -50,7 +50,7 @@ index = "https://pypi.org/simple/"
 
 [packages.sdist]
 name = "hatchling-1.32.4.tar.gz"
-upload-time = 2026-09-20 22:48:45.398505+00:00
+upload-time = 2026-09-20T22:48:45.398505+00:00
 url = "https://files.pythonhosted.org/packages/f6/97/b5312f01a8c6daf729a9d272dd442e0c546dbcc630495788786c4b567ed0/hatchling-1.32.4.tar.gz"
 size = 58065
 
@@ -59,7 +59,7 @@ sha256 = "c4468f73144c054d2aab4ef0f0378c43b9878bf07f8ffd6b79690e970d375f07"
 
 [[packages.wheels]]
 name = "hatchling-1.32.4-py3-none-any.whl"
-upload-time = 2026-09-20 22:48:44.190681+00:00
+upload-time = 2026-09-20T22:48:44.190681+00:00
 url = "https://files.pythonhosted.org/packages/5f/80/91f51f439c05d4ec4623c22928ce16a938d6d793bf709477830823497859/hatchling-1.32.4-py3-none-any.whl"
 size = 78748
 
@@ -74,7 +74,7 @@ index = "https://pypi.org/simple/"
 
 [packages.sdist]
 name = "packaging-26.3.tar.gz"
-upload-time = 2026-08-04 18:15:28.737071+00:00
+upload-time = 2026-08-04T18:15:28.737071+00:00
 url = "https://files.pythonhosted.org/packages/7d/fa/3944b40b07da9ce895c0e6303a5ab7d53da063554f534556b134a54d6093/packaging-26.3.tar.gz"
 size = 313412
 
@@ -83,7 +83,7 @@ sha256 = "94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79"
 
 [[packages.wheels]]
 name = "packaging-26.3-py3-none-any.whl"
-upload-time = 2026-08-04 18:15:27.159957+00:00
+upload-time = 2026-08-04T18:15:27.159957+00:00
 url = "https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl"
 size = 129956
 
@@ -98,7 +98,7 @@ index = "https://pypi.org/simple/"
 
 [packages.sdist]
 name = "pathspec-1.1.1.tar.gz"
-upload-time = 2026-04-27 01:46:08.907631+00:00
+upload-time = 2026-04-27T01:46:08.907631+00:00
 url = "https://files.pythonhosted.org/packages/5a/82/42f767fc1c1143d6fd36efb827202a2d997a375e160a71eb2888a925aac1/pathspec-1.1.1.tar.gz"
 size = 135180
 
@@ -107,7 +107,7 @@ sha256 = "17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a"
 
 [[packages.wheels]]
 name = "pathspec-1.1.1-py3-none-any.whl"
-upload-time = 2026-04-27 01:46:07.060850+00:00
+upload-time = 2026-04-27T01:46:07.060850+00:00
 url = "https://files.pythonhosted.org/packages/f1/d9/7fb5aa316bc299258e68c73ba3bddbc499654a07f151cba08f6153988714/pathspec-1.1.1-py3-none-any.whl"
 size = 57328
 
@@ -122,7 +122,7 @@ index = "https://pypi.org/simple/"
 
 [packages.sdist]
 name = "pluggy-1.7.0.tar.gz"
-upload-time = 2026-10-15 09:50:58.343484+00:00
+upload-time = 2026-10-15T09:50:58.343484+00:00
 url = "https://files.pythonhosted.org/packages/bf/db/7fc19e6f2dc92a966727031389fc2e08b558f0f25eb7403c1119ad4713cd/pluggy-1.7.0.tar.gz"
 size = 123304
 
@@ -131,7 +131,7 @@ sha256 = "d1eaa46ebb595891b860ab086b4d09c8588af65ebd4361b8e8f4bb8920b90ba8"
 
 [[packages.wheels]]
 name = "pluggy-1.7.0-py3-none-any.whl"
-upload-time = 2026-10-15 09:50:56.808462+00:00
+upload-time = 2026-10-15T09:50:56.808462+00:00
 url = "https://files.pythonhosted.org/packages/40/9e/2b38731e0fc536806f16490e1a12d7f0dc2a1235aa8cc07bcc75416a7daa/pluggy-1.7.0-py3-none-any.whl"
 size = 27082
 
@@ -147,7 +147,7 @@ index = "https://pypi.org/simple/"
 
 [packages.sdist]
 name = "tomli-2.5.0.tar.gz"
-upload-time = 2026-10-07 12:23:37.892554+00:00
+upload-time = 2026-10-07T12:23:37.892554+00:00
 url = "https://files.pythonhosted.org/packages/b0/78/9ad63712633ed3ab5cc1a648d863d7e7da371e9425e209555a0fe711b695/tomli-2.5.0.tar.gz"
 size = 17662
 
@@ -156,7 +156,7 @@ sha256 = "264507556cd8b8c8e7c6ee037cdf443a463f03f4c958e57195e3d369711b8ff6"
 
 [[packages.wheels]]
 name = "tomli-2.5.0-py3-none-any.whl"
-upload-time = 2026-10-07 12:23:36.875825+00:00
+upload-time = 2026-10-07T12:23:36.875825+00:00
 url = "https://files.pythonhosted.org/packages/60/3f/3e3f8fd0919249b0200c80fbc4f9a1e70be19f9883da71dfb7f8b9ab8aca/tomli-2.5.0-py3-none-any.whl"
 size = 14765
 
@@ -171,7 +171,7 @@ index = "https://pypi.org/simple/"
 
 [packages.sdist]
 name = "tomlkit-0.15.2.tar.gz"
-upload-time = 2026-10-16 04:07:08.166827+00:00
+upload-time = 2026-10-16T04:07:08.166827+00:00
 url = "https://files.pythonhosted.org/packages/08/72/fc01563df95c189a9f65850096bdc205bc2fe37da6c740cd64afaf18d07e/tomlkit-0.15.2.tar.gz"
 size = 190522
 
@@ -180,7 +180,7 @@ sha256 = "83e32755ba1d20d9340bd069ee97e9f6232ba2346b63ffcba425de01f7e327a6"
 
 [[packages.wheels]]
 name = "tomlkit-0.15.2-py3-none-any.whl"
-upload-time = 2026-10-16 04:07:09.216014+00:00
+upload-time = 2026-10-16T04:07:09.216014+00:00
 url = "https://files.pythonhosted.org/packages/da/46/7d84138a60a8bd796825b2d38ebe92d0d16501ca57d501b7c5d677401bbc/tomlkit-0.15.2-py3-none-any.whl"
 size = 52225
 
@@ -194,7 +194,7 @@ index = "https://pypi.org/simple/"
 
 [packages.sdist]
 name = "trove_classifiers-2026.9.21.13.tar.gz"
-upload-time = 2026-09-21 13:29:07.301512+00:00
+upload-time = 2026-09-21T13:29:07.301512+00:00
 url = "https://files.pythonhosted.org/packages/bf/93/af436dfaa845cab5d96f0adbc1e4f3730532d37fa249e4eb796fb1d7fc82/trove_classifiers-2026.9.21.13.tar.gz"
 size = 17085
 
@@ -203,7 +203,7 @@ sha256 = "0a9ebc8d4e2f3e8a22848c5258033035bec17a3012ac3fea16dbaa764489eb71"
 
 [[packages.wheels]]
 name = "trove_classifiers-2026.9.21.13-py3-none-any.whl"
-upload-time = 2026-09-21 13:29:06.123578+00:00
+upload-time = 2026-09-21T13:29:06.123578+00:00
 url = "https://files.pythonhosted.org/packages/30/81/0da8afb52a71d0a4f2bd3152357b1a441e393b286374802b9d3addab4ab5/trove_classifiers-2026.9.21.13-py3-none-any.whl"
 size = 14232
 
@@ -212,7 +212,7 @@ sha256 = "8b1ff4f9c191b1040b71c37f1e445ab99732911e3cd91de52838453a854d7a17"
 
 [tool.nab]
 nab-version = "0.0.26.dev0"
-created-at = 2026-11-03 02:06:19.779414+00:00
+created-at = 2026-11-03T02:06:19.779414+00:00
 command-line = [
     "nab",
     "lock",
@@ -234,6 +234,6 @@ platforms = [
 
 [tool.nab.validation]
 version = 1
-all-inputs-sha256 = "f643e6caabf57fb300a772a54af87e55b31bc5b1f79d972d7f29215af084d891"
-selection-inputs-sha256 = "9dbc96f961a04b17181f92a53443d8437f0c5824e35f2b09eb3ffaf442a4b1f0"
-contents-sha256 = "b6f02a32f6f62744cf3b7a2d5f8e77709a722606e31f74a934ac8aa36edf6924"
+all-inputs-sha256 = "a56fe6e0e337ca485b089efb155b7dfe3a27540f0d490f73546fafca0b1aadca"
+selection-inputs-sha256 = "f9778e5e6fd4d5cb07fa8c987360e91b5b8aaeff6377e066b5fc90228097f3ad"
+contents-sha256 = "1dc6fbdc9bc2e4db8ed6c574d17d0d8bb2bd08f95b6b2191cbf214311c9ae5f0"

@@ -24,9 +24,10 @@ import sys
 from typing import NamedTuple
 
 import pytest
-import tomli_w
 from hypothesis import given
 from hypothesis import strategies as st
+
+from nab_project import toml_writer
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -243,4 +244,4 @@ class TestEmitParseEmitFixedPoint:
         """``write_lock`` output is a fixed point of parse + re-serialise."""
         text = write_lock(_build_input(case))
         reparsed = Pylock.from_dict(tomllib.loads(text))
-        assert tomli_w.dumps(dict(reparsed.to_dict())) == text
+        assert toml_writer.dumps(dict(reparsed.to_dict())) == text

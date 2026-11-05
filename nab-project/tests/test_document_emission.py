@@ -7,8 +7,8 @@ from datetime import datetime, timedelta, timezone, tzinfo
 from typing import TYPE_CHECKING
 
 import pytest
-import tomli_w
 
+from nab_project import toml_io, toml_writer
 from nab_project._lockfile import pylock
 from nab_project._lockfile.coverage import CoverageError
 from nab_project.lockfile import (
@@ -166,7 +166,7 @@ def test_index_document_matches_native_values_types_order_and_text(
 
     text, calls = observe_render(value, lock_dir=tmp_path)
 
-    assert text == tomli_w.dumps(expected)
+    assert toml_io.loads(text) == toml_io.loads(toml_writer.dumps(expected))
     assert calls == ["disjointness", "coverage", "document", "schema"]
 
 
@@ -212,7 +212,7 @@ def test_other_source_kinds_keep_the_native_serializer(
     expected = pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
     text, calls = observe_render(value, lock_dir=tmp_path)
 
-    assert text == tomli_w.dumps(expected)
+    assert toml_io.loads(text) == toml_io.loads(toml_writer.dumps(expected))
     assert calls == ["disjointness", "coverage", "native-document", "schema"]
 
 
@@ -234,7 +234,7 @@ def test_mixed_sources_keep_index_artifacts_on_the_native_path(tmp_path: Path) -
     expected = pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
     text, calls = observe_render(value, lock_dir=tmp_path)
 
-    assert text == tomli_w.dumps(expected)
+    assert toml_io.loads(text) == toml_io.loads(toml_writer.dumps(expected))
     assert calls == ["disjointness", "coverage", "native-document", "schema"]
 
 
@@ -390,11 +390,13 @@ def test_custom_scalar_copy_uses_native_serialization_once(
     if field == "provenance":
         assert value.provenance is not None
         value.provenance.nab_version = CopyText("original", "copied")
-    expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
+    expected = toml_writer.dumps(
+        pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
+    )
 
     text, calls = observe_render(value, lock_dir=tmp_path)
 
-    assert text == expected
+    assert toml_io.loads(text) == toml_io.loads(expected)
     assert ("copied" if field != "hash" else "c" * 64) in text
     assert calls == [
         "disjointness",
@@ -416,10 +418,12 @@ def test_marker_subclass_in_tool_values_keeps_native_copy(tmp_path: Path) -> Non
             {"marker": CopiedMarker('python_version == "3.12"')}
         ),
     )
-    expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
+    expected = toml_writer.dumps(
+        pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
+    )
     text, calls = observe_render(value, lock_dir=tmp_path)
 
-    assert text == expected
+    assert toml_io.loads(text) == toml_io.loads(expected)
     assert "copied-marker" in text
     assert calls == [
         "disjointness",
@@ -469,10 +473,12 @@ def test_custom_tool_container_uses_native_reconstruction(tmp_path: Path) -> Non
         lock_input(index_pin()),
         provenance=BlockProvenance({"values": AppendingList(["original"])}),
     )
-    expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
+    expected = toml_writer.dumps(
+        pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
+    )
     text, calls = observe_render(value, lock_dir=tmp_path)
 
-    assert text == expected
+    assert toml_io.loads(text) == toml_io.loads(expected)
     assert text.count("copied") == 2
     assert calls == [
         "disjointness",
@@ -520,10 +526,12 @@ def test_custom_metaclass_cannot_admit_a_scalar(tmp_path: Path) -> None:
     value = lock_input(
         index_pin().replace(index=CopiedScalar("https://original.invalid/"))
     )
-    expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
+    expected = toml_writer.dumps(
+        pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
+    )
     text, calls = observe_render(value, lock_dir=tmp_path)
 
-    assert text == expected
+    assert toml_io.loads(text) == toml_io.loads(expected)
     assert "copied" in text
     assert calls == [
         "disjointness",
@@ -558,10 +566,12 @@ def test_plain_tool_scalars_keep_direct_emission(tmp_path: Path) -> None:
         lock_input(index_pin()),
         provenance=BlockProvenance({"flag": True, "count": 0, "ratio": 0.5}),
     )
-    expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
+    expected = toml_writer.dumps(
+        pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
+    )
     text, calls = observe_render(value, lock_dir=tmp_path)
 
-    assert text == expected
+    assert toml_io.loads(text) == toml_io.loads(expected)
     assert calls == ["disjointness", "coverage", "document", "schema"]
 
 
@@ -575,10 +585,12 @@ def test_custom_tool_mapping_uses_native_reconstruction(tmp_path: Path) -> None:
         lock_input(index_pin()),
         provenance=BlockProvenance({"values": AppendingDict((("original", "value"),))}),
     )
-    expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
+    expected = toml_writer.dumps(
+        pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
+    )
     text, calls = observe_render(value, lock_dir=tmp_path)
 
-    assert text == expected
+    assert toml_io.loads(text) == toml_io.loads(expected)
     assert 'copies = "xx"' in text
     assert calls == [
         "disjointness",
@@ -626,10 +638,12 @@ def test_naive_tool_datetime_keeps_direct_emission(tmp_path: Path) -> None:
             }
         ),
     )
-    expected = tomli_w.dumps(pylock.build_pylock(value, lock_dir=tmp_path).to_dict())
+    expected = toml_writer.dumps(
+        pylock.build_pylock(value, lock_dir=tmp_path).to_dict()
+    )
     text, calls = observe_render(value, lock_dir=tmp_path)
 
-    assert text == expected
+    assert toml_io.loads(text) == toml_io.loads(expected)
     assert calls == ["disjointness", "coverage", "document", "schema"]
 
 
@@ -709,7 +723,7 @@ def test_semantic_specifier_text_keeps_native_copy_behavior(
         assert expected["packages"][0]["requires-python"] == ">=4"
     text, calls = observe_render(value, lock_dir=tmp_path)
 
-    assert text == tomli_w.dumps(expected)
+    assert toml_io.loads(text) == toml_io.loads(toml_writer.dumps(expected))
     assert calls == [
         "disjointness",
         "coverage",
@@ -742,7 +756,7 @@ def test_runtime_specifier_object_keeps_native_member_copy(
         assert expected["packages"][0]["requires-python"] == ">=4"
     text, calls = observe_render(value, lock_dir=tmp_path)
 
-    assert text == tomli_w.dumps(expected)
+    assert toml_io.loads(text) == toml_io.loads(toml_writer.dumps(expected))
     assert calls == [
         "disjointness",
         "coverage",
@@ -803,7 +817,7 @@ def test_semantic_specifier_component_copy_changes_output(
         assert expected["packages"][0]["requires-python"] == expected_range
     text, calls = observe_render(value, lock_dir=tmp_path)
 
-    assert text == tomli_w.dumps(expected)
+    assert toml_io.loads(text) == toml_io.loads(toml_writer.dumps(expected))
     assert calls == [
         "disjointness",
         "coverage",

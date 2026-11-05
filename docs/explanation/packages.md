@@ -40,6 +40,10 @@ resolution and saved-lock validation. The CLI selects the input format and appli
 layers, including a script's inline `[tool.nab]`. Script parsing never imports the script, and
 selecting a script does not discover an enclosing workspace.
 
+`nab-project` also emits its generated TOML. Its writer uses a fixed layout for locks and synthetic
+build projects; it does not preserve source formatting or comments. Datetime values use a `T`
+separator.
+
 ### Matrix ownership
 
 ```python

@@ -691,7 +691,7 @@ def test_non_sticky_stale_falls_through_out_of_date(
 def test_a_deeply_nested_extra_table_falls_through_out_of_date(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A table too deep for ``tomli_w`` to render still reaches a verdict.
+    """Deeply nested committed tables reach a verdict without being rendered.
 
     tomli parses table depths the writer cannot write back, so the
     comparison must not round-trip the committed lock through the writer.

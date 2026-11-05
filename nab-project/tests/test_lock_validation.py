@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,13 @@ from nab_provider._vendor.packaging.tags import Tag
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.overrides import PackageOverride
 from nab_provider.pep508 import parse_requirement
-from nab_provider.policy import DecisionOrder, LocalSource, ResolutionStrategy
+from nab_provider.policy import (
+    BuildPolicy,
+    DecisionOrder,
+    DistPolicy,
+    LocalSource,
+    ResolutionStrategy,
+)
 from nab_provider.records import IndexConfig
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, MatrixInclude, ResolveTarget
@@ -212,6 +219,90 @@ def test_known_input_types_are_serializable(value: object, tmp_path: Path) -> No
     result = _value(value, tmp_path)
     encoded = json.dumps(result)
     assert "secret" not in encoded
+
+
+@pytest.mark.parametrize(
+    "value", [BuildPolicy.NEVER, DecisionOrder.STABLE, DistPolicy.WHEEL_ONLY]
+)
+def test_policy_values_are_encoded_as_plain_strings(
+    value: BuildPolicy | DecisionOrder | DistPolicy, tmp_path: Path
+) -> None:
+    encoded = _value(value, tmp_path)
+    assert type(encoded) is str
+    assert encoded == value.value
+
+
+def test_scalar_subclass_urls_are_still_normalized(tmp_path: Path) -> None:
+    class Text(str):
+        __slots__ = ()
+
+    text = Text("Demo @ https://user:secret@example.invalid/demo.whl")
+    assert _value(text, tmp_path) == "demo @ https://example.invalid/demo.whl"
+
+
+def test_scalar_subclass_without_url_is_retained(tmp_path: Path) -> None:
+    class Text(str):
+        __slots__ = ()
+
+    text = Text("value")
+    assert _value(text, tmp_path) is text
+
+
+def test_nested_mapping_order_does_not_change_fingerprints(tmp_path: Path) -> None:
+    first = {"z": {"b": 2, "a": 1}, "a": [{"d": 4, "c": 3}]}
+    second = {"a": [{"c": 3, "d": 4}], "z": {"a": 1, "b": 2}}
+    assert validation_digest(_value(first, tmp_path)) == validation_digest(
+        _value(second, tmp_path)
+    )
+
+
+@pytest.mark.parametrize("microsecond", [0, 1, 123456])
+def test_content_datetime_fingerprint_is_reproducible(microsecond: int) -> None:
+    timestamp = datetime(2026, 1, 2, 3, 4, 5, microsecond, tzinfo=timezone.utc)
+    document = {"packages": [{"upload-time": timestamp}]}
+    expected_json = json.dumps(
+        {"packages": [{"upload-time": timestamp.isoformat()}]},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    assert (
+        content_digest(document) == hashlib.sha256(expected_json.encode()).hexdigest()
+    )
+    for separator in (" ", "T"):
+        text = f"[[packages]]\nupload-time = {timestamp.isoformat(sep=separator)}\n"
+        assert content_digest(toml_io.loads(text)) == content_digest(document)
+
+
+def test_datetime_fingerprint_does_not_depend_on_display_overrides() -> None:
+    class DisplayDatetime(datetime):
+        __slots__ = ()
+
+        def __str__(self) -> str:
+            return "custom display"
+
+        def isoformat(self, sep: str = "T", timespec: str = "auto") -> str:
+            return "custom display"
+
+    timestamp = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    display = DisplayDatetime(2026, 1, 2, tzinfo=timezone.utc)
+    assert content_digest({"timestamp": display}) == content_digest(
+        {"timestamp": timestamp}
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "text"),
+    [
+        (date(2026, 1, 2), "2026-01-02"),
+        (time(3, 4, 5), "03:04:05"),
+    ],
+)
+def test_other_toml_scalar_fingerprints_keep_their_text(
+    value: date | time, text: str
+) -> None:
+    encoded = json.dumps({"value": text}, separators=(",", ":")).encode()
+    assert content_digest({"value": value}) == hashlib.sha256(encoded).hexdigest()
 
 
 def test_override_records_keep_semantic_fields(tmp_path: Path) -> None:

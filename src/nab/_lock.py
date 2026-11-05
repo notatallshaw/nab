@@ -490,9 +490,8 @@ def _packages_only(text: str) -> dict[str, Any]:
 
     Drops the provenance block (its command line and timestamp change every
     run) so two locks compare equal whenever their packages, environments,
-    and metadata match.  Returning the parsed tables keeps the comparison
-    off ``tomli_w``, which recurses once per table level and so cannot
-    re-render every document tomli accepts.
+    and metadata match. Comparing parsed values also ignores differences in
+    TOML layout and accepts tables that cannot be rendered recursively.
     """
     data = toml_io.loads(text)
     data.pop("tool", None)

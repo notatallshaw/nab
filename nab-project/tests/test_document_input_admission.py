@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypeVar
 
-import tomli_w
-
+from nab_project import toml_io, toml_writer
 from nab_project._lockfile import pylock
 from nab_project._testing.artifacts import make_wheel_artifact
 from nab_project.lockfile import IndexPin, LockInput, PinShape, TargetLock
@@ -81,7 +80,7 @@ def _input(target: ResolveTarget, locks: Mapping[str, TargetLock]) -> LockInput:
 
 def _native_first_text(target: ResolveTarget, lock_dir: Path) -> str:
     value = _input(target, {target.label: TargetLock(target, _pins("1.0"))})
-    return tomli_w.dumps(pylock.build_pylock(value, lock_dir=lock_dir).to_dict())
+    return toml_writer.dumps(pylock.build_pylock(value, lock_dir=lock_dir).to_dict())
 
 
 def test_custom_pin_mapping_keeps_native_pins(tmp_path: Path) -> None:
@@ -89,8 +88,8 @@ def test_custom_pin_mapping_keeps_native_pins(tmp_path: Path) -> None:
     pins = _SwapOnSecondValues(_pins("1.0"), _pins("2.0"))
     value = _input(target, {target.label: TargetLock(target, pins)})
 
-    assert pylock.render_lock(value, lock_dir=tmp_path) == _native_first_text(
-        target, tmp_path
+    assert toml_io.loads(pylock.render_lock(value, lock_dir=tmp_path)) == toml_io.loads(
+        _native_first_text(target, tmp_path)
     )
 
 
@@ -101,9 +100,9 @@ def test_custom_target_mapping_keeps_native_pins(tmp_path: Path) -> None:
         {target.label: TargetLock(target, _pins("2.0"))},
     )
 
-    assert pylock.render_lock(_input(target, locks), lock_dir=tmp_path) == (
-        _native_first_text(target, tmp_path)
-    )
+    assert toml_io.loads(
+        pylock.render_lock(_input(target, locks), lock_dir=tmp_path)
+    ) == toml_io.loads(_native_first_text(target, tmp_path))
 
 
 def test_target_subclass_keeps_native_property_reads(tmp_path: Path) -> None:
@@ -123,8 +122,8 @@ def test_target_subclass_keeps_native_property_reads(tmp_path: Path) -> None:
 
     value = _input(target, {target.label: ChangingTarget(target, _pins("1.0"))})
 
-    assert pylock.render_lock(value, lock_dir=tmp_path) == _native_first_text(
-        target, tmp_path
+    assert toml_io.loads(pylock.render_lock(value, lock_dir=tmp_path)) == toml_io.loads(
+        _native_first_text(target, tmp_path)
     )
 
 
@@ -148,6 +147,6 @@ def test_input_subclass_keeps_native_property_reads(tmp_path: Path) -> None:
         environments=[Marker(environment_declaration(target, []))],
     )
 
-    assert pylock.render_lock(value, lock_dir=tmp_path) == _native_first_text(
-        target, tmp_path
+    assert toml_io.loads(pylock.render_lock(value, lock_dir=tmp_path)) == toml_io.loads(
+        _native_first_text(target, tmp_path)
     )

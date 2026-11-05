@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
-import tomli_w
 
-from nab_project import toml_io
+from nab_project import toml_io, toml_writer
 from nab_project._resolve.engine import InstallContexts
 from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.inputs import ResolveInputs
@@ -136,7 +137,7 @@ def test_constraints_cover_active_packages_and_micro_slices(
 
 def _replace_record(lock: Path, document: dict[str, Any]) -> None:
     """Write edited machine data to exercise standard field checks."""
-    lock.write_text(tomli_w.dumps(document))
+    lock.write_text(toml_writer.dumps(document))
 
 
 @pytest.mark.parametrize(
@@ -320,6 +321,29 @@ def test_validation_version_requires_an_integer(
     document["tool"]["nab"]["validation"]["version"] = version
     _replace_record(case[0], document)
     with pytest.raises(LockConsistencyError, match="no supported validation record"):
+        _check(case)
+
+
+def test_previous_datetime_fingerprint_requires_regeneration(tmp_path: Path) -> None:
+    case = _saved(tmp_path)
+    document = toml_io.load_path(case[0])
+    document["packages"][0]["wheels"][0]["upload-time"] = datetime(
+        2026, 1, 1, tzinfo=timezone.utc
+    )
+    standard = {key: value for key, value in document.items() if key != "tool"}
+    legacy = json.dumps(
+        standard,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        default=str,
+    ).encode()
+    document["tool"]["nab"]["validation"]["contents-sha256"] = hashlib.sha256(
+        legacy
+    ).hexdigest()
+    Pylock.from_dict(document).validate()
+    _replace_record(case[0], document)
+    with pytest.raises(LockConsistencyError, match="does not match the lock contents"):
         _check(case)
 
 
