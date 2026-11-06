@@ -23,6 +23,11 @@ assert loaded == [], f"imported submodules: {loaded}"
 
 
 SUPPORTED_API = {
+    "nab_resolver.testing": {
+        "ProviderScenario",
+        "check_provider",
+        "check_provider_scenarios",
+    },
     "nab_resolver.errors": {
         "ResolutionError",
         "ResolutionInvariantError",
