@@ -93,8 +93,9 @@ from nab_provider.provider import (
 )
 from nab_provider.tags import PlatformSpec, TagSet
 from nab_provider.target import ResolveTarget
-from nab_provider.testing import pkg_override
+from nab_provider.testing import make_metadata, make_wheel, pkg_override
 from nab_provider.value import replace
+from nab_resolver.diagnostics import error_message
 from nab_resolver.errors import ResolutionError, ResolutionLimitError
 
 requires_int_limit = pytest.mark.skipif(
@@ -3990,12 +3991,7 @@ class TestBuildRequirementTwoLevelsDown:
 
 
 class TestBuildRequirementBuildFailures:
-    """``_build_requirement`` wraps every way the nested build can fail.
-
-    Each surfaces as ``BuildEnvError`` naming the requirement, so the
-    outer resolve skips the sdist it was building rather than aborting
-    on a raw archive or backend error.
-    """
+    """Nested build failures identify the build requirement."""
 
     PENDING = _PendingBuild(
         name="demo",
@@ -4063,6 +4059,59 @@ class TestBuildRequirementBuildFailures:
 
         with pytest.raises(BuildEnvError, match="could not be built"):
             self._env()._build_requirement(self.PENDING, tmp_path)
+
+    @pytest.mark.usefixtures("_stub_build_env")
+    def test_nested_resolution_keeps_verbose_rejection(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Keep the deciding Python restriction when a nested build cannot resolve."""
+        (tmp_path / self.PENDING.sdist.filename).write_bytes(b"sdist fixture")
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "pyproject.toml").write_text(
+            '[build-system]\nrequires = ["badleaf==1.0"]\n'
+            'build-backend = "demo_backend"\nbackend-path = ["."]\n'
+        )
+        (source / "demo_backend.py").write_text(
+            _SDIST_BACKEND_SRC.format(
+                name="demo", version="1.0", requires_python=repr("")
+            )
+        )
+        monkeypatch.setattr(
+            env_mod, "extract_sdist_archive", lambda _data, _target: source
+        )
+
+        def coordinator(
+            _transport: AsyncHttpTransport,
+            *,
+            build_config: ResolveInputs,
+            **_kwargs: object,
+        ) -> AbstractContextManager[FakeFetchPort]:
+            """Serve the nested requirement's metadata without fetch workers."""
+            return nullcontext(
+                make_coordinator(
+                    [make_wheel(package="badleaf")],
+                    package="badleaf",
+                    metadata_text=make_metadata(
+                        "badleaf", "1.0", requires_python=">=999"
+                    ),
+                    build_config=build_config,
+                )
+            )
+
+        monkeypatch.setattr("nab_project.resolve.FetchCoordinator", coordinator)
+        with pytest.raises(BuildEnvError, match="build requirement demo 1.0") as info:
+            self._env()._build_requirement(self.PENDING, tmp_path)
+
+        assert isinstance(info.value.__cause__, BuildBackendError)
+
+        message = error_message(info.value)
+        assert "requires Python >=999" not in message.render()
+
+        verbose = message.render(verbose=True)
+        assert "badleaf 1.0 requires Python >=999" in verbose
+        assert "host resolve targets Python" in verbose
+        assert "(-v for detail)" not in verbose
 
     @pytest.mark.parametrize("cancel", [False, True], ids=["success", "cancel"])
     def test_cleanup_error_does_not_replace_result_or_cancellation(

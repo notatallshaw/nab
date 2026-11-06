@@ -51,6 +51,7 @@ __lazy_modules__ = (
     "nab_provider.tags",
     "nab_provider.target",
     "nab_provider.vcs_admission",
+    "nab_resolver.diagnostics",
     "os",
     "pathlib",
     "subprocess",
@@ -106,6 +107,7 @@ from nab_provider.tags import TagSet
 from nab_provider.target import ResolveTarget, host_environment
 from nab_provider.value import Record, replace
 from nab_provider.vcs_admission import UnsupportedVcsError
+from nab_resolver.diagnostics import error_message
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 
 from .. import toml_writer
@@ -766,6 +768,7 @@ class NabBuildEnv:
             except ValueError as exc:
                 msg = f"build requirement {label} could not be extracted: {exc}"
                 raise BuildEnvError(msg) from exc
+
             try:
                 built = build_wheel_for_install(
                     source_dir,
@@ -776,8 +779,10 @@ class NabBuildEnv:
                     transport_factory=self._transport_factory,
                 )
             except BuildBackendError as exc:
-                msg = f"build requirement {label} could not be built: {exc}"
-                raise BuildEnvError(msg) from exc
+                report = error_message(exc).prefixed(
+                    f"build requirement {label} could not be built: "
+                )
+                raise BuildEnvError(report) from exc
 
             _check_built_wheel(pending, built)
             _check_built_requires_python(pending, built, self._config.package_overrides)
