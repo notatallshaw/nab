@@ -26,6 +26,8 @@ __lazy_modules__ = (
     "nab_project",
     "nab_project.lockfile",
     "nab_project.lock_preferences",
+    "nab_project.lock_policy",
+    "nab_project.lock_check",
     "nab_project.paths",
     "nab_project.pyproject_files",
     "nab_project.resolve",
@@ -58,7 +60,8 @@ from nab_project.input_source import (
     ScriptMetadataError,
     read_input_document,
 )
-from nab_project.lock_check import check_saved_lock
+from nab_project.lock_check import can_reuse_saved_lock, check_saved_lock
+from nab_project.lock_policy import LockPolicy
 from nab_project.lock_preferences import read_lock_preferences
 from nab_project.lock_validation import snapshot_inputs
 from nab_project.lockfile import (
@@ -143,6 +146,7 @@ from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runti
     HttpBackend,
     ImplementationFlag,
     LockFormat,
+    LockPolicyFlag,
     MatrixOrderFlag,
     MetadataPolicyFlag,
     ModeFlag,
@@ -237,7 +241,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     upgrade: bool = False,
     locked: bool = False,
     reproduce: bool = False,
-    prefer_existing: bool = False,
+    lock_policy: LockPolicyFlag = "resolve",
 ) -> None:
     """Resolve dependencies and emit a lockfile or pin list.
 
@@ -268,6 +272,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     ``--locked`` checks the saved solution without resolving or writing.
     ``--reproduce`` resolves afresh and checks that the output is identical.
     """
+    selected_lock_policy = LockPolicy(lock_policy)
     path, input_format = select_input(path, script)
     check_script_options(
         input_format,
@@ -287,7 +292,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         locked=locked,
         reproduce=reproduce,
         upgrade=upgrade,
-        prefer_existing=prefer_existing,
+        lock_policy=selected_lock_policy,
     )
 
     if build_requirements:
@@ -399,8 +404,11 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         cli_overrides=overrides,
         upgrade=upgrade,
         input_format=input_format,
-        prefer_existing=prefer_existing,
+        lock_policy=selected_lock_policy,
     )
+
+    strategy = inputs.resolution if settings.resolution is None else settings.resolution
+    _validate_lock_strategy(run, strategy)
 
     if locked:
         _check_saved(run, config=config, inputs=inputs, exclude=workspace_to_drop)
@@ -411,15 +419,20 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
             run, config=config, inputs=inputs, workspace_to_drop=workspace_to_drop
         )
 
-    validation_inputs = (
+    validation = (
         _lock_snapshot(run, config, inputs, workspace_to_drop)
         if format == "pylock" and not reproduce
         else None
     )
 
-    previous_lock = _existing_lock_preferences(
-        run, inputs.resolution if settings.resolution is None else settings.resolution
-    )
+    if _reuse_consistent_lock(run, inputs, validation):
+        return
+
+    validation_inputs = None if validation is None else validation[0]
+    # A live resolve plans its own targets; retain only the input evidence.
+    del validation
+
+    previous_lock = _existing_lock_preferences(run)
     transport = _make_resolve_transport(settings.http_backend)
     result = _resolve(
         path,
@@ -634,7 +647,7 @@ class _LockRun(Record):
         "cli_overrides",
         "upgrade",
         "input_format",
-        "prefer_existing",
+        "lock_policy",
     )
 
     path: Path
@@ -650,7 +663,7 @@ class _LockRun(Record):
     cli_overrides: Mapping[str, object]
     upgrade: bool
     input_format: InputFormat
-    prefer_existing: bool
+    lock_policy: LockPolicy
 
     def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
@@ -667,8 +680,8 @@ class _LockRun(Record):
         no_emit_workspace: bool,
         cli_overrides: Mapping[str, object],
         upgrade: bool,
+        lock_policy: LockPolicy,
         input_format: InputFormat = InputFormat.PROJECT,
-        prefer_existing: bool = False,
     ) -> None:
         self.path = path
         self.output = output
@@ -683,7 +696,7 @@ class _LockRun(Record):
         self.cli_overrides = cli_overrides
         self.upgrade = upgrade
         self.input_format = input_format
-        self.prefer_existing = prefer_existing
+        self.lock_policy = lock_policy
 
     def refresh_command(self) -> str:
         """Render this run without ``--locked``, ready to paste into a shell."""
@@ -743,8 +756,8 @@ class _LockRun(Record):
         arguments += project_override_arguments(self.cli_overrides)
         if self.upgrade:
             arguments.append("--upgrade")
-        if self.prefer_existing:
-            arguments.append("--prefer-existing")
+        if self.lock_policy is not LockPolicy.RESOLVE:
+            arguments.extend(("--lock-policy", self.lock_policy.value))
         return arguments
 
 
@@ -755,33 +768,70 @@ def _validate_lock_mode(
     locked: bool,
     reproduce: bool,
     upgrade: bool,
-    prefer_existing: bool,
+    lock_policy: LockPolicy,
 ) -> None:
     """Refuse mode combinations that cannot read or write the required lock."""
     if locked and (upgrade or reproduce):
         printer().error("--locked cannot be combined with --upgrade or --reproduce.")
         sys.exit(1)
 
-    if prefer_existing and locked:
-        printer().error("--prefer-existing cannot be combined with --locked.")
+    if lock_policy is not LockPolicy.RESOLVE and locked:
+        printer().error("nondefault --lock-policy cannot be combined with --locked.")
         sys.exit(1)
-    if prefer_existing and (format != "pylock" or is_stdout(output)):
-        printer().error("--prefer-existing requires pylock output to a file.")
+    if lock_policy is not LockPolicy.RESOLVE and (
+        format != "pylock" or is_stdout(output)
+    ):
+        printer().error("nondefault --lock-policy requires pylock output to a file.")
+        sys.exit(1)
+    if lock_policy is LockPolicy.REUSE and reproduce:
+        printer().error("--lock-policy reuse cannot be combined with --reproduce.")
         sys.exit(1)
     if (locked or reproduce) and (format != "pylock" or is_stdout(output)):
         printer().error("lock checks are only supported for pylock output to a file.")
         sys.exit(1)
 
 
-def _existing_lock_preferences(
-    run: _LockRun, strategy: ResolutionStrategy
-) -> LockPreferences | None:
-    """Read an explicitly requested prior model under highest resolution."""
-    if not run.prefer_existing:
-        return None
-    if strategy is not ResolutionStrategy.HIGHEST:
-        printer().error("--prefer-existing requires highest resolution.")
+def _validate_lock_strategy(run: _LockRun, strategy: ResolutionStrategy) -> None:
+    """Enforce the policy restriction before checking a saved solution."""
+    if (
+        run.lock_policy is not LockPolicy.RESOLVE
+        and strategy is not ResolutionStrategy.HIGHEST
+    ):
+        printer().error("nondefault --lock-policy requires highest resolution.")
         sys.exit(1)
+
+
+def _reuse_consistent_lock(
+    run: _LockRun,
+    inputs: ResolveInputs,
+    snapshot: tuple[dict[str, Any], tuple[ResolveTarget, ...]] | None,
+) -> bool:
+    """Report a supported saved hit before constructing a resolver transport."""
+    # An upgrade must emit its new anchor even when constraints are unchanged.
+    if run.lock_policy is not LockPolicy.REUSE or snapshot is None or run.upgrade:
+        return False
+    current, targets = snapshot
+    target = _check_target_path(run)
+    if not can_reuse_saved_lock(
+        target,
+        run.path,
+        current,
+        inputs,
+        targets,
+        groups=run.groups,
+        extras=run.extras,
+        build_requirements=run.build_requirements,
+        input_format=run.input_format,
+    ):
+        return False
+    printer().done(f"Reused consistent lockfile {target}")
+    return True
+
+
+def _existing_lock_preferences(run: _LockRun) -> LockPreferences | None:
+    """Read an explicitly requested prior model under highest resolution."""
+    if run.lock_policy is LockPolicy.RESOLVE:
+        return None
     return read_lock_preferences(_check_target_path(run))
 
 
@@ -953,13 +1003,14 @@ def _lock_snapshot(
     config: NabProjectConfig,
     inputs: ResolveInputs,
     exclude: frozenset[str],
-) -> dict[str, Any] | None:
-    """Read validation inputs, leaving invalid declarations to resolution."""
+) -> tuple[dict[str, Any], tuple[ResolveTarget, ...]] | None:
+    """Read inputs and targets, leaving invalid declarations to resolution."""
     try:
-        return snapshot_inputs(
+        targets = plan_targets(config)
+        current = snapshot_inputs(
             run.path,
             inputs,
-            plan_targets(config),
+            targets,
             groups=run.groups,
             extras=run.extras,
             build_requirements=run.build_requirements,
@@ -979,6 +1030,7 @@ def _lock_snapshot(
         TypeError,
     ):
         return None
+    return current, targets
 
 
 def _attach_validation_inputs(
@@ -993,7 +1045,8 @@ def _attach_validation_inputs(
     """Refuse evidence from a resolve whose project inputs changed."""
     if snapshot is None:
         return
-    if _lock_snapshot(run, config, inputs, exclude) != snapshot:
+    current, _ = _lock_snapshot(run, config, inputs, exclude) or (None, ())
+    if current != snapshot:
         kind = "script" if run.input_format is InputFormat.SCRIPT else "project"
         printer().error(f"{kind} inputs changed while locking; re-run nab lock")
         sys.exit(1)

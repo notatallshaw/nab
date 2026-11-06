@@ -77,7 +77,7 @@ HELP: tuple[str, ...] = (
     "re-anchor a relative upload window to now",
     "check the saved solution without resolving or writing",
     "resolve afresh and check the saved lock without writing",
-    "check previous lock choices before normal version search",
+    "resolve, check existing choices, or reuse a consistent saved lock",
     "the directory the artefacts are written to",
 )
 
@@ -277,10 +277,8 @@ COMMANDS: dict[
         ("--no-locked", "", "neg", "locked", "", (), False, False, False, 55),
         ("--reproduce", "", "flag", "reproduce", "", (), True, False, False, 56),
         ("--no-reproduce", "", "neg", "reproduce", "", (), False, False, False, 56),
-        ("--prefer-existing", "", "flag", "prefer_existing", "", (), True, False,
-        False, 57),
-        ("--no-prefer-existing", "", "neg", "prefer_existing", "", (), False, False,
-        False, 57),
+        ("--lock-policy", "", "value", "lock_policy", "choice",
+        ("resolve", "prefer-existing", "reuse"), None, "resolve", False, 57),
     ),
     "download": (
         ("--project-resolution", "", "value", "project_resolution", "choice?",

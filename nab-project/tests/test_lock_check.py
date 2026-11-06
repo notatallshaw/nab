@@ -23,8 +23,10 @@ from nab_project.lock_check import (
     _check_target_slices,
     _current_local_metadata,
     _fork_selections,
+    can_reuse_saved_lock,
     check_saved_lock,
 )
+from nab_project.lock_policy import LockPolicy
 from nab_project.lock_validation import content_digest, snapshot_inputs
 from nab_project.lockfile import ArchivePin, LockInput, TargetLock, render_lock
 from nab_project.resolve import (
@@ -39,11 +41,11 @@ from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import parse_metadata
 from nab_provider.overrides import PackageOverride
 from nab_provider.pep508 import parse_requirement
-from nab_provider.policy import ArchiveSource, LocalSource
+from nab_provider.policy import ArchiveSource, LocalSource, VcsSource
 from nab_provider.records import IndexConfig
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, MatrixInclude, ResolveTarget
-from nab_provider.testing import make_metadata, make_wheel
+from nab_provider.testing import make_metadata, make_wheel, pkg_override
 
 
 def _saved(
@@ -619,3 +621,127 @@ def test_standard_requires_python_keeps_every_admitted_micro_slice(
         target.marker_env["python_full_version"]
         for target in _check_target_slices(lock, case[3][0], requirements)
     ] == ["3.14.3", "3.14.5"]
+
+
+def test_reuse_policy_preserves_the_standard_saved_check(tmp_path: Path) -> None:
+    lock, path, inputs, targets = _saved(tmp_path)
+    current = snapshot_inputs(path, inputs, targets)
+    assert can_reuse_saved_lock(lock, path, current, inputs, targets)
+    path.write_text(path.read_text().replace("demo>=1", "demo>=2"))
+    current = snapshot_inputs(path, inputs, targets)
+    assert not can_reuse_saved_lock(lock, path, current, inputs, targets)
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        "local",
+        "vcs",
+        "archive",
+        "local-snapshot",
+        "file-index",
+        "root-url",
+        "constraint-url",
+        "override-url",
+    ],
+)
+def test_reuse_policy_refuses_unqualified_source_contexts(
+    tmp_path: Path, context: str
+) -> None:
+    lock, path, inputs, targets = _saved(tmp_path)
+    current = snapshot_inputs(path, inputs, targets)
+    if context == "local":
+        inputs = inputs.replace(local_sources=(LocalSource("source", str(tmp_path)),))
+    elif context == "vcs":
+        inputs = inputs.replace(
+            vcs_sources=(VcsSource("source", "git+https://example.test/repo"),)
+        )
+    elif context == "archive":
+        inputs = inputs.replace(
+            archive_sources=(
+                ArchiveSource("source", "https://example.test/source.tar.gz"),
+            )
+        )
+    elif context == "local-snapshot":
+        current["local"]["source"] = {"name": "source", "version": "1"}
+    elif context == "file-index":
+        inputs = inputs.replace(indexes=(IndexConfig("local", tmp_path.as_uri()),))
+    elif context == "root-url":
+        current["roots"]["base"] = ["demo @ https://example.test/demo.whl"]
+    elif context == "constraint-url":
+        current["constraints"] = ["demo @ https://example.test/demo.whl"]
+    else:
+        inputs = inputs.replace(
+            package_overrides=(
+                pkg_override(
+                    "demo",
+                    dependencies=(
+                        parse_requirement("dep @ https://example.test/dep.whl"),
+                    ),
+                ),
+            )
+        )
+    assert not can_reuse_saved_lock(lock, path, current, inputs, targets)
+
+
+@pytest.mark.parametrize("location", ["path", "url"])
+def test_reuse_policy_declines_valid_local_artifact_records(
+    tmp_path: Path, location: str
+) -> None:
+    case = _saved(tmp_path)
+    lock, path, inputs, targets = case
+    document = toml_io.load_path(lock)
+    artifact = tmp_path / "demo-1-py3-none-any.whl"
+    artifact.write_bytes(b"reviewed local artifact")
+    wheel = document["packages"][0]["wheels"][0]
+    wheel.pop("url")
+    wheel[location] = artifact.name if location == "path" else artifact.as_uri()
+    wheel["hashes"] = {"sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}
+    document["tool"]["nab"]["validation"]["contents-sha256"] = content_digest(document)
+    _replace_record(lock, document)
+    _check(case)
+    assert not can_reuse_saved_lock(
+        lock, path, snapshot_inputs(path, inputs, targets), inputs, targets
+    )
+
+
+@pytest.mark.parametrize(
+    "source", ["directory", "vcs", "archive", "sdist-http", "sdist-file"]
+)
+def test_reuse_policy_limits_saved_source_kinds(tmp_path: Path, source: str) -> None:
+    lock, path, inputs, targets = _saved(tmp_path)
+    document = toml_io.load_path(lock)
+    package = document["packages"][0]
+    artifact = package.pop("wheels")[0]
+    if source == "directory":
+        package["directory"] = {"path": "source", "editable": False}
+    elif source == "vcs":
+        package["vcs"] = {
+            "type": "git",
+            "url": "https://example.test/repo",
+            "commit-id": "a" * 40,
+        }
+    elif source == "archive":
+        package["archive"] = {
+            "url": "https://example.test/source.tar.gz",
+            "hashes": artifact["hashes"],
+        }
+    else:
+        artifact["url"] = (
+            "https://example.test/demo-1.tar.gz"
+            if source == "sdist-http"
+            else (tmp_path / "demo-1.tar.gz").as_uri()
+        )
+        artifact["name"] = "demo-1.tar.gz"
+        package["sdist"] = artifact
+    Pylock.from_dict(document)
+    document["tool"]["nab"]["validation"]["contents-sha256"] = content_digest(document)
+    _replace_record(lock, document)
+    assert can_reuse_saved_lock(
+        lock, path, snapshot_inputs(path, inputs, targets), inputs, targets
+    ) is (source == "sdist-http")
+
+
+def test_unknown_lock_policy_is_refused() -> None:
+    with pytest.raises(ValueError, match="unsupported-policy"):
+        LockPolicy("unsupported-policy")

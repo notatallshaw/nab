@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from nab_index.file_urls import is_file_url, parse_file_url
 from nab_provider._vendor.packaging.markers import Marker, prepare_environment
@@ -49,7 +50,7 @@ if TYPE_CHECKING:
     from .inputs import ResolveInputs
     from .resolve import ResolveFork
 
-__all__ = ["LockConsistencyError", "check_saved_lock"]
+__all__ = ["LockConsistencyError", "can_reuse_saved_lock", "check_saved_lock"]
 
 
 class LockConsistencyError(ValueError):
@@ -389,3 +390,94 @@ def check_saved_lock(  # noqa: PLR0913 - public keyword API for independent lock
     ) as exc:
         message = f"cannot verify saved lock: {exc}"
         raise LockConsistencyError(message) from exc
+
+
+def _http_url(url: str | None) -> bool:
+    """Limit source identity checks to remote index artifacts."""
+    return url is not None and urlsplit(url).scheme in {"http", "https"}
+
+
+def _reuse_inputs_supported(current: Mapping[str, Any], inputs: ResolveInputs) -> bool:
+    """Refuse mutable/file sources outside the saved-checker's reuse domain."""
+    if (
+        inputs.local_sources
+        or inputs.vcs_sources
+        or inputs.archive_sources
+        or current["local"]
+    ):
+        return False
+    if any(not _http_url(index.url) for index in inputs.indexes):
+        return False
+    requirements = [*current["constraints"]]
+    for group in current["roots"].values():
+        requirements.extend(group)
+    if any(parse_requirement(text).url is not None for text in requirements):
+        return False
+    return not any(
+        requirement.url is not None
+        for override in inputs.package_overrides
+        for requirement in override.dependencies or ()
+    )
+
+
+def _reuse_artifacts_supported(lock: Pylock) -> bool:
+    """Do not reuse validation records whose file identities may be lossy."""
+    for package in lock.packages:
+        if (
+            package.directory is not None
+            or package.vcs is not None
+            or package.archive is not None
+        ):
+            return False
+        if any(
+            wheel.path is not None or not _http_url(wheel.url)
+            for wheel in package.wheels or ()
+        ):
+            return False
+        sdist = package.sdist
+        if sdist is not None and (sdist.path is not None or not _http_url(sdist.url)):
+            return False
+    return True
+
+
+def can_reuse_saved_lock(  # noqa: PLR0913 - mirror the saved checker inputs and selection keywords
+    lockfile: Path,
+    path: Path,
+    current: Mapping[str, Any],
+    inputs: ResolveInputs,
+    targets: Sequence[ResolveTarget],
+    *,
+    groups: Sequence[str] = (),
+    extras: Sequence[str] = (),
+    build_requirements: bool = False,
+    input_format: InputFormat = InputFormat.PROJECT,
+) -> bool:
+    """Check a saved solution without remote discovery or changing its file."""
+    try:
+        if not _reuse_inputs_supported(current, inputs):
+            return False
+        # Validation format 1 cannot distinguish every file-URL source identity.
+        saved = Pylock.from_dict(toml_io.load_path(lockfile))
+        if not _reuse_artifacts_supported(saved):
+            return False
+        check_saved_lock(
+            lockfile,
+            path,
+            current,
+            inputs,
+            targets,
+            groups=groups,
+            extras=extras,
+            build_requirements=build_requirements,
+            input_format=input_format,
+        )
+    except (
+        OSError,
+        ValueError,
+        LookupError,
+        TypeError,
+        RecursionError,
+        PylockValidationError,
+    ):
+        return False
+    return True
