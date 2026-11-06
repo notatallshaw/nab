@@ -62,7 +62,6 @@ from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
-from nab_provider.diagnostics import Diagnostic
 from nab_provider.errors import ConfigError
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.metadata import WheelMetadata
@@ -4086,47 +4085,61 @@ def _diagnostics(error: ResolutionError, *, detailed: bool = True) -> str:
 class TestAugmentResolutionError:
     """``resolve_pyproject`` enriches errors with provider hints."""
 
-    def _no_versions_clause(self, package: str) -> Incompatibility:
+    def _no_versions_clause(
+        self, package: str, allowed: VersionRange | None = None
+    ) -> Incompatibility:
+        constraint = Range.full() if allowed is None else allowed
         return Incompatibility(
-            [Term(package, Range.full(), positive=True)],
+            [Term(package, constraint, positive=True)],
             cause=IncompatibilityCause.NO_VERSIONS,
         )
 
+    def _provider_with_version_mismatch(self, package: str) -> Provider:
+        """Record a >=2 mismatch against a listing containing only version 1.0."""
+        provider = Provider(
+            make_coordinator(listings={package: _index_wheels(package, "1.0")}),
+            target=ResolveTarget.for_host_python("3.12.0"),
+        )
+        allowed = Requirement(f"{package}>=2").specifier.to_range()
+        assert provider.choose_version(package, allowed) is None
+        return provider
+
     def test_appends_diagnostics_for_no_versions_packages(self) -> None:
-        """A NO_VERSIONS clause whose package has a recorded reason is surfaced."""
         clause = self._no_versions_clause("missing-pkg")
         exc = ResolutionError("base message", incompatibility=clause)
-        provider = MagicMock()
-        provider.get_no_versions_reason.side_effect = lambda pkg, _range, **_kwargs: (
-            Diagnostic("package not found on any configured index")
-            if pkg == "missing-pkg"
-            else None
+        provider = Provider(
+            make_coordinator(listings={"missing-pkg": []}),
+            target=ResolveTarget.for_host_python("3.12.0"),
         )
+        assert provider.choose_version("missing-pkg", VersionRange.full()) is None
+
         _augment_resolution_error(exc, provider)
+
         text = str(exc)
         assert "Diagnostics:" in text
         assert "missing-pkg: package not found on any configured index" in text
 
     def test_no_op_when_incompatibility_is_none(self) -> None:
-        """An exception without a derivation tree is returned unchanged."""
         exc = ResolutionError("base", incompatibility=None)
-        provider = MagicMock()
+        provider = Provider(make_coordinator())
+
         _augment_resolution_error(exc, provider)
+
         assert str(exc) == "base"
 
     def test_no_op_when_no_reasons_recorded(self) -> None:
-        """The exception is unchanged when the provider has no hints."""
         clause = self._no_versions_clause("missing-pkg")
         exc = ResolutionError("base", incompatibility=clause)
-        provider = MagicMock()
-        provider.get_no_versions_reason.return_value = None
+        provider = Provider(make_coordinator())
+
         _augment_resolution_error(exc, provider)
+
         assert str(exc) == "base"
 
     def test_dedupes_packages_seen_multiple_times(self) -> None:
-        """Each package's reason is appended at most once."""
-        first = self._no_versions_clause("foo")
-        second = self._no_versions_clause("foo")
+        allowed = Requirement("foo>=2").specifier.to_range()
+        first = self._no_versions_clause("foo", allowed)
+        second = self._no_versions_clause("foo", allowed)
         derived = Incompatibility(
             [Term("foo", Range.full(), positive=True)],
             cause=IncompatibilityCause.DERIVED,
@@ -4134,11 +4147,10 @@ class TestAugmentResolutionError:
             cause_right=second,
         )
         exc = ResolutionError("base", incompatibility=derived)
-        provider = MagicMock()
-        provider.get_no_versions_reason.return_value = Diagnostic(
-            "no version matches the requirement"
-        )
+        provider = self._provider_with_version_mismatch("foo")
+
         _augment_resolution_error(exc, provider)
+
         text = str(exc)
         assert text.count("foo: no version matches the requirement") == 1
 
@@ -4184,23 +4196,29 @@ class TestAugmentResolutionError:
         )
         assert _walk_no_versions_packages(clause) == [("cand", Range.full())]
 
-    def test_grouped_clause_hint_survives_a_later_range(self) -> None:
-        """Accepted tolerance: reasons are keyed by package name, so a later
-        range still surfaces the reason an earlier ask recorded."""
+    def test_grouped_clause_hint_respects_failed_range(self) -> None:
+        """A recorded mismatch applies only when the failure range excludes 1.0."""
+        allowed = Requirement("cand>=3").specifier.to_range()
         clause = Incompatibility(
             [
-                Term("cand", Range.full(), positive=True),
+                Term("cand", allowed, positive=True),
                 Term("blocker", Range.singleton(1), positive=True),
             ],
             cause=IncompatibilityCause.DEPENDENCY,
         )
         exc = ResolutionError("base message", incompatibility=clause)
-        provider = MagicMock()
-        provider.get_no_versions_reason.side_effect = lambda pkg, _range, **_kwargs: (
-            Diagnostic("no version matches the requirement") if pkg == "cand" else None
-        )
+        provider = self._provider_with_version_mismatch("cand")
+
         _augment_resolution_error(exc, provider)
+
         assert "cand: no version matches the requirement" in str(exc)
+
+        admitted = self._no_versions_clause("cand", VersionRange.full())
+        admitted_error = ResolutionError("base message", incompatibility=admitted)
+
+        _augment_resolution_error(admitted_error, provider)
+
+        assert str(admitted_error) == "base message"
 
     def test_walk_skips_real_dependency_clauses(self) -> None:
         """A dependency clause with a negative dep term is not collected."""
