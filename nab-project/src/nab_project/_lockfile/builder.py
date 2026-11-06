@@ -47,7 +47,7 @@ from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.digest import is_hex_digest
 from nab_provider.extra_keys import split_extra
 from nab_provider.iso8601 import parse_iso_datetime
-from nab_provider.metadata import validate_specifier_versions
+from nab_provider.metadata import parse_metadata, validate_specifier_versions
 from nab_provider.policy import DistPolicy
 from nab_provider.records import SdistFile, WheelFile
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
@@ -106,13 +106,19 @@ class _LockInputIndex(Protocol):
         """Return the configured index name that served ``package``."""
         ...
 
+    def get_metadata_with_origin(
+        self, package: str, version: str, metadata_url: str | None = None
+    ) -> tuple[str | None, bool]:
+        """Return cached metadata text and whether it came from an sdist."""
+        ...
+
 
 class _LockInputCoordinator(Protocol):
     """Protocol for the FetchCoordinator slice the builder reads."""
 
     @property
     def index(self) -> _LockInputIndex:
-        """The underlying index used to look up serving-index labels."""
+        """The index holding serving-index labels and cached metadata."""
         ...
 
 
@@ -138,7 +144,7 @@ class LockInputProvider(Protocol):
 
     @property
     def coordinator(self) -> _LockInputCoordinator:
-        """Coordinator used to look up the index that served a listing."""
+        """Coordinator holding the cached index used for lock construction."""
         ...
 
     def local_source_for(self, canonical_name: str, /) -> LocalSource | None:
@@ -662,15 +668,16 @@ def _index_pin_from_listing(
         compatible_wheels = [f for f in files if isinstance(f, WheelFile)]
         try:
             covered = target.covered_by_requires_python(
-                SpecifierSet(
-                    override_rp
-                    if override_rp is not None
-                    else wheel.requires_python or ""
+                _known_wheel_python_requirements(
+                    provider.coordinator.index,
+                    canonical,
+                    version,
+                    compatible_wheels,
+                    override_rp,
                 )
-                for wheel in compatible_wheels
             )
         except (RecursionError, ValueError):
-            # Keep the source archive when range comparison cannot finish.
+            # Keep the source archive when Python coverage cannot be established.
             covered = False
         if covered:
             files = list(compatible_wheels)
@@ -713,6 +720,28 @@ def _index_pin_from_listing(
         wheels=wheels,
         requires_python=requires_python,
     )
+
+
+def _known_wheel_python_requirements(
+    index: _LockInputIndex,
+    canonical: str,
+    version: Version,
+    wheels: Iterable[WheelFile],
+    override: str | None,
+) -> Iterable[SpecifierSet]:
+    """Yield Python ranges that can prove wheel coverage for source omission."""
+    for wheel in wheels:
+        requirement = override if override is not None else wheel.requires_python
+        if requirement is not None:
+            yield SpecifierSet(requirement)
+            continue
+
+        # An absent listing hint proves nothing without this wheel's metadata.
+        text, from_sdist = index.get_metadata_with_origin(
+            canonical, str(version), wheel.metadata_url or wheel.url
+        )
+        if text is not None and not from_sdist:
+            yield parse_metadata(text).requires_python or SpecifierSet()
 
 
 def _build_artifact(
