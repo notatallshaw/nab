@@ -245,23 +245,23 @@ class TestResolutionLadder:
 
 
 class TestDecisionOrderLadder:
-    def test_default_is_arrival(self, tmp_path: Path) -> None:
+    def test_default_is_stable(self, tmp_path: Path) -> None:
         _project(tmp_path)
         eff = _resolve(SourceRoots(project_dir=tmp_path))
-        assert eff["decision-order"].value is DecisionOrder.ARRIVAL
+        assert eff["decision-order"].value is DecisionOrder.STABLE
         assert eff["decision-order"].origin.kind is SourceKind.DEFAULT
 
     def test_pyproject_sets_decision_order(self, tmp_path: Path) -> None:
-        _project(tmp_path, 'decision-order = "stable"\n')
+        _project(tmp_path, 'decision-order = "arrival"\n')
         eff = _resolve(SourceRoots(project_dir=tmp_path))
-        assert eff["decision-order"].value is DecisionOrder.STABLE
+        assert eff["decision-order"].value is DecisionOrder.ARRIVAL
         assert eff["decision-order"].origin.kind is SourceKind.PYPROJECT
 
     def test_project_nab_toml_sets_decision_order(self, tmp_path: Path) -> None:
         _project(tmp_path)
-        _write(tmp_path / "nab.toml", 'decision-order = "stable"\n')
+        _write(tmp_path / "nab.toml", 'decision-order = "arrival"\n')
         eff = _resolve(SourceRoots(project_dir=tmp_path))
-        assert eff["decision-order"].value is DecisionOrder.STABLE
+        assert eff["decision-order"].value is DecisionOrder.ARRIVAL
         assert eff["decision-order"].origin.kind is SourceKind.PROJECT_TOML
 
     def test_cli_project_decision_order_wins(self, tmp_path: Path) -> None:

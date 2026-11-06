@@ -105,7 +105,7 @@ class ResolveInputs(ValueType):
         build_requires_depth: int = 0,
         conflicts: tuple[ConflictSet, ...] = (),
         constraints: tuple[str, ...] = (),
-        decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
+        decision_order: DecisionOrder = DecisionOrder.STABLE,
         default_groups: tuple[str, ...] = (),
         dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST,
         metadata_policy: MetadataPolicy = MetadataPolicy.MATCH_ARTIFACT,

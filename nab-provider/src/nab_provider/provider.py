@@ -732,7 +732,7 @@ class Provider:
         assume_universal_deps: bool = False,
         assume_consistent_metadata: bool = False,
         allow_zip_sdists: bool = False,
-        decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
+        decision_order: DecisionOrder = DecisionOrder.STABLE,
         release_refused_wheels: bool = False,
         defer_yanked: bool = False,
         lookahead_versions: int | None = None,

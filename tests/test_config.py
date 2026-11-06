@@ -38,6 +38,7 @@ from nab.config.values import (
     _PEP508_MARKER_VARIABLES,
     MatrixConfig,
     SourceConfigError,
+    parse_decision_order,
 )
 from nab_index.multi_index import IndexConfig
 from nab_markersets._compat import get_int_max_str_digits
@@ -2045,12 +2046,14 @@ class TestPolicies:
             read_pyproject_config(path)
 
     def test_decision_order_reaches_the_config(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[tool.nab]\ndecision-order = "stable"\n')
-        assert read_pyproject_config(path).decision_order is DecisionOrder.STABLE
-
-    def test_decision_order_defaults_to_arrival(self, tmp_path: Path) -> None:
-        path = write(tmp_path, "[tool.nab]\n")
+        path = write(tmp_path, '[tool.nab]\ndecision-order = "arrival"\n')
         assert read_pyproject_config(path).decision_order is DecisionOrder.ARRIVAL
+
+    def test_decision_order_defaults_to_stable(self, tmp_path: Path) -> None:
+        assert NabProjectConfig().decision_order is DecisionOrder.STABLE
+        assert parse_decision_order(None, "decision-order") is DecisionOrder.STABLE
+        path = write(tmp_path, "[tool.nab]\n")
+        assert read_pyproject_config(path).decision_order is DecisionOrder.STABLE
 
 
 _UNIVERSAL_MATRIX = (

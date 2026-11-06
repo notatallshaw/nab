@@ -2289,7 +2289,7 @@ class TestResolveAndDownload:
             config=ResolveInputs(
                 indexes=(index,),
                 uploaded_prior_to=cutoff,
-                decision_order=DecisionOrder.STABLE,
+                decision_order=DecisionOrder.ARRIVAL,
                 package_overrides=(package_override,),
                 index_overrides={"internal": index_override},
                 constraints=("setuptools<70",),
@@ -2302,7 +2302,7 @@ class TestResolveAndDownload:
 
         assert inner.indexes == (index,)
         assert inner.uploaded_prior_to == cutoff
-        assert inner.decision_order is DecisionOrder.STABLE
+        assert inner.decision_order is DecisionOrder.ARRIVAL
         assert inner.package_overrides == (package_override,)
         assert inner.index_overrides == {"internal": index_override}
 
@@ -2313,12 +2313,12 @@ class TestResolveAndDownload:
     def test_inner_resolve_keeps_the_default_decision_order(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A project that did not ask for ``stable`` does not get it inside."""
+        """A build resolve inherits the stable default when none is configured."""
         env = NabBuildEnv(requires=["hatchling"], config=ResolveInputs())
 
         inner = self._capture_inner_inputs(env, tmp_path, monkeypatch)
 
-        assert inner.decision_order is DecisionOrder.ARRIVAL
+        assert inner.decision_order is DecisionOrder.STABLE
 
     def test_url_build_requirement_wrapped(self, tmp_path: Path) -> None:
         """A direct-URL build requirement the inner resolve refuses is
