@@ -3078,6 +3078,11 @@ class _FakeIndex:
     def get_listing_index(self, package: str) -> str | None:
         return self._listing_indexes.get(package)
 
+    def get_metadata_with_origin(
+        self, package: str, version: str, metadata_url: str | None = None
+    ) -> tuple[str | None, bool]:
+        return None, False
+
 
 class _FakeCoordinator:
     """Stub for the FetchCoordinator slice the lockfile builder reads."""
