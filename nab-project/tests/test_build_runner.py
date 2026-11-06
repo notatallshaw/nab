@@ -3503,7 +3503,7 @@ def test_build_wheel_cutoff_refusal_does_not_claim_nonpublication(
 
 @pytest.mark.parametrize("requires_python", [">=99", ">=3.10"])
 def test_index_sdist_failure_preserves_build_requirement_diagnostics(
-    tmp_path: Path, requires_python: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, requires_python: str
 ) -> None:
     index = tmp_path / "index"
     app = index / "app"
@@ -3526,12 +3526,19 @@ def test_index_sdist_failure_preserves_build_requirement_diagnostics(
             name="app", version="1.0", requires_python=repr("")
         ),
     }
+    source = tmp_path / "source"
+    source.mkdir()
     with tarfile.open(sdist, "w:gz") as archive:
         for name, text in members.items():
             data = text.encode()
+            (source / name).write_bytes(data)
             member = tarfile.TarInfo(f"app-1.0/{name}")
             member.size = len(data)
             archive.addfile(member, io.BytesIO(data))
+    monkeypatch.setattr(
+        "nab_project._build_remote.extract_sdist_archive",
+        lambda _data, _target: source,
+    )
 
     for artifact in (wheel, sdist):
         digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
