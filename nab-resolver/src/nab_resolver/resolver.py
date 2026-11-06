@@ -1014,7 +1014,7 @@ class Resolver(Generic[PackageType, VersionType]):
                 ],
                 cause=IncompatibilityCause.DEPENDENCY,
             )
-            incompat_index.add_incompatibility(self, clause)
+            # The derived range enforces this edge without a search clause.
             narrowed = self.solution.derive(
                 dependency, dependency_range, positive=True, cause=clause
             )

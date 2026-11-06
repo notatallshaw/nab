@@ -289,26 +289,23 @@ def _decode_rows(rows: object) -> list[WheelFile | SdistFile]:
         raise _BadRowError
     decoded: list[WheelFile | SdistFile] = []
     previous_version: str | None = None
+    record: WheelFile | SdistFile
     for row in rows:
-        record = _decode_row(row, previous_version)
+        if not isinstance(row, list) or not row:
+            raise _BadRowError
+        tag = row[0]
+        # bool is a subclass of int, so ``True == _TAG_SDIST`` without this.
+        if type(tag) is not int:
+            raise _BadRowError
+        if tag == _TAG_WHEEL:
+            record = _decode_wheel(row, previous_version)
+        elif tag == _TAG_SDIST:
+            record = _decode_sdist(row, previous_version)
+        else:
+            raise _BadRowError
         previous_version = record.version
         decoded.append(record)
     return decoded
-
-
-def _decode_row(row: object, previous_version: str | None) -> WheelFile | SdistFile:
-    """Rehydrate one row, dispatching on the tag its first element carries."""
-    if not isinstance(row, list) or not row:
-        raise _BadRowError
-    tag = row[0]
-    # bool is a subclass of int, so ``True == _TAG_SDIST`` without this.
-    if type(tag) is not int:
-        raise _BadRowError
-    if tag == _TAG_WHEEL:
-        return _decode_wheel(row, previous_version)
-    if tag == _TAG_SDIST:
-        return _decode_sdist(row, previous_version)
-    raise _BadRowError
 
 
 def _decode_wheel(row: Sequence[object], previous_version: str | None) -> WheelFile:
