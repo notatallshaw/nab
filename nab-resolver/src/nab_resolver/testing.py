@@ -455,6 +455,19 @@ class _CheckingProvider(BaseProvider[_PackageType, VersionType]):
         return self.provider.begin_decision_scan()
 
     @override
+    def begin_resolution(self) -> None:
+        """Initialize the underlying provider within the real resolver lifecycle."""
+        begin = getattr(self.provider, "begin_resolution", None)
+        if begin is not None:
+            begin()
+
+    @override
+    def receive_decision(self, package: _PackageType, version: VersionType) -> bool:
+        """Preserve provider notifications before the checker reads metadata."""
+        notify = getattr(self.provider, "receive_decision", None)
+        return notify is not None and bool(notify(package, version))
+
+    @override
     def is_ready(self, package: _PackageType) -> bool:
         return self.provider.is_ready(package)
 

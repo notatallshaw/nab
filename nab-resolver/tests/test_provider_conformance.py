@@ -9,7 +9,7 @@ from hypothesis import strategies as st
 
 from nab_resolver.errors import ResolutionError, ResolutionLimitError
 from nab_resolver.ranges import Range
-from nab_resolver.resolver import BaseProvider
+from nab_resolver.resolver import BaseProvider, Resolver
 from nab_resolver.testing import ProviderScenario, check_provider
 from nab_resolver.types import (
     Incompatibility,
@@ -331,6 +331,52 @@ def test_scan_precedes_direct_queries() -> None:
             return super().choose_version(package, version_range)
 
     check_fixture({"app": {1: {}}}, Initialized)
+
+
+def test_resolution_lifecycle_reaches_the_checked_provider() -> None:
+    class Initialized(FixtureProvider):
+        """Require the resolver to initialize each fresh provider before queries."""
+
+        started = False
+
+        def begin_resolution(self) -> None:
+            self.started = True
+
+        def choose_version(
+            self, package: str, version_range: RangeProtocol[int]
+        ) -> int | None:
+            assert self.started
+
+            return super().choose_version(package, version_range)
+
+    graph: Graph = {"app": {1: {}}}
+    assert Resolver(Initialized(graph)).resolve({"app": Range.full()}) == {"app": 1}
+
+    check_fixture(graph, Initialized)
+
+
+def test_decision_notification_reaches_the_checked_provider() -> None:
+    class Listening(FixtureProvider):
+        """Require each metadata read to follow its actual decision notification."""
+
+        notified: tuple[str, int] | None = None
+
+        def receive_decision(self, package: str, version: int) -> bool:
+            self.notified = package, version
+
+            return False
+
+        def get_dependencies(
+            self, package: str, version: int
+        ) -> Mapping[str, RangeProtocol[int]]:
+            assert self.notified == (package, version)
+
+            return super().get_dependencies(package, version)
+
+    graph: Graph = {"app": {1: {}}}
+    assert Resolver(Listening(graph)).resolve({"app": Range.full()}) == {"app": 1}
+
+    check_fixture(graph, Listening)
 
 
 def test_structural_provider_is_supported() -> None:
