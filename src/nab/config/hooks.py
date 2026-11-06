@@ -196,7 +196,7 @@ def parse_indexes(value: object, where: str) -> tuple[IndexConfig, ...]:
                 message = f"{where}: invalid file-index URL: {exc}"
                 raise SourceConfigError(message) from exc
             if not path.is_absolute():
-                url = (_current_declaring_dir() / path).resolve().as_uri()
+                url = (_current_declaring_dir() / path).absolute().as_uri()
                 configured = IndexConfig(index.name, url, index.serialization)
         result.append(configured)
     return tuple(result)
