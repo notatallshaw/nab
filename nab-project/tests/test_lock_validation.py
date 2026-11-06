@@ -11,6 +11,7 @@ import pytest
 
 from nab_project import toml_io
 from nab_project._testing.coordinator_fake import make_coordinator
+from nab_project.input_source import InputFormat
 from nab_project.inputs import ResolveInputs
 from nab_project.lock_validation import (
     _value,
@@ -29,6 +30,7 @@ from nab_provider._vendor.packaging.version import Version
 from nab_provider.overrides import PackageOverride
 from nab_provider.pep508 import parse_requirement
 from nab_provider.policy import (
+    ArchiveSource,
     BuildPolicy,
     DecisionOrder,
     DistPolicy,
@@ -59,6 +61,83 @@ def _targets() -> list[ResolveTarget]:
     ).expand()
 
 
+def _write_input(path: Path, input_format: InputFormat) -> None:
+    """Write equivalent dependencies in either supported input format."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if input_format is InputFormat.PROJECT:
+        _project(path.parent)
+    else:
+        path.write_text('# /// script\n# dependencies=["demo>=1"]\n# ///\n')
+
+
+@pytest.mark.parametrize("input_format", [InputFormat.PROJECT, InputFormat.SCRIPT])
+def test_input_symlink_retargeting_preserves_changed_index_identity(
+    tmp_path: Path, input_format: InputFormat
+) -> None:
+    filename = "pyproject.toml" if input_format is InputFormat.PROJECT else "app.py"
+    link = tmp_path / filename
+    targets = _targets()
+    snapshots = []
+
+    for profile_name in ("first", "second"):
+        profile = tmp_path / profile_name
+        source = profile / filename
+        _write_input(source, input_format)
+        wheels = profile / "wheels"
+        wheels.mkdir()
+
+        if link.is_symlink():
+            link.unlink()
+        link.symlink_to(source)
+
+        inputs = ResolveInputs(indexes=(IndexConfig("local", wheels.as_uri()),))
+        snapshots.append(
+            snapshot_inputs(link, inputs, targets, input_format=input_format)
+        )
+
+    assert validation_digest(snapshots[0]) != validation_digest(snapshots[1])
+    assert selection_inputs_digest(snapshots[0]) != selection_inputs_digest(
+        snapshots[1]
+    )
+
+
+@pytest.mark.parametrize("input_format", [InputFormat.PROJECT, InputFormat.SCRIPT])
+def test_symlinked_input_sources_remain_portable_with_the_declaring_directory(
+    tmp_path: Path, input_format: InputFormat
+) -> None:
+    filename = "pyproject.toml" if input_format is InputFormat.PROJECT else "app.py"
+    targets = _targets()
+    snapshots = []
+
+    for tree_name in ("original", "relocated"):
+        root = tmp_path / tree_name
+        source = root / "profile" / filename
+        _write_input(source, input_format)
+
+        link = root / filename
+        link.symlink_to(Path("profile") / filename)
+
+        wheels = source.parent / "wheels"
+        wheels.mkdir()
+        inputs = ResolveInputs(indexes=(IndexConfig("local", wheels.as_uri()),))
+        snapshot = snapshot_inputs(link, inputs, targets, input_format=input_format)
+        snapshots.append(snapshot)
+
+        alias = tmp_path / (tree_name + "-alias")
+        alias.symlink_to(root, target_is_directory=True)
+        assert (
+            snapshot_inputs(
+                alias / filename, inputs, targets, input_format=input_format
+            )
+            == snapshot
+        )
+
+    assert validation_digest(snapshots[0]) == validation_digest(snapshots[1])
+    assert selection_inputs_digest(snapshots[0]) == selection_inputs_digest(
+        snapshots[1]
+    )
+
+
 def test_input_snapshot_ignores_formatting_and_search_preferences(
     tmp_path: Path,
 ) -> None:
@@ -77,6 +156,28 @@ def test_input_snapshot_ignores_formatting_and_search_preferences(
     assert first == second
     path.write_text(path.read_text().replace("Demo>=1", "Demo>=2"))
     assert snapshot_inputs(path, ResolveInputs(), _targets()) != first
+
+
+@pytest.mark.parametrize(
+    "fragment", ["", "#sha256=" + "a" * 64 + "&subdirectory=first"]
+)
+def test_file_archive_fingerprints_are_portable(fragment: str) -> None:
+    snapshots = []
+    for name in ("original", "relocated"):
+        directory = Path("/" + name)
+        url = f"file:///{name}/source%20archive.tar.gz{fragment}"
+        snapshots.append(_value(ArchiveSource("demo", url), directory))
+
+    assert validation_digest(snapshots[0]) == validation_digest(snapshots[1])
+
+
+@pytest.mark.parametrize("name", ["ordinary index", "café"])
+def test_ordinary_file_index_identities_keep_their_legacy_representation(
+    tmp_path: Path, name: str
+) -> None:
+    index = IndexConfig("local", (tmp_path / name).as_uri())
+
+    assert _value(index, tmp_path)["url"] == "file:" + name
 
 
 def test_groups_extras_build_inputs_and_constraints_are_normalized(
@@ -264,6 +365,23 @@ def test_scalar_subclass_without_url_is_retained(tmp_path: Path) -> None:
     assert _value(text, tmp_path) is text
 
 
+@pytest.mark.parametrize("authority", ["", "localhost"])
+@pytest.mark.parametrize("suffix", ["", "?download=1", "#fragment", "?x=1#fragment"])
+def test_local_file_urls_normalize_filesystem_paths(
+    tmp_path: Path, authority: str, suffix: str
+) -> None:
+    """Local paths normalize without dropping their URL selectors."""
+    path = tmp_path / "local" / "wheels"
+    url = path.as_uri().replace("file://", f"file://{authority}", 1) + suffix
+    assert _value(url, tmp_path) == f"file:local/wheels{suffix}"
+
+
+def test_file_url_remote_authority_remains_a_url(tmp_path: Path) -> None:
+    """Remote authorities retain their existing URL representation."""
+    url = "file://server/share/wheels?x=1#fragment"
+    assert _value(url, tmp_path) == url
+
+
 def test_nested_mapping_order_does_not_change_fingerprints(tmp_path: Path) -> None:
     first = {"z": {"b": 2, "a": 1}, "a": [{"d": 4, "c": 3}]}
     second = {"a": [{"c": 3, "d": 4}], "z": {"a": 1, "b": 2}}
@@ -371,6 +489,7 @@ def test_cross_drive_sources_retain_their_absolute_identity(
 
     monkeypatch.setattr("nab_project.lock_validation.os.path.relpath", no_relative_path)
     assert _value(Path("D:/source"), tmp_path) == "D:/source"
+    assert "D:" in _value(IndexConfig("local", "file:///D:/source"), tmp_path)["url"]
 
 
 def test_workspace_root_without_project_can_record_groups(tmp_path: Path) -> None:

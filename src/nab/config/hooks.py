@@ -179,7 +179,7 @@ def parse_local_sources(value: Any, where: str) -> tuple[LocalSource, ...]:
 
 
 def parse_indexes(value: object, where: str) -> tuple[IndexConfig, ...]:
-    """Anchor relative file-index URLs at their declaring configuration file."""
+    """Validate file-index URLs and anchor relative paths at their declaring file."""
     indexes = values.parse_indexes(value, where)
     result = []
     for index in indexes:
@@ -189,13 +189,13 @@ def parse_indexes(value: object, where: str) -> tuple[IndexConfig, ...]:
             result.append(index)
             continue
         configured = index
-        if parsed.scheme == "file" and not parsed.netloc:
+        if parsed.scheme == "file":
             try:
                 path = parse_file_url(index.url)
             except ValueError as exc:
                 message = f"{where}: invalid file-index URL: {exc}"
                 raise SourceConfigError(message) from exc
-            if not path.is_absolute():
+            if not parsed.netloc and not path.is_absolute():
                 url = (_current_declaring_dir() / path).absolute().as_uri()
                 configured = IndexConfig(index.name, url, index.serialization)
         result.append(configured)

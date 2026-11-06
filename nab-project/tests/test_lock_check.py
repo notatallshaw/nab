@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -23,11 +25,8 @@ from nab_project.lock_check import (
     _fork_selections,
     check_saved_lock,
 )
-from nab_project.lock_validation import (
-    content_digest,
-    snapshot_inputs,
-)
-from nab_project.lockfile import render_lock
+from nab_project.lock_validation import content_digest, snapshot_inputs
+from nab_project.lockfile import ArchivePin, LockInput, TargetLock, render_lock
 from nab_project.resolve import (
     ResolveFork,
     build_lock_input,
@@ -40,7 +39,8 @@ from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import parse_metadata
 from nab_provider.overrides import PackageOverride
 from nab_provider.pep508 import parse_requirement
-from nab_provider.policy import LocalSource
+from nab_provider.policy import ArchiveSource, LocalSource
+from nab_provider.records import IndexConfig
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, MatrixInclude, ResolveTarget
 from nab_provider.testing import make_metadata, make_wheel
@@ -88,6 +88,21 @@ def _check(case: tuple[Path, Path, ResolveInputs, list[ResolveTarget]]) -> None:
     )
 
 
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX filesystem byte paths")
+def test_local_index_changes_keep_distinct_filesystem_bytes(tmp_path: Path) -> None:
+    """A different file-URL byte path changes the saved selection policy."""
+    first = tmp_path / os.fsdecode(b"index-\xff")
+    second = tmp_path / os.fsdecode(b"index-\xfe")
+    inputs = ResolveInputs(indexes=(IndexConfig("local", first.as_uri()),))
+    case = _saved(tmp_path, inputs=inputs)
+    _check(case)
+
+    lock, path, _, targets = case
+    changed = ResolveInputs(indexes=(IndexConfig("local", second.as_uri()),))
+    with pytest.raises(LockConsistencyError, match="selections or policy changed"):
+        _check((lock, path, changed, targets))
+
+
 def test_unchanged_inputs_skip_graph_planning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -100,6 +115,88 @@ def test_unchanged_inputs_skip_graph_planning(
     monkeypatch.setattr("nab_project.lock_check.plan_project_inputs", unexpected)
     _check(case)
     assert case[0].read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("first_suffix", "second_suffix"),
+    [
+        ("%FF", "%FE"),
+        ("%FF", "%EF%BF%BD"),
+        ("%C3%A9", "%C3%A8"),
+        ("%3Fselector", "?selector"),
+        ("%23selector", "#selector"),
+        ("%253Fselector", "%3Fselector"),
+    ],
+    ids=[
+        "undecodable-bytes",
+        "replacement-character",
+        "utf8",
+        "query",
+        "fragment",
+        "percent",
+    ],
+)
+def test_file_index_changes_need_update(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    first_suffix: str,
+    second_suffix: str,
+) -> None:
+    # Exercise POSIX filename decoding on every test platform.
+    monkeypatch.setattr(sys, "platform", "linux")
+    index_url = tmp_path.as_uri() + "/index-"
+    case = _saved(
+        tmp_path,
+        inputs=ResolveInputs(indexes=(IndexConfig("local", index_url + first_suffix),)),
+    )
+    lock, path, _, targets = case
+    before = lock.read_bytes()
+    _check(case)
+    assert lock.read_bytes() == before
+
+    changed = ResolveInputs(indexes=(IndexConfig("local", index_url + second_suffix),))
+    with pytest.raises(LockConsistencyError, match="policy changed"):
+        _check((lock, path, changed, targets))
+    assert lock.read_bytes() == before
+
+
+@pytest.mark.parametrize("url_kind", ["file", "localhost", "https"])
+def test_archive_subdirectory_changes_need_update(
+    tmp_path: Path, url_kind: str
+) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text('[project]\nname="app"\nversion="1"\ndependencies=["demo"]\n')
+
+    archive = tmp_path / "source archive.tar.gz"
+    archive.write_bytes(b"reviewed archive bytes")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    url = archive.as_uri()
+    if url_kind == "localhost":
+        url = url.replace("file:///", "file://localhost/")
+    elif url_kind == "https":
+        url = "https://example.com/archive.tar.gz"
+
+    source = ArchiveSource("demo", f"{url}#sha256={digest}&subdirectory=first")
+    inputs = ResolveInputs(archive_sources=(source,))
+    targets = [ResolveTarget.for_host()]
+    pin = ArchivePin("demo", "1.0", url, (("sha256", digest),), "first")
+    lock_input = LockInput(
+        targets={"host": TargetLock(targets[0], {"demo": pin})},
+        validation_inputs=snapshot_inputs(path, inputs, targets),
+    )
+    lock = tmp_path / "pylock.toml"
+    lock.write_text(render_lock(lock_input, lock_dir=tmp_path))
+
+    before = lock.read_bytes()
+    _check((lock, path, inputs, targets))
+
+    changed = inputs.replace(
+        archive_sources=(ArchiveSource("demo", source.url.replace("first", "second")),)
+    )
+    with pytest.raises(LockConsistencyError, match="selections or policy changed"):
+        _check((lock, path, changed, targets))
+
+    assert lock.read_bytes() == before
 
 
 @pytest.mark.parametrize("bound", [">=0", "==1", "<2", ">=2"])
