@@ -215,6 +215,82 @@ def test_script_python_bound_cannot_be_broadened_by_tool_settings(
 
 
 @pytest.mark.parametrize(
+    ("blocker", "tool_source"),
+    [
+        ("script", SourceKind.PROJECT_TOML),
+        ("tool", SourceKind.PROJECT_TOML),
+        ("tool", SourceKind.SCRIPT),
+        ("tool", SourceKind.CLI),
+    ],
+)
+def test_script_python_bound_failure_names_the_blocking_declaration(
+    hermetic_roots: Path,
+    capsys: pytest.CaptureFixture[str],
+    blocker: str,
+    tool_source: SourceKind,
+) -> None:
+    script_bound = ">=3.12" if blocker == "script" else ">=3.10"
+    tool_bound = ">=3.12" if blocker == "tool" else ">=3.10"
+    configuration = (
+        f'[tool.nab]\nrequires-python="{tool_bound}"\n'
+        if tool_source is SourceKind.SCRIPT
+        else ""
+    )
+    script_source = _write_script(
+        hermetic_roots / "example.py",
+        dependencies=(),
+        requires_python=script_bound,
+        configuration=configuration,
+    )
+    tool_config = script_source.with_name("nab.toml")
+    if tool_source is SourceKind.PROJECT_TOML:
+        tool_config.write_text(f'requires-python="{tool_bound}"\n')
+    arguments = (
+        "lock",
+        "--script",
+        str(script_source),
+        "--python",
+        "3.11",
+        "--offline",
+        "--no-cache",
+    )
+    if tool_source is SourceKind.CLI:
+        arguments += ("--project-requires-python", tool_bound)
+
+    assert run(arguments) == 1
+
+    if blocker == "script":
+        source = f"{script_source}: PEP 723 requires-python"
+    elif tool_source is SourceKind.PROJECT_TOML:
+        source = f"{tool_config}: requires-python"
+    elif tool_source is SourceKind.SCRIPT:
+        source = f"{script_source}: tool.nab.requires-python"
+    else:
+        source = "--project-requires-python"
+    assert (
+        f"{source} = '>=3.12' excludes the resolve target Python 3.11"
+        in capsys.readouterr().err
+    )
+    assert not _lock_path(script_source).exists()
+
+    if blocker == "script":
+        _write_script(script_source, dependencies=())
+    elif tool_source is SourceKind.PROJECT_TOML:
+        tool_config.write_text('requires-python=">=3.10"\n')
+    elif tool_source is SourceKind.SCRIPT:
+        _write_script(
+            script_source,
+            dependencies=(),
+            configuration='[tool.nab]\nrequires-python=">=3.10"\n',
+        )
+    else:
+        arguments = (*arguments[:-1], ">=3.10")
+
+    assert run(arguments) == 0
+    assert _lock_path(script_source).exists()
+
+
+@pytest.mark.parametrize(
     "change", ["body", "relaxed-bound", "tightened-bound", "dependency", "policy"]
 )
 def test_script_lock_freshness(script_source: Path, change: str) -> None:

@@ -173,6 +173,7 @@ class NabProjectConfig(ValueType):
         "build_group",
         "requires_python",
         "requires_python_source",
+        "requires_python_declarations",
         "uploaded_prior_to",
         "dist_policy",
         "metadata_policy",
@@ -209,6 +210,8 @@ class NabProjectConfig(ValueType):
     # The surface ``requires_python`` was read from, named by the error when
     # the declaration excludes a target.
     requires_python_source: str
+    # Preserve each bound and origin when script/tool constraints intersect.
+    requires_python_declarations: tuple[tuple[str, str], ...]
     uploaded_prior_to: datetime | None
     dist_policy: DistPolicy
     metadata_policy: MetadataPolicy
@@ -259,6 +262,7 @@ class NabProjectConfig(ValueType):
         build_group: str | None = None,
         requires_python: str | None = None,
         requires_python_source: str = _TOOL_NAB_REQUIRES_PYTHON,
+        requires_python_declarations: tuple[tuple[str, str], ...] = (),
         uploaded_prior_to: datetime | None = None,
         dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST,
         metadata_policy: MetadataPolicy = MetadataPolicy.MATCH_ARTIFACT,
@@ -290,6 +294,7 @@ class NabProjectConfig(ValueType):
         self.build_group = build_group
         self.requires_python = requires_python
         self.requires_python_source = requires_python_source
+        self.requires_python_declarations = requires_python_declarations
         self.uploaded_prior_to = uploaded_prior_to
         self.dist_policy = dist_policy
         self.metadata_policy = metadata_policy
@@ -408,25 +413,44 @@ def read_pyproject_config(
         effective["base-group"], effective["build-group"], document
     )
     if input_format is InputFormat.SCRIPT:
-        if project_requires_python is not None:
-            combined = str(
-                SpecifierSet(
-                    ",".join(
-                        value
-                        for value in (config.requires_python, project_requires_python)
-                        if value is not None
-                    )
-                )
-            )
-            config = config.replace(
-                requires_python=combined,
-                requires_python_source=f"{path}: PEP 723 requires-python",
-            )
+        config = _script_python_bounds(
+            config, path, project_requires_python, effective["requires-python"]
+        )
     elif discover_workspace:
         config = _apply_workspace_discovery(
             path, config, declared_in=effective["workspace"].origin.label
         )
     return config
+
+
+def _script_python_bounds(
+    config: NabProjectConfig,
+    path: Path,
+    script_requires_python: str | None,
+    tool_requires_python: EffectiveValue,
+) -> NabProjectConfig:
+    """Combine script/tool Python bounds while retaining their diagnostic origins."""
+    if script_requires_python is None:
+        return config
+
+    declarations: tuple[tuple[str, str], ...] = (
+        (script_requires_python, f"{path}: PEP 723 requires-python"),
+    )
+    if tool_requires_python.value is not None:
+        origin = tool_requires_python.origin
+        if origin.kind is SourceKind.CLI:
+            tool_source = "--project-requires-python"
+        else:
+            key = project_key_path("requires-python", origin.kind)
+            tool_source = f"{origin.label}: {key}"
+        declarations += ((tool_requires_python.value, tool_source),)
+
+    combined = str(SpecifierSet(",".join(value for value, _source in declarations)))
+    return config.replace(
+        requires_python=combined,
+        requires_python_source="combined requires-python",
+        requires_python_declarations=declarations,
+    )
 
 
 def _config_from_effective(
@@ -813,6 +837,7 @@ def plan_targets(config: NabProjectConfig) -> tuple[ResolveTarget, ...]:
             target,
             source=config.requires_python_source,
             matrix=config.matrix,
+            declarations=config.requires_python_declarations,
         )
     return targets
 
@@ -898,6 +923,7 @@ def _check_requires_python_admits_target(
     *,
     source: str,
     matrix: MatrixConfig | None,
+    declarations: tuple[tuple[str, str], ...] = (),
 ) -> None:
     """Reject a ``requires-python`` declaration that excludes the resolve target.
 
@@ -918,6 +944,11 @@ def _check_requires_python_admits_target(
 
     if target.admits_requires_python(SpecifierSet(requires_python)):
         return
+
+    for declared, declared_in in declarations:
+        if not target.admits_requires_python(SpecifierSet(declared)):
+            requires_python, source = declared, declared_in
+            break
 
     excludes = (
         f"{source} = {requires_python!r} excludes the resolve target"
