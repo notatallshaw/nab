@@ -57,6 +57,7 @@ _PAGES = (
     ("dist-policy", "reference/distribution-policy.md"),
     ("metadata-policy", "reference/distribution-policy.md"),
     ("assume-universal-deps", "reference/build-policy.md"),
+    ("assume-consistent-metadata", "reference/distribution-policy.md"),
     ("allow-zip-sdists", "reference/distribution-policy.md"),
     ("build-policy", "reference/build-policy.md"),
     ("build-requires-depth", "reference/build-policy.md"),
@@ -185,13 +186,13 @@ class TestTheDeclaredTable:
         command = [row for row in ALL if row.commands and not row.is_global]
         file_only = [row for row in ALL if not row.commands]
 
-        assert (len(root), len(command), len(file_only)) == (7, 50, 13)
-        assert len(root) + len(command) + len(file_only) == len(ALL) == 70
+        assert (len(root), len(command), len(file_only)) == (7, 51, 13)
+        assert len(root) + len(command) + len(file_only) == len(ALL) == 71
 
         keyed = [row for row in ALL if row.key]
 
-        assert len(keyed) == 32
-        assert sum(1 for row in keyed if row.cli_flag) == 19
+        assert len(keyed) == 33
+        assert sum(1 for row in keyed if row.cli_flag) == 20
         assert sum(1 for row in keyed if not row.commands) == 13
 
     def test_the_sub_rows_spell_the_two_tables(self) -> None:
@@ -219,7 +220,7 @@ class TestTheDeclaredTable:
     def test_the_layered_rows_split_by_scope_as_the_registry_does(self) -> None:
         keyed = [row for row in ALL if row.key]
 
-        assert sum(row.scope is Scope.PROJECT for row in keyed) == 28
+        assert sum(row.scope is Scope.PROJECT for row in keyed) == 29
         assert sum(row.scope is Scope.USER for row in keyed) == 4
 
     def test_the_environment_names_are_the_four_user_keys(self) -> None:
@@ -292,7 +293,7 @@ class TestTheDeclaredTable:
         """
         negatable = [row for row in ALL if row.kind in _BOOL_KINDS]
 
-        assert len(negatable) == 15
+        assert len(negatable) == 16
 
         for row in negatable:
             assert row.negatable is not row.name.startswith("no-"), row.name

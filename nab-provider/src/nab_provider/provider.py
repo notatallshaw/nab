@@ -514,6 +514,13 @@ def _assume_universal_deps_value(override: PackageOverride | IndexOverride) -> o
     return _unset_if_none(override.assume_universal_deps)
 
 
+def _assume_consistent_metadata_value(
+    override: PackageOverride | IndexOverride,
+) -> object:
+    """Read the release-wide metadata assumption, preserving an explicit refusal."""
+    return _unset_if_none(override.assume_consistent_metadata)
+
+
 # What each field a remedy can name is read with, so the layer lookup and
 # the effective value read the same surfaces the same way.
 _SOURCE_VALUES: dict[str, Callable[[PackageOverride | IndexOverride], object]] = {
@@ -522,6 +529,7 @@ _SOURCE_VALUES: dict[str, Callable[[PackageOverride | IndexOverride], object]] =
     "metadata-policy": _metadata_policy_value,
     "allow-zip-sdists": _allow_zip_sdists_value,
     "assume-universal-deps": _assume_universal_deps_value,
+    "assume-consistent-metadata": _assume_consistent_metadata_value,
     "build-policy": lambda override: _unset_if_none(override.build_policy),
 }
 
@@ -722,6 +730,7 @@ class Provider:
         constraints: Mapping[str, VersionRange] | None = None,
         trust_unverified_sdist_deps: bool = False,
         assume_universal_deps: bool = False,
+        assume_consistent_metadata: bool = False,
         allow_zip_sdists: bool = False,
         decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
         release_refused_wheels: bool = False,
@@ -769,6 +778,24 @@ class Provider:
         # routing through the dynamic path. Off by default (strict PEP 643).
         self.trust_unverified_sdist_deps = trust_unverified_sdist_deps
         self.assume_universal_deps = assume_universal_deps
+        self.assume_consistent_metadata = assume_consistent_metadata
+        self.consistent_metadata_declared = (
+            assume_consistent_metadata
+            or any(
+                rule.assume_consistent_metadata is not None
+                for rule in package_overrides
+            )
+            or (
+                index_overrides is not None
+                and any(
+                    rule.assume_consistent_metadata is not None
+                    for rule in index_overrides.values()
+                )
+            )
+        )
+        self.consistent_metadata_contexts: dict[str, object | None] | None = (
+            {} if self.consistent_metadata_declared else None
+        )
         self.allow_zip_sdists = allow_zip_sdists
         self._resolution_strategy = resolution_strategy
         # The scan asks this once per package, so keep the answer.
@@ -1290,6 +1317,27 @@ class Provider:
         assert isinstance(result, bool)
         return result
 
+    def effective_assume_consistent_metadata(
+        self,
+        canonical_name: str,
+        version: Version,
+        index_name: str | None = None,
+    ) -> bool:
+        """Whether one wheel's complete metadata may answer for this release."""
+        if not self._package_overrides and not self._index_overrides:
+            return self.assume_consistent_metadata
+        result = self._effective_field(
+            canonical_name,
+            version,
+            index_name,
+            field="assume-consistent-metadata",
+            value=_assume_consistent_metadata_value,
+        )
+        if result is _UNSET:
+            return self.assume_consistent_metadata
+        assert isinstance(result, bool)
+        return result
+
     def effective_dependencies(
         self, canonical_name: str, version: Version
     ) -> tuple[Requirement, ...] | None:
@@ -1629,6 +1677,13 @@ class Provider:
         self, normalized: str, files: Sequence[WheelFile | SdistFile]
     ) -> list[tuple[Version, DistFile]]:
         """See :func:`nab_provider._provider.listing.filter_distributions`."""
+        if (
+            self.consistent_metadata_contexts is not None
+            and normalized not in self.versions_cache
+        ):
+            self.consistent_metadata_contexts[normalized] = (
+                self.coordinator.index.consistent_metadata_context(normalized, files)
+            )
         original_cache = self.listing_filter_cache
         self.prepared_listings.pop(normalized, None)
 
@@ -3090,15 +3145,24 @@ class Provider:
             self.prefetch_new_deps(self.deps_cache[cache_key])
             return self.deps_cache[cache_key]
 
-        metadata_text, from_sdist = _metadata_resolver.resolve_metadata(
-            self, versions, package, version
+        read_metadata = (
+            _metadata_resolver.resolve_consistent_metadata
+            if self.consistent_metadata_declared
+            else _metadata_resolver.resolve_metadata
         )
+        metadata_text, from_sdist = read_metadata(self, versions, package, version)
         self._parse_and_cache_metadata_guarded(
             cache_key, metadata_text, from_sdist=from_sdist
         )
-        _metadata_resolver.check_sibling_metadata_divergence(
-            self, versions, package, version
-        )
+        if (
+            not self.consistent_metadata_declared
+            or not self.effective_assume_consistent_metadata(
+                normalized, version, self.serving_index(normalized)
+            )
+        ):
+            _metadata_resolver.check_sibling_metadata_divergence(
+                self, versions, package, version
+            )
 
         self.stats.metadata_fetched += 1
         self.prefetch_new_deps(self.deps_cache[cache_key])
@@ -3167,9 +3231,12 @@ class Provider:
         from_sdist: bool = False,
     ) -> None:
         """See :func:`._provider.metadata_resolver.parse_and_cache_metadata`."""
-        _metadata_resolver.parse_and_cache_metadata(
-            self, cache_key, metadata_text, from_sdist=from_sdist
+        parse_metadata = (
+            _metadata_resolver.parse_consistent_metadata
+            if self.consistent_metadata_declared
+            else _metadata_resolver.parse_and_cache_metadata
         )
+        parse_metadata(self, cache_key, metadata_text, from_sdist=from_sdist)
 
     def split_and_normalize(self, package: str) -> tuple[str, str | None, str]:
         """Return ``(base, extra, normalized_base)`` for ``package``, cached."""

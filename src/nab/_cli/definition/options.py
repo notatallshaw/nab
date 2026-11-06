@@ -242,6 +242,14 @@ class ProjectKeys(
         docs="reference/build-policy.md",
     )
 
+    assume_consistent_metadata = Tri(
+        key=Layer[bool](
+            rdefault=False, parse=values.parse_bool, render=hooks.render_bool
+        ),
+        help="assume all wheels of a release have identical metadata",
+        docs="reference/distribution-policy.md",
+    )
+
     allow_zip_sdists = Tri(
         key=Layer[bool](
             rdefault=False, parse=values.parse_bool, render=hooks.render_bool

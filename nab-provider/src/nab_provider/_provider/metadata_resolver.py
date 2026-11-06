@@ -97,6 +97,77 @@ _OFFLINE_METADATA_MISS = "offline mode skipped a metadata fetch with no cached m
 _FILTERED_SDIST = "no PEP 658 metadata and the listing filter excluded the sdist"
 
 
+def assumed_wheel_metadata(
+    provider: Provider, package: str, version: Version
+) -> str | None:
+    """Return a release-wide wheel source only under the effective assumption."""
+    if not provider.effective_assume_consistent_metadata(
+        package, version, provider.serving_index(package)
+    ):
+        return None
+    versions = provider.versions_cache.get(package)
+    if versions is None or not isinstance(
+        version_dists(provider, package, versions).picked.get(version), WheelFile
+    ):
+        return None
+    contexts = provider.consistent_metadata_contexts
+    assert contexts is not None
+    return provider.coordinator.index.get_consistent_wheel_metadata(
+        package, str(version), context=contexts.get(package)
+    )
+
+
+def resolve_consistent_metadata(
+    provider: Provider,
+    versions: list[tuple[Version, DistFile]],
+    package: str,
+    version: Version,
+) -> tuple[str, bool]:
+    """Read a representative only when the selected wheel permits the assumption."""
+    _, _, normalized = provider.split_and_normalize(package)
+    assumed = assumed_wheel_metadata(provider, normalized, version)
+    if assumed is not None:
+        dist = version_dists(provider, normalized, versions).picked.get(version)
+        assert isinstance(dist, WheelFile)
+        if dist.yanked:
+            require_yank_admission(provider, versions, normalized, version)
+        return assumed, False
+    return resolve_metadata(provider, versions, package, version)
+
+
+def parse_consistent_metadata(
+    provider: Provider,
+    cache_key: tuple[str, Version],
+    metadata_text: str,
+    *,
+    from_sdist: bool = False,
+) -> None:
+    """Validate and classify a release source before remembering its wheel text."""
+    package, version = cache_key
+    if not from_sdist:
+        assumed = assumed_wheel_metadata(provider, package, version)
+        if assumed is not None:
+            metadata_text = assumed
+    parse_and_cache_metadata(provider, cache_key, metadata_text, from_sdist=from_sdist)
+    if from_sdist or not provider.effective_assume_consistent_metadata(
+        package, version, provider.serving_index(package)
+    ):
+        return
+    versions = provider.versions_cache.get(package)
+    if versions is not None:
+        dist = version_dists(provider, package, versions).picked.get(version)
+        if isinstance(dist, WheelFile):
+            contexts = provider.consistent_metadata_contexts
+            assert contexts is not None
+            provider.coordinator.index.store_consistent_wheel_metadata(
+                package,
+                str(version),
+                dist.metadata_url or dist.url,
+                metadata_text,
+                context=contexts.get(package),
+            )
+
+
 def resolve_metadata(
     provider: Provider,
     versions: list[tuple[Version, DistFile]],

@@ -833,6 +833,7 @@ _PACKAGE_OVERRIDE_BODY_KEYS = frozenset(
         "dist-policy",
         "metadata-policy",
         "assume-universal-deps",
+        "assume-consistent-metadata",
         "allow-zip-sdists",
         "build-policy",
         "uploaded-prior-to",
@@ -850,6 +851,7 @@ _INDEX_OVERRIDE_KEYS = frozenset(
         "dist-policy",
         "metadata-policy",
         "assume-universal-deps",
+        "assume-consistent-metadata",
         "allow-zip-sdists",
         "build-policy",
         "uploaded-prior-to",
@@ -870,6 +872,7 @@ _PACKAGE_POLICY_FIELDS = (
     ("metadata-policy", "metadata_policy"),
     ("dist-policy.trust-unverified-deps", "dist_trust_unverified_deps"),
     ("assume-universal-deps", "assume_universal_deps"),
+    ("assume-consistent-metadata", "assume_consistent_metadata"),
     ("allow-zip-sdists", "allow_zip_sdists"),
     ("build-policy", "build_policy"),
     ("uploaded-prior-to", "uploaded_prior_to"),
@@ -1025,6 +1028,15 @@ def _build_package_overrides(
         if "assume-universal-deps" in body
         else None
     )
+    assume_consistent_metadata = (
+        _parse_bool(
+            f"{where}.assume-consistent-metadata",
+            body["assume-consistent-metadata"],
+            default=False,
+        )
+        if "assume-consistent-metadata" in body
+        else None
+    )
     allow_zip_sdists = (
         _parse_bool(
             f"{where}.allow-zip-sdists", body["allow-zip-sdists"], default=False
@@ -1063,6 +1075,7 @@ def _build_package_overrides(
         or metadata_policy is not None
         or dist_trust is not None
         or assume_universal_deps is not None
+        or assume_consistent_metadata is not None
         or allow_zip_sdists is not None
         or build_policy is not None
         or uploaded_prior_to is not None
@@ -1099,6 +1112,7 @@ def _build_package_overrides(
             metadata_policy=metadata_policy,
             dist_trust_unverified_deps=dist_trust,
             assume_universal_deps=assume_universal_deps,
+            assume_consistent_metadata=assume_consistent_metadata,
             allow_zip_sdists=allow_zip_sdists,
             build_policy=build_policy,
             uploaded_prior_to=uploaded_prior_to,
@@ -1261,6 +1275,15 @@ def _parse_index_override_body(
         if "assume-universal-deps" in body
         else None
     )
+    assume_consistent_metadata = (
+        _parse_bool(
+            f"{where}.assume-consistent-metadata",
+            body["assume-consistent-metadata"],
+            default=False,
+        )
+        if "assume-consistent-metadata" in body
+        else None
+    )
     allow_zip_sdists = (
         _parse_bool(
             f"{where}.allow-zip-sdists", body["allow-zip-sdists"], default=False
@@ -1295,6 +1318,7 @@ def _parse_index_override_body(
         or metadata_policy is not None
         or dist_trust is not None
         or assume_universal_deps is not None
+        or assume_consistent_metadata is not None
         or allow_zip_sdists is not None
         or build_policy is not None
         or uploaded_prior_to is not None
@@ -1313,6 +1337,7 @@ def _parse_index_override_body(
         metadata_policy=metadata_policy,
         dist_trust_unverified_deps=dist_trust,
         assume_universal_deps=assume_universal_deps,
+        assume_consistent_metadata=assume_consistent_metadata,
         allow_zip_sdists=allow_zip_sdists,
         build_policy=build_policy,
         uploaded_prior_to=uploaded_prior_to,

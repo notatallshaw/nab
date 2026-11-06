@@ -43,6 +43,41 @@ When sources are allowed and no usable wheel remains, Nab reads source metadata.
 may need a [permitted build](build-policy.md). Wheel metadata can come from a
 [sidecar, range request or full download](lockfile.md#metadata-selection).
 
+## Assuming wheel metadata is consistent
+
+To allow targets to reuse one wheel's metadata for a selected release:
+
+```toml
+[tool.nab]
+assume-consistent-metadata = true
+```
+
+The default is `false`: each target reads the wheel it would install. With the assumption enabled,
+the first wheel metadata read for a release can supply its dependencies for later targets. Markers
+are still evaluated separately for each target. Releases publishing different dependency metadata
+across wheels may produce an incomplete or incorrect lock under this assumption.
+
+Wheel tags, listing-level `Requires-Python`, distribution policies, upload cutoffs and yanking rules
+still apply. The representative's package name and version must match the selected release, and its
+`Requires-Python` must admit each target. Other wheels' metadata identity, `Requires-Python` and
+advertised metadata hashes are not independently checked. This option does not make a foreign wheel
+installable or guarantee that every wheel of a release agrees with the representative.
+
+Set the option globally, per package, in a package rule or per index. A scoped `false` cancels a
+global `true`; package and index declarations for the same field conflict. The CLI options are
+`--project-assume-consistent-metadata` and `--no-project-assume-consistent-metadata`. Global
+settings apply to the project's lock resolve; they are not forwarded to isolated build-requirements
+resolves.
+
+Locks created before this setting was introduced need one `nab lock` run to refresh their validation
+records before using `--locked`. Changing the setting also requires regenerating the lock.
+
+This assumption concerns complete wheel metadata. The separate
+[assume-universal-deps](build-policy.md#assuming-dependencies-are-universal) option borrows
+dependency declarations for dynamic source metadata while retaining that source's identity and
+Python requirements. Neither option changes the meaning of `trust-unverified-deps` for older source
+metadata.
+
 ## Include sdists only when needed
 
 Use this setting to omit source archives when wheels cover the environments that need each selected

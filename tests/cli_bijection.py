@@ -33,7 +33,7 @@ def _cache_command() -> None:
 
 
 def _config_command() -> None:
-    """``nab config``: 33 parameters."""
+    """``nab config``: 34 parameters."""
     config_command(
         ConfigWords.action,
         ConfigWords.key,
@@ -49,6 +49,7 @@ def _config_command() -> None:
         project_dist_policy=ProjectKeys.dist_policy,
         project_metadata_policy=ProjectKeys.metadata_policy,
         project_assume_universal_deps=ProjectKeys.assume_universal_deps,
+        project_assume_consistent_metadata=ProjectKeys.assume_consistent_metadata,
         project_allow_zip_sdists=ProjectKeys.allow_zip_sdists,
         project_build_policy=ProjectKeys.build_policy,
         project_build_requires_depth=ProjectKeys.build_requires_depth,
@@ -72,7 +73,7 @@ def _config_command() -> None:
 
 
 def _lock() -> None:
-    """``nab lock``: 43 parameters."""
+    """``nab lock``: 44 parameters."""
     lock(
         ConfigWords.path,
         project_resolution=ProjectKeys.resolution,
@@ -87,6 +88,7 @@ def _lock() -> None:
         project_dist_policy=ProjectKeys.dist_policy,
         project_metadata_policy=ProjectKeys.metadata_policy,
         project_assume_universal_deps=ProjectKeys.assume_universal_deps,
+        project_assume_consistent_metadata=ProjectKeys.assume_consistent_metadata,
         project_allow_zip_sdists=ProjectKeys.allow_zip_sdists,
         project_build_policy=ProjectKeys.build_policy,
         project_build_requires_depth=ProjectKeys.build_requires_depth,
@@ -121,7 +123,7 @@ def _lock() -> None:
 
 
 def _download() -> None:
-    """``nab download``: 38 parameters."""
+    """``nab download``: 39 parameters."""
     download(
         ConfigWords.path,
         project_resolution=ProjectKeys.resolution,
@@ -136,6 +138,7 @@ def _download() -> None:
         project_dist_policy=ProjectKeys.dist_policy,
         project_metadata_policy=ProjectKeys.metadata_policy,
         project_assume_universal_deps=ProjectKeys.assume_universal_deps,
+        project_assume_consistent_metadata=ProjectKeys.assume_consistent_metadata,
         project_allow_zip_sdists=ProjectKeys.allow_zip_sdists,
         project_build_policy=ProjectKeys.build_policy,
         project_build_requires_depth=ProjectKeys.build_requires_depth,

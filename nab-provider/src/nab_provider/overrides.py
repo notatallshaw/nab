@@ -59,6 +59,7 @@ class PackageOverride(SlottedValue):
         "metadata_policy",
         "dist_trust_unverified_deps",
         "assume_universal_deps",
+        "assume_consistent_metadata",
         "build_policy",
         "allow_zip_sdists",
         "uploaded_prior_to",
@@ -85,6 +86,7 @@ class PackageOverride(SlottedValue):
         metadata_policy: MetadataPolicy | None = None,
         dist_trust_unverified_deps: bool | None = None,
         assume_universal_deps: bool | None = None,
+        assume_consistent_metadata: bool | None = None,
         build_policy: BuildPolicy | None = None,
         allow_zip_sdists: bool | None = None,
         uploaded_prior_to: datetime | None = None,
@@ -105,6 +107,7 @@ class PackageOverride(SlottedValue):
         self.metadata_policy = metadata_policy
         self.dist_trust_unverified_deps = dist_trust_unverified_deps
         self.assume_universal_deps = assume_universal_deps
+        self.assume_consistent_metadata = assume_consistent_metadata
         self.build_policy = build_policy
         self.allow_zip_sdists = allow_zip_sdists
         self.uploaded_prior_to = uploaded_prior_to
@@ -157,6 +160,7 @@ class IndexOverride(SlottedValue):
         "metadata_policy",
         "dist_trust_unverified_deps",
         "assume_universal_deps",
+        "assume_consistent_metadata",
         "build_policy",
         "allow_zip_sdists",
         "uploaded_prior_to",
@@ -171,6 +175,7 @@ class IndexOverride(SlottedValue):
         metadata_policy: MetadataPolicy | None = None,
         dist_trust_unverified_deps: bool | None = None,
         assume_universal_deps: bool | None = None,
+        assume_consistent_metadata: bool | None = None,
         build_policy: BuildPolicy | None = None,
         allow_zip_sdists: bool | None = None,
         uploaded_prior_to: datetime | None = None,
@@ -182,6 +187,7 @@ class IndexOverride(SlottedValue):
         self.metadata_policy = metadata_policy
         self.dist_trust_unverified_deps = dist_trust_unverified_deps
         self.assume_universal_deps = assume_universal_deps
+        self.assume_consistent_metadata = assume_consistent_metadata
         self.build_policy = build_policy
         self.allow_zip_sdists = allow_zip_sdists
         self.uploaded_prior_to = uploaded_prior_to

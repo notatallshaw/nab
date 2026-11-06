@@ -39,7 +39,11 @@ from ..policy import DistPolicy, MetadataPolicy
 from ..tags import TagSet
 from ..value import HashableRecord
 from ..vcs_admission import UnsupportedVcsError
-from .metadata_resolver import pick_dist_for_metadata, version_dists
+from .metadata_resolver import (
+    assumed_wheel_metadata,
+    pick_dist_for_metadata,
+    version_dists,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -221,15 +225,14 @@ def speculative_prefetch(
         prefetch_transitive_best(provider, normalized, versions)
 
 
-def _has_complete_override(
+def _has_metadata_override_or_representative(
     provider: Provider, normalized: str, version: Version
 ) -> bool:
-    """Whether a complete ``dependencies`` override replaces this version's metadata.
-
-    Callers skip prefetching such a candidate: ``get_dependencies`` synthesizes
-    its deps without a METADATA fetch, so any prefetch would be wasted.
-    """
-    return provider.effective_dependencies(normalized, version) is not None
+    """Whether a declared override or assumed wheel source can answer."""
+    return provider.effective_dependencies(normalized, version) is not None or (
+        provider.consistent_metadata_declared
+        and assumed_wheel_metadata(provider, normalized, version) is not None
+    )
 
 
 def prefetch_root_batch(
@@ -263,7 +266,7 @@ def prefetch_root_batch(
             continue
         if (normalized, version) in provider.deps_cache:
             continue
-        if _has_complete_override(provider, normalized, version):
+        if _has_metadata_override_or_representative(provider, normalized, version):
             continue
         if (
             isinstance(dist, WheelFile)
@@ -303,7 +306,7 @@ def prefetch_transitive_best(
         return
     provider.speculative_candidates.add((normalized, version))
 
-    if _has_complete_override(provider, normalized, version):
+    if _has_metadata_override_or_representative(provider, normalized, version):
         return
 
     # Prefetch the artifact the read picks, not the listing's first at that version.
@@ -1267,7 +1270,7 @@ def prefetch_walk_ahead(
             or (url := dist.metadata_url) is None
         ):
             continue
-        if _has_complete_override(provider, normalized, version):
+        if _has_metadata_override_or_representative(provider, normalized, version):
             continue
         if coordinator_index.has_metadata(normalized, dist.version, url):
             continue
@@ -1318,7 +1321,7 @@ def prefetch_batch(
             continue
         # A complete override supplies the deps, so fetching this version's
         # metadata is wasted work.
-        if _has_complete_override(provider, package, v):
+        if _has_metadata_override_or_representative(provider, package, v):
             continue
         wheel = wheel_by_version_map[v]
         if (
