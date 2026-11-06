@@ -3502,6 +3502,80 @@ def test_build_wheel_cutoff_refusal_does_not_claim_nonpublication(
     assert f"/{wheel}" in requests
 
 
+@pytest.mark.parametrize("requires_python", [">=99", ">=3.10"])
+def test_index_sdist_failure_preserves_build_requirement_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, requires_python: str
+) -> None:
+    index = tmp_path / "index"
+    app = index / "app"
+    leaf = index / "badleaf"
+    app.mkdir(parents=True)
+    leaf.mkdir()
+    wheel = leaf / "badleaf-1.0-py3-none-any.whl"
+    _make_installable_wheel(wheel, "badleaf", "1.0", requires_python=requires_python)
+
+    sdist = app / "app-1.0.tar.gz"
+    members = {
+        "PKG-INFO": (
+            "Metadata-Version: 2.2\nName: app\nVersion: 1.0\nDynamic: Requires-Dist\n"
+        ),
+        "pyproject.toml": (
+            '[build-system]\nrequires = ["badleaf==1.0"]\n'
+            'build-backend = "app_backend"\nbackend-path = ["."]\n'
+        ),
+        "app_backend.py": _SDIST_BACKEND_SRC.format(
+            name="app", version="1.0", requires_python=repr("")
+        ),
+    }
+    source = tmp_path / "source"
+    source.mkdir()
+    with tarfile.open(sdist, "w:gz") as archive:
+        for name, text in members.items():
+            data = text.encode()
+            (source / name).write_bytes(data)
+            member = tarfile.TarInfo(f"app-1.0/{name}")
+            member.size = len(data)
+            archive.addfile(member, io.BytesIO(data))
+    monkeypatch.setattr(
+        "nab_project._build_remote.extract_sdist_archive",
+        lambda _data, _target: source,
+    )
+
+    for artifact in (wheel, sdist):
+        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        (artifact.parent / "index.html").write_text(
+            f'<a href="{artifact.name}#sha256={digest}">{artifact.name}</a>\n',
+            encoding="utf-8",
+        )
+
+    project = tmp_path / "pyproject.toml"
+    project.write_text(
+        '[project]\nname = "consumer"\nversion = "1"\ndependencies = ["app"]\n',
+        encoding="utf-8",
+    )
+
+    result = resolve_for_targets(
+        project,
+        HttpxAsyncTransport(),
+        targets=(ResolveTarget.for_host(),),
+        inputs=ResolveInputs(
+            indexes=(IndexConfig("fixture", index.as_uri()),),
+            build_policy=BuildPolicy.BUILD_REMOTE,
+        ),
+    )
+
+    if requires_python == ">=99":
+        error = result.target_results[0].error
+        assert error is not None
+        assert ">=99" not in str(error)
+        assert error.verbose_message is not None
+        assert "badleaf:" in error.verbose_message
+        assert "requires Python >=99" in error.verbose_message
+    else:
+        result.raise_for_failure()
+        assert result.target_results[0].pins == {"app": Version("1.0")}
+
+
 class TestDistPolicyOverAPackageThatPublishesNoWheel:
     """``sdist-only`` where the index had no wheel to bar.
 

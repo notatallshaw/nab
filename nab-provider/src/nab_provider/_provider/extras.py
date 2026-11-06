@@ -189,9 +189,7 @@ def _pick_in_mode(
     for version in candidates:
         cached = provider.invalid_metadata_message(normalized, version)
         if cached is not None:
-            unreadable.append(
-                MetadataBlock(cached.message, suggestions=cached.suggestions)
-            )
+            unreadable.append(MetadataBlock(cached))
             continue
         try:
             provider.get_dependencies(base, version)

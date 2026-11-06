@@ -1489,11 +1489,12 @@ class Provider:
     def invalid_metadata_message(
         self, canonical_name: str, version: Version
     ) -> DiagnosticMessage | None:
-        """Return a cached cause with its suggestions still separate."""
+        """Return the cached diagnostic, including child causes and suggestions."""
         failure = self._invalid_metadata.get((canonical_name, version))
         if failure is None:
             return None
-        return DiagnosticMessage(failure.message, suggestions=failure.suggestions)
+
+        return failure.diagnostic
 
     def materialize_source(
         self,
