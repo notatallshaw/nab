@@ -161,11 +161,21 @@ Fresh universal locks for `requests==2.32.3` on Python 3.12, 3.13 and 3.14. All 
 packages and usable wheels across 48 checked targets: eight platforms × three Python versions ×
 CPython/PyPy.
 
-Nab validates dependencies and artifact compatibility for all 48 target environments;
-[uv](https://docs.astral.sh/uv/reference/internals/resolver/#wheel-tags),
-[Poetry](https://github.com/python-poetry/poetry/blob/2.5.1/src/poetry/repositories/http_repository.py#L402-L406)
-and [PDM](https://github.com/pdm-project/pdm/blob/2.29.3/src/pdm/models/candidates.py#L493-L513)
-omit full per-target validation, which could potentially produce unsound universal locks.
+Bars show medians of eight fresh lock commands, including startup and imports; exports and the
+benchmark's output checks are outside the measured interval. Cold runs use empty package caches.
+Warm runs retain package caches and recreate the lockfile.
+
+Each panel uses the complete cohort with the lowest Nab median from local and GitHub CI runs on
+CPython 3.15.0 and 3.15.0t. All four bars in a panel use that same cohort. Both panels shown use
+CPython 3.15.0 on a GitHub-hosted Ubuntu 24.04 runner, measured in November 2026 with
+[Nab `0058b1b`](https://github.com/notatallshaw/nab/tree/0058b1b1b0685457c649806262d6b1e2702dcdc8),
+uv 0.13.7, Poetry 2.5.1 and PDM 2.29.6.
+
+Nab checks dependencies and artifact compatibility for each of these 48 targets.
+[uv's universal resolution does not guarantee wheel-tag coverage](https://github.com/astral-sh/uv/blob/0.13.7/docs/reference/internals/resolver.md#L120-L130);
+[Poetry](https://github.com/python-poetry/poetry/blob/2.5.1/src/poetry/repositories/http_repository.py#L436-L440)
+and [PDM](https://github.com/pdm-project/pdm/blob/2.29.6/src/pdm/models/candidates.py#L529-L549) can
+resolve using metadata from a single wheel.
 
 ## Libraries
 
