@@ -17,9 +17,9 @@ __lazy_modules__ = (
 from typing import TYPE_CHECKING
 
 from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_resolver.priority import CULPRIT_DEMOTE_THRESHOLD, compute_tier
 
 from ..errors import OverrideConflictError
-from ..priority import CULPRIT_DEMOTE_THRESHOLD, compute_tier
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

@@ -34,6 +34,7 @@ from collections import defaultdict, deque
 from itertools import chain
 from typing import TYPE_CHECKING, TypeVar, cast
 
+import nab_resolver.priority as _conflict_priority
 from nab_provider._vendor.packaging.markers import prepare_environment
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
@@ -41,7 +42,6 @@ from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 from nab_resolver.types import IncompatibilityCause
 
-from . import priority as decision_priority
 from ._provider import extras as _extras
 from ._provider import listing as _listing
 from ._provider import listing_diagnosis as _diagnosis
@@ -677,18 +677,18 @@ class Provider:
     # Set low because the trigger is conservative: a unique
     # ``(blocker_pkg, blocker_version)`` repeating across every rejection
     # is already a strong signal.
-    _LOOKAHEAD_ABORT_THRESHOLD = 4
+    _LOOKAHEAD_ABORT_THRESHOLD = _conflict_priority.PRECHECK_REJECTION_THRESHOLD
 
     # Max force-backtracks one blocker can drive per resolution.
     # One-shot misses sustained culprits; unlimited oscillates on
     # blockers that are also the right pin.
-    _MAX_FORCE_BACKTRACKS_PER_PKG = 3
+    _MAX_FORCE_BACKTRACKS_PER_PKG = _conflict_priority.MAX_PRECHECK_BACKTRACKS
 
-    TIER_AFFECTED = decision_priority.TIER_AFFECTED
-    TIER_NORMAL = decision_priority.TIER_NORMAL
-    TIER_CULPRIT = decision_priority.TIER_CULPRIT
-    CONFLICT_THRESHOLD = decision_priority.CONFLICT_THRESHOLD
-    CULPRIT_DEMOTE_THRESHOLD = decision_priority.CULPRIT_DEMOTE_THRESHOLD
+    TIER_AFFECTED = _conflict_priority.TIER_AFFECTED
+    TIER_NORMAL = _conflict_priority.TIER_NORMAL
+    TIER_CULPRIT = _conflict_priority.TIER_CULPRIT
+    CONFLICT_THRESHOLD = _conflict_priority.CONFLICT_THRESHOLD
+    CULPRIT_DEMOTE_THRESHOLD = _conflict_priority.CULPRIT_DEMOTE_THRESHOLD
 
     # Deferred admission retains withdrawn candidates but still guards preparation.
     yank_admissions: frozenset[tuple[str, Version]] = frozenset()

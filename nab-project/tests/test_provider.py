@@ -102,6 +102,7 @@ from nab_provider.target import ResolveTarget
 from nab_provider.testing import make_metadata, make_sdist, make_wheel, pkg_override
 from nab_provider.yanking import mark_yanked
 from nab_resolver.errors import ResolutionError
+from nab_resolver.priority import TIER_CULPRIT, compute_tier
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import (
     Incompatibility,
@@ -12025,6 +12026,20 @@ class TestPublicAccessors:
 
         assert provider.dist_files_for("pkg", version) == [mid_dist]
         assert version.comparisons < 20
+
+
+class TestComputeTier:
+    """Cover the tier-decision branches."""
+
+    def test_force_backtracked_returns_culprit(self) -> None:
+        tier = compute_tier(
+            "foo",
+            affected_count=0,
+            culprit_count=0,
+            culprit_counts=None,
+            force_backtracked=True,
+        )
+        assert tier == TIER_CULPRIT
 
 
 class TestExtrasInvalidMetadata:

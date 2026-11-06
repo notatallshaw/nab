@@ -35,6 +35,7 @@ class ResolutionError(Exception):
     ``ResolutionTerminatedError`` identifies a limit or resolver fault.
     Its incompatibility, when present, is diagnostic rather than a proof
     that the requirements are unsatisfiable.
+    Provisional assumptions also make a derived failure inconclusive.
 
     ``verbose_message`` is the same report at more depth, set by whatever
     augments the error with what the resolve knows beyond the derivation.
