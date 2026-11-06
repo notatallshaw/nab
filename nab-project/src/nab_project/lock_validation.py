@@ -9,8 +9,9 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
+from nab_index.file_urls import parse_file_url
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
@@ -77,7 +78,11 @@ def _url(url: str, base: Path) -> str:
     """Remove URL credentials and normalize local source locations."""
     parts = urlsplit(url)
     if parts.scheme == "file" and parts.netloc in {"", "localhost"}:
-        return "file:" + _relative(Path(unquote(parts.path)), base)
+        location = _relative(parse_file_url(url), base)
+        # Keep filename '?' and '#' separate from URL selectors.
+        location = location.replace("%", "%25").replace("?", "%3F").replace("#", "%23")
+        return "file:" + urlunsplit(("", "", location, parts.query, parts.fragment))
+
     return strip_userinfo(url)
 
 
@@ -288,7 +293,8 @@ def snapshot_inputs(
     input_format: InputFormat = InputFormat.PROJECT,
 ) -> dict[str, Any]:
     """Capture declarations, admission policy, targets and local metadata."""
-    base = path.resolve().parent
+    # A symlinked input still declares paths relative to its parent.
+    base = path.parent.resolve()
     data = read_input_document(path, input_format=input_format)
     roots: dict[str, list[str]] = {}
     if build_requirements:
