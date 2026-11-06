@@ -576,7 +576,9 @@ class CacheWords(Table, on=("cache",), docs="reference/cache.md"):
 
     output = Value[Path | None](
         help=(
-            "output path or -; defaults to pylock.toml or requirements.txt; "
+            "output path or -; project defaults to pylock.toml or requirements.txt; "
+            "script defaults to pylock.<stem>.toml or "
+            "<script>.requirements.txt beside the input; "
             "universal requirements paths may use {python_version}, "
             "{platform_id}, and {selection}, but must render uniquely for every "
             "target; otherwise use pylock"

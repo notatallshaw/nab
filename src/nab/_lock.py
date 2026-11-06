@@ -237,8 +237,9 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
 
     ``pylock`` is the default format. ``requirements`` adds ``--hash`` lines to
     index pins; ``requirements-without-hashes`` omits those lines. Output
-    defaults to ``pylock.toml`` or ``requirements.txt``; ``--output -`` writes
-    stdout.
+    defaults to ``pylock.toml`` or ``requirements.txt`` for project inputs.
+    With ``--script``, the defaults are ``pylock.<stem>.toml`` and
+    ``<script>.requirements.txt`` beside the script. ``--output -`` writes stdout.
 
     Groups and extras select project requirements. ``--build-requirements``
     instead locks the static ``[build-system].requires`` list and cannot be

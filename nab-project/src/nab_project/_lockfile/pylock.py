@@ -532,8 +532,7 @@ def render_lock(lock_input: LockInput, *, lock_dir: Path | None = None) -> str:
 
     ``lock_dir`` is the directory the lock will live in; directory, wheel
     and sdist paths are emitted relative to it so the lock stays portable.
-    Defaults to the current directory.  Used by ``write_lock`` and by
-    ``nab lock --locked`` to render the would-be lock for comparison.
+    Defaults to the current directory.
 
     Raises :class:`LockValidationError` when the document it would build
     does not satisfy PEP 751, and

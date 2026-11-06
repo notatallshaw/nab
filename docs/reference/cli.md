@@ -27,8 +27,9 @@ Choose `pylock` (default), `requirements`, or `requirements-without-hashes`. See
 
 ### `--output PATH`
 
-Write to `PATH`, or stdout with `-`. Single-environment defaults are `pylock.toml` or
-`requirements.txt`. Universal requirements go to stdout unless you provide an
+Write to `PATH`, or stdout with `-`. Project defaults are `pylock.toml` or `requirements.txt`. With
+`--script`, defaults are `pylock.<stem>.toml` and `<script>.requirements.txt` beside the script.
+Universal project requirements go to stdout unless you provide an
 [output template](formats.md#--output).
 
 ### `--locked`
