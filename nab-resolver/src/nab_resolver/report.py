@@ -13,6 +13,7 @@ __lazy_modules__ = ("nab_resolver.root",)
 
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+from .proofs import dependency_terms
 from .root import ROOT
 from .types import IncompatibilityCause, PackageType, Term, VersionType
 
@@ -244,31 +245,6 @@ def _narrowed_away(
     return found
 
 
-def _dependency_pair(
-    incompatibility: Incompatibility[Any, Any], terms: Sequence[Term[Any, Any]]
-) -> tuple[Term[Any, Any], Term[Any, Any]] | None:
-    """Return the parent and dependency terms of a DEPENDENCY clause, else None.
-
-    ``terms`` are the clause's terms as the line renders them, which is not
-    ``incompatibility.terms`` once narrowing has been applied.  A package
-    depending on itself merges the two terms into one, so the dependency side
-    is rebuilt from the range the clause carries.
-    """
-    if incompatibility.cause is not IncompatibilityCause.DEPENDENCY:
-        return None
-
-    if len(terms) == _ATTRIBUTION_CLAUSE_TERMS:
-        parent, dependency = terms
-        return parent, dependency
-
-    dependency_range = incompatibility.dependency_range
-    if len(terms) != 1 or dependency_range is None:
-        return None
-
-    (parent,) = terms
-    return parent, Term(parent.package, dependency_range, positive=False)
-
-
 def _render_line(
     incompatibility: Incompatibility[Any, Any],
     narrow: _NarrowFn | None,
@@ -288,7 +264,7 @@ def _render_line(
     if cause is IncompatibilityCause.CONTEXTUAL_NO_VERSIONS:
         return _render_contextual_no_versions(incompatibility, format_range)
 
-    attributed = _dependency_pair(incompatibility, terms)
+    attributed = dependency_terms(incompatibility, terms)
     if attributed is not None:
         parent, dep = attributed
         plural = _is_full(parent)
