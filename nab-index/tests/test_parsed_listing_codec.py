@@ -318,11 +318,11 @@ def test_unknown_tag_on_a_well_formed_row_is_miss(tag: object) -> None:
         (_W_SIZE, "1024"),
         # ... nor a bool as a count.
         (_W_SIZE, True),
-        (_W_HASHES, "sha256"),
+        (_W_HASHES, True),
         (_W_HASHES, [["sha256"]]),
         (_W_HASHES, [["sha256", 5]]),
         (_W_HASHES, ["sha256"]),
-        (_W_METADATA_HASH, "sha256"),
+        (_W_METADATA_HASH, 3),
         (_W_METADATA_HASH, ["sha256", "dead", "extra"]),
     ],
 )
@@ -452,13 +452,13 @@ def _deferred_wheel(hashes: object, *, sidecar: object) -> WheelFile:
     return wheel
 
 
-def test_unparsed_tables_ride_the_wire_as_the_index_served_them() -> None:
+def test_raw_integrity_cells_preserve_algorithm_names() -> None:
     wheel = _deferred_wheel({"SHA256": DIGEST.upper()}, sidecar={"sha256": DIGEST})
 
     rows = json.loads(encode([wheel], DIGEST))[1]
 
     assert rows[0][_W_HASHES] == {"SHA256": DIGEST.upper()}
-    assert rows[0][_W_METADATA_HASH] == {"sha256": DIGEST}
+    assert rows[0][_W_METADATA_HASH] == DIGEST
 
 
 def test_a_value_that_is_not_an_object_rides_as_its_parse() -> None:
@@ -555,3 +555,22 @@ def test_corrupt_withdrawal_table_is_rejected(cell: object) -> None:
     blob = _tamper_header(5, cell)
     assert decode(blob, _policy()) is None
     assert corruption_reason(blob) is not None
+
+
+@pytest.mark.parametrize("digest", [DIGEST, DIGEST.upper(), "not hex", "", "\ud800"])
+def test_compact_raw_sha256_preserves_integrity_semantics(digest: str) -> None:
+    wheel = _deferred_wheel({"sha256": digest}, sidecar={"sha256": digest})
+    blob = encode([wheel], DIGEST)
+    rows = json.loads(blob)[1]
+    assert rows[0][_W_HASHES] == digest
+    assert rows[0][_W_METADATA_HASH] == digest
+
+    restored = decode(blob, _policy())
+    assert restored is not None
+    (record,) = restored.files
+    assert isinstance(record, WheelFile)
+    assert record.raw_hashes() == wheel.raw_hashes()
+    assert record.raw_sidecar() == wheel.raw_sidecar()
+    assert record.hashes == wheel.hashes
+    assert record.metadata_hash == wheel.metadata_hash
+    assert encode(restored.files, DIGEST) == blob

@@ -9,12 +9,24 @@ from collections.abc import Callable
 
 import pytest
 
-from nab_provider.records import SdistFile, WheelFile
+from nab_provider.records import (
+    SdistFile,
+    WheelFile,
+    parse_hash_table,
+    rehydrated_sdist,
+    rehydrated_wheel,
+)
 from nab_provider.value import field_names
 
 WHEEL_URL = "https://pypi.example/pkg-1.0-py3-none-any.whl"
 
 HAND_WRITTEN_INIT_RECORDS = [WheelFile, SdistFile]
+
+
+class _DigestText(str):
+    """A string subtype accepted by cached-record factories."""
+
+    __slots__ = ()
 
 
 def make_wheel(
@@ -142,3 +154,70 @@ def test_withdrawn_wheel_releases_the_original_record_slots() -> None:
     assert not withdrawn.has_metadata
     assert withdrawn.metadata_url is None
     assert withdrawn.yanked == "withdrawn"
+
+
+@pytest.mark.parametrize(
+    "digest",
+    [
+        "ABCD",
+        pytest.param(_DigestText("ABCD"), id="str-subclass"),
+        "not hex",
+        "",
+        "\ud800",
+    ],
+)
+def test_rehydrated_compact_hashes_keep_raw_and_parsed_values(digest: str) -> None:
+    wheel = rehydrated_wheel(
+        filename="pkg-1.0-py3-none-any.whl",
+        url=WHEEL_URL,
+        version="1.0",
+        requires_python=None,
+        has_metadata=True,
+        upload_time=None,
+        hashes=digest,
+        size=None,
+        metadata_hash=digest,
+    )
+    sdist = rehydrated_sdist(
+        filename="pkg-1.0.tar.gz",
+        url="https://pypi.example/pkg-1.0.tar.gz",
+        version="1.0",
+        requires_python=None,
+        upload_time=None,
+        hashes=digest,
+        size=None,
+    )
+    assert wheel.raw_hashes() == sdist.raw_hashes() == {"sha256": digest}
+    assert wheel.raw_sidecar() == {"sha256": digest}
+
+    expected = (("sha256", "abcd"),) if digest == "ABCD" else ()
+    assert wheel.hashes == sdist.hashes == expected
+    assert wheel.metadata_hash == (expected[0] if expected else None)
+    assert wheel.raw_hashes() == sdist.raw_hashes() == {"sha256": digest}
+    assert wheel.raw_sidecar() == {"sha256": digest}
+
+
+def test_compact_rehydration_defers_hash_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parsed: list[object] = []
+
+    def observe(value: object) -> tuple[tuple[str, str], ...]:
+        parsed.append(value)
+        return parse_hash_table(value)
+
+    monkeypatch.setattr("nab_provider.records.parse_hash_table", observe)
+    sdist = rehydrated_sdist(
+        filename="pkg-1.0.tar.gz",
+        url="https://pypi.example/pkg-1.0.tar.gz",
+        version="1.0",
+        requires_python=None,
+        upload_time=None,
+        hashes="ABCD",
+        size=None,
+    )
+    assert not parsed
+    assert sdist.hashes == (("sha256", "abcd"),)
+    assert parsed == [{"sha256": "ABCD"}]
+    assert sdist.hashes == (("sha256", "abcd"),)
+    assert len(parsed) == 1

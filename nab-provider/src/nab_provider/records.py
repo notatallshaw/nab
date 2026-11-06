@@ -153,7 +153,7 @@ def _compact_shared_table(table: dict[object, object]) -> object:
 
 def _expand_table(held: object) -> object:
     """Return ``held`` as the index served it, undoing :func:`_compact_table`."""
-    if type(held) is str:
+    if isinstance(held, str):
         return {"sha256": held}
     if isinstance(held, tuple):
         algo, digest = held
@@ -362,15 +362,16 @@ def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its ow
     requires_python: str | None,
     has_metadata: bool,  # noqa: FBT001 - Serialized record field, not a behavior flag.
     upload_time: str | None,
-    hashes: tuple[tuple[str, str], ...] | dict[Any, Any],
+    hashes: tuple[tuple[str, str], ...] | dict[Any, Any] | str,
     size: int | None,
-    metadata_hash: tuple[str, str] | dict[Any, Any] | None,
+    metadata_hash: tuple[str, str] | dict[Any, Any] | str | None,
 ) -> WheelFile:
     """Return a wheel rebuilt from a cached listing row.
 
     ``hashes`` and ``metadata_hash`` each take either a parsed value or the
-    index's own table, and a table is held raw for the field's first read to
-    parse.  Deferring a field means leaving its slot unwritten, which
+    index's own table. A string represents a raw ``{"sha256": digest}`` table.
+    Both raw forms are parsed on the field's first read.
+    Deferring a field means leaving its slot unwritten, which
     ``__init__`` cannot do, so this writes the slots directly.
 
     ``local_path`` is ``None``: a cached listing row carries none.
@@ -385,12 +386,16 @@ def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its ow
     wheel.size = size
     wheel.local_path = None
 
-    if isinstance(hashes, dict):
+    if isinstance(hashes, str):
+        wheel._raw_hashes = hashes
+    elif isinstance(hashes, dict):
         wheel._raw_hashes = _compact_shared_table(hashes)
     else:
         wheel.hashes = hashes
 
-    if isinstance(metadata_hash, dict):
+    if isinstance(metadata_hash, str):
+        wheel._raw_metadata = metadata_hash
+    elif isinstance(metadata_hash, dict):
         wheel._raw_metadata = _compact_shared_table(metadata_hash)
     else:
         wheel.metadata_hash = metadata_hash
@@ -455,7 +460,7 @@ def rehydrated_sdist(
     version: str,
     requires_python: str | None,
     upload_time: str | None,
-    hashes: tuple[tuple[str, str], ...] | dict[Any, Any],
+    hashes: tuple[tuple[str, str], ...] | dict[Any, Any] | str,
     size: int | None,
 ) -> SdistFile:
     """Return a source distribution rebuilt from a cached listing row.
@@ -472,7 +477,9 @@ def rehydrated_sdist(
     sdist.size = size
     sdist.local_path = None
 
-    if isinstance(hashes, dict):
+    if isinstance(hashes, str):
+        sdist._raw_hashes = hashes
+    elif isinstance(hashes, dict):
         sdist._raw_hashes = _compact_shared_table(hashes)
     else:
         sdist.hashes = hashes
