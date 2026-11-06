@@ -170,11 +170,8 @@ class KeyedRange(FrozenValue, Generic[KeyType, ValueType]):
         if len(self.overrides) != len(other.overrides):
             return False
 
-        # Normalization excludes default-valued entries, so a missing key cannot match.
-        right = dict(other.overrides)
-        return all(
-            value == right.get(key, self.default) for key, value in self.overrides
-        )
+        # Coordinate order does not change the admitted set.
+        return dict(self.overrides) == dict(other.overrides)
 
     @override
     def __hash__(self) -> int:
