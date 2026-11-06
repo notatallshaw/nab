@@ -665,7 +665,7 @@ def parse_build_policy(value: object, where: str) -> BuildPolicy:
 
 def parse_decision_order(value: object, where: str) -> DecisionOrder:
     """Read ``decision-order``: the order the resolver decides packages in."""
-    return parse_enum(value, where, DecisionOrder, DecisionOrder.ARRIVAL)
+    return parse_enum(value, where, DecisionOrder, DecisionOrder.STABLE)
 
 
 def parse_marker_environment(value: object, where: str) -> dict[str, str]:

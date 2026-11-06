@@ -630,7 +630,7 @@ DEFAULTS = [
             "archive_sources": (),
             "matrix": None,
             "resolution": ResolutionStrategy.HIGHEST,
-            "decision_order": DecisionOrder.ARRIVAL,
+            "decision_order": DecisionOrder.STABLE,
             "workspace": None,
             "conflicts": (),
             "package_overrides": (),

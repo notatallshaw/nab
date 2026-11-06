@@ -95,7 +95,7 @@ def _inputs_off_every_default(tmp_path: Path) -> ResolveInputs:
         build_requires_depth=1,
         conflicts=(ConflictSet(members=(ConflictMember(ConflictKind.EXTRA, "cpu"),)),),
         constraints=("setuptools<70",),
-        decision_order=DecisionOrder.STABLE,
+        decision_order=DecisionOrder.ARRIVAL,
         default_groups=("dev",),
         dist_policy=DistPolicy.SDIST_ONLY,
         metadata_policy=MetadataPolicy.PREFER_WHEEL,

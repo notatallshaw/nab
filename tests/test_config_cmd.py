@@ -63,7 +63,7 @@ _CLI_FLAGS: dict[str, str] = {
 # ``config get`` then prints.
 _CLI_FLAG_CASES: tuple[tuple[str, str, str], ...] = (
     ("resolution", "lowest", "lowest"),
-    ("decision-order", "stable", "stable"),
+    ("decision-order", "arrival", "arrival"),
     ("mode", "universal", "universal"),
     ("constraints", "foo<2", "foo<2"),
     ("default-groups", "dev", "dev"),
