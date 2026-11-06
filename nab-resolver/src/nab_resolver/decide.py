@@ -56,7 +56,7 @@ def choose_package_to_decide(
     than backjumping to level 0.
     """
     undecided = resolver.solution.undecided_packages()
-    if excluded:
+    if excluded is not None and excluded:
         undecided = undecided - excluded
     if not undecided:
         if excluded is not None and resolver.solution.undecided_packages():

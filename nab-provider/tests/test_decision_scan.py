@@ -35,10 +35,10 @@ from nab_provider.store import InMemoryIndex
 from nab_provider.testing import FakeFetchPort, make_coordinator, make_wheel
 from nab_resolver import decide
 from nab_resolver.priority import (
-    TIER_CULPRIT,
-    compute_tier,
     CONFLICT_THRESHOLD,
     CULPRIT_DEMOTE_THRESHOLD,
+    TIER_CULPRIT,
+    compute_tier,
 )
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term

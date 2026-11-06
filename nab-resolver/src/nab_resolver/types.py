@@ -455,6 +455,7 @@ class Incompatibility(Generic[PackageType, VersionType]):
                 pending.append(node.cause_right)
             if node.cause_left is not None:
                 pending.append(node.cause_left)
+
     @property
     def unavailable_package(self) -> PackageType | None:
         """The package whose availability a contextual absence clause describes."""
