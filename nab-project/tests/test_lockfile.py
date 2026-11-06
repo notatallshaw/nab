@@ -113,7 +113,7 @@ from nab_provider.target import (
     micro_boundary_points,
     slices_from_points,
 )
-from nab_provider.testing import pkg_override
+from nab_provider.testing import make_metadata, make_wheel, pkg_override
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
@@ -5551,43 +5551,49 @@ class TestDependencyGraph:
         assert lock.base_dependencies == {}
 
     def test_umbrella_extra_drops_self_edge(self) -> None:
-        # ``all`` pulls ``mypkg[graphviz]`` and ``mypkg[otel]``, so its recorded
-        # deps name ``mypkg`` itself; the graph keeps only the transitive deps.
-        provider = _FakeProvider(
-            listings={
-                name: [(Version("1.0"), _wheel_file(name))]
-                for name in ("mypkg", "graphviz-lib", "otel-lib")
-            },
-            deps_cache={("mypkg", Version("1.0")): {}},
-            extra_deps_map={
-                ("mypkg", Version("1.0")): {
-                    "all": dict.fromkeys(["mypkg[graphviz]", "mypkg[otel]"]),
-                    "graphviz": dict.fromkeys(["graphviz-lib"]),
-                    "otel": dict.fromkeys(["otel-lib"]),
-                }
-            },
-        )
-        lock = build_target_lock(
-            provider,
-            _HOST,
-            {
-                "mypkg": Version("1.0"),
-                "graphviz-lib": Version("1.0"),
-                "otel-lib": Version("1.0"),
-            },
-            resolved_keys=(
+        wheels = {
+            name: make_wheel(
+                package=name.replace("-", "_"), hashes=(("sha256", "a" * 64),)
+            )
+            for name in ("mypkg", "graphviz-lib", "otel-lib")
+        }
+        metadata = {
+            "mypkg": make_metadata(
                 "mypkg",
-                "mypkg[all]",
-                "mypkg[graphviz]",
-                "mypkg[otel]",
-                "graphviz-lib",
-                "otel-lib",
+                "1.0",
+                'mypkg[graphviz]; extra == "all"',
+                'mypkg[otel]; extra == "all"',
+                'graphviz-lib; extra == "graphviz"',
+                'otel-lib; extra == "otel"',
+                provides_extra=("all", "graphviz", "otel"),
             ),
+            "graphviz-lib": make_metadata("graphviz-lib", "1.0"),
+            "otel-lib": make_metadata("otel-lib", "1.0"),
+        }
+        coordinator = make_coordinator(
+            listings={name: [wheel] for name, wheel in wheels.items()},
+            metadata_by_url={
+                wheels[name].metadata_url: text for name, text in metadata.items()
+            },
         )
+
+        result = resolve_with_coordinator(
+            coordinator,
+            [_HOST],
+            [Requirement("mypkg[all]")],
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+        )
+        result.raise_for_failure()
+
+        lock = result.target_results[0].lock
+        assert lock is not None
         assert lock.dependencies == {"mypkg": ("graphviz-lib", "otel-lib")}
-        # Both transitive deps arrive through extras, so neither is a base
-        # edge and mypkg has no base dependencies.
         assert lock.base_dependencies == {}
+        assert {name: pin.version for name, pin in lock.pins.items()} == {
+            "mypkg": "1.0",
+            "graphviz-lib": "1.0",
+            "otel-lib": "1.0",
+        }
 
     def test_resolve_records_transitive_extra_edges(self) -> None:
         """A resolve of ``app[cli]`` locks the edges of every extra it activates.
