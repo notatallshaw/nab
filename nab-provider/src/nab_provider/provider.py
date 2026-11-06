@@ -1070,19 +1070,13 @@ class Provider:
         for requirement in metadata.requires_dist:
             if requirement.url is not None:
                 continue
-            kind = _metadata_resolver.requirement_gating(self, requirement)
-            if kind == "base":
-                active.append(_dependency_declaration(parent_name, requirement, ()))
-            elif kind == "extra" and selected:
-                marker = requirement.marker
-                assert marker is not None
-                matched = _metadata_resolver.marker_matched_extras(
-                    self, marker, id(marker), selected
+            matched = _metadata_resolver.classify_requirement(
+                self, requirement, selected
+            )
+            if matched is not None:
+                active.append(
+                    _dependency_declaration(parent_name, requirement, matched)
                 )
-                if matched:
-                    active.append(
-                        _dependency_declaration(parent_name, requirement, matched)
-                    )
         return tuple(active)
 
     def defer_extra_deps(self, cache_key: tuple[str, Version]) -> None:
