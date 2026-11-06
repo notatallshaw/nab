@@ -214,6 +214,17 @@ def test_self_dependencies_keep_their_actual_requirement(
     )
 
 
+def test_dependency_can_force_a_different_preferred_version() -> None:
+    provider = GraphProvider({"a": {1: {"b": Range.at_least(2)}}, "b": {1: {}, 2: {}}})
+    hint = {"a": 1, "b": 1}
+    provider.preferences = hint
+
+    assert Resolver(provider).try_resolve_preferred({"a": Range.full()}, hint) == {
+        "a": 1,
+        "b": 2,
+    }
+
+
 @pytest.mark.parametrize(
     ("cap", "roots", "hint", "expected"),
     [
