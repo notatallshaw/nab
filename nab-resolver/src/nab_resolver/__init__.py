@@ -9,6 +9,7 @@ renamed or relocated in any release.
     nab_resolver.errors     ResolutionError, ResolutionInvariantError,
                             ResolutionLimitError,
                             ResolutionStalledError, ResolutionTerminatedError
+    nab_resolver.keyed_ranges KeyedRange
     nab_resolver.priority   CONFLICT_THRESHOLD, CULPRIT_DEMOTE_THRESHOLD,
                             TIER_AFFECTED, TIER_CULPRIT, TIER_NORMAL,
                             compute_tier, is_dominant_culprit
@@ -20,6 +21,7 @@ renamed or relocated in any release.
                             check_provider_scenarios
     nab_resolver.types      Incompatibility, IncompatibilityCause,
                             RangeProtocol, RootRequirement, Term
+    nab_resolver.values     FrozenValue, SlottedValue
 
 The package root binds no names, so importing ``nab_resolver`` pulls in no
 submodules and a caller loads only what it imports.
