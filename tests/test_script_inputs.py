@@ -339,6 +339,69 @@ def test_relative_script_index_uses_the_script_directory(
     assert not (elsewhere / "pylock.toml").exists()
 
 
+@pytest.mark.parametrize("input_format", [InputFormat.PROJECT, InputFormat.SCRIPT])
+@pytest.mark.parametrize("relative_path", ["simple", "route/../simple"])
+def test_relative_file_index_preserves_symlink_base(
+    hermetic_roots: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    input_format: InputFormat,
+    relative_path: str,
+) -> None:
+    packages = hermetic_roots / "packages"
+    packages.mkdir()
+    _wheel(packages, "child", "1.0")
+    _wheel(packages, "demo", "1.0", "child==1.0")
+
+    stored_index = tmp_path / "storage" / "simple"
+    for name in ("demo", "child"):
+        page_dir = stored_index / name
+        page_dir.mkdir(parents=True)
+        filename = f"{name}-1.0-py3-none-any.whl"
+        digest = sha256((packages / filename).read_bytes()).hexdigest()
+        (page_dir / "index.html").write_text(
+            f'<a href="../../packages/{filename}#sha256={digest}">{name}</a>\n'
+        )
+
+    index = hermetic_roots / "simple"
+    index.symlink_to(stored_index, target_is_directory=True)
+    physical_route = tmp_path / "storage" / "nested"
+    physical_route.mkdir()
+    (hermetic_roots / "route").symlink_to(physical_route, target_is_directory=True)
+    monkeypatch.chdir(tmp_path)
+
+    expected_url = (hermetic_roots / relative_path).as_uri()
+    for url_kind, url in (
+        ("absolute", expected_url),
+        ("relative", "file:" + relative_path),
+    ):
+        configuration = f'[[tool.nab.indexes]]\nname="local"\nurl={json.dumps(url)}\n'
+        if input_format is InputFormat.SCRIPT:
+            source = _write_script(
+                hermetic_roots / "example.py", configuration=configuration
+            )
+            arguments = ("--script", str(source))
+        else:
+            source = hermetic_roots / "pyproject.toml"
+            source.write_text(
+                '[project]\nname="app"\nversion="1.0"\ndependencies=["demo"]\n'
+                + configuration
+            )
+            arguments = (str(source),)
+
+        output = hermetic_roots / f"pylock.{url_kind}.toml"
+        assert (
+            run(
+                ("lock", *arguments, "--no-cache", "--offline", "--output", str(output))
+            )
+            == 0
+        )
+
+        packages_locked = tomli.loads(output.read_text())["packages"]
+        pins = [(package["name"], package["version"]) for package in packages_locked]
+        assert pins == [("child", "1.0"), ("demo", "1.0")]
+
+
 def test_local_script_source_metadata_is_checked_fresh(script_source: Path) -> None:
     local = script_source.parent / "local"
     local.mkdir()
