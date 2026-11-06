@@ -29,6 +29,7 @@ class SlottedValue:
         """Compare identities within the exact value class."""
         if not isinstance(other, SlottedValue) or type(other) is not type(self):
             return NotImplemented
+
         return self.identity() == other.identity()
 
     @override
@@ -79,19 +80,24 @@ class FrozenValue(SlottedValue):
         dictionary = getattr(self, "__dict__", {}).copy()
         slots: dict[str, Any] = {}
         seen = set()
+
         for cls in type(self).__mro__:
             for name, descriptor in cls.__dict__.items():
                 if not isinstance(descriptor, MemberDescriptorType) or name in seen:
                     continue
+
+                # Read slot storage without invoking subclass properties.
                 try:
                     value = descriptor.__get__(self)
                 except AttributeError:
                     continue
+
                 seen.add(name)
                 if name in self.__match_args__:
                     dictionary[name] = value
                 else:
                     slots[name] = value
+
         return (dictionary, slots) if slots else dictionary
 
     def __setstate__(
@@ -100,13 +106,16 @@ class FrozenValue(SlottedValue):
         """Restore fields and subclass state without running their constructors."""
         dictionary, slots = state if isinstance(state, tuple) else (state, {})
         extra = dictionary.copy()
+
         for name in self.__match_args__:
             if name in extra and name not in slots:
                 descriptor = _attribute_slot(type(self), name)
                 if descriptor is not None:
                     descriptor.__set__(self, extra.pop(name))
+
         if extra:
             self.__dict__.update(extra)
+
         for name, value in slots.items():
             setattr(self, name, value)
 
