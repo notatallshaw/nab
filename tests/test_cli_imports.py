@@ -117,7 +117,7 @@ with redirect_stdout(out), redirect_stderr(err):
 assert status == 0, (status, out.getvalue(), err.getvalue())
 if 'nab_resolver.resolver' in banned:
     assert {name for name in sys.modules if name.startswith('nab_resolver.')} <= {
-        'nab_resolver.diagnostics', 'nab_resolver._compat',
+        'nab_resolver.diagnostics', 'nab_resolver._compat', 'nab_resolver.values',
     }
 held = set(sys.modules) | {name.partition(".")[0] for name in sys.modules}
 sys.stderr.write(" ".join(sorted(held & banned)))

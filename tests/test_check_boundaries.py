@@ -145,6 +145,42 @@ def test_the_published_table_resolves_against_its_own_package() -> None:
     assert check_boundaries.unresolved_rows(resolver) == []
 
 
+@pytest.mark.parametrize(
+    ("module", "name", "status"),
+    [
+        ("keyed_ranges", "KeyedRange", 0),
+        ("values", "FrozenValue", 0),
+        ("values", "SlottedValue", 0),
+        ("ranges", "KeyedRange", 1),
+        ("ranges", "FrozenValue", 1),
+    ],
+)
+def test_host_components_use_their_supported_owners(
+    workspace: FakeWorkspace,
+    capsys: pytest.CaptureFixture[str],
+    module: str,
+    name: str,
+    status: int,
+) -> None:
+    workspace.add(
+        "nab-resolver",
+        docstring="Generic host components.\n\nSupported imports:\n\n    nab_resolver.keyed_ranges KeyedRange\n    nab_resolver.values FrozenValue, SlottedValue\n",
+        keyed_ranges="class KeyedRange:\n    pass\n",
+        values="class FrozenValue:\n    pass\nclass SlottedValue:\n    pass\n",
+        ranges="from .keyed_ranges import KeyedRange\nfrom .values import FrozenValue\n",
+    )
+    workspace.add(
+        "host",
+        requires=("nab-resolver",),
+        use=f"from nab_resolver.{module} import {name}\n",
+    )
+    workspace.publishes_supported_paths("nab_resolver")
+
+    assert check_boundaries.main() == status
+    if status:
+        assert f"supports {name} at nab_resolver." in capsys.readouterr().err
+
+
 @pytest.mark.parametrize(("module", "status"), [("toml_writer", 0), ("lockfile", 1)])
 def test_generated_writer_uses_its_supported_module(
     workspace: FakeWorkspace,

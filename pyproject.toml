@@ -616,6 +616,12 @@ matches = "nab-provider/src/nab_provider/records.py"
 uninitialized-instance-variable = "ignore"
 
 [[tool.pyrefly.sub-config]]
+matches = "nab-resolver/src/nab_resolver/keyed_ranges.py"
+[tool.pyrefly.sub-config.errors]
+# Frozen range fields initialize through object.__setattr__.
+uninitialized-instance-variable = "ignore"
+
+[[tool.pyrefly.sub-config]]
 matches = "nab-resolver/src/nab_resolver/resolver.py"
 [tool.pyrefly.sub-config.errors]
 # Solution initializes frozen fields through object.__setattr__.
