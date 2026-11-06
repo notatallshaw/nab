@@ -1044,7 +1044,7 @@ def classify_requirement(
     gating = requirement_gating(provider, req)
     if gating == "base":
         return set()
-    if gating == "excluded":
+    if gating == "excluded" or not provided_extras:
         return None
     matched_extras = marker_matched_extras(
         provider, marker, id(marker), provided_extras

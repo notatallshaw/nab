@@ -1,25 +1,56 @@
-"""Public Simple clients request normalized project URLs."""
+"""Public Simple clients normalize project URLs and resolve file references."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
-from nab_index.cache import CachePolicy, OnDiskCache
+from nab_index import cache as cache_module
+from nab_index.cache import CachePolicy, OfflineError, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import AsyncSimpleClient, SdistFile, WheelFile
 from nab_index.multi_index import MultiIndexClient
-from nab_index.parsed_listing import decode
+from nab_index.parsed_listing import decode, encode
 from nab_index.transport import HttpError
+from nab_provider._vendor.packaging.version import Version
+from nab_provider.provider import Provider
+from nab_provider.testing import make_coordinator, make_wheel
 from nab_provider.value import replace
 
 _INDEX = "https://primary.example/simple/"
 _PROJECT_URL = f"{_INDEX}foo-bar/"
 _NAMES = ["Foo.Bar", "Foo-Bar", "foo_bar", "FOO__..BAR", "foo-bar"]
+_ARTIFACT = "https://files.example/foo_bar-1.0-py3-none-any.whl"
+_METADATA = (
+    b"Metadata-Version: 2.3\nName: foo-bar\nVersion: 1.0\nRequires-Dist: leaf>=2\n\n"
+)
+
+
+def _query_listing(reference: str, *, html: bool) -> bytes:
+    """Build a listing with one file reference and a metadata-sidecar declaration."""
+    if html:
+        return (
+            f'<a href="{reference}" data-core-metadata="true">'
+            "foo_bar-1.0-py3-none-any.whl</a>"
+        ).encode()
+
+    return json.dumps(
+        {
+            "files": [
+                {
+                    "filename": "foo_bar-1.0-py3-none-any.whl",
+                    "url": reference,
+                    "hashes": {},
+                    "core-metadata": True,
+                }
+            ]
+        }
+    ).encode()
 
 
 def _listing(version: str, *, html: bool = False) -> bytes:
@@ -103,6 +134,153 @@ class _RoutedTransport:
 
 class _InlinePolicyCache(OnDiskCache):
     """Use the custom-backend path to write revalidation policies inline."""
+
+
+@pytest.mark.parametrize(
+    ("reference", "suffix"),
+    [
+        pytest.param("?", "", id="empty-query"),
+        pytest.param("?#download", "#download", id="empty-query-fragment"),
+        pytest.param("?\t\r\n#download", "#download", id="stripped-query-controls"),
+        pytest.param("?download=1", "?download=1", id="explicit-query"),
+        pytest.param("?download=?", "?download=?", id="query-ending-in-question-mark"),
+        pytest.param("", "?view=index", id="absent-query"),
+        pytest.param("#download", "?view=index#download", id="fragment-only"),
+    ],
+)
+@pytest.mark.parametrize("html", [False, True], ids=["json", "html"])
+@pytest.mark.parametrize("cached", [False, True], ids=["plain", "cached"])
+def test_file_references_resolve_queries(
+    tmp_path: Path, reference: str, suffix: str, html: bool, cached: bool
+) -> None:
+    expected_url = _ARTIFACT + suffix
+    if html:
+        expected_url = expected_url.partition("#")[0]
+    path_query = expected_url.partition("#")[0]
+    path, separator, query = path_query.partition("?")
+    metadata_url = path + ".metadata" + separator + query
+
+    transport = _RoutedTransport(
+        {
+            _PROJECT_URL: (200, _query_listing(reference, html=html)),
+            metadata_url: (200, _METADATA),
+        },
+        response_url=_ARTIFACT + "?view=index",
+        html=html,
+    )
+    cache = OnDiskCache(tmp_path, _INDEX)
+
+    async def check(client: AsyncSimpleClient | CachedAsyncSimpleClient) -> None:
+        async with client:
+            files = await client.get_files("foo-bar")
+            assert [file.url for file in files] == [expected_url]
+            assert files[0].metadata_url == metadata_url
+
+            text = (
+                await client.get_metadata_text("foo-bar", "1.0", metadata_url)
+                if isinstance(client, CachedAsyncSimpleClient)
+                else await client.get_metadata_text(metadata_url)
+            )
+            assert text == _METADATA.decode()
+
+            provider = Provider(
+                make_coordinator(
+                    files,
+                    package="foo-bar",
+                    metadata_by_url={metadata_url: text},
+                )
+            )
+            assert set(provider.get_dependencies("foo-bar", Version("1.0"))) == {"leaf"}
+
+    if cached:
+        asyncio.run(check(CachedAsyncSimpleClient(transport, cache, _INDEX)))
+        asyncio.run(check(CachedAsyncSimpleClient(transport, cache, _INDEX)))
+
+        calls = len(transport.calls)
+        asyncio.run(
+            check(CachedAsyncSimpleClient(transport, cache, _INDEX, offline=True))
+        )
+        assert len(transport.calls) == calls
+    else:
+        asyncio.run(check(AsyncSimpleClient(transport, _INDEX)))
+
+
+def test_html_base_reference_clears_query() -> None:
+    body = b'<base href="?">' + _query_listing("#download", html=True)
+    transport = _RoutedTransport(
+        {_PROJECT_URL: (200, body)},
+        response_url=_ARTIFACT + "?view=index",
+        html=True,
+    )
+    files = asyncio.run(AsyncSimpleClient(transport, _INDEX).get_files("foo-bar"))
+
+    assert [file.url for file in files] == [_ARTIFACT]
+
+
+def test_cached_html_with_inherited_query_is_retired(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = _query_listing(_ARTIFACT + "?view=index", html=False)
+    policy = CachePolicy(
+        fetched_at=time.time(), max_age=600, etag='"old"', page_url=_ARTIFACT
+    )
+    with monkeypatch.context() as old:
+        old.setattr(cache_module, "CACHE_VERSION_SIMPLE", "v3")
+        OnDiskCache(tmp_path, _INDEX).put_simple("foo-bar", body, policy)
+
+    cache = OnDiskCache(tmp_path, _INDEX)
+    transport = _RoutedTransport(
+        {_PROJECT_URL: (200, _query_listing("?", html=True))},
+        response_url=_ARTIFACT + "?view=index",
+        html=True,
+    )
+
+    async def read(*, offline: bool) -> list[WheelFile | SdistFile]:
+        async with CachedAsyncSimpleClient(
+            transport, cache, _INDEX, offline=offline
+        ) as client:
+            return await client.get_files("foo-bar")
+
+    with pytest.raises(OfflineError):
+        asyncio.run(read(offline=True))
+    assert transport.calls == []
+
+    assert [file.url for file in asyncio.run(read(offline=False))] == [_ARTIFACT]
+    assert [file.url for file in asyncio.run(read(offline=True))] == [_ARTIFACT]
+    assert [url for url, _ in transport.calls] == [_PROJECT_URL]
+
+
+def test_cached_json_with_inherited_query_is_reparsed(tmp_path: Path) -> None:
+    cache = OnDiskCache(tmp_path, _INDEX)
+    digest = cache.put_simple(
+        "foo-bar",
+        _query_listing("?", html=False),
+        CachePolicy(
+            fetched_at=time.time(),
+            max_age=600,
+            etag=None,
+            page_url=_ARTIFACT + "?view=index",
+        ),
+    )
+    assert digest is not None
+
+    wheel = make_wheel(package="foo_bar", url=_ARTIFACT + "?view=index")
+    blob = json.loads(encode([wheel], digest))
+    # Emulate a stale parsed record without changing the current encoder.
+    blob[0][0] = 7
+    cache.put_simple_parsed("foo-bar", json.dumps(blob).encode())
+
+    transport = _RoutedTransport({})
+
+    async def read() -> list[WheelFile | SdistFile]:
+        async with CachedAsyncSimpleClient(
+            transport, cache, _INDEX, offline=True
+        ) as client:
+            return await client.get_files("foo-bar")
+
+    assert [file.url for file in asyncio.run(read())] == [_ARTIFACT]
+    assert [file.url for file in asyncio.run(read())] == [_ARTIFACT]
+    assert transport.calls == []
 
 
 @pytest.mark.parametrize(

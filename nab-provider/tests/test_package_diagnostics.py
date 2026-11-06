@@ -2,16 +2,114 @@
 
 import pytest
 
-from nab_provider._provider.listing_diagnosis import MetadataBlock
+from nab_provider._provider.listing_diagnosis import MetadataBlock, metadata_diagnostic
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
-from nab_provider.diagnostics import Diagnostic
-from nab_provider.errors import MissingExtraError, UnsupportedSdistError
+from nab_provider.diagnostics import Diagnostic, ResolutionMessage
+from nab_provider.errors import MetadataError, MissingExtraError, UnsupportedSdistError
 from nab_provider.provider import Provider
 from nab_provider.testing import make_coordinator, make_metadata, make_wheel
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion, error_message
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
+
+
+@pytest.fixture
+def build_failure() -> ResolutionMessage:
+    """A build requirement rejected by its wheel's Python metadata."""
+    return ResolutionMessage(
+        "could not resolve build requirements",
+        (
+            (
+                "badleaf",
+                Diagnostic(
+                    "metadata rejected",
+                    ("Requires-Python: >=99",),
+                    suggestions=(Suggestion("use a compatible Python"),),
+                ),
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize("cached", [False, True], ids=["snapshot", "provider-cache"])
+@pytest.mark.parametrize("error_type", [MetadataError, UnsupportedSdistError])
+def test_metadata_snapshot_preserves_child_diagnostics(
+    build_failure: ResolutionMessage, error_type: type[MetadataError], *, cached: bool
+) -> None:
+    snapshot = MetadataBlock.from_error(error_type(build_failure))
+
+    if cached:
+        provider = Provider(make_coordinator([]))
+        cache = (
+            provider._unsupported_sdists
+            if error_type is UnsupportedSdistError
+            else provider._invalid_metadata
+        )
+        cache[("pkg", Version("1"))] = snapshot
+
+        with pytest.raises(error_type) as caught:
+            provider.get_dependencies("pkg", Version("1"))
+        recovered = error_message(caught.value)
+    else:
+        recovered = error_message(snapshot.as_error(error_type))
+
+    assert recovered.render() == build_failure.render()
+    assert recovered.render(verbose=True) == build_failure.render(verbose=True)
+
+
+@pytest.mark.parametrize("duplicate_action", [False, True])
+def test_metadata_report_preserves_children_and_deduplicates_actions(
+    build_failure: ResolutionMessage, *, duplicate_action: bool
+) -> None:
+    blocks = [MetadataBlock.from_error(UnsupportedSdistError(build_failure))]
+    if duplicate_action:
+        other_failure = MetadataError(
+            DiagnosticMessage(
+                "another rejection",
+                suggestions=(Suggestion("use a compatible Python"),),
+            )
+        )
+        blocks.append(MetadataBlock.from_error(other_failure))
+
+    diagnostic = metadata_diagnostic(Provider(make_coordinator([])), "pkg", blocks)
+    report = ResolutionMessage("no solution", (("pkg", diagnostic),))
+
+    compact = report.render()
+    assert ">=99" not in compact
+    assert "badleaf:" not in compact
+    assert compact.count("try: use a compatible Python") == 1
+
+    seen: set[str] = set()
+    verbose = report.render(verbose=True, seen=seen)
+    assert "badleaf: metadata rejected" in verbose
+    assert "        Requires-Python: >=99" in verbose
+    if duplicate_action:
+        assert "another rejection" in verbose
+    assert verbose.count("try: use a compatible Python") == 1
+
+    repeated = report.render(verbose=True, seen=seen)
+    assert "badleaf: metadata rejected" in repeated
+    assert "Requires-Python: >=99" in repeated
+    assert "try:" not in repeated
+
+
+def test_cached_extra_rejections_preserve_child_diagnostics(
+    build_failure: ResolutionMessage,
+) -> None:
+    provider = Provider(make_coordinator([make_wheel("1")]))
+    provider._invalid_metadata[("pkg", Version("1"))] = MetadataBlock.from_error(
+        MetadataError(build_failure)
+    )
+
+    assert provider.choose_version("pkg[x]", VersionRange.full()) is None
+    diagnostic = provider.get_no_versions_reason("pkg[x]")
+
+    assert diagnostic is not None
+    assert any(
+        "Requires-Python: >=99" in line for line in diagnostic.lines(verbose=True)
+    )
+    assert all(">=99" not in line for line in diagnostic.lines())
 
 
 def test_metadata_failure_snapshots_preserve_actions_and_filter_attribution() -> None:
@@ -83,6 +181,38 @@ def test_reporting_one_missing_domain_does_not_persist_it_for_another_domain() -
     assert missing.short == "no version matches the requirement"
     assert available is None
     assert provider.get_no_versions_reason("pkg") is None
+
+
+def test_availability_domains_do_not_narrow_permanent_ban_evidence() -> None:
+    provider = Provider(make_coordinator([make_wheel("1")]))
+    provider.fetch_versions("pkg")
+    provider.record_root_ban(
+        "pkg",
+        "cap",
+        Requirement("cap>=2").specifier.to_range(),
+        Requirement("cap==1").specifier.to_range(),
+        [Version("3"), Version("4")],
+    )
+    provider.record_metadata_ban(
+        "pkg",
+        {
+            Version("3"): MetadataBlock("pkg 3 metadata unavailable"),
+            Version("4"): MetadataBlock("pkg 4 metadata unavailable"),
+        },
+    )
+
+    diagnostic = provider.get_no_versions_reason(
+        "pkg",
+        Requirement("pkg>=2,<4").specifier.to_range(),
+        availability_range=VersionRange.singleton(Version("2")),
+    )
+
+    assert diagnostic is not None
+    report = "\n".join(diagnostic.lines(verbose=True))
+    assert "3 needs cap in >=2, but your project requires cap ==1" in report
+    assert "pkg 3 metadata unavailable" in report
+    assert "4 needs cap" not in report
+    assert "pkg 4 metadata unavailable" not in report
 
 
 def test_missing_extra_rejections_can_share_the_metadata_failure_snapshot() -> None:

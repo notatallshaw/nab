@@ -52,9 +52,10 @@ HELP: tuple[str, ...] = (
     "report the sources a config error would have refused",
     "the project file to resolve",
     (
-        "output path or -; defaults to pylock.toml or requirements.txt; universal "
-        "requirements paths may use {python_version}, {platform_id}, and {selection}, "
-        "but must render uniquely for every target; otherwise use pylock"
+        "output path or -; project defaults to pylock.toml or requirements.txt; script "
+        "defaults to pylock.<stem>.toml or <script>.requirements.txt beside the input; "
+        "universal requirements paths may use {python_version}, {platform_id}, and "
+        "{selection}, but must render uniquely for every target; otherwise use pylock"
     ),
     "emit pylock, requirements with index-pin hash lines, or requirements without them",
     "read and write the on-disk cache",

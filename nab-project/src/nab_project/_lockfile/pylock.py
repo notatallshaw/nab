@@ -532,8 +532,7 @@ def render_lock(lock_input: LockInput, *, lock_dir: Path | None = None) -> str:
 
     ``lock_dir`` is the directory the lock will live in; directory, wheel
     and sdist paths are emitted relative to it so the lock stays portable.
-    Defaults to the current directory.  Used by ``write_lock`` and by
-    ``nab lock --locked`` to render the would-be lock for comparison.
+    Defaults to the current directory.
 
     Raises :class:`LockValidationError` when the document it would build
     does not satisfy PEP 751, and
@@ -801,13 +800,8 @@ def _prepare_pylock(
     return root_fields, package_records
 
 
-def _check_threading_variants(targets: Mapping[str, TargetLock]) -> None:
+def _check_build_variants(targets: Mapping[str, TargetLock]) -> None:
     """Reject build-specific selections that PEP 508 cannot distinguish."""
-    if not any(
-        (spec := lock.target.platform_spec) is not None and spec.free_threaded
-        for lock in targets.values()
-    ):
-        return
     by_context: dict[tuple[object, ...], TargetLock] = {}
     for lock in targets.values():
         target = lock.target
@@ -818,7 +812,6 @@ def _check_threading_variants(targets: Mapping[str, TargetLock]) -> None:
             tuple(sorted(target.marker_env.items())),
             target.micro_clauses,
             target.selection,
-            replace(spec, free_threaded=False),
         )
         previous = by_context.get(key)
         if previous is not None and previous.target.platform_spec != spec:
@@ -826,8 +819,8 @@ def _check_threading_variants(targets: Mapping[str, TargetLock]) -> None:
             changed.update(
                 name
                 for name in previous.pins.keys() & lock.pins.keys()
-                if previous.package_gates.get(name, ())
-                != lock.package_gates.get(name, ())
+                if frozenset(previous.package_gates.get(name, ()))
+                != frozenset(lock.package_gates.get(name, ()))
             )
             if changed:
                 message = (
@@ -1329,7 +1322,7 @@ def _build_packages(
     package_rows: dict[tuple[str, str], int] = {}
     pending_dependencies: list[_PendingDependencies] = []
     targets = lock_input.targets
-    _check_threading_variants(targets)
+    _check_build_variants(targets)
     by_name = _group_by_name(targets)
     env_signatures = _env_signatures(targets)
     env_fork_counts = _count(env_signatures.values())

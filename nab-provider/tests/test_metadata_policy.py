@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 import pytest
 
 from nab_provider._vendor.packaging.version import Version
@@ -17,6 +19,8 @@ from nab_provider.testing import (
     make_wheel,
     pkg_override,
 )
+from nab_provider.yank_candidates import YankCandidates
+from nab_provider.yanking import mark_yanked
 
 _TARGET = ResolveTarget.for_declared(
     python_version="3.12", spec=PlatformSpec("linux_x86_64")
@@ -46,6 +50,50 @@ def test_metadata_comes_from_the_selected_policy(
         port, target=_TARGET, dist_policy=dist_policy, metadata_policy=metadata_policy
     )
     assert set(provider.get_dependencies("demo", Version("1.0"))) == {dependency}
+
+
+@pytest.mark.parametrize("source_yanked", [False, True])
+@pytest.mark.parametrize(
+    "metadata_policy", [MetadataPolicy.MATCH_ARTIFACT, MetadataPolicy.PREFER_WHEEL]
+)
+def test_yank_preparation_preserves_metadata_policy(
+    source_yanked: bool, metadata_policy: MetadataPolicy
+) -> None:
+    wheel = make_wheel(package="demo")
+    source = make_sdist(package="demo")
+    files = (
+        [wheel, mark_yanked(source, reason="withdrawn")]
+        if source_yanked
+        else [mark_yanked(wheel, reason="withdrawn"), source]
+    )
+
+    port = make_coordinator(
+        listings={"demo": files},
+        metadata_text=make_metadata("demo", "1.0", "wheel-dep"),
+        sdist_pkg_info=make_metadata(
+            "demo", "1.0", "source-dep", metadata_version="2.2"
+        ),
+    )
+
+    factory = partial(
+        Provider,
+        port,
+        target=_TARGET,
+        defer_yanked=True,
+        dist_policy=DistPolicy.SDIST_ONLY,
+        metadata_policy=metadata_policy,
+    )
+    facts = YankCandidates(factory(), factory, preferences={})
+    (candidate,) = facts.choices("demo")
+    data = facts.prepare(candidate)
+
+    assert data is not None
+    expected = (
+        "wheel-dep"
+        if source_yanked and metadata_policy is MetadataPolicy.PREFER_WHEEL
+        else "source-dep"
+    )
+    assert set(data.dependencies) == {expected}
 
 
 @pytest.mark.parametrize("scope", ["package", "rule", "index"])

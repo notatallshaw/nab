@@ -16,7 +16,7 @@ from nab_provider._vendor.packaging.version import Version
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import DistPolicy, MetadataPolicy
 from nab_provider.provider import Provider
-from nab_provider.records import SdistFile, WheelFile
+from nab_provider.records import RangeMetadataResult, RangeOutcome, SdistFile, WheelFile
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import (
@@ -51,11 +51,18 @@ def _lock(
     files: list[WheelFile | SdistFile],
     targets: tuple[ResolveTarget, ...] = (_LINUX, _WINDOWS),
     requirement: str = "demo",
+    *,
+    metadata_by_url: dict[str, str | None] | None = None,
 ) -> Pylock:
     """Resolve and emit the requested matrix without network or build execution."""
     coordinator = make_coordinator(
         listings={"demo": files},
         auto_metadata=True,
+        metadata_by_url=metadata_by_url,
+        range_by_url={
+            url: RangeMetadataResult(text, RangeOutcome.PARTIAL)
+            for url, text in (metadata_by_url or {}).items()
+        },
         sdist_pkg_info_by_version={
             version: make_metadata("demo", version, metadata_version="2.2")
             for version in {file.version for file in files}
@@ -66,6 +73,7 @@ def _lock(
         coordinator, targets, [Requirement(requirement)], inputs=inputs
     )
     assert result.success
+
     pylock = build_pylock(build_lock_input(result, inputs=inputs))
     pylock.validate()
     return pylock
@@ -133,6 +141,85 @@ def test_python_patch_gap_keeps_source(requires_python: str) -> None:
     assert lock.packages[0].sdist is not None
 
 
+@pytest.mark.parametrize("has_metadata", [True, False], ids=["sidecar", "wheel"])
+@pytest.mark.parametrize(
+    "platforms",
+    [
+        pytest.param(("linux_x86_64",), id="single-target"),
+        pytest.param(("linux_x86_64", "windows_amd64"), id="matrix"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("requires_python", "python_full_version", "needs_sdist"),
+    [
+        pytest.param(">=3.12.4", None, True, id="patch-floor"),
+        pytest.param("!=3.12.4", None, True, id="patch-hole"),
+        pytest.param(">=3.12.4", "3.12.7", False, id="covered-micro"),
+        pytest.param(None, None, False, id="unrestricted-metadata"),
+    ],
+)
+def test_metadata_python_coverage_without_index_hint(
+    requires_python: str | None,
+    python_full_version: str | None,
+    needs_sdist: bool,
+    platforms: tuple[str, ...],
+    *,
+    has_metadata: bool,
+) -> None:
+    wheel = replace(_wheel(), has_metadata=has_metadata)
+    targets = tuple(
+        ResolveTarget.for_declared(
+            python_version="3.12",
+            python_full_version=python_full_version,
+            spec=PlatformSpec(platform),
+        )
+        for platform in platforms
+    )
+    metadata = make_metadata("demo", "1.0", requires_python=requires_python)
+    lock = _lock(
+        [wheel, replace(_sdist(), requires_python=">=3.12")],
+        targets=targets,
+        metadata_by_url={wheel.metadata_url or wheel.url: metadata},
+    )
+
+    (package,) = lock.packages
+    assert (package.sdist is not None) is needs_sdist
+    assert [file.name for file in package.wheels or ()] == [wheel.filename]
+
+
+@pytest.mark.parametrize("metadata_state", ["missing", "sdist", "sibling", "invalid"])
+def test_unknown_wheel_python_coverage_keeps_source(metadata_state: str) -> None:
+    wheel = _wheel()
+    coordinator = make_coordinator(listings={"demo": [wheel, _sdist()]})
+    metadata = make_metadata("demo", "1.0")
+
+    if metadata_state == "sdist":
+        coordinator.index.store_metadata(
+            "demo", "1.0", None, metadata_url=wheel.metadata_url
+        )
+        coordinator.index.store_sdist_metadata("demo", "1.0", metadata)
+    elif metadata_state == "sibling":
+        sibling = _wheel(tag="cp312-cp312-linux_x86_64")
+        coordinator.index.store_metadata(
+            "demo", "1.0", metadata, metadata_url=sibling.metadata_url
+        )
+    elif metadata_state == "invalid":
+        metadata = make_metadata("demo", "1.0", requires_python="not-a-specifier")
+        coordinator.index.store_metadata(
+            "demo", "1.0", metadata, metadata_url=wheel.metadata_url
+        )
+
+    provider = Provider(
+        coordinator, target=_LINUX, dist_policy=DistPolicy.SDIST_IF_NEEDED
+    )
+    provider.fetch_versions("demo")
+    pin = build_target_lock(provider, _LINUX, {"demo": Version("1.0")}).pins["demo"]
+
+    assert isinstance(pin, IndexPin)
+    assert pin.sdist is not None
+    assert [file.filename for file in pin.wheels] == [wheel.filename]
+
+
 @pytest.mark.parametrize(
     "wheel",
     [
@@ -176,7 +263,14 @@ def test_unknown_tag_compatibility_keeps_source() -> None:
 
 def test_package_policy_keeps_other_versions_unchanged() -> None:
     coordinator = make_coordinator(
-        listings={"demo": [_wheel(), _sdist(), _wheel("2.0"), _sdist("2.0")]}
+        listings={
+            "demo": [
+                replace(_wheel(), requires_python=">=3.12"),
+                _sdist(),
+                _wheel("2.0"),
+                _sdist("2.0"),
+            ]
+        }
     )
     provider = Provider(
         coordinator,
@@ -195,7 +289,8 @@ def test_package_policy_keeps_other_versions_unchanged() -> None:
 
 
 def test_index_policy_reaches_lock_construction() -> None:
-    coordinator = make_coordinator(listings={"demo": [_wheel(), _sdist()]})
+    wheel = replace(_wheel(), requires_python=">=3.12")
+    coordinator = make_coordinator(listings={"demo": [wheel, _sdist()]})
     provider = Provider(
         coordinator,
         target=_LINUX,
@@ -255,21 +350,25 @@ def test_different_versions_keep_their_own_coverage() -> None:
     assert by_version["2.0"].sdist is not None
 
 
-def test_python_override_participates_in_wheel_coverage() -> None:
+@pytest.mark.parametrize("listing_hint", [None, ">=3.13"])
+@pytest.mark.parametrize("override", ["", ">=3.12"])
+def test_python_override_participates_in_wheel_coverage(
+    listing_hint: str | None, override: str
+) -> None:
     coordinator = make_coordinator(
-        listings={"demo": [replace(_wheel(), requires_python=">=3.13"), _sdist()]}
+        listings={"demo": [replace(_wheel(), requires_python=listing_hint), _sdist()]}
     )
     provider = Provider(
         coordinator,
         target=_LINUX,
         dist_policy=DistPolicy.SDIST_IF_NEEDED,
-        package_overrides=(pkg_override("demo", requires_python=">=3.12"),),
+        package_overrides=(pkg_override("demo", requires_python=override),),
     )
     provider.fetch_versions("demo")
     pin = build_target_lock(provider, _LINUX, {"demo": Version("1.0")}).pins["demo"]
     assert isinstance(pin, IndexPin)
     assert pin.sdist is None
-    assert pin.requires_python == ">=3.12"
+    assert pin.requires_python == override
 
 
 @pytest.mark.parametrize(

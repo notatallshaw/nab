@@ -37,7 +37,7 @@ import zlib
 from collections.abc import Mapping
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from packaging.utils import canonicalize_name
 from packaging.version import Version
@@ -60,6 +60,7 @@ from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from ._json_decode import decode_json
 from ._pep503 import json_listing
+from ._urljoin import join_url
 from .transport import IDENTITY_HEADERS, raise_unless_ok
 
 if TYPE_CHECKING:
@@ -708,7 +709,7 @@ def _resolve_file_url(raw_url: str, base_url: str) -> str | None:
         absolute = (
             raw_url
             if raw_url.startswith(("https://", "http://"))
-            else urljoin(base_url, raw_url)
+            else join_url(base_url, raw_url)
         )
         file_url = _normalized_url(absolute)
 

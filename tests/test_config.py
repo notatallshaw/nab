@@ -6769,6 +6769,7 @@ _STAYS_IN_NAB = frozenset(
         "matrix",
         "mode",
         "requires_python_source",
+        "requires_python_declarations",
         "workspace",
         "workspace_member_names",
     }

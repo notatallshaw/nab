@@ -25,9 +25,10 @@ archive's digest comes from its configured URL and is verified before metadata i
 
 ### Metadata selection
 
-Nab reads the compatible wheel whose PEP 425 tags rank highest. Among equally ranked wheels, it
-prefers one with a [PEP 658] metadata sidecar. Otherwise it reads `METADATA` with HTTP ranges or a
-full wheel download.
+Nab reads the compatible wheel whose PEP 425 tags rank highest. Among equally ranked wheels, the
+highest build tag wins; an absent build tag ranks lowest. If the build tags also tie, Nab prefers
+one with a [PEP 658] metadata sidecar. Otherwise it reads `METADATA` with HTTP ranges or a full
+wheel download.
 
 With `dist-policy = "sdist-only"`, the default metadata source is the sdist. Set
 `metadata-policy = "prefer-wheel"` to allow wheel metadata instead. Source metadata may require a

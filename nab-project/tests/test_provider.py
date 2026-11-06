@@ -9470,21 +9470,7 @@ class TestFetchVersionsNotInIndex:
     def test_listing_not_in_index_blocks_on_request(self) -> None:
         """When listing is not in the index, request_listing + wait is used."""
         wheels = [make_wheel("1.0")]
-        # The listing is absent until request_listing populates the index.
-        coordinator = make_coordinator()
-        index = coordinator.index
-
-        def _request_listing(pkg: str, _speculative: bool) -> threading.Event:
-            # Simulate the coordinator populating the index after request.
-            index.store_listing(pkg, wheels)
-            return _done_event()
-
-        coordinator.override("request_listing", _request_listing)
-        coordinator.override("request_metadata", lambda p, v, u, h=None: _done_event())
-        coordinator.override(
-            "request_metadata_batch",
-            lambda items: [(p, v, _done_event()) for p, v, u, h in items],
-        )
+        coordinator = make_coordinator(pending_listings={"pkg": wheels})
 
         provider = Provider(coordinator)
         result = provider.fetch_versions("pkg")
@@ -11482,7 +11468,6 @@ class TestStaticSdistMetadata:
 
     def test_look_ahead_skips_unsupported_sdist(self) -> None:
         """A dynamic sdist is rejected by look-ahead, not raised."""
-        # Two versions: 2.0 has a dynamic sdist, 1.0 has a usable wheel.
         wheels = [
             make_wheel("1.0"),
             make_sdist("2.0"),
@@ -11493,23 +11478,10 @@ class TestStaticSdistMetadata:
         coordinator = make_coordinator(
             wheels,
             metadata_by_version={"1.0": meta_v1, "2.0": None},
+            sdist_pkg_info_by_version={
+                "2.0": PKG_INFO_DYNAMIC_DEPS.replace("Version: 1.0", "Version: 2.0"),
+            },
         )
-
-        def _request_sdist(
-            pkg: str,
-            ver: str,
-            url: str,
-            hashes: tuple[tuple[str, str], ...],
-        ) -> threading.Event:
-            coordinator.index.store_sdist_metadata(
-                pkg,
-                ver,
-                PKG_INFO_DYNAMIC_DEPS.replace("Version: 1.0", f"Version: {ver}"),
-            )
-            coordinator.index.store_sdist_pyproject(pkg, ver, None)
-            return _done_event()
-
-        coordinator.override("request_sdist", _request_sdist)
 
         root_reqs = {"pkg": SpecifierSet(">=0").to_range()}
         provider = Provider(

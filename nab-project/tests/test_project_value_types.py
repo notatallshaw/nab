@@ -34,6 +34,19 @@ _INSTANCES = [
 ]
 
 
+def test_empty_value_type_preserves_value_semantics() -> None:
+    class DerivedValue(ValueType):
+        __slots__ = ()
+
+    first, second = ValueType(), ValueType()
+
+    assert first == second
+    assert hash(first) == hash(())
+    assert repr(first) == "ValueType()"
+    assert first.__eq__(object()) is NotImplemented
+    assert first.__eq__(DerivedValue()) is NotImplemented
+
+
 def test_a_conflict_set_renders_its_policy_and_members() -> None:
     """The form an error message and ``nab config list`` both print."""
     assert str(ConflictSet(_MEMBERS)) == "at-most-one (extra 'cpu', extra 'gpu')"

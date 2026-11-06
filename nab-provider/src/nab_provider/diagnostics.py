@@ -68,7 +68,14 @@ class ResolutionMessage(DiagnosticMessage):
         self, message: str, entries: tuple[tuple[str, Diagnostic], ...]
     ) -> None:
         """Retain the solver explanation and attributed provider diagnostics."""
-        super().__init__(message)
+        super().__init__(
+            message,
+            suggestions=tuple(
+                suggestion
+                for _, diagnostic in entries
+                for suggestion in diagnostic.suggestions
+            ),
+        )
         self.entries = entries
 
     @override

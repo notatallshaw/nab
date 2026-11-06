@@ -1071,19 +1071,13 @@ class Provider:
         for requirement in metadata.requires_dist:
             if requirement.url is not None:
                 continue
-            kind = _metadata_resolver.requirement_gating(self, requirement)
-            if kind == "base":
-                active.append(_dependency_declaration(parent_name, requirement, ()))
-            elif kind == "extra" and selected:
-                marker = requirement.marker
-                assert marker is not None
-                matched = _metadata_resolver.marker_matched_extras(
-                    self, marker, id(marker), selected
+            matched = _metadata_resolver.classify_requirement(
+                self, requirement, selected
+            )
+            if matched is not None:
+                active.append(
+                    _dependency_declaration(parent_name, requirement, matched)
                 )
-                if matched:
-                    active.append(
-                        _dependency_declaration(parent_name, requirement, matched)
-                    )
         return tuple(active)
 
     def defer_extra_deps(self, cache_key: tuple[str, Version]) -> None:
@@ -1490,11 +1484,12 @@ class Provider:
     def invalid_metadata_message(
         self, canonical_name: str, version: Version
     ) -> DiagnosticMessage | None:
-        """Return a cached cause with its suggestions still separate."""
+        """Return the cached diagnostic, including child causes and suggestions."""
         failure = self._invalid_metadata.get((canonical_name, version))
         if failure is None:
             return None
-        return DiagnosticMessage(failure.message, suggestions=failure.suggestions)
+
+        return failure.diagnostic
 
     def materialize_source(
         self,
@@ -2443,16 +2438,24 @@ class Provider:
         return allowed
 
     def get_no_versions_reason(
-        self, package: str, failed_range: RangeProtocol[Version] | None = None
+        self,
+        package: str,
+        failed_range: RangeProtocol[Version] | None = None,
+        *,
+        availability_range: RangeProtocol[Version] | None = None,
     ) -> Diagnostic | None:
         """Return the recorded no-versions diagnostic for package.
 
         Specific recorded causes take precedence over permanent bans.
         ``failed_range`` restricts banned versions; None includes every ban.
+        ``availability_range`` scopes listing causes apart from dependency conflicts.
         """
         normalized = self.split_and_normalize(package)[2]
         recorded = self._no_versions_reasons.get(package)
-        if isinstance(failed_range, VersionRange) and (
+        listing_range = (
+            failed_range if availability_range is None else availability_range
+        )
+        if isinstance(listing_range, VersionRange) and (
             recorded is None
             or recorded.kind
             in (
@@ -2465,8 +2468,8 @@ class Provider:
             if versions is not None:
                 # A reporting query must not retain another requirement's domain.
                 recorded = (
-                    self._listing_no_versions_reason(package, failed_range)
-                    if not list(failed_range.filter([v for v, _ in versions]))
+                    self._listing_no_versions_reason(package, listing_range)
+                    if not list(listing_range.filter([v for v, _ in versions]))
                     else None
                 )
         if recorded is not None and not recorded.is_generic:

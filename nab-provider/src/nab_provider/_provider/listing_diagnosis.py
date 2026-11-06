@@ -335,43 +335,46 @@ class RootBan:
 
 
 class MetadataBlock:
-    """One version whose metadata no rung of the ladder could read.
+    """A cached metadata rejection with child diagnostics and filter attribution."""
 
-    ``message`` is the failure as every other caller of the raising code
-    reads it.  ``filtered_sdist_version`` is the ladder's marker for a
-    failure the report can say more about: the walk can name which rung
-    took that version's sdist.
-    """
-
-    __slots__ = ("filtered_sdist_version", "message", "suggestions")
+    __slots__ = ("diagnostic", "filtered_sdist_version")
 
     def __init__(
         self,
-        message: str,
+        message: str | DiagnosticMessage,
         filtered_sdist_version: Version | None = None,
         *,
         suggestions: tuple[Suggestion, ...] = (),
     ) -> None:
         """Record ``message`` as this version's failure."""
-        self.message = message
+        self.diagnostic = (
+            DiagnosticMessage(message, suggestions=suggestions)
+            if isinstance(message, str)
+            else message
+        )
         self.filtered_sdist_version = filtered_sdist_version
-        self.suggestions = suggestions
+
+    @property
+    def message(self) -> str:
+        """Return the rejection's summary without rendering child diagnostics."""
+        return self.diagnostic.message
+
+    @property
+    def suggestions(self) -> tuple[Suggestion, ...]:
+        """Return the rejection's corrective actions."""
+        return self.diagnostic.suggestions
 
     @classmethod
     def from_error(cls, error: MetadataError | MissingExtraError) -> MetadataBlock:
         """Snapshot a rejection without retaining its exception traceback."""
-        message = error_message(error)
         return cls(
-            message.message,
+            error_message(error),
             error.filtered_sdist_version if isinstance(error, MetadataError) else None,
-            suggestions=message.suggestions,
         )
 
     def as_error(self, error_type: type[MetadataError]) -> MetadataError:
-        """Recreate a cached rejection with its attribution and corrections."""
-        error = error_type(
-            DiagnosticMessage(self.message, suggestions=self.suggestions)
-        )
+        """Recreate a cached rejection with its diagnostic and filter attribution."""
+        error = error_type(self.diagnostic)
         error.filtered_sdist_version = self.filtered_sdist_version
         return error
 
@@ -1427,12 +1430,19 @@ def metadata_diagnostic(
 
 def _rejected_metadata(blocks: Sequence[MetadataBlock]) -> Diagnostic:
     """Retain metadata causes and their corrections for a final failure."""
+    suggestions = tuple(
+        suggestion for block in blocks for suggestion in block.suggestions
+    )
+    # Keep repair actions separate from nested evidence.
+    seen = {suggestion.action for suggestion in suggestions}
     return Diagnostic(
         _METADATA_REJECTED,
-        tuple(block.message for block in blocks),
-        suggestions=tuple(
-            suggestion for block in blocks for suggestion in block.suggestions
+        tuple(
+            line
+            for block in blocks
+            for line in block.diagnostic.render(verbose=True, seen=seen).splitlines()
         ),
+        suggestions=suggestions,
     )
 
 

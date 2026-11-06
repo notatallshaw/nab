@@ -18,12 +18,15 @@ Three formats:
 
 ## `--output`
 
-`--output` defaults to `pylock.toml` for `pylock` and `requirements.txt` for the requirements
-formats. With `--build-requirements`, the defaults are `pylock.build.toml` and
+For project inputs, `--output` defaults to `pylock.toml` for `pylock` and `requirements.txt` for the
+requirements formats. With `--build-requirements`, the defaults are `pylock.build.toml` and
 `build-requirements.txt`. Pass `--output -` for stdout.
 
-A universal requirements resolve has no default file because one pip requirements file cannot
-represent every target. It prints to stdout unless `--output` names a template.
+With `--script path/to/example.py`, defaults are `path/to/pylock.example.toml` and
+`path/to/example.py.requirements.txt`.
+
+A universal project requirements resolve has no default file because one pip requirements file
+cannot represent every target. It prints to stdout unless `--output` names a template.
 
 A requirements `--output` template writes one file per target. The variables are `{python_version}`,
 `{platform_id}`, and `{selection}`, which names the conflict fork a target belongs to (`extra-cpu`,
