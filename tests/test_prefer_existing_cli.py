@@ -205,12 +205,15 @@ def test_validated_prior_is_shared_with_the_write_summary(
     assert registry.command("--prefer-existing") == 0
 
 
-def test_refresh_command_keeps_the_previous_lock_policy(registry: Registry) -> None:
+def test_refresh_command_keeps_the_previous_lock_policy(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(registry.project.parent)
     assert registry.command() == 0
     registry.add_release()
     invocation = _lock._LockRun(
-        path=registry.project,
-        output=registry.output,
+        path=Path("pyproject.toml"),
+        output=Path("pylock.toml"),
         groups=(),
         all_groups=False,
         extras=(),
