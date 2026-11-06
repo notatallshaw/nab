@@ -17,9 +17,11 @@ __lazy_modules__ = (
 import hashlib
 import json
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import unquote, urlsplit
 
 from nab_provider.digest import is_hex_digest
+
+from ._urljoin import join_url
 
 if TYPE_CHECKING:
     from ._html_page import Anchor, ProjectPageParser
@@ -95,11 +97,11 @@ def _file_entry(anchor: Anchor, base_url: str) -> dict[str, object] | None:
 
     An href with a malformed authority (an unterminated IPv6 bracket) makes
     both the join and the split raise. The entry is kept, with the href
-    unresolved, when the last segment names a wheel or ``.tar.gz`` sdist,
+    unresolved, when the last segment names a wheel or supported sdist,
     since this body is the only record that the page offered that release.
     """
     try:
-        url, _, fragment = urljoin(base_url, anchor.href).partition("#")
+        url, _, fragment = join_url(base_url, anchor.href).partition("#")
         same_http_scheme = (
             base_url.startswith("https://") and url.startswith("https://")
         ) or (base_url.startswith("http://") and url.startswith("http://"))
@@ -177,7 +179,7 @@ def json_listing(text: str, page_url: str) -> bytes:
     base_url = page_url
     if base_href is not None:
         try:
-            base_url = urljoin(page_url, base_href)
+            base_url = join_url(page_url, base_href)
         except ValueError as exc:
             msg = f"unparseable <base href> {base_href!r}: {exc}"
             raise ValueError(msg) from exc

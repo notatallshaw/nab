@@ -47,7 +47,7 @@ __all__ = ["ParsedListing", "corruption_reason", "decode", "encode"]
 # blob surfacing under the current bucket. Bump it when the header or row shape
 # changes, or when the same body parses to different records: ``body_digest``
 # pins only the input.
-FORMAT_VERSION = 7
+FORMAT_VERSION = 8
 # Serialization variant that wrote the rows, so a future codec switch
 # self-heals rather than misdecodes.
 CODEC = 1
