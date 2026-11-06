@@ -547,6 +547,9 @@ def _apply_target_drops(
     ``parsed``, and is ``None`` when no cutoff is configured and only the
     Requires-Python drop runs.
     """
+    if time_causes is None and not policy.overridden and not policy.time_filter_active:
+        return _apply_default_target_drops(provider, parsed, policy)
+
     if time_causes is None:
         return [
             pair
@@ -563,6 +566,40 @@ def _apply_target_drops(
         )
         and not zip_sdist_cause(provider, normalized, pair[0], pair[1], policy)
     ]
+
+
+def _apply_default_target_drops(
+    provider: Provider,
+    parsed: list[tuple[Version, DistFile]],
+    policy: ListingPolicy,
+) -> list[tuple[Version, DistFile]]:
+    """Apply one Python's cached admission without version-specific policies."""
+    result: list[tuple[Version, DistFile]] = []
+    requires_python_cache = provider.requires_python_cache
+    stats = provider.stats
+    for pair in parsed:
+        _, dist = pair
+        requires_python = dist.requires_python
+        excluded = (
+            requires_python_cache.get(requires_python)
+            if requires_python is not None and requires_python
+            else False
+        )
+        if excluded is None:
+            excluded = excluded_by_python(provider, dist, None)
+        elif excluded:
+            stats.excluded_by_python += 1
+        if excluded:
+            continue
+        if (
+            isinstance(dist, SdistFile)
+            and dist.filename.endswith(".zip")
+            and not policy.default_allow_zip_sdists
+        ):
+            stats.excluded_zip_sdists += 1
+            continue
+        result.append(pair)
+    return result
 
 
 def _prepare_listing(
