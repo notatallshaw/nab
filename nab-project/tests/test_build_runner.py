@@ -4065,11 +4065,20 @@ class TestBuildRequirementBuildFailures:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Keep the deciding Python restriction when a nested build cannot resolve."""
-        _make_buildable_sdist(
-            tmp_path / self.PENDING.sdist.filename,
-            "demo",
-            "1.0",
-            requires=("badleaf==1.0",),
+        (tmp_path / self.PENDING.sdist.filename).write_bytes(b"sdist fixture")
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "pyproject.toml").write_text(
+            '[build-system]\nrequires = ["badleaf==1.0"]\n'
+            'build-backend = "demo_backend"\nbackend-path = ["."]\n'
+        )
+        (source / "demo_backend.py").write_text(
+            _SDIST_BACKEND_SRC.format(
+                name="demo", version="1.0", requires_python=repr("")
+            )
+        )
+        monkeypatch.setattr(
+            env_mod, "extract_sdist_archive", lambda _data, _target: source
         )
 
         def coordinator(
