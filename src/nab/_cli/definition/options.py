@@ -711,6 +711,14 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
         on=("lock",),
     )
 
+    prefer_existing = Switch(
+        default=False,
+        negatable=True,
+        help="check previous lock choices before normal version search",
+        docs="reference/cli.md",
+        on=("lock",),
+    )
+
     include_rejected = Switch(
         default=False,
         negatable=True,

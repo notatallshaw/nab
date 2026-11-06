@@ -25,6 +25,7 @@ __lazy_modules__ = (
     "nab.output",
     "nab_project",
     "nab_project.lockfile",
+    "nab_project.lock_preferences",
     "nab_project.paths",
     "nab_project.pyproject_files",
     "nab_project.resolve",
@@ -58,6 +59,7 @@ from nab_project.input_source import (
     read_input_document,
 )
 from nab_project.lock_check import check_saved_lock
+from nab_project.lock_preferences import read_lock_preferences
 from nab_project.lock_validation import snapshot_inputs
 from nab_project.lockfile import (
     DisjointnessError,
@@ -99,6 +101,7 @@ from nab_project.resolve import (
     build_lock_input,
     inputs_for_build_requirements,
 )
+from nab_provider.policy import ResolutionStrategy
 from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
@@ -151,6 +154,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 
     from nab_project.inputs import ResolveInputs
+    from nab_project.lock_preferences import LockPreferences
     from nab_provider.target import ResolveTarget
 
 
@@ -233,6 +237,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     upgrade: bool = False,
     locked: bool = False,
     reproduce: bool = False,
+    prefer_existing: bool = False,
 ) -> None:
     """Resolve dependencies and emit a lockfile or pin list.
 
@@ -276,13 +281,14 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     if input_format is InputFormat.SCRIPT and output is None:
         output = _script_output_path(path, format_name=format)
     _validate_pylock_output_name(output=output, format=format)
-    if locked and (upgrade or reproduce):
-        printer().error("--locked cannot be combined with --upgrade or --reproduce.")
-        sys.exit(1)
-
-    if (locked or reproduce) and (format != "pylock" or is_stdout(output)):
-        printer().error("lock checks are only supported for pylock output to a file.")
-        sys.exit(1)
+    _validate_lock_mode(
+        output=output,
+        format=format,
+        locked=locked,
+        reproduce=reproduce,
+        upgrade=upgrade,
+        prefer_existing=prefer_existing,
+    )
 
     if build_requirements:
         _refuse_group_selection_with_build_requirements(
@@ -393,6 +399,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         cli_overrides=overrides,
         upgrade=upgrade,
         input_format=input_format,
+        prefer_existing=prefer_existing,
     )
 
     if locked:
@@ -410,6 +417,9 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         else None
     )
 
+    previous_lock = _existing_lock_preferences(
+        run, inputs.resolution if settings.resolution is None else settings.resolution
+    )
     transport = _make_resolve_transport(settings.http_backend)
     result = _resolve(
         path,
@@ -424,6 +434,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         build_requirements=build_requirements,
         input_format=input_format,
         resolution_strategy=settings.resolution,
+        lock_preferences=previous_lock,
         progress=ProgressReporter(printer()),
         max_concurrency=settings.max_concurrency,
     )
@@ -457,6 +468,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
             format=format,
             output=output,
             build_requirements=build_requirements,
+            previous_lock=previous_lock,
         )
     )
 
@@ -480,11 +492,17 @@ def _emit(
     format: str,  # noqa: A002 - shadows builtin by convention
     output: Path | None,
     build_requirements: bool = False,
+    previous_lock: LockPreferences | None = None,
 ) -> None:
     """Write the resolved lock in the requested format."""
     default_output = _default_output_path(format, build_requirements=build_requirements)
     if format == "pylock":
-        _emit_pylock(lock_input, output=output, default_output=default_output)
+        _emit_pylock(
+            lock_input,
+            output=output,
+            default_output=default_output,
+            previous_lock=previous_lock,
+        )
     else:
         _emit_requirements(
             lock_input, format=format, output=output, default_output=default_output
@@ -616,6 +634,7 @@ class _LockRun(Record):
         "cli_overrides",
         "upgrade",
         "input_format",
+        "prefer_existing",
     )
 
     path: Path
@@ -631,6 +650,7 @@ class _LockRun(Record):
     cli_overrides: Mapping[str, object]
     upgrade: bool
     input_format: InputFormat
+    prefer_existing: bool
 
     def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
@@ -648,6 +668,7 @@ class _LockRun(Record):
         cli_overrides: Mapping[str, object],
         upgrade: bool,
         input_format: InputFormat = InputFormat.PROJECT,
+        prefer_existing: bool = False,
     ) -> None:
         self.path = path
         self.output = output
@@ -662,6 +683,7 @@ class _LockRun(Record):
         self.cli_overrides = cli_overrides
         self.upgrade = upgrade
         self.input_format = input_format
+        self.prefer_existing = prefer_existing
 
     def refresh_command(self) -> str:
         """Render this run without ``--locked``, ready to paste into a shell."""
@@ -721,7 +743,46 @@ class _LockRun(Record):
         arguments += project_override_arguments(self.cli_overrides)
         if self.upgrade:
             arguments.append("--upgrade")
+        if self.prefer_existing:
+            arguments.append("--prefer-existing")
         return arguments
+
+
+def _validate_lock_mode(
+    *,
+    output: Path | None,
+    format: str,  # noqa: A002 - matches the command's output format
+    locked: bool,
+    reproduce: bool,
+    upgrade: bool,
+    prefer_existing: bool,
+) -> None:
+    """Refuse mode combinations that cannot read or write the required lock."""
+    if locked and (upgrade or reproduce):
+        printer().error("--locked cannot be combined with --upgrade or --reproduce.")
+        sys.exit(1)
+
+    if prefer_existing and locked:
+        printer().error("--prefer-existing cannot be combined with --locked.")
+        sys.exit(1)
+    if prefer_existing and (format != "pylock" or is_stdout(output)):
+        printer().error("--prefer-existing requires pylock output to a file.")
+        sys.exit(1)
+    if (locked or reproduce) and (format != "pylock" or is_stdout(output)):
+        printer().error("lock checks are only supported for pylock output to a file.")
+        sys.exit(1)
+
+
+def _existing_lock_preferences(
+    run: _LockRun, strategy: ResolutionStrategy
+) -> LockPreferences | None:
+    """Read an explicitly requested prior model under highest resolution."""
+    if not run.prefer_existing:
+        return None
+    if strategy is not ResolutionStrategy.HIGHEST:
+        printer().error("--prefer-existing requires highest resolution.")
+        sys.exit(1)
+    return read_lock_preferences(_check_target_path(run))
 
 
 def _check_target_path(run: _LockRun) -> Path:
@@ -1034,7 +1095,11 @@ def _check_reproduction(lock_input: LockInput, *, run: _LockRun) -> None:
 
 
 def _emit_pylock(
-    lock_input: LockInput, *, output: Path | None, default_output: Path
+    lock_input: LockInput,
+    *,
+    output: Path | None,
+    default_output: Path,
+    previous_lock: LockPreferences | None = None,
 ) -> None:
     """Write the PEP 751 lock to a file, or print it."""
     if is_stdout(output):
@@ -1043,7 +1108,11 @@ def _emit_pylock(
 
     target = output if output is not None else default_output
     # Read the prior pins before the write overwrites the file.
-    prior = read_lockfile_packages(target)
+    prior = (
+        read_lockfile_packages(target)
+        if previous_lock is None
+        else previous_lock.summary_versions()
+    )
     # Pass the target so wheel/sdist/directory paths are written relative
     # to the lockfile's own directory, not the cwd.
     _write_lock_or_exit(lock_input, target=target)

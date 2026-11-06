@@ -77,6 +77,7 @@ HELP: tuple[str, ...] = (
     "re-anchor a relative upload window to now",
     "check the saved solution without resolving or writing",
     "resolve afresh and check the saved lock without writing",
+    "check previous lock choices before normal version search",
     "the directory the artefacts are written to",
 )
 
@@ -276,6 +277,10 @@ COMMANDS: dict[
         ("--no-locked", "", "neg", "locked", "", (), False, False, False, 55),
         ("--reproduce", "", "flag", "reproduce", "", (), True, False, False, 56),
         ("--no-reproduce", "", "neg", "reproduce", "", (), False, False, False, 56),
+        ("--prefer-existing", "", "flag", "prefer_existing", "", (), True, False,
+        False, 57),
+        ("--no-prefer-existing", "", "neg", "prefer_existing", "", (), False, False,
+        False, 57),
     ),
     "download": (
         ("--project-resolution", "", "value", "project_resolution", "choice?",
@@ -345,7 +350,7 @@ COMMANDS: dict[
         False, 36),
         ("", "", "positional", "path", "path", (), None, "pyproject.toml", False, 42),
         ("--script", "", "value", "script", "path?", (), None, None, False, 40),
-        ("--output", "", "value", "output", "path", (), None, "wheels", False, 57),
+        ("--output", "", "value", "output", "path", (), None, "wheels", False, 58),
         ("--cache", "", "flag", "cache", "", (), True, True, False, 45),
         ("--no-cache", "", "neg", "cache", "", (), False, True, False, 45),
         ("--python", "", "value", "python", "str?", (), None, None, False, 46),

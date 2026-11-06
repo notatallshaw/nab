@@ -132,6 +132,8 @@ if TYPE_CHECKING:
     from nab_provider.provider import ResolutionStrategy
     from nab_provider.resolver_inputs import MarkerHolds
 
+    from .lock_preferences import LockPreferences
+
 
 __all__ = [
     "InstallContexts",
@@ -183,6 +185,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     build_requirements: bool = False,
     include_dependency_requirements: bool = False,
     resolution_strategy: ResolutionStrategy | None = None,
+    lock_preferences: LockPreferences | None = None,
     progress: ProgressSink | None = None,
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     prefetch_settings: PrefetchSettings | None = None,
@@ -259,6 +262,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
             forks=forks,
             base_requirements=base_requirements,
             resolution_strategy=resolution_strategy,
+            lock_preferences=lock_preferences,
             progress=progress,
             release_refused_wheels=True,
             include_dependency_requirements=include_dependency_requirements,
@@ -321,6 +325,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     forks: Sequence[ResolveFork] | None = None,
     base_requirements: Sequence[Requirement] | None = None,
     resolution_strategy: ResolutionStrategy | None = None,
+    lock_preferences: LockPreferences | None = None,
     align_across_targets: bool = True,
     preferences: Mapping[str, Version] | None = None,
     progress: ProgressSink | None = None,
@@ -345,6 +350,11 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     apart keeps one version across targets.  ``preferences`` seeds that,
     e.g. from a previous lock.
 
+    ``lock_preferences`` selects an explicit checked-model policy: try applicable
+    prior versions unchanged, then fall back to ordinary version preferences.
+    It cannot be combined with ``preferences``. Current provider checks run
+    in either path.
+
     ``base_requirements`` are the no-member requirements (the project
     deps plus any non-conflicting selection).  When given, a final base
     pass resolves them per target; pass it only when conflict forks ran.
@@ -361,6 +371,9 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     nothing else reads them.  A matrix keeps the payload either way: one
     target's refusal is another target's candidate.
     """
+    if preferences is not None and lock_preferences is not None:
+        message = "pass preferences or lock_preferences, not both"
+        raise ValueError(message)
     if lookahead_versions is None:
         lookahead_versions = coordinator.prefetch_settings.lookahead_versions
     inputs = ResolveInputs() if inputs is None else inputs
@@ -386,6 +399,13 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
                 target_count=len(targets),
             ),
             release_refused_wheels=release_refused_wheels and len(targets) == 1,
+            # Preference keys propose a trial; their versions are checked live.
+            preferred_names=(
+                set(lock_preferences.known_packages)
+                if lock_preferences is not None
+                else FACTORY
+            ),
+            lock_preferences=lock_preferences,
         )
 
         fork_list = (

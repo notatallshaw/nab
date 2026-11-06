@@ -49,6 +49,15 @@ stable decision order when comparing resolves. Requires pylock output to a file.
 Reset a relative upload cutoff (`P<n>D`) to the current time instead of reusing the existing lock's
 timestamp.
 
+### `--prefer-existing`
+
+Check the previous lock's applicable versions against current package listings, metadata and
+artifact rules. Prefer that model when its reachable versions remain unchanged; otherwise resolve
+normally with its versions as preferences. Missing or invalid prior locks use fresh resolution.
+
+This checked-model policy can choose a different valid solution from ordinary preference search.
+Requires highest resolution and pylock output to a file; cannot combine with `--locked`.
+
 ### `--build-requirements`
 
 Lock `[build-system].requires` instead of project dependencies. Defaults to `pylock.build.toml` or
