@@ -19,18 +19,19 @@ from typing import TYPE_CHECKING, ClassVar, Final
 from ._provider.extras import version_provides_extra
 from ._provider.listing_diagnosis import MetadataBlock
 from ._provider.metadata_resolver import classify_requirement, dists_at_version
+from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.utils import canonicalize_name
 from .errors import MetadataError, MissingExtraError
 from .extra_keys import split_extra
 from .metadata import intern_version
 from .policy import DistPolicy, ExtrasMode, MetadataPolicy
+from .preference import UnavailableMetadataError
 from .records import SdistFile, WheelFile
 from .value import HashableRecord, Record, field_names
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from ._vendor.packaging.ranges import VersionRange
     from ._vendor.packaging.requirements import Requirement
     from ._vendor.packaging.version import Version
     from .provider import DistFile, Provider, ProviderStats
@@ -90,10 +91,6 @@ class CandidateData(Record):
         self.pins = pins
 
 
-class UnavailableMetadataError(Exception):
-    """An offline miss cannot establish that a live choice is impossible."""
-
-
 def is_pin(requirement: Requirement) -> bool:
     """Recognize original exact equality syntax, including redundant conjuncts."""
     return any(
@@ -111,6 +108,65 @@ def add_range(ranges: dict[str, VersionRange], name: str, value: VersionRange) -
 
 class YankCandidates:
     """Cache candidates and metadata without granting permission to use yanked files."""
+
+    @staticmethod
+    def candidate_package(candidate: Candidate) -> str:
+        """Return the candidate's package."""
+        return candidate.package
+
+    @staticmethod
+    def candidate_base(candidate: Candidate) -> str:
+        """Return the candidate's base."""
+        return candidate.base
+
+    @staticmethod
+    def candidate_label(candidate: Candidate) -> str:
+        """Return the candidate's label."""
+        return candidate.label
+
+    @staticmethod
+    def candidate_withdrawn(candidate: Candidate) -> bool:
+        """Return whether the candidate is yanked."""
+        return candidate.withdrawn
+
+    @staticmethod
+    def full_range() -> VersionRange:
+        """Return the identity for version-range intersection."""
+        return VersionRange.full()
+
+    @staticmethod
+    def intersect_ranges(left: VersionRange, right: VersionRange) -> VersionRange:
+        """Intersect two ranges using the native version algebra."""
+        return left & right
+
+    @staticmethod
+    def range_contains(candidate: Candidate, allowed: VersionRange) -> bool:
+        """Test a candidate version against native bounds."""
+        return candidate.version in allowed
+
+    @staticmethod
+    def pin_allows(pin: Requirement, candidate: Candidate) -> bool:
+        """Check whether an original pin permits this withdrawn candidate."""
+        return canonicalize_name(pin.name) == candidate.base and pin.specifier.contains(
+            candidate.version, prereleases=True
+        )
+
+    @staticmethod
+    def pin_project(pin: Requirement) -> str:
+        """Return the normalized project named by an original pin."""
+        return canonicalize_name(pin.name)
+
+    @staticmethod
+    def base_name(package: str) -> str:
+        """Remove an extras proxy from a package identifier."""
+        return split_extra(package)[0]
+
+    @staticmethod
+    def base_candidate(candidate: Candidate) -> Candidate:
+        """Return the matching base identity for an extra candidate."""
+        return Candidate(
+            candidate.base, candidate.version, withdrawn=candidate.withdrawn
+        )
 
     def __init__(
         self,
