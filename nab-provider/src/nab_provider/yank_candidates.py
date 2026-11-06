@@ -256,8 +256,9 @@ class YankCandidates:
             for file in files
         ):
             return self.provider
-        # Wheel metadata may use an equivalent version string.
-        allow_equivalent_wheel_metadata = (
+
+        # A yanked source may use metadata from a live wheel of the same version.
+        allow_wheel_metadata = (
             self.provider.effective_dist_policy(
                 candidate.base,
                 candidate.version,
@@ -275,10 +276,14 @@ class YankCandidates:
         provider.versions_cache[candidate.base] = [
             (candidate.version, file)
             for file in files
-            if bool(file.yanked) == candidate.withdrawn
-            and (
-                str(intern_version(file.version)) == candidate.label
-                or (allow_equivalent_wheel_metadata and isinstance(file, WheelFile))
+            if (
+                bool(file.yanked) == candidate.withdrawn
+                and str(intern_version(file.version)) == candidate.label
+            )
+            or (
+                allow_wheel_metadata
+                and isinstance(file, WheelFile)
+                and (candidate.withdrawn or not file.yanked)
             )
         ]
         if candidate.withdrawn:

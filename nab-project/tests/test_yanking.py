@@ -607,6 +607,57 @@ def test_yanked_fallback_keeps_equivalent_wheel_metadata_for_source_install() ->
     assert not pin.wheels
 
 
+@pytest.mark.parametrize("wheel_yanked", [False, True])
+@pytest.mark.parametrize("universal", [False, True])
+def test_yanked_source_uses_preferred_wheel_metadata_without_building(
+    wheel_yanked: bool, universal: bool
+) -> None:
+    port = graph_port(
+        [("dep", "2", wheel_yanked, ["leaf==1"]), ("leaf", "1", False, [])]
+    )
+    files = port.index.get_listing("dep")
+    assert files is not None
+    port.index.store_listing("dep", [*files, withdrawn_sdist()])
+
+    targets = (
+        Matrix(
+            python=">=3.11,<3.13",
+            platforms=(PlatformSpec("linux_x86_64"),),
+        ).expand()
+        if universal
+        else [ResolveTarget.for_host()]
+    )
+
+    result = resolve_with_coordinator(
+        port,
+        targets,
+        [Requirement("dep==2")],
+        inputs=ResolveInputs(
+            build_policy=BuildPolicy.NEVER,
+            package_overrides=(
+                pkg_override(
+                    "dep",
+                    dist_policy=DistPolicy.SDIST_ONLY,
+                    metadata_policy=MetadataPolicy.PREFER_WHEEL,
+                ),
+            ),
+        ),
+    )
+
+    assert result.success, [target.error for target in result.target_results]
+    for selected in result.target_results:
+        assert selected.pins == {"dep": Version("2"), "leaf": Version("1")}
+        assert selected.lock is not None
+
+        pin = selected.lock.pins["dep"]
+        assert isinstance(pin, IndexPin)
+        assert pin.sdist is not None
+        assert pin.sdist.url == "https://example.test/dep-2.tar.gz"
+        assert not pin.wheels
+
+    assert not port.calls_to("request_built_metadata")
+
+
 def test_rejected_live_metadata_still_splits_the_universal_lock() -> None:
     port = graph_port(
         [
