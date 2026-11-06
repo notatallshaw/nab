@@ -18,10 +18,16 @@ from nab_provider.preference import (
     _Context,
     _KnownFacts,
 )
-from nab_provider.preference_provider import Package, PreferenceProvider
+from nab_provider.preference_provider import (
+    MetadataProxy,
+    Package,
+    PermissionProxy,
+    PreferenceProvider,
+)
 from nab_resolver.errors import ResolutionError, ResolutionLimitError
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver, ResolverProvider, ResolverStats
+from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 PackageType = TypeVar("PackageType", bound=Hashable)
 
@@ -159,6 +165,91 @@ class Search(PreferenceSearch[Choice, Range[int], Pin]):
     @override
     def record_solver_stats(self, stats: ResolverStats[PackageType]) -> None:
         self.rounds += stats.rounds
+
+
+def test_proxy_projects_original_dependency_choices_and_skips_permission_facts() -> (
+    None
+):
+    parent = Choice("parent", 1)
+    child = Choice("child", 2)
+    catalogue = Catalogue((parent, child))
+    catalogue.facts[parent] = Data({"child": Range.singleton(2)})
+    proxy = PreferenceProvider.from_catalogue(catalogue, {}, (), {})
+    parent_token = proxy.identify(parent)
+    child_token = proxy.identify(child)
+    dependency = Incompatibility[Package, int](
+        [
+            Term(MetadataProxy(parent_token), Range.singleton(0), positive=True),
+            Term("child", Range.singleton(child_token), positive=False),
+        ],
+        cause=IncompatibilityCause.DEPENDENCY,
+    )
+    projected = proxy.project_requirements(
+        dependency, version_of=lambda candidate: candidate.version, range_type=Range
+    )
+
+    assert len(projected) == 1
+    assert [term.package for term in projected[0].terms] == ["parent", "child"]
+    assert projected[0].terms[0].constraint == Range.singleton(1)
+    assert projected[0].terms[1].constraint == Range.singleton(2)
+    assert not projected[0].terms[1].is_positive()
+
+    permission = Incompatibility[Package, int](
+        [Term(PermissionProxy(parent_token), Range.full(), positive=True)],
+        cause=IncompatibilityCause.DEPENDENCY,
+    )
+    absent = Incompatibility[Package, int](
+        [Term("child", Range.full(), positive=True)],
+        cause=IncompatibilityCause.NO_VERSIONS,
+    )
+    assert (
+        proxy.project_requirements(
+            permission, version_of=lambda candidate: candidate.version, range_type=Range
+        )
+        == []
+    )
+    assert (
+        proxy.project_requirements(
+            absent, version_of=lambda candidate: candidate.version, range_type=Range
+        )
+        == []
+    )
+
+    assert (
+        proxy.project_requirements(
+            Incompatibility([], cause=IncompatibilityCause.ROOT),
+            version_of=lambda candidate: candidate.version,
+            range_type=Range,
+        )
+        == []
+    )
+
+    assert list(proxy.empty_requirements(absent)) == []
+    assert list(proxy.empty_requirements(dependency)) == []
+    dependency.terms[1] = Term("child", Range.empty(), positive=False)
+    assert list(proxy.empty_requirements(dependency)) == [("child", Range.singleton(2))]
+
+
+def test_proxy_failure_preserves_empty_original_root_constraints() -> None:
+    proxy = PreferenceProvider.from_catalogue(
+        Catalogue(()), {"child": Range.singleton(2)}, (), {"child": Range.singleton(1)}
+    )
+    with pytest.raises(ResolutionError) as caught:
+        proxy.select()
+
+    proof = caught.value.incompatibility
+    assert proof is not None
+    requests = [
+        request for node in proof.walk() for request in proxy.empty_requirements(node)
+    ]
+    assert requests == [("child", Range.empty())]
+
+    projected = proxy.project_requirements(
+        proof, version_of=lambda candidate: candidate.version, range_type=Range
+    )
+    assert len(projected) == 1
+    assert projected[0].terms[1].package == "child"
+    assert projected[0].terms[1].constraint.is_empty
 
 
 def test_parameterized_scope_has_immutable_hash_keys() -> None:

@@ -153,8 +153,12 @@ def test_the_published_table_resolves_against_its_own_package() -> None:
         ("keyed_ranges", "KeyedRange", 0),
         ("values", "FrozenValue", 0),
         ("values", "SlottedValue", 0),
+        ("result", "walk_selected", 0),
+        ("version_spans", "cached_dependency_span", 0),
         ("ranges", "KeyedRange", 1),
         ("ranges", "FrozenValue", 1),
+        ("report", "walk_selected", 1),
+        ("ranges", "cached_dependency_span", 1),
     ],
 )
 def test_host_components_use_their_supported_owners(
@@ -166,10 +170,13 @@ def test_host_components_use_their_supported_owners(
 ) -> None:
     workspace.add(
         "nab-resolver",
-        docstring="Generic host components.\n\nSupported imports:\n\n    nab_resolver.keyed_ranges KeyedRange\n    nab_resolver.values FrozenValue, SlottedValue\n",
+        docstring="Generic host components.\n\nSupported imports:\n\n    nab_resolver.keyed_ranges KeyedRange\n    nab_resolver.values FrozenValue, SlottedValue\n    nab_resolver.result walk_selected\n    nab_resolver.version_spans cached_dependency_span\n",
         keyed_ranges="class KeyedRange:\n    pass\n",
         values="class FrozenValue:\n    pass\nclass SlottedValue:\n    pass\n",
-        ranges="from .keyed_ranges import KeyedRange\nfrom .values import FrozenValue\n",
+        result="def walk_selected():\n    pass\n",
+        version_spans="def cached_dependency_span():\n    pass\n",
+        ranges="from .keyed_ranges import KeyedRange\nfrom .values import FrozenValue\nfrom .version_spans import cached_dependency_span\n",
+        report="from .result import walk_selected\n",
     )
     workspace.add(
         "host",

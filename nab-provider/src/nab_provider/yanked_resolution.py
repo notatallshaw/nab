@@ -17,7 +17,7 @@ __lazy_modules__ = (
 from typing import TYPE_CHECKING
 
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
-from nab_resolver.types import Incompatibility, IncompatibilityCause
+from nab_resolver.types import IncompatibilityCause
 
 from ._provider.listing_diagnosis import MetadataBlock, metadata_diagnostic
 from ._vendor.packaging.ranges import VersionRange
@@ -26,7 +26,6 @@ from .diagnostics import ResolutionMessage
 from .extra_keys import split_extra
 from .preference_provider import (
     MetadataProxy,
-    Package,
     PermissionProxy,
     PreferenceProvider,
 )
@@ -37,7 +36,7 @@ from .yank_preference import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from nab_resolver.types import RootRequirement
 
@@ -76,30 +75,6 @@ class YankProxyProvider(PreferenceProvider["Candidate", "VersionRange", Requirem
         self._native_preference = preference
         self._native_catalogue = catalogue
 
-    def _empty_requirements(
-        self, node: Incompatibility[Package, int]
-    ) -> Iterator[tuple[str, VersionRange]]:
-        """Recover version constraints from empty encoded dependency domains."""
-        if node.cause not in (
-            IncompatibilityCause.ROOT,
-            IncompatibilityCause.DEPENDENCY,
-        ):
-            return
-        parent = node.terms[0].package
-        for term in node.terms[1:]:
-            if not isinstance(term.package, str) or not term.constraint.is_empty:
-                continue
-            if isinstance(parent, MetadataProxy):
-                data = self._native_catalogue.facts[self.items[parent.candidate]]
-                assert data is not None
-                allowed = data.dependencies[term.package]
-            else:
-                allowed = self.roots[term.package]
-            yield (
-                term.package,
-                allowed & self.constraints.get(term.package, VersionRange.full()),
-            )
-
     def _failure_diagnostics(
         self, error: ResolutionError
     ) -> tuple[tuple[str, Diagnostic], ...]:
@@ -109,7 +84,7 @@ class YankProxyProvider(PreferenceProvider["Candidate", "VersionRange", Requirem
         failures: dict[str, VersionRange] = {}
         rejections: dict[str, dict[Candidate, MetadataBlock]] = {}
         for node in incompatibility.walk():
-            for package, allowed in self._empty_requirements(node):
+            for package, allowed in self.empty_requirements(node):
                 failures[package] = (
                     failures.get(package, VersionRange.empty()) | allowed
                 )

@@ -8,8 +8,10 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 from nab_resolver.priority import compute_tier
+from nab_resolver.proofs import external_clauses
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import BaseProvider, Resolver
+from nab_resolver.root import ROOT
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 from ._compat import override
@@ -23,7 +25,7 @@ from .preference import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
 
     from nab_resolver.resolver import ResolverProvider
     from nab_resolver.types import RangeProtocol
@@ -33,6 +35,8 @@ __all__ = ["MetadataProxy", "Package", "PermissionProxy", "PreferenceProvider"]
 CandidateType = TypeVar("CandidateType", bound=Hashable)
 RangeType = TypeVar("RangeType")
 PinnedRequirementType = TypeVar("PinnedRequirementType")
+ProjectedVersionType = TypeVar("ProjectedVersionType", bound=Hashable)
+ClausePackageType = TypeVar("ClausePackageType", bound=Hashable)
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +142,80 @@ class PreferenceProvider(
             query_is_complete=query_is_complete,
             resolver_factory=resolver_factory,
         )
+
+    def empty_requirements(
+        self, clause: Incompatibility[Package, int]
+    ) -> Iterator[tuple[str, RangeType]]:
+        """Recover original requirements whose encoded candidate domains are empty."""
+        if clause.cause not in {
+            IncompatibilityCause.ROOT,
+            IncompatibilityCause.DEPENDENCY,
+        }:
+            return
+
+        parent = clause.terms[0].package
+        for term in clause.terms[1:]:
+            if not isinstance(term.package, str) or not term.constraint.is_empty:
+                continue
+
+            if isinstance(parent, MetadataProxy):
+                data = self.catalogue.facts[self.items[parent.candidate]]
+                assert data is not None
+                allowed = data.dependencies[term.package]
+            else:
+                allowed = self.roots[term.package]
+            yield (
+                term.package,
+                self.catalogue.intersect_ranges(
+                    allowed,
+                    self.constraints.get(term.package, self.catalogue.full_range()),
+                ),
+            )
+
+    def project_requirements(
+        self,
+        derivation: Incompatibility[ClausePackageType, int] | None,
+        *,
+        version_of: Callable[[CandidateType], ProjectedVersionType],
+        range_type: type[RangeProtocol[ProjectedVersionType]],
+        left_first: bool = True,
+    ) -> list[Incompatibility[object, ProjectedVersionType]]:
+        """Decode original request clauses into the host's candidate version domain."""
+        projected: list[Incompatibility[object, ProjectedVersionType]] = []
+        for clause in external_clauses(derivation, left_first=left_first):
+            if clause.cause not in {
+                IncompatibilityCause.ROOT,
+                IncompatibilityCause.DEPENDENCY,
+            }:
+                continue
+
+            terms: list[Term[object, ProjectedVersionType]] = []
+            for term in clause.terms:
+                # Solver-root terms share the proof with encoded catalogue packages.
+                package: object = term.package
+                if isinstance(package, MetadataProxy):
+                    candidate = self.items[package.candidate]
+                    named: object = self.catalogue.candidate_package(candidate)
+                    allowed = range_type.singleton(version_of(candidate))
+                elif isinstance(package, str):
+                    named = package
+                    allowed = range_type.empty()
+                    for token, candidate in self.items.items():
+                        if (
+                            self.catalogue.candidate_package(candidate) == package
+                            and token in term.constraint
+                        ):
+                            allowed |= range_type.singleton(version_of(candidate))
+                elif package is ROOT:
+                    named = ROOT
+                    allowed = range_type.full()
+                else:
+                    break
+                terms.append(Term(named, allowed, positive=term.is_positive()))
+            else:
+                if terms:
+                    projected.append(Incompatibility(terms, cause=clause.cause))
+        return projected
 
     def identify(self, candidate: CandidateType) -> int:
         """Assign a stable identity without relying on the size of the catalogue."""
