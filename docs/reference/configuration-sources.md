@@ -18,7 +18,10 @@ offline = true
 cache-dir = "/fast/disk/nab-cache"
 ```
 
-A `nab.toml` beside `pyproject.toml` can set project options too:
+With `--script`, project settings come from the script's inline `[tool.nab]` and a `nab.toml` beside
+the script. See [Lock a Python script](../how-to/scripts.md) for the permitted settings.
+
+A `nab.toml` beside the input can set project options too:
 
 ```toml
 constraints = ["urllib3<2"]
@@ -33,23 +36,23 @@ url = "https://pypi.example.com/simple/"
 For sources allowed by a setting's scope, precedence increases from left to right:
 
 ```text
-default -> system file -> user file -> project files -> environment -> CLI
+default -> system file -> user file -> project or script files -> environment -> CLI
 ```
 
 Nab uses the whole value from the highest-precedence source. Lists and tables are replaced, not
 merged. Passing `--project-constraint` twice replaces the file's constraints with those two values.
 
-The project files, `[tool.nab]` and the adjacent `nab.toml`, share one rank. A key set in both must
-have identical whole values. Different lists or different subkeys of an `environment` table are
-errors naming both files.
+The input's `[tool.nab]` and adjacent `nab.toml` share one rank. A key set in both must have
+identical whole values. Different lists or different subkeys of an `environment` table are errors
+naming both files.
 
 ## File locations
 
 Nab reads the system file at `/etc/nab/nab.toml`. The user file is `$XDG_CONFIG_HOME/nab/nab.toml`,
 or `~/.config/nab/nab.toml` when that variable is unset or empty.
 
-Project-directory discovery uses the directory containing `pyproject.toml`; it does not search
-parent directories.
+Directory-level `nab.toml` discovery uses the directory containing `pyproject.toml` or, with
+`--script`, the script's directory. It does not search parent directories.
 
 ## Environment variables
 

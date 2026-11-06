@@ -109,8 +109,16 @@ environment and run the pip installation command there. An environment outside t
 needs a new lock that includes it.
 
 After changing dependencies or targets, run `nab lock pyproject.toml` again and review the diff.
-Existing pins do not seed the new resolve. `--locked` currently checks single-environment locks
-only; it cannot check this universal lock.
+Existing pins do not seed the new resolve.
+
+Check the saved lock without resolving or writing it:
+
+```bash
+nab lock --locked pyproject.toml
+```
+
+See [Checking the lock in CI](../reference/reproducibility.md#checking-the-lock-in-ci) for
+validation limits.
 
 ## Continue with your project
 
