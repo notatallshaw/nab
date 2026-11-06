@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,10 +25,7 @@ from nab_project.lock_check import (
     _fork_selections,
     check_saved_lock,
 )
-from nab_project.lock_validation import (
-    content_digest,
-    snapshot_inputs,
-)
+from nab_project.lock_validation import content_digest, snapshot_inputs
 from nab_project.lockfile import ArchivePin, LockInput, TargetLock, render_lock
 from nab_project.resolve import (
     ResolveFork,
@@ -88,6 +86,21 @@ def _check(case: tuple[Path, Path, ResolveInputs, list[ResolveTarget]]) -> None:
     check_saved_lock(
         lock, path, snapshot_inputs(path, inputs, targets), inputs, targets
     )
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX filesystem byte paths")
+def test_local_index_changes_keep_distinct_filesystem_bytes(tmp_path: Path) -> None:
+    """A different file-URL byte path changes the saved selection policy."""
+    first = tmp_path / os.fsdecode(b"index-\xff")
+    second = tmp_path / os.fsdecode(b"index-\xfe")
+    inputs = ResolveInputs(indexes=(IndexConfig("local", first.as_uri()),))
+    case = _saved(tmp_path, inputs=inputs)
+    _check(case)
+
+    lock, path, _, targets = case
+    changed = ResolveInputs(indexes=(IndexConfig("local", second.as_uri()),))
+    with pytest.raises(LockConsistencyError, match="selections or policy changed"):
+        _check((lock, path, changed, targets))
 
 
 def test_unchanged_inputs_skip_graph_planning(

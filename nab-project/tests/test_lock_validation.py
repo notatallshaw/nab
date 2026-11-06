@@ -365,6 +365,23 @@ def test_scalar_subclass_without_url_is_retained(tmp_path: Path) -> None:
     assert _value(text, tmp_path) is text
 
 
+@pytest.mark.parametrize("authority", ["", "localhost"])
+@pytest.mark.parametrize("suffix", ["", "?download=1", "#fragment", "?x=1#fragment"])
+def test_local_file_urls_normalize_filesystem_paths(
+    tmp_path: Path, authority: str, suffix: str
+) -> None:
+    """Local paths normalize without dropping their URL selectors."""
+    path = tmp_path / "local" / "wheels"
+    url = path.as_uri().replace("file://", f"file://{authority}", 1) + suffix
+    assert _value(url, tmp_path) == f"file:local/wheels{suffix}"
+
+
+def test_file_url_remote_authority_remains_a_url(tmp_path: Path) -> None:
+    """Remote authorities retain their existing URL representation."""
+    url = "file://server/share/wheels?x=1#fragment"
+    assert _value(url, tmp_path) == url
+
+
 def test_nested_mapping_order_does_not_change_fingerprints(tmp_path: Path) -> None:
     first = {"z": {"b": 2, "a": 1}, "a": [{"d": 4, "c": 3}]}
     second = {"a": [{"c": 3, "d": 4}], "z": {"a": 1, "b": 2}}
