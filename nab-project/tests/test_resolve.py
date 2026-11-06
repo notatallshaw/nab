@@ -83,7 +83,7 @@ from nab_provider.requirements_file import (
 )
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
-from nab_provider.testing import make_metadata
+from nab_provider.testing import make_metadata, make_wheel
 from nab_provider.vcs_admission import VcsPolicy
 from nab_resolver.errors import (
     ResolutionError,
@@ -4097,7 +4097,7 @@ class TestAugmentResolutionError:
         clause = self._no_versions_clause("missing-pkg")
         exc = ResolutionError("base message", incompatibility=clause)
         provider = MagicMock()
-        provider.get_no_versions_reason.side_effect = lambda pkg, _range: (
+        provider.get_no_versions_reason.side_effect = lambda pkg, _range, **_kwargs: (
             Diagnostic("package not found on any configured index")
             if pkg == "missing-pkg"
             else None
@@ -4196,7 +4196,7 @@ class TestAugmentResolutionError:
         )
         exc = ResolutionError("base message", incompatibility=clause)
         provider = MagicMock()
-        provider.get_no_versions_reason.side_effect = lambda pkg, _range: (
+        provider.get_no_versions_reason.side_effect = lambda pkg, _range, **_kwargs: (
             Diagnostic("no version matches the requirement") if pkg == "cand" else None
         )
         _augment_resolution_error(exc, provider)
@@ -4405,6 +4405,74 @@ class TestAugmentResolutionError:
         diagnostics = _diagnostics(info.value)
         assert "foo: no version in range supports Python 3.12" in diagnostics
         assert "no version matches the requirement" not in diagnostics
+
+    @staticmethod
+    def _self_dependency_result(
+        *, requires_python: str | None = ">=3.13", minimum: str = "2"
+    ) -> ResolveResult:
+        """Resolve a Python-filtered release beside an impossible self-dependency."""
+        coordinator = make_coordinator(
+            listings={
+                "app": [make_wheel("1", package="app")],
+                "bridge": [make_wheel("1", package="bridge")],
+                "leaf": [
+                    make_wheel("3", package="leaf"),
+                    make_wheel("2", package="leaf", requires_python=requires_python),
+                    make_wheel("1", package="leaf"),
+                ],
+            },
+            metadata_by_url={
+                "https://example.com/app-1-py3-none-any.whl.metadata": make_metadata(
+                    "app", "1", "bridge"
+                ),
+                "https://example.com/bridge-1-py3-none-any.whl.metadata": make_metadata(
+                    "bridge", "1", f"leaf>={minimum}"
+                ),
+                "https://example.com/leaf-3-py3-none-any.whl.metadata": make_metadata(
+                    "leaf", "3", "leaf>=4"
+                ),
+                "https://example.com/leaf-2-py3-none-any.whl.metadata": make_metadata(
+                    "leaf", "2", requires_python=requires_python
+                ),
+                "https://example.com/leaf-1-py3-none-any.whl.metadata": make_metadata(
+                    "leaf", "1"
+                ),
+            },
+        )
+        return resolve_with_coordinator(
+            coordinator,
+            [ResolveTarget.for_host_python("3.12.0")],
+            [Requirement("app")],
+        )
+
+    @pytest.mark.parametrize("detailed", [False, True])
+    def test_filtered_release_cause_survives_a_self_dependency(
+        self, *, detailed: bool
+    ) -> None:
+        failed = self._self_dependency_result().target_results[0]
+        assert not failed.success
+        assert failed.error is not None
+        report = str(failed.error)
+        if detailed:
+            report = failed.error.verbose_message or report
+        assert "leaf ==3 depends on leaf >=4" in report
+        assert "leaf: no version in range supports Python 3.12" in report
+        if detailed:
+            assert "2 requires >=3.13" in report
+
+        repaired = self._self_dependency_result(requires_python=None).target_results[0]
+        assert repaired.success
+        assert repaired.pins == {"app": V("1"), "bridge": V("1"), "leaf": V("2")}
+
+    def test_filtered_release_outside_the_failure_domain_is_not_reported(self) -> None:
+        failed = self._self_dependency_result(minimum="3").target_results[0]
+        assert not failed.success
+        assert failed.error is not None
+        reports = (str(failed.error), failed.error.verbose_message or str(failed.error))
+        for report in reports:
+            assert "leaf ==3 depends on leaf >=4" in report
+            assert "supports Python" not in report
+            assert "2 requires >=3.13" not in report
 
     def test_constraint_does_not_hide_the_transitive_blocker(
         self, tmp_path: Path
