@@ -1114,6 +1114,19 @@ class TestWheelRank:
         assert generic is not None
         assert specific < generic
 
+    def test_compressed_platforms_use_the_best_rank(self) -> None:
+        """A wheel's best compatible tag supplies its preference key."""
+        tags = TagSet.for_spec(
+            python_version="3.11",
+            spec=PlatformSpec("linux_x86_64", runs_on_libc=(2, 28)),
+        )
+        best = tags.wheel_rank("pkg-1.0-cp311-cp311-manylinux_2_28_x86_64.whl")
+        assert best is not None
+        compressed = tags.wheel_rank(
+            "pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+        )
+        assert compressed == best
+
     def test_rejected_wheel_has_no_rank(self) -> None:
         """A wheel the target cannot install ranks None."""
         tags = TagSet.for_spec(python_version="3.11", spec=PlatformSpec("linux_x86_64"))

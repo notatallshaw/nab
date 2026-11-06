@@ -741,10 +741,11 @@ class TagSet(SlottedValue):
         :attr:`_placed` inline and come here only on a miss.
         """
         index = self._index
-        rank_index = min(
-            (i for tag in wheel_tags if (i := index.of(tag)) is not None),
-            default=None,
-        )
+        rank_index: int | None = None
+        for tag in wheel_tags:
+            tag_index = index.of(tag)
+            if tag_index is not None and (rank_index is None or tag_index < rank_index):
+                rank_index = tag_index
         self._placed[wheel_tags] = rank_index
         return rank_index
 
