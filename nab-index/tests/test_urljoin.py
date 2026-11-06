@@ -44,24 +44,43 @@ def test_malformed_reference_keeps_authority_validation(
         join("https://example.com/pkg.whl?view=index", "https://[bad/file.whl?")
 
 
+@pytest.mark.parametrize(
+    "clears_empty_query", [False, True], ids=["affected-runtime", "corrected-runtime"]
+)
 def test_runtime_capability_selects_empty_query_compatibility(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, *, clears_empty_query: bool
 ) -> None:
     original = parse.urljoin
 
-    def old_join(base: str, reference: str) -> str:
-        if reference == "?" and parse.urlsplit(base).query:
-            return base
+    def runtime_join(base: str, reference: str) -> str:
+        parts = parse.urlsplit(base)
+        if reference == "?" and parts.query:
+            if not clears_empty_query:
+                return base
+            base = parse.urlunsplit(
+                (parts.scheme, parts.netloc, parts.path, "", parts.fragment)
+            )
         return original(base, reference)
 
     try:
         with monkeypatch.context() as changes:
-            changes.setattr(parse, "urljoin", old_join)
+            changes.setattr(parse, "urljoin", runtime_join)
             importlib.reload(_urljoin)
+            assert (_urljoin.join_url is runtime_join) is clears_empty_query
             cleared = _urljoin.join_url("https://example.com/pkg.whl?view=index", "?")
             assert parse.urlsplit(cleared).geturl() == "https://example.com/pkg.whl"
             assert _urljoin.join_url(
                 "https://example.com/pkg.whl?view=index", "#x"
             ) == ("https://example.com/pkg.whl?view=index#x")
+            assert (
+                _urljoin.join_url("https://example.com/pkg.whl?view=index", "other.whl")
+                == "https://example.com/other.whl"
+            )
+            assert (
+                _urljoin.join_url(
+                    "https://example.com/pkg.whl?view=index", "?download=1"
+                )
+                == "https://example.com/pkg.whl?download=1"
+            )
     finally:
         importlib.reload(_urljoin)
