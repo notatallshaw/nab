@@ -138,6 +138,17 @@ The provider shares a candidate view only when all tag groups have identical adm
 target retains wheel ranking, metadata validation and marker evaluation. Views hold no learned
 clauses or pending rejections, and their cache lasts one project resolve.
 
+## Previous-lock preferences
+
+`nab-project` owns projecting a saved PEP 751 lock onto each current target's combined extras and
+groups. Its `LockPreferences` supplies versions; `nab-provider` still owns live candidate admission,
+metadata validation and artifact selection. The CLI exposes this policy through
+[`--prefer-existing`](../reference/cli.md#--prefer-existing).
+
+The project tries an unchanged reachable model before ordinary search. A refused or modified trial
+discards its provider and solver, retaining version preferences for fresh solving. Old dependency
+declarations and artifact records are not reused.
+
 ## Driving the provider without networking
 
 ```python

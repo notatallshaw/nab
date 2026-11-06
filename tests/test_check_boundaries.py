@@ -170,6 +170,36 @@ def test_generated_writer_uses_its_supported_module(
         assert "supports dumps at nab_project.toml_writer" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    ("module", "status"), [("lock_preferences", 0), ("resolve", 1)]
+)
+def test_previous_lock_preferences_use_their_project_module(
+    workspace: FakeWorkspace,
+    capsys: pytest.CaptureFixture[str],
+    module: str,
+    status: int,
+) -> None:
+    workspace.add(
+        "nab-project",
+        docstring="Previous lock policy.\n\nSupported imports:\n\n    nab_project.lock_preferences  LockPreferences\n",
+        lock_preferences="class LockPreferences:\n    pass\n",
+        resolve="from .lock_preferences import LockPreferences\n",
+    )
+    workspace.add(
+        "lock-consumer",
+        requires=("nab-project",),
+        use=f"from nab_project.{module} import LockPreferences\n",
+    )
+    workspace.publishes_supported_paths("nab_project")
+
+    assert check_boundaries.main() == status
+    if status:
+        assert (
+            "supports LockPreferences at nab_project.lock_preferences"
+            in capsys.readouterr().err
+        )
+
+
 def test_clean_tree_passes(
     workspace: FakeWorkspace, capsys: pytest.CaptureFixture[str]
 ) -> None:

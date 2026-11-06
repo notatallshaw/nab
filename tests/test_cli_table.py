@@ -108,6 +108,7 @@ _PAGES = (
     ("upgrade", "reference/cli.md"),
     ("locked", "reference/cli.md"),
     ("reproduce", "reference/cli.md"),
+    ("prefer-existing", "reference/cli.md"),
     ("include-rejected", "reference/cli.md"),
 )
 

@@ -14,7 +14,7 @@ from nab_provider._vendor.packaging.pylock import (
 )
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.conflict_kind import EMPTY_MEMBERSHIP_SETS
-from nab_provider.environment import classify_dependency
+from nab_provider.environment import classify_dependency, marker_environment
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.pep508 import parse_requirement
 from nab_provider.records import select_artifact_hash
@@ -36,7 +36,6 @@ if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
     from pathlib import Path
 
-    from nab_provider._vendor.packaging.markers import Environment
     from nab_provider._vendor.packaging.pylock import (
         PackageArchive,
         PackageSdist,
@@ -287,23 +286,6 @@ def _check_constraints(
             raise LockConsistencyError(message)
 
 
-def _pylock_environment(environment: Mapping[str, str]) -> Environment:
-    """Project a target onto the standard marker environment."""
-    return {
-        "implementation_name": environment["implementation_name"],
-        "implementation_version": environment["implementation_version"],
-        "os_name": environment["os_name"],
-        "platform_machine": environment["platform_machine"],
-        "platform_release": environment["platform_release"],
-        "platform_system": environment["platform_system"],
-        "platform_version": environment["platform_version"],
-        "platform_python_implementation": environment["platform_python_implementation"],
-        "python_full_version": environment["python_full_version"],
-        "python_version": environment["python_version"],
-        "sys_platform": environment["sys_platform"],
-    }
-
-
 def _check_changed_bounds(  # noqa: PLR0913 - explicit saved-lock input and selector keywords
     lock: Pylock,
     path: Path,
@@ -342,7 +324,7 @@ def _check_changed_bounds(  # noqa: PLR0913 - explicit saved-lock input and sele
                 versions = {
                     str(package.name): package.version
                     for package, _ in lock.select(
-                        environment=_pylock_environment(sliced.marker_env),
+                        environment=marker_environment(sliced.marker_env),
                         tags=sliced.tags.ordered,
                         extras=selected_extras,
                         dependency_groups=selected_groups,
