@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-from nab_resolver.resolver import ResolverStats
+from typing import TYPE_CHECKING
 
 from ._compat import override
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.requirements import Requirement
 from .preference import (
+    CataloguePreference,
     IncompletePreferenceError,
-    PreferenceSearch,
     PreparationStatus,
 )
 from .preference import (
@@ -36,8 +34,8 @@ __all__ = [
 PreferenceScope = CoreScope[Candidate]
 
 
-class YankPreference(PreferenceSearch[Candidate, VersionRange, Requirement]):
-    """Retain native adoption and diagnostic statistics around the shared search."""
+class YankPreference(CataloguePreference[Candidate, VersionRange, Requirement]):
+    """Retain native adoption around the shared preference search."""
 
     def __init__(
         self,
@@ -50,33 +48,20 @@ class YankPreference(PreferenceSearch[Candidate, VersionRange, Requirement]):
     ) -> None:
         """Retain native adoption and the provider-specific incomplete-query policy."""
         super().__init__(
+            catalogue,
             roots,
             input_pins,
             constraints,
             max_steps=max_steps,
             refresh_incomplete=False,
         )
-
-        self._catalogue = catalogue
-        self.stats: ResolverStats[Any] = ResolverStats()
+        self._native_catalogue = catalogue
 
     @property
     @override
     def catalogue(self) -> YankCandidates:
         """Return the native catalogue used for preparation and adoption."""
-        return self._catalogue
-
-    @override
-    def record_solver_stats(self, stats: ResolverStats[Any]) -> None:
-        """Accumulate every scalar and package counter before a query is discarded."""
-        for name in ResolverStats.__slots__:
-            value = getattr(stats, name)
-            if isinstance(value, int):
-                setattr(self.stats, name, getattr(self.stats, name) + value)
-            else:
-                target = getattr(self.stats, name)
-                for package, count in value.items():
-                    target[package] += count
+        return self._native_catalogue
 
     def adopt(
         self, selected: Mapping[str, Candidate]

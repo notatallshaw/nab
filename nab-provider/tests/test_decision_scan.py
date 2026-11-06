@@ -26,20 +26,20 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from nab_provider import priority as native_priority
 from nab_provider._provider.priority import _NO_LISTING_PRIOR
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.priority import (
     CONFLICT_THRESHOLD,
     CULPRIT_DEMOTE_THRESHOLD,
-    TIER_CULPRIT,
-    compute_tier,
 )
 from nab_provider.provider import DecisionOrder, Provider
 from nab_provider.records import WheelFile
 from nab_provider.store import InMemoryIndex
 from nab_provider.testing import FakeFetchPort, make_coordinator, make_wheel
 from nab_resolver import decide
+from nab_resolver import priority as resolver_priority
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
@@ -497,13 +497,9 @@ class TestTheSearchCountersReachTheSortKey:
         assert decide.choose_package_to_decide(resolver) == "alpha"
 
 
-def test_force_backtracked_package_uses_culprit_tier() -> None:
-    tier = compute_tier(
-        "foo",
-        affected_count=0,
-        culprit_count=0,
-        culprit_counts=None,
-        force_backtracked=True,
+def test_native_priority_keeps_the_resolver_owner() -> None:
+    assert native_priority.compute_tier is resolver_priority.compute_tier
+    assert Provider.CONFLICT_THRESHOLD == resolver_priority.CONFLICT_THRESHOLD
+    assert (
+        Provider.CULPRIT_DEMOTE_THRESHOLD == resolver_priority.CULPRIT_DEMOTE_THRESHOLD
     )
-
-    assert tier == TIER_CULPRIT

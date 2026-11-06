@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Hashable
+from collections.abc import Hashable, Mapping
 from dataclasses import dataclass
 from typing import TypeVar
 
@@ -10,6 +10,7 @@ import pytest
 
 from nab_provider._compat import override
 from nab_provider.preference import (
+    CataloguePreference,
     IncompletePreferenceError,
     PreferenceScope,
     PreferenceSearch,
@@ -17,9 +18,10 @@ from nab_provider.preference import (
     _Context,
     _KnownFacts,
 )
+from nab_provider.preference_provider import Package, PreferenceProvider
 from nab_resolver.errors import ResolutionError, ResolutionLimitError
 from nab_resolver.ranges import Range
-from nab_resolver.resolver import Resolver, ResolverStats
+from nab_resolver.resolver import Resolver, ResolverProvider, ResolverStats
 
 PackageType = TypeVar("PackageType", bound=Hashable)
 
@@ -60,6 +62,17 @@ class Catalogue:
         self.items = choices
         self.facts: dict[Choice, Data | None] = {}
         self.missing_listings: set[str] = set()
+        self.unavailable: set[Choice] = set()
+        self.unavailable_reason = "metadata is unavailable"
+        self.metadata: dict[Choice, Data | None] = {}
+
+    def prepare(self, candidate: Choice) -> Data | None:
+        """Cache the declared metadata when the shared provider grants admission."""
+        if candidate in self.unavailable:
+            return None
+        if candidate not in self.facts:
+            self.facts[candidate] = self.metadata.get(candidate, Data({}))
+        return self.facts[candidate]
 
     def choices(self, package: str) -> tuple[Choice, ...]:
         return tuple(
@@ -318,3 +331,112 @@ def test_an_extra_keeps_its_exact_base_identity_in_a_known_fact_proof(
     )
     assert statuses == [expected]
     assert search.rounds > 0
+
+
+def test_shared_provider_resolves_a_grounded_transitive_pin() -> None:
+    parent = Choice("app", 1)
+    withdrawn = Choice("dep", 1, withdrawn=True)
+    live = Choice("dep", 2)
+    catalogue = Catalogue((parent, live, withdrawn))
+    catalogue.metadata[parent] = Data({"dep": Range.singleton(1)}, (Pin("dep", 1),))
+    search = CataloguePreference(catalogue, {"app": Range.full()}, (), {})
+    provider = PreferenceProvider(search)
+
+    selected = search.run(provider.run_query)
+
+    assert selected == {"app": parent, "dep": withdrawn}
+    assert search.explain(selected) == {
+        "dep": ("app==1 requires Pin(package='dep', version=1)",)
+    }
+    assert search.stats.rounds > 0
+    assert search.remaining < 100_000
+
+
+def test_shared_provider_does_not_prepare_a_self_authorizing_yank() -> None:
+    withdrawn = Choice("dep", 1, withdrawn=True)
+    catalogue = Catalogue((withdrawn,))
+    catalogue.metadata[withdrawn] = Data({}, (Pin("dep", 1),))
+    search = CataloguePreference(catalogue, {"dep": Range.full()}, (), {})
+
+    with pytest.raises(ResolutionError):
+        search.run(PreferenceProvider(search).run_query)
+
+    assert withdrawn not in catalogue.facts
+
+
+def test_shared_provider_keeps_host_plan_policy_in_scoped_queries() -> None:
+    high = Choice("app", 2)
+    low = Choice("app", 1)
+    catalogue = Catalogue((high, low))
+    search = CataloguePreference(catalogue, {"app": Range.full()}, (), {})
+    checked = []
+
+    def admitted(candidate: Choice, selected: Mapping[str, Choice]) -> bool:
+        checked.append((candidate, dict(selected)))
+        return candidate == low
+
+    provider = PreferenceProvider(search, metadata_is_admitted=admitted)
+    selected = search.run(provider.run_query)
+
+    assert selected == {"app": low}
+    assert (high, {"app": high}) in checked
+    assert (low, {"app": low}) in checked
+
+
+def test_shared_provider_requires_a_complete_failed_query() -> None:
+    catalogue = Catalogue(())
+    search = CataloguePreference(catalogue, {"dep": Range.full()}, (), {})
+    provider = PreferenceProvider(search, query_is_complete=lambda _scope: False)
+
+    with pytest.raises(IncompletePreferenceError):
+        provider.run_query(PreferenceScope())
+
+
+def test_shared_provider_keeps_missing_metadata_incomplete() -> None:
+    candidate = Choice("dep", 1)
+    catalogue = Catalogue((candidate,))
+    catalogue.unavailable.add(candidate)
+    search = CataloguePreference(catalogue, {"dep": Range.full()}, (), {})
+
+    with pytest.raises(IncompletePreferenceError, match="metadata is unavailable"):
+        PreferenceProvider(search).run_query(PreferenceScope())
+
+
+def test_shared_provider_uses_the_host_resolver_factory() -> None:
+    candidate = Choice("app", 1)
+    catalogue = Catalogue((candidate,))
+    budgets = []
+
+    def make_solver(
+        provider: ResolverProvider[Package, int], limit: int
+    ) -> Resolver[Package, int]:
+        budgets.append(limit)
+        return Resolver(provider, max_iterations=limit)
+
+    provider = PreferenceProvider.from_catalogue(
+        catalogue, {"app": Range.full()}, (), {}, resolver_factory=make_solver
+    )
+
+    assert provider.select() == {"app": candidate}
+    assert budgets == [100_000]
+
+
+def test_incomplete_refresh_keeps_yanked_metadata_unprepared() -> None:
+    live = Choice("dep", 1)
+    withdrawn = Choice("dep", 1, withdrawn=True)
+    catalogue = Catalogue((live, withdrawn))
+    catalogue.unavailable.add(live)
+    provider = PreferenceProvider.from_catalogue(
+        catalogue,
+        {"dep": Range.singleton(1)},
+        [Pin("dep", 1)],
+        {},
+        refresh_incomplete=True,
+    )
+
+    with pytest.raises(IncompletePreferenceError):
+        provider.select()
+
+    assert withdrawn not in catalogue.facts
+    assert provider.preference.outcomes
+    assert set(provider.preference.outcomes.values()) == {PreparationStatus.INCOMPLETE}

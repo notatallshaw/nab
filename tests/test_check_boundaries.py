@@ -384,3 +384,30 @@ def test_url_output_uses_the_supported_index_module(
 
     if status:
         assert "supports strip_userinfo at nab_index.urls" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("module", "status"), [("priority", 0), ("resolver", 1)])
+def test_conflict_priority_uses_its_owning_module(
+    workspace: FakeWorkspace,
+    capsys: pytest.CaptureFixture[str],
+    module: str,
+    status: int,
+) -> None:
+    workspace.add(
+        "nab-resolver",
+        docstring="Conflict ordering.\nSupported imports:\n\n    nab_resolver.priority  compute_tier\n",
+        priority="def compute_tier():\n    pass\n",
+        resolver="from .priority import compute_tier\n",
+    )
+    workspace.publishes_supported_paths("nab_resolver")
+    workspace.add(
+        "nab-provider",
+        requires=("nab-resolver",),
+        use=f"from nab_resolver.{module} import compute_tier\n",
+    )
+
+    assert check_boundaries.main() == status
+    if status:
+        assert (
+            "supports compute_tier at nab_resolver.priority" in capsys.readouterr().err
+        )

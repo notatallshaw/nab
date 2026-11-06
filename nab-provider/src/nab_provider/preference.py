@@ -34,6 +34,7 @@ else:
 
 
 __all__ = [
+    "CataloguePreference",
     "DependencyData",
     "IncompletePreferenceError",
     "PreferenceCatalogue",
@@ -106,6 +107,22 @@ class PreferenceCatalogue(Protocol[CandidateType, RangeType, PinnedRequirementTy
     @property
     def missing_listings(self) -> AbstractSet[str]:
         """Package listings whose absence has not been established."""
+        ...
+
+    @property
+    def unavailable(self) -> AbstractSet[CandidateType]:
+        """Candidate metadata whose absence has not been established."""
+        ...
+
+    @property
+    def unavailable_reason(self) -> str:
+        """Describe the latest listing or metadata uncertainty."""
+        ...
+
+    def prepare(
+        self, candidate: CandidateType
+    ) -> DependencyData[RangeType, PinnedRequirementType] | None:
+        """Prepare metadata only after the provider has established admission."""
         ...
 
     def choices(self, package: str) -> Sequence[CandidateType]:
@@ -243,6 +260,7 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         self.constraints = constraints
         self.remaining = max_steps
         self.refresh_incomplete = refresh_incomplete
+        self.stats: ResolverStats[Hashable] = ResolverStats()
 
         self.outcomes: dict[PreferenceScope[CandidateType], PreparationStatus] = {}
         self.incomplete_facts: dict[PreferenceScope[CandidateType], int] = {}
@@ -268,10 +286,16 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         """Return the host catalogue retained for this search."""
         ...
 
-    @abstractmethod
     def record_solver_stats(self, stats: ResolverStats[StatisticsPackageType]) -> None:
-        """Let the concrete consumer retain its diagnostic counters."""
-        ...
+        """Accumulate scalar and per-package work across all scoped queries."""
+        for name in ResolverStats.__slots__:
+            value = getattr(stats, name)
+            if isinstance(value, int):
+                setattr(self.stats, name, getattr(self.stats, name) + value)
+            else:
+                target = getattr(self.stats, name)
+                for package, count in value.items():
+                    target[package] += count
 
     def parents(
         self, candidate: CandidateType, selected: Mapping[str, CandidateType]
@@ -685,3 +709,37 @@ class _KnownFacts(
             underlying = self.catalogue.base_candidate(candidate)
             result[base] = Range.singleton(self.identify(underlying))
         return result
+
+
+class CataloguePreference(
+    PreferenceSearch[CandidateType, RangeType, PinnedRequirementType]
+):
+    """Run scoped preference proofs against a supplied candidate catalogue."""
+
+    def __init__(
+        self,
+        catalogue: PreferenceCatalogue[CandidateType, RangeType, PinnedRequirementType],
+        roots: Mapping[str, RangeType],
+        input_pins: Sequence[PinnedRequirementType],
+        constraints: Mapping[str, RangeType],
+        *,
+        max_steps: int = 100_000,
+        refresh_incomplete: bool = False,
+    ) -> None:
+        """Keep one host snapshot and a shared budget for its preference proofs."""
+        super().__init__(
+            roots,
+            input_pins,
+            constraints,
+            max_steps=max_steps,
+            refresh_incomplete=refresh_incomplete,
+        )
+        self._catalogue = catalogue
+
+    @property
+    @_override
+    def catalogue(
+        self,
+    ) -> PreferenceCatalogue[CandidateType, RangeType, PinnedRequirementType]:
+        """Return the catalogue whose immutable facts the search shares."""
+        return self._catalogue
