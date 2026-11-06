@@ -1381,28 +1381,42 @@ class TestEnvironmentMarkerReuse:
 
 
 @pytest.mark.parametrize("difference", ["packages", "groups"])
-def test_threading_variants_require_shared_install_selections(difference: str) -> None:
-    ordinary = ResolveTarget.for_declared(
+@pytest.mark.parametrize(
+    "variant",
+    [
+        PlatformSpec("linux_x86_64", free_threaded=True),
+        PlatformSpec("linux_x86_64", libc="musl"),
+    ],
+    ids=["threading", "libc"],
+)
+def test_build_variants_require_shared_install_selections(
+    difference: str, variant: PlatformSpec
+) -> None:
+    base_target = ResolveTarget.for_declared(
         python_version="3.14", spec=PlatformSpec("linux_x86_64")
     )
-    threaded = ResolveTarget.for_declared(
-        python_version="3.14", spec=PlatformSpec("linux_x86_64", free_threaded=True)
+    variant_target = ResolveTarget.for_declared(python_version="3.14", spec=variant)
+    base_pins = {"foo": _index_pin()}
+    variant_pins = (
+        {**base_pins, "bar": _index_pin("bar")}
+        if difference == "packages"
+        else base_pins
     )
-    pins = {"foo": _index_pin()}
-    second = {**pins, "bar": _index_pin("bar")} if difference == "packages" else pins
+
     lock = LockInput(
         targets={
-            ordinary.label: TargetLock(ordinary, pins),
-            threaded.label: TargetLock(
-                threaded,
-                second,
+            base_target.label: TargetLock(base_target, base_pins),
+            variant_target.label: TargetLock(
+                variant_target,
+                variant_pins,
                 package_gates={"foo": (("group", "dev"),)}
                 if difference == "groups"
                 else {},
             ),
         },
-        environments=[Marker(ordinary.environment_marker_string)],
+        environments=[Marker(base_target.environment_marker_string)],
     )
+
     with pytest.raises(LockValidationError, match="package selections"):
         build_pylock(lock)
 
@@ -1423,3 +1437,52 @@ def test_shared_build_pins_remain_installable_alongside_a_host_target() -> None:
         ],
     )
     assert [str(package.name) for package in build_pylock(lock).packages] == ["foo"]
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        PlatformSpec("linux_x86_64", free_threaded=True),
+        PlatformSpec("linux_x86_64", libc="musl"),
+    ],
+    ids=["threading", "libc"],
+)
+@pytest.mark.parametrize(
+    "members",
+    [
+        (("group", "beta"), ("group", "alpha")),
+        (("group", "alpha"), ("group", "beta"), ("group", "alpha")),
+    ],
+    ids=["reordered", "duplicate"],
+)
+def test_build_variants_share_equivalent_install_contexts(
+    variant: PlatformSpec, members: tuple[tuple[str, str], ...]
+) -> None:
+    base = ResolveTarget.for_declared(
+        python_version="3.14", spec=PlatformSpec("linux_x86_64")
+    )
+    other = ResolveTarget.for_declared(python_version="3.14", spec=variant)
+    pins = {"foo": _index_pin()}
+    inputs = LockInput(
+        targets={
+            base.label: TargetLock(
+                base,
+                pins,
+                package_gates={"foo": (("group", "alpha"), ("group", "beta"))},
+            ),
+            other.label: TargetLock(other, pins, package_gates={"foo": members}),
+        },
+        dependency_groups=["alpha", "beta"],
+    )
+
+    lock = build_pylock(inputs)
+    for target in (base, other):
+        for group in ("alpha", "beta"):
+            assert [
+                package.name
+                for package, _wheel in lock.select(
+                    environment=dict(target.marker_env),
+                    tags=target.tags.ordered,
+                    dependency_groups=[group],
+                )
+            ] == ["foo"]
