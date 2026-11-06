@@ -327,3 +327,29 @@ def test_package_with_no_directory_names_itself(workspace: FakeWorkspace) -> Non
 
     with pytest.raises(SystemExit, match="pkg-ghost is in the release package list"):
         check_boundaries.packages()
+
+
+@pytest.mark.parametrize(("module", "status"), [("lock_policy", 0), ("lockfile", 1)])
+def test_lock_operation_policy_uses_its_owning_module(
+    workspace: FakeWorkspace,
+    capsys: pytest.CaptureFixture[str],
+    module: str,
+    status: int,
+) -> None:
+    workspace.add(
+        "nab-project",
+        docstring="Lock operation policy.\n\nSupported imports:\n\n    nab_project.lock_policy  LockPolicy\n",
+        lock_policy="class LockPolicy:\n    pass\n",
+        lockfile="from .lock_policy import LockPolicy\n",
+    )
+    workspace.add(
+        "lock-consumer",
+        requires=("nab-project",),
+        use=f"from nab_project.{module} import LockPolicy\n",
+    )
+    workspace.publishes_supported_paths("nab_project")
+    assert check_boundaries.main() == status
+    if status:
+        assert (
+            "supports LockPolicy at nab_project.lock_policy" in capsys.readouterr().err
+        )

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Literal, NewType
 
 from nab_project.conflicts import ConflictSet
+from nab_project.lock_policy import LockPolicy
 from nab_project.workspace import WorkspaceConfig
 from nab_provider.policy import (
     ArchiveSource,
@@ -37,6 +38,7 @@ from ...flagtypes import (
     HttpBackend,
     ImplementationFlag,
     LockFormat,
+    LockPolicyFlag,
     MatrixOrderFlag,
     MetadataPolicyFlag,
     ModeFlag,
@@ -711,10 +713,10 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
         on=("lock",),
     )
 
-    prefer_existing = Switch(
-        default=False,
-        negatable=True,
-        help="check previous lock choices before normal version search",
+    lock_policy = Value[LockPolicyFlag](
+        mirrors=LockPolicy,
+        default="resolve",
+        help="resolve, check existing choices, or reuse a consistent saved lock",
         docs="reference/cli.md",
         on=("lock",),
     )

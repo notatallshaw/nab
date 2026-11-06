@@ -95,3 +95,16 @@ console_entry()
     assert result.returncode == 1
     assert f"{backend} is not installed" in result.stderr
     assert f"pip install nab[{backend}]" in result.stderr
+
+
+def test_lock_policy_enum_does_not_load_saved_lock_implementation() -> None:
+    probe = """
+import sys
+from nab_project.lock_policy import LockPolicy
+assert LockPolicy.RESOLVE.value == "resolve"
+assert "nab_project.lock_check" not in sys.modules
+assert "nab_provider._vendor.packaging.pylock" not in sys.modules
+"""
+    subprocess.run(  # noqa: S603 - fixed import probe in the current interpreter.
+        [sys.executable, "-c", probe], env=dict(os.environ), check=True
+    )

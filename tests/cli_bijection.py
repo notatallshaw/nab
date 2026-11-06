@@ -119,7 +119,7 @@ def _lock() -> None:
         upgrade=RunFlags.upgrade,
         locked=RunFlags.locked,
         reproduce=RunFlags.reproduce,
-        prefer_existing=RunFlags.prefer_existing,
+        lock_policy=RunFlags.lock_policy,
     )
 
 
