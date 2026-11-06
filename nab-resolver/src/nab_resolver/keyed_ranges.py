@@ -45,6 +45,7 @@ class KeyedRange(FrozenValue, Generic[KeyType, ValueType]):
         normalized = tuple(
             (key, value) for key, value in dict(overrides).items() if value != default
         )
+
         object.__setattr__(self, "default", default)
         object.__setattr__(self, "overrides", normalized)
         object.__setattr__(self, "_hash", hash((default, frozenset(normalized))))
@@ -101,6 +102,7 @@ class KeyedRange(FrozenValue, Generic[KeyType, ValueType]):
         if not isinstance(other, type(self)):
             # Zuban does not allow the standard operator fallback for Self.
             return NotImplemented  # zuban: ignore[return-value]
+
         return self._combine(other, lambda left, right: left & right)
 
     def __or__(self, other: object) -> Self:
@@ -108,6 +110,7 @@ class KeyedRange(FrozenValue, Generic[KeyType, ValueType]):
         if not isinstance(other, type(self)):
             # Zuban does not allow the standard operator fallback for Self.
             return NotImplemented  # zuban: ignore[return-value]
+
         return self._combine(other, lambda left, right: left | right)
 
     def __sub__(self, other: object) -> Self:
@@ -115,6 +118,7 @@ class KeyedRange(FrozenValue, Generic[KeyType, ValueType]):
         if not isinstance(other, type(self)):
             # Zuban does not allow the standard operator fallback for Self.
             return NotImplemented  # zuban: ignore[return-value]
+
         return self._combine(other, lambda left, right: left - right)
 
     def __invert__(self) -> Self:
