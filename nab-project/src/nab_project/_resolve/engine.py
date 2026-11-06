@@ -1198,6 +1198,7 @@ def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
     """Attach short and verbose no-versions diagnostics to exc.
 
     Combine repeated packages' ranges before filtering permanent bans.
+    Listing causes use only availability clauses when present.
     """
     if isinstance(exc, ResolutionTerminatedError) or exc.incompatibility is None:
         return
@@ -1207,18 +1208,31 @@ def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
         earlier = failed.get(package)
         failed[package] = clause_range if earlier is None else earlier | clause_range
 
+    unavailable: dict[str, RangeProtocol[Version]] = {}
+    for package, clause_range in _walk_no_versions_packages(
+        exc.incompatibility, include_dependencies=False
+    ):
+        earlier = unavailable.get(package)
+        unavailable[package] = (
+            clause_range if earlier is None else earlier | clause_range
+        )
+
     entries: list[tuple[str, Diagnostic]] = []
     for package, clause_range in failed.items():
         failed_range = clause_range
+        availability_range = unavailable.get(package, clause_range)
         label = package
         if split_extra(package)[1] is not None:
             declared = provider.extra_requirement_range(package, exc.incompatibility)
             if declared is not None:
                 failed_range = declared & failed_range
+                availability_range = declared & availability_range
                 if rendered := provider.format_range(declared):
                     label = f"{package} {rendered}"
 
-        diagnostic = provider.get_no_versions_reason(package, failed_range)
+        diagnostic = provider.get_no_versions_reason(
+            package, failed_range, availability_range=availability_range
+        )
         if diagnostic is not None:
             entries.append((label, diagnostic))
 
@@ -1249,10 +1263,13 @@ def _rules_out_candidate(node: Incompatibility[Any, Any]) -> bool:
 
 def _walk_no_versions_packages(
     incompatibility: Incompatibility[Any, Any],
+    *,
+    include_dependencies: bool = True,
 ) -> list[tuple[str, RangeProtocol[Any]]]:
     """Collect package/range pairs from clauses that exclude candidates.
 
     Walk iteratively because backtracking can produce a deep cause graph.
+    Exclude dependencies when collecting only availability domains.
     """
     out: list[tuple[str, RangeProtocol[Any]]] = []
     for node in incompatibility.walk():
@@ -1261,7 +1278,7 @@ def _walk_no_versions_packages(
                 pkg = term.package
                 if isinstance(pkg, str):
                     out.append((pkg, term.constraint))
-        elif _rules_out_candidate(node):
+        elif include_dependencies and _rules_out_candidate(node):
             candidate = node.terms[0]
             pkg = candidate.package
             if isinstance(pkg, str):

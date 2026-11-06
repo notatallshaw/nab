@@ -62,7 +62,6 @@ from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
-from nab_provider.diagnostics import Diagnostic
 from nab_provider.errors import ConfigError
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.metadata import WheelMetadata
@@ -83,7 +82,7 @@ from nab_provider.requirements_file import (
 )
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
-from nab_provider.testing import make_metadata
+from nab_provider.testing import make_metadata, make_wheel
 from nab_provider.vcs_admission import VcsPolicy
 from nab_resolver.errors import (
     ResolutionError,
@@ -4086,47 +4085,61 @@ def _diagnostics(error: ResolutionError, *, detailed: bool = True) -> str:
 class TestAugmentResolutionError:
     """``resolve_pyproject`` enriches errors with provider hints."""
 
-    def _no_versions_clause(self, package: str) -> Incompatibility:
+    def _no_versions_clause(
+        self, package: str, allowed: VersionRange | None = None
+    ) -> Incompatibility:
+        constraint = Range.full() if allowed is None else allowed
         return Incompatibility(
-            [Term(package, Range.full(), positive=True)],
+            [Term(package, constraint, positive=True)],
             cause=IncompatibilityCause.NO_VERSIONS,
         )
 
+    def _provider_with_version_mismatch(self, package: str) -> Provider:
+        """Record a >=2 mismatch against a listing containing only version 1.0."""
+        provider = Provider(
+            make_coordinator(listings={package: _index_wheels(package, "1.0")}),
+            target=ResolveTarget.for_host_python("3.12.0"),
+        )
+        allowed = Requirement(f"{package}>=2").specifier.to_range()
+        assert provider.choose_version(package, allowed) is None
+        return provider
+
     def test_appends_diagnostics_for_no_versions_packages(self) -> None:
-        """A NO_VERSIONS clause whose package has a recorded reason is surfaced."""
         clause = self._no_versions_clause("missing-pkg")
         exc = ResolutionError("base message", incompatibility=clause)
-        provider = MagicMock()
-        provider.get_no_versions_reason.side_effect = lambda pkg, _range: (
-            Diagnostic("package not found on any configured index")
-            if pkg == "missing-pkg"
-            else None
+        provider = Provider(
+            make_coordinator(listings={"missing-pkg": []}),
+            target=ResolveTarget.for_host_python("3.12.0"),
         )
+        assert provider.choose_version("missing-pkg", VersionRange.full()) is None
+
         _augment_resolution_error(exc, provider)
+
         text = str(exc)
         assert "Diagnostics:" in text
         assert "missing-pkg: package not found on any configured index" in text
 
     def test_no_op_when_incompatibility_is_none(self) -> None:
-        """An exception without a derivation tree is returned unchanged."""
         exc = ResolutionError("base", incompatibility=None)
-        provider = MagicMock()
+        provider = Provider(make_coordinator())
+
         _augment_resolution_error(exc, provider)
+
         assert str(exc) == "base"
 
     def test_no_op_when_no_reasons_recorded(self) -> None:
-        """The exception is unchanged when the provider has no hints."""
         clause = self._no_versions_clause("missing-pkg")
         exc = ResolutionError("base", incompatibility=clause)
-        provider = MagicMock()
-        provider.get_no_versions_reason.return_value = None
+        provider = Provider(make_coordinator())
+
         _augment_resolution_error(exc, provider)
+
         assert str(exc) == "base"
 
     def test_dedupes_packages_seen_multiple_times(self) -> None:
-        """Each package's reason is appended at most once."""
-        first = self._no_versions_clause("foo")
-        second = self._no_versions_clause("foo")
+        allowed = Requirement("foo>=2").specifier.to_range()
+        first = self._no_versions_clause("foo", allowed)
+        second = self._no_versions_clause("foo", allowed)
         derived = Incompatibility(
             [Term("foo", Range.full(), positive=True)],
             cause=IncompatibilityCause.DERIVED,
@@ -4134,11 +4147,10 @@ class TestAugmentResolutionError:
             cause_right=second,
         )
         exc = ResolutionError("base", incompatibility=derived)
-        provider = MagicMock()
-        provider.get_no_versions_reason.return_value = Diagnostic(
-            "no version matches the requirement"
-        )
+        provider = self._provider_with_version_mismatch("foo")
+
         _augment_resolution_error(exc, provider)
+
         text = str(exc)
         assert text.count("foo: no version matches the requirement") == 1
 
@@ -4184,23 +4196,29 @@ class TestAugmentResolutionError:
         )
         assert _walk_no_versions_packages(clause) == [("cand", Range.full())]
 
-    def test_grouped_clause_hint_survives_a_later_range(self) -> None:
-        """Accepted tolerance: reasons are keyed by package name, so a later
-        range still surfaces the reason an earlier ask recorded."""
+    def test_grouped_clause_hint_respects_failed_range(self) -> None:
+        """A recorded mismatch applies only when the failure range excludes 1.0."""
+        allowed = Requirement("cand>=3").specifier.to_range()
         clause = Incompatibility(
             [
-                Term("cand", Range.full(), positive=True),
+                Term("cand", allowed, positive=True),
                 Term("blocker", Range.singleton(1), positive=True),
             ],
             cause=IncompatibilityCause.DEPENDENCY,
         )
         exc = ResolutionError("base message", incompatibility=clause)
-        provider = MagicMock()
-        provider.get_no_versions_reason.side_effect = lambda pkg, _range: (
-            Diagnostic("no version matches the requirement") if pkg == "cand" else None
-        )
+        provider = self._provider_with_version_mismatch("cand")
+
         _augment_resolution_error(exc, provider)
+
         assert "cand: no version matches the requirement" in str(exc)
+
+        admitted = self._no_versions_clause("cand", VersionRange.full())
+        admitted_error = ResolutionError("base message", incompatibility=admitted)
+
+        _augment_resolution_error(admitted_error, provider)
+
+        assert str(admitted_error) == "base message"
 
     def test_walk_skips_real_dependency_clauses(self) -> None:
         """A dependency clause with a negative dep term is not collected."""
@@ -4405,6 +4423,74 @@ class TestAugmentResolutionError:
         diagnostics = _diagnostics(info.value)
         assert "foo: no version in range supports Python 3.12" in diagnostics
         assert "no version matches the requirement" not in diagnostics
+
+    @staticmethod
+    def _self_dependency_result(
+        *, requires_python: str | None = ">=3.13", minimum: str = "2"
+    ) -> ResolveResult:
+        """Resolve a Python-filtered release beside an impossible self-dependency."""
+        coordinator = make_coordinator(
+            listings={
+                "app": [make_wheel("1", package="app")],
+                "bridge": [make_wheel("1", package="bridge")],
+                "leaf": [
+                    make_wheel("3", package="leaf"),
+                    make_wheel("2", package="leaf", requires_python=requires_python),
+                    make_wheel("1", package="leaf"),
+                ],
+            },
+            metadata_by_url={
+                "https://example.com/app-1-py3-none-any.whl.metadata": make_metadata(
+                    "app", "1", "bridge"
+                ),
+                "https://example.com/bridge-1-py3-none-any.whl.metadata": make_metadata(
+                    "bridge", "1", f"leaf>={minimum}"
+                ),
+                "https://example.com/leaf-3-py3-none-any.whl.metadata": make_metadata(
+                    "leaf", "3", "leaf>=4"
+                ),
+                "https://example.com/leaf-2-py3-none-any.whl.metadata": make_metadata(
+                    "leaf", "2", requires_python=requires_python
+                ),
+                "https://example.com/leaf-1-py3-none-any.whl.metadata": make_metadata(
+                    "leaf", "1"
+                ),
+            },
+        )
+        return resolve_with_coordinator(
+            coordinator,
+            [ResolveTarget.for_host_python("3.12.0")],
+            [Requirement("app")],
+        )
+
+    @pytest.mark.parametrize("detailed", [False, True])
+    def test_filtered_release_cause_survives_a_self_dependency(
+        self, *, detailed: bool
+    ) -> None:
+        failed = self._self_dependency_result().target_results[0]
+        assert not failed.success
+        assert failed.error is not None
+        report = str(failed.error)
+        if detailed:
+            report = failed.error.verbose_message or report
+        assert "leaf ==3 depends on leaf >=4" in report
+        assert "leaf: no version in range supports Python 3.12" in report
+        if detailed:
+            assert "2 requires >=3.13" in report
+
+        repaired = self._self_dependency_result(requires_python=None).target_results[0]
+        assert repaired.success
+        assert repaired.pins == {"app": V("1"), "bridge": V("1"), "leaf": V("2")}
+
+    def test_filtered_release_outside_the_failure_domain_is_not_reported(self) -> None:
+        failed = self._self_dependency_result(minimum="3").target_results[0]
+        assert not failed.success
+        assert failed.error is not None
+        reports = (str(failed.error), failed.error.verbose_message or str(failed.error))
+        for report in reports:
+            assert "leaf ==3 depends on leaf >=4" in report
+            assert "supports Python" not in report
+            assert "2 requires >=3.13" not in report
 
     def test_constraint_does_not_hide_the_transitive_blocker(
         self, tmp_path: Path

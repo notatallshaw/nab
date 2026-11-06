@@ -2443,16 +2443,24 @@ class Provider:
         return allowed
 
     def get_no_versions_reason(
-        self, package: str, failed_range: RangeProtocol[Version] | None = None
+        self,
+        package: str,
+        failed_range: RangeProtocol[Version] | None = None,
+        *,
+        availability_range: RangeProtocol[Version] | None = None,
     ) -> Diagnostic | None:
         """Return the recorded no-versions diagnostic for package.
 
         Specific recorded causes take precedence over permanent bans.
         ``failed_range`` restricts banned versions; None includes every ban.
+        ``availability_range`` scopes listing causes apart from dependency conflicts.
         """
         normalized = self.split_and_normalize(package)[2]
         recorded = self._no_versions_reasons.get(package)
-        if isinstance(failed_range, VersionRange) and (
+        listing_range = (
+            failed_range if availability_range is None else availability_range
+        )
+        if isinstance(listing_range, VersionRange) and (
             recorded is None
             or recorded.kind
             in (
@@ -2465,8 +2473,8 @@ class Provider:
             if versions is not None:
                 # A reporting query must not retain another requirement's domain.
                 recorded = (
-                    self._listing_no_versions_reason(package, failed_range)
-                    if not list(failed_range.filter([v for v, _ in versions]))
+                    self._listing_no_versions_reason(package, listing_range)
+                    if not list(listing_range.filter([v for v, _ in versions]))
                     else None
                 )
         if recorded is not None and not recorded.is_generic:

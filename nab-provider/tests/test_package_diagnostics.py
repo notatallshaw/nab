@@ -183,6 +183,38 @@ def test_reporting_one_missing_domain_does_not_persist_it_for_another_domain() -
     assert provider.get_no_versions_reason("pkg") is None
 
 
+def test_availability_domains_do_not_narrow_permanent_ban_evidence() -> None:
+    provider = Provider(make_coordinator([make_wheel("1")]))
+    provider.fetch_versions("pkg")
+    provider.record_root_ban(
+        "pkg",
+        "cap",
+        Requirement("cap>=2").specifier.to_range(),
+        Requirement("cap==1").specifier.to_range(),
+        [Version("3"), Version("4")],
+    )
+    provider.record_metadata_ban(
+        "pkg",
+        {
+            Version("3"): MetadataBlock("pkg 3 metadata unavailable"),
+            Version("4"): MetadataBlock("pkg 4 metadata unavailable"),
+        },
+    )
+
+    diagnostic = provider.get_no_versions_reason(
+        "pkg",
+        Requirement("pkg>=2,<4").specifier.to_range(),
+        availability_range=VersionRange.singleton(Version("2")),
+    )
+
+    assert diagnostic is not None
+    report = "\n".join(diagnostic.lines(verbose=True))
+    assert "3 needs cap in >=2, but your project requires cap ==1" in report
+    assert "pkg 3 metadata unavailable" in report
+    assert "4 needs cap" not in report
+    assert "pkg 4 metadata unavailable" not in report
+
+
 def test_missing_extra_rejections_can_share_the_metadata_failure_snapshot() -> None:
     snapshot = MetadataBlock.from_error(
         MissingExtraError("pkg==1 does not provide extra 'x'")
