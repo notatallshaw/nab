@@ -73,11 +73,16 @@ for name in (
     sys.modules[name] = None
 
 from nab_provider.preference import PreferenceScope, PreferenceSearch
+from nab_provider.preference_provider import PreferenceProvider
+from nab_provider.version_candidates import PreparedVersionCatalogue
 scope = PreferenceScope()
 assert scope.fixed == frozenset()
 assert scope.live == frozenset()
 assert isinstance(hash(scope), int)
 assert callable(PreferenceSearch.run)
+assert callable(PreferenceProvider.from_catalogue)
+assert callable(PreferenceProvider.select)
+assert callable(PreparedVersionCatalogue.prepare)
 """
     subprocess.run(  # noqa: S603 - fixed interpreter and import probe
         [sys.executable, "-c", probe], check=True

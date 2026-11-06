@@ -23,7 +23,7 @@ __all__ = [
     "replace",
 ]
 
-_T = TypeVar("_T")
+ValueType = TypeVar("ValueType")
 
 
 class FactoryDefault:
@@ -40,7 +40,9 @@ class FactoryDefault:
 FACTORY = FactoryDefault()
 
 
-def factory_value(value: _T | FactoryDefault, factory: Callable[[], _T]) -> _T:
+def factory_value(
+    value: ValueType | FactoryDefault, factory: Callable[[], ValueType]
+) -> ValueType:
     """Allocate an omitted default, retaining explicitly supplied values."""
     if isinstance(value, FactoryDefault):
         return factory()
@@ -121,7 +123,7 @@ def field_names(value: object) -> tuple[str, ...]:
     raise TypeError(msg)
 
 
-def replace(value: _T, /, **changes: object) -> _T:
+def replace(value: ValueType, /, **changes: object) -> ValueType:
     """Reconstruct a record, retaining omitted constructor arguments."""
     if isinstance(value, Record):
         names = field_names(value)
@@ -148,7 +150,7 @@ def replace(value: _T, /, **changes: object) -> _T:
         elif name not in changes:
             changes[name] = getattr(value, name)
 
-    constructor: Callable[..., _T] = type(value)
+    constructor: Callable[..., ValueType] = type(value)
     return constructor(**changes)
 
 
