@@ -8,12 +8,12 @@ with [`nab cache`](cli.md).
 ## Layout
 
 Each record nab writes is one file under a versioned bucket directory. Bumping a bucket's version
-suffix retires the old format: the stale directory is harmless and `nab cache clear` reclaims it.
+suffix retires the old records: the stale directory is harmless and `nab cache clear` reclaims it.
 The one exception is `sdist-v1/`, which nab still reads.
 
 | Bucket              | Holds                                                      |
 | ------------------- | ---------------------------------------------------------- |
-| `simple-v3/`        | the Simple-API listing body and a `.policy` sidecar        |
+| `simple-v4/`        | the Simple-API listing body and a `.policy` sidecar        |
 | `simple-parsed-v1/` | the parsed listing, an accelerator for the body            |
 | `simple-neg-v0/`    | a short-lived record that a name returned a 404            |
 | `metadata-v1/`      | PEP 658 metadata and recovered wheel `METADATA`, immutable |

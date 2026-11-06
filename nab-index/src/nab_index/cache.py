@@ -7,8 +7,8 @@ before any HTTP transport call.
 
 Layout under ``root``:
 
-    simple-v3/<index>[-<serialization>]/<package>.json    <- PEP 691 JSON body
-    simple-v3/<index>[-<serialization>]/<package>.policy  <- {fetched_at, max_age,
+    simple-v4/<index>[-<serialization>]/<package>.json    <- PEP 691 JSON body
+    simple-v4/<index>[-<serialization>]/<package>.policy  <- {fetched_at, max_age,
                                                               etag, page_url,
                                                               body_digest}
     simple-parsed-v1/<index>[-<serialization>]/<package>.parsed  <- parsed blob
@@ -21,9 +21,8 @@ Layout under ``root``:
 An index pinned to one serialization gets its own listings directory,
 since a stored body records nothing about which serialization it came from.
 
-A versioned bucket name (``simple-v3``) gives zero-cost schema
-migration: when the on-disk format changes, bump the suffix and the
-old directory is harmless. ``sdist-v1`` is the exception, still read
+Bump the bucket version when its stored records can no longer be reused.
+The old directory is ignored. ``sdist-v1`` is the exception, still read
 when ``sdist-v2`` misses, since rebuilding one of its records means
 downloading the archive again.
 
@@ -94,7 +93,7 @@ __all__ = [
 ]
 
 
-CACHE_VERSION_SIMPLE = "v3"
+CACHE_VERSION_SIMPLE = "v4"
 CACHE_VERSION_SIMPLE_PARSED = "v1"
 CACHE_VERSION_SIMPLE_NEG = "v0"
 CACHE_VERSION_METADATA = "v1"
