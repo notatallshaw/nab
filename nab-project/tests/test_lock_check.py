@@ -41,7 +41,7 @@ from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import parse_metadata
 from nab_provider.overrides import PackageOverride
 from nab_provider.pep508 import parse_requirement
-from nab_provider.policy import ArchiveSource, LocalSource, VcsSource
+from nab_provider.policy import ArchiveSource, DecisionOrder, LocalSource, VcsSource
 from nab_provider.records import IndexConfig
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, MatrixInclude, ResolveTarget
@@ -103,6 +103,17 @@ def test_local_index_changes_keep_distinct_filesystem_bytes(tmp_path: Path) -> N
     changed = ResolveInputs(indexes=(IndexConfig("local", second.as_uri()),))
     with pytest.raises(LockConsistencyError, match="selections or policy changed"):
         _check((lock, path, changed, targets))
+
+
+def test_default_order_keeps_a_saved_arrival_solution(tmp_path: Path) -> None:
+    """Checking a saved solution does not repeat its search preference."""
+    case = _saved(tmp_path, inputs=ResolveInputs(decision_order=DecisionOrder.ARRIVAL))
+    lock, path, _, targets = case
+    before = lock.read_bytes()
+
+    _check((lock, path, ResolveInputs(), targets))
+
+    assert lock.read_bytes() == before
 
 
 def test_unchanged_inputs_skip_graph_planning(

@@ -135,10 +135,10 @@ class DecisionOrder(enum.Enum):
     """Whether arrived listings may steer which package is decided next."""
 
     ARRIVAL = "arrival"
-    """Rank on what has already landed, so the search keeps moving (default)."""
+    """Rank on what has already landed, so the search keeps moving."""
 
     STABLE = "stable"
-    """Wait for each listing, so the sort key cannot see arrival order."""
+    """Wait for each listing, so the sort key cannot see arrival order (default)."""
 
 
 class LocalSource(SlottedValue):

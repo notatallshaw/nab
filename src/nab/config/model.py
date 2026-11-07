@@ -282,7 +282,7 @@ class NabProjectConfig(ValueType):
         archive_sources: tuple[ArchiveSource, ...] = (),
         matrix: MatrixConfig | None = None,
         resolution: ResolutionStrategy = ResolutionStrategy.HIGHEST,
-        decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
+        decision_order: DecisionOrder = DecisionOrder.STABLE,
         workspace: WorkspaceConfig | None = None,
         conflicts: tuple[ConflictSet, ...] = (),
         package_overrides: tuple[PackageOverride, ...] = (),

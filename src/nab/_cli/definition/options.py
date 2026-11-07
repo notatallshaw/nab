@@ -132,7 +132,7 @@ class ProjectKeys(
     decision_order = Value[DecisionOrderFlag | None](
         mirrors=DecisionOrder,
         key=Layer[DecisionOrder](
-            rdefault=DecisionOrder.ARRIVAL,
+            rdefault=DecisionOrder.STABLE,
             parse=values.parse_decision_order,
             render=hooks.render_enum_value,
         ),
