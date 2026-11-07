@@ -145,6 +145,45 @@ def test_the_published_table_resolves_against_its_own_package() -> None:
     assert check_boundaries.unresolved_rows(resolver) == []
 
 
+@pytest.mark.parametrize(
+    ("module", "name", "status"),
+    [
+        ("values", "SlottedValue", 0),
+        ("result", "walk_selected", 0),
+        ("version_spans", "cached_dependency_span", 0),
+        ("ranges", "SlottedValue", 1),
+        ("report", "walk_selected", 1),
+        ("ranges", "cached_dependency_span", 1),
+    ],
+)
+def test_host_components_use_their_supported_owners(
+    workspace: FakeWorkspace,
+    capsys: pytest.CaptureFixture[str],
+    module: str,
+    name: str,
+    status: int,
+) -> None:
+    workspace.add(
+        "nab-resolver",
+        docstring="Generic host components.\n\nSupported imports:\n\n    nab_resolver.values SlottedValue\n    nab_resolver.result walk_selected\n    nab_resolver.version_spans cached_dependency_span\n",
+        values="class SlottedValue:\n    pass\n",
+        result="def walk_selected():\n    pass\n",
+        version_spans="def cached_dependency_span():\n    pass\n",
+        ranges="from .values import SlottedValue\nfrom .version_spans import cached_dependency_span\n",
+        report="from .result import walk_selected\n",
+    )
+    workspace.add(
+        "host",
+        requires=("nab-resolver",),
+        use=f"from nab_resolver.{module} import {name}\n",
+    )
+    workspace.publishes_supported_paths("nab_resolver")
+
+    assert check_boundaries.main() == status
+    if status:
+        assert f"supports {name} at nab_resolver." in capsys.readouterr().err
+
+
 @pytest.mark.parametrize(("module", "status"), [("toml_writer", 0), ("lockfile", 1)])
 def test_generated_writer_uses_its_supported_module(
     workspace: FakeWorkspace,
@@ -297,3 +336,30 @@ def test_package_with_no_directory_names_itself(workspace: FakeWorkspace) -> Non
 
     with pytest.raises(SystemExit, match="pkg-ghost is in the release package list"):
         check_boundaries.packages()
+
+
+@pytest.mark.parametrize(("module", "status"), [("priority", 0), ("resolver", 1)])
+def test_conflict_priority_uses_its_owning_module(
+    workspace: FakeWorkspace,
+    capsys: pytest.CaptureFixture[str],
+    module: str,
+    status: int,
+) -> None:
+    workspace.add(
+        "nab-resolver",
+        docstring="Conflict ordering.\nSupported imports:\n\n    nab_resolver.priority  compute_tier\n",
+        priority="def compute_tier():\n    pass\n",
+        resolver="from .priority import compute_tier\n",
+    )
+    workspace.publishes_supported_paths("nab_resolver")
+    workspace.add(
+        "nab-provider",
+        requires=("nab-resolver",),
+        use=f"from nab_resolver.{module} import compute_tier\n",
+    )
+
+    assert check_boundaries.main() == status
+    if status:
+        assert (
+            "supports compute_tier at nab_resolver.priority" in capsys.readouterr().err
+        )

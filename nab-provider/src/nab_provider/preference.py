@@ -34,6 +34,7 @@ else:
 
 
 __all__ = [
+    "CataloguePreference",
     "DependencyData",
     "IncompletePreferenceError",
     "PreferenceCatalogue",
@@ -106,6 +107,22 @@ class PreferenceCatalogue(Protocol[CandidateType, RangeType, PinnedRequirementTy
     @property
     def missing_listings(self) -> AbstractSet[str]:
         """Package listings whose absence has not been established."""
+        ...
+
+    @property
+    def unavailable(self) -> AbstractSet[CandidateType]:
+        """Candidate metadata whose absence has not been established."""
+        ...
+
+    @property
+    def unavailable_reason(self) -> str:
+        """Describe the latest listing or metadata uncertainty."""
+        ...
+
+    def prepare(
+        self, candidate: CandidateType
+    ) -> DependencyData[RangeType, PinnedRequirementType] | None:
+        """Prepare metadata only after the provider has established admission."""
         ...
 
     def choices(self, package: str) -> Sequence[CandidateType]:
@@ -236,6 +253,8 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         *,
         max_steps: int = 100_000,
         refresh_incomplete: bool = False,
+        exact_dependencies: Callable[[CandidateType], Sequence[CandidateType]]
+        | None = None,
     ) -> None:
         """Retain shared facts and the original target declarations."""
         self.roots = roots
@@ -243,6 +262,8 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         self.constraints = constraints
         self.remaining = max_steps
         self.refresh_incomplete = refresh_incomplete
+        self.exact_dependencies = exact_dependencies
+        self.stats: ResolverStats[Hashable] = ResolverStats()
 
         self.outcomes: dict[PreferenceScope[CandidateType], PreparationStatus] = {}
         self.incomplete_facts: dict[PreferenceScope[CandidateType], int] = {}
@@ -268,10 +289,16 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         """Return the host catalogue retained for this search."""
         ...
 
-    @abstractmethod
     def record_solver_stats(self, stats: ResolverStats[StatisticsPackageType]) -> None:
-        """Let the concrete consumer retain its diagnostic counters."""
-        ...
+        """Accumulate scalar and per-package work across all scoped queries."""
+        for name in ResolverStats.__slots__:
+            value = getattr(stats, name)
+            if isinstance(value, int):
+                setattr(self.stats, name, getattr(self.stats, name) + value)
+            else:
+                target = getattr(self.stats, name)
+                for package, count in value.items():
+                    target[package] += count
 
     def parents(
         self, candidate: CandidateType, selected: Mapping[str, CandidateType]
@@ -358,6 +385,28 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
             )
         return allowed
 
+    def _has_exact_parent(
+        self, candidate: CandidateType, parents: frozenset[CandidateType]
+    ) -> bool:
+        """Check whether an ancestor fixes this identity or an extra's base."""
+        exact_dependencies = self.exact_dependencies
+        if exact_dependencies is None:
+            return False
+
+        for parent in parents:
+            for child in exact_dependencies(parent):
+                if child == candidate:
+                    return True
+
+                # An extra constrains only its own base artifact.
+                if (
+                    self.catalogue.candidate_package(child)
+                    != self.catalogue.candidate_base(child)
+                    and self.catalogue.base_candidate(child) == candidate
+                ):
+                    return True
+        return False
+
     def check(
         self,
         candidate: CandidateType,
@@ -373,7 +422,9 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         if not self.catalogue.range_contains(candidate, allowed):
             return PreparationStatus.IMPOSSIBLE
 
-        if not any(
+        exact_parent = self._has_exact_parent(candidate, parents)
+        # A fixed exact edge needs the scoped proof, without an unrelated listing.
+        if not exact_parent and not any(
             not self.catalogue.candidate_withdrawn(choice)
             for choice in self.catalogue.ordered(
                 self.catalogue.candidate_base(candidate), allowed
@@ -540,7 +591,12 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
 
     def check_context(self, context: _Context[CandidateType]) -> None:
         """Check for known conflicts after the requesting solver unwinds."""
-        provider = _KnownFacts(self.catalogue, self.constraints, context)
+        provider = _KnownFacts(
+            self.catalogue,
+            self.constraints,
+            context,
+            exact_dependencies=self.exact_dependencies,
+        )
         solver: Resolver[str, int] = Resolver(provider, max_iterations=self.remaining)
         refuted = False
         try:
@@ -571,6 +627,33 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
             self.possible[context] = len(self.catalogue.facts)
 
 
+def encode_dependencies(
+    catalogue: PreferenceCatalogue[CandidateType, RangeType, PinnedRequirementType],
+    candidate: CandidateType,
+    dependencies: Mapping[str, RangeType],
+    exact_dependencies: Callable[[CandidateType], Sequence[CandidateType]] | None,
+    encode_range: Callable[[str, RangeType], Range[int]],
+    encode_candidate: Callable[[CandidateType, RangeType], Range[int]],
+) -> dict[str, Range[int]]:
+    """Refine prepared dependency edges with conjunctive candidate identities."""
+    exact: dict[str, Range[int]] = {}
+    if exact_dependencies is not None:
+        for child in exact_dependencies(candidate):
+            package = catalogue.candidate_package(child)
+            if package not in dependencies:
+                message = f"Exact candidate {child!r} has no prepared dependency edge"
+                raise ResolutionInvariantError(message)
+
+            # Different identities are simultaneous requirements, even at one version.
+            encoded = encode_candidate(child, dependencies[package])
+            exact[package] = exact.get(package, Range[int].full()) & encoded
+
+    return {
+        package: exact[package] if package in exact else encode_range(package, allowed)
+        for package, allowed in dependencies.items()
+    }
+
+
 class _KnownFacts(
     BaseProvider[str, int], Generic[CandidateType, RangeType, PinnedRequirementType]
 ):
@@ -581,9 +664,13 @@ class _KnownFacts(
         catalogue: PreferenceCatalogue[CandidateType, RangeType, PinnedRequirementType],
         constraints: Mapping[str, RangeType],
         context: _Context[CandidateType],
+        *,
+        exact_dependencies: Callable[[CandidateType], Sequence[CandidateType]]
+        | None = None,
     ) -> None:
         self.catalogue = catalogue
         self.constraints = constraints
+        self.exact_dependencies = exact_dependencies
 
         self.fixed = {
             self.catalogue.candidate_package(value): value
@@ -620,16 +707,46 @@ class _KnownFacts(
         if package in self.catalogue.missing_listings:
             raise UnavailableMetadataError(package)
 
-        return [
-            candidate
-            for candidate in candidates
-            if self.fixed.get(package, candidate) == candidate
+        return [candidate for candidate in candidates if self.eligible(candidate)]
+
+    def eligible(self, candidate: CandidateType) -> bool:
+        """Keep frozen choices, live restrictions and known metadata rejections."""
+        package = self.catalogue.candidate_package(candidate)
+        return (
+            self.fixed.get(package, candidate) == candidate
             and not (
                 self.catalogue.candidate_withdrawn(candidate)
                 and self.catalogue.candidate_base(candidate) in self.live
             )
             and (candidate not in self.facts or self.facts[candidate] is not None)
-        ]
+        )
+
+    def encode_candidate(
+        self, candidate: CandidateType, allowed: RangeType
+    ) -> Range[int]:
+        """Encode one known identity while retaining frozen proof restrictions."""
+        package = self.catalogue.candidate_package(candidate)
+        allowed = self.catalogue.intersect_ranges(
+            allowed, self.constraints.get(package, self.catalogue.full_range())
+        )
+        if not self.eligible(candidate) or not self.catalogue.range_contains(
+            candidate, allowed
+        ):
+            return Range[int].empty()
+
+        return Range[int].singleton(self.identify(candidate))
+
+    def singleton_token(self, package: str, allowed: RangeProtocol[int]) -> int | None:
+        """Recognize a registered exact domain without consulting the catalogue."""
+        return next(
+            (
+                token
+                for token, candidate in self.items.items()
+                if self.catalogue.candidate_package(candidate) == package
+                and allowed == Range.singleton(token)
+            ),
+            None,
+        )
 
     def encode(self, package: str, allowed: RangeType) -> Range[int]:
         result = Range[int].empty()
@@ -644,12 +761,24 @@ class _KnownFacts(
         conflict_counts: Mapping[str, int],
         culprit_counts: Mapping[str, int] | None = None,
     ) -> int:
-        del version_range, conflict_counts, culprit_counts
+        del conflict_counts, culprit_counts
+        if (
+            self.exact_dependencies is not None
+            and self.singleton_token(package, version_range) is not None
+        ):
+            return 1
+
         return len(self.catalogue.choices(package))
 
     def choose_version(
         self, package: str, version_range: RangeProtocol[int]
     ) -> int | None:
+        if self.exact_dependencies is not None:
+            token = self.singleton_token(package, version_range)
+            if token is not None:
+                # Registration already applied this frozen proof's restrictions.
+                return token
+
         return next(
             (
                 self.identify(value)
@@ -673,15 +802,61 @@ class _KnownFacts(
         result = (
             {}
             if data is None
-            else {
-                name: self.encode(name, allowed)
-                for name, allowed in data.dependencies.items()
-            }
+            else encode_dependencies(
+                self.catalogue,
+                candidate,
+                data.dependencies,
+                self.exact_dependencies,
+                self.encode,
+                self.encode_candidate,
+            )
         )
 
         # Extra metadata belongs to exactly the same base artifact.
         base = self.catalogue.base_name(package)
         if base != package:
             underlying = self.catalogue.base_candidate(candidate)
-            result[base] = Range.singleton(self.identify(underlying))
+            if self.exact_dependencies is None:
+                result[base] = Range.singleton(self.identify(underlying))
+            else:
+                result[base] = result.get(
+                    base, Range[int].full()
+                ) & self.encode_candidate(underlying, self.catalogue.full_range())
         return result
+
+
+class CataloguePreference(
+    PreferenceSearch[CandidateType, RangeType, PinnedRequirementType]
+):
+    """Run scoped preference proofs against a supplied candidate catalogue."""
+
+    def __init__(
+        self,
+        catalogue: PreferenceCatalogue[CandidateType, RangeType, PinnedRequirementType],
+        roots: Mapping[str, RangeType],
+        input_pins: Sequence[PinnedRequirementType],
+        constraints: Mapping[str, RangeType],
+        *,
+        max_steps: int = 100_000,
+        refresh_incomplete: bool = False,
+        exact_dependencies: Callable[[CandidateType], Sequence[CandidateType]]
+        | None = None,
+    ) -> None:
+        """Keep one host snapshot and a shared budget for its preference proofs."""
+        super().__init__(
+            roots,
+            input_pins,
+            constraints,
+            max_steps=max_steps,
+            refresh_incomplete=refresh_incomplete,
+            exact_dependencies=exact_dependencies,
+        )
+        self._catalogue = catalogue
+
+    @property
+    @_override
+    def catalogue(
+        self,
+    ) -> PreferenceCatalogue[CandidateType, RangeType, PinnedRequirementType]:
+        """Return the catalogue whose immutable facts the search shares."""
+        return self._catalogue

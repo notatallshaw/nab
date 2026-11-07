@@ -14,8 +14,9 @@ __lazy_modules__ = (
     "nab_provider.records",
 )
 
-from typing import TYPE_CHECKING, ClassVar, Final
+from typing import TYPE_CHECKING
 
+from ._compat import override
 from ._provider.extras import version_provides_extra
 from ._provider.listing_diagnosis import MetadataBlock
 from ._provider.metadata_resolver import classify_requirement, dists_at_version
@@ -27,7 +28,13 @@ from .metadata import intern_version
 from .policy import DistPolicy, ExtrasMode, MetadataPolicy
 from .preference import UnavailableMetadataError
 from .records import SdistFile, WheelFile
-from .value import HashableRecord, Record, field_names
+from .value import field_names
+from .version_candidates import (
+    PreparedVersionCatalogue,
+    VersionCandidate,
+    VersionCandidateData,
+    is_pin,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -37,47 +44,36 @@ if TYPE_CHECKING:
     from .provider import DistFile, Provider, ProviderStats
 
 
-class Candidate(HashableRecord):
+__all__ = [
+    "Candidate",
+    "CandidateData",
+    "YankCandidates",
+    "add_range",
+    "candidate_dependencies",
+    "is_pin",
+    "merge_stats",
+]
+
+
+class Candidate(VersionCandidate):
     """A package version restricted to its yanked or non-yanked files."""
 
-    __record_fields__: ClassVar[tuple[str, ...] | None]
-
-    __slots__ = __record_fields__ = ("package", "version", "withdrawn", "label")
-
-    __record_init_fields__: ClassVar[tuple[str, ...] | None] = (
-        "package",
-        "version",
-        "withdrawn",
-    )
-
-    __match_args__ = ("package", "version", "withdrawn")
-
-    package: Final[str]
-    version: Final[Version]
-    withdrawn: Final[bool]
-    label: Final[str]
-
-    def __init__(self, package: str, version: Version, *, withdrawn: bool) -> None:
-        """Select a version's withdrawn or non-withdrawn files."""
-        self.package = package
-        self.version = version
-        self.withdrawn = withdrawn
-        self.label = str(version)
+    __slots__ = ()
 
     @property
+    @override
     def base(self) -> str:
         """Return the package name without an extra proxy."""
         return split_extra(self.package)[0]
 
 
-class CandidateData(Record):
+class CandidateData(VersionCandidateData):
     """Dependencies and the provider selecting the candidate's files."""
 
-    __slots__ = __match_args__ = ("provider", "dependencies", "pins")
+    __slots__ = ("provider",)
+    __match_args__ = ("provider", "dependencies", "pins")
 
     provider: Provider
-    dependencies: dict[str, VersionRange]
-    pins: tuple[Requirement, ...]
 
     def __init__(
         self,
@@ -86,18 +82,8 @@ class CandidateData(Record):
         pins: tuple[Requirement, ...],
     ) -> None:
         """Retain candidate dependencies and independent selected pins."""
+        super().__init__(dependencies, pins)
         self.provider = provider
-        self.dependencies = dependencies
-        self.pins = pins
-
-
-def is_pin(requirement: Requirement) -> bool:
-    """Recognize original exact equality syntax, including redundant conjuncts."""
-    return any(
-        spec.operator == "==="
-        or (spec.operator == "==" and not spec.version.endswith(".*"))
-        for spec in requirement.specifier
-    )
 
 
 def add_range(ranges: dict[str, VersionRange], name: str, value: VersionRange) -> None:
@@ -106,67 +92,22 @@ def add_range(ranges: dict[str, VersionRange], name: str, value: VersionRange) -
     ranges[name] = value if previous is None else previous & value
 
 
-class YankCandidates:
+class YankCandidates(PreparedVersionCatalogue[Candidate, CandidateData]):
     """Cache candidates and metadata without granting permission to use yanked files."""
 
-    @staticmethod
-    def candidate_package(candidate: Candidate) -> str:
-        """Return the candidate's package."""
-        return candidate.package
+    range_type = VersionRange
 
     @staticmethod
-    def candidate_base(candidate: Candidate) -> str:
-        """Return the candidate's base."""
-        return candidate.base
-
-    @staticmethod
-    def candidate_label(candidate: Candidate) -> str:
-        """Return the candidate's label."""
-        return candidate.label
-
-    @staticmethod
-    def candidate_withdrawn(candidate: Candidate) -> bool:
-        """Return whether the candidate is yanked."""
-        return candidate.withdrawn
-
-    @staticmethod
-    def full_range() -> VersionRange:
-        """Return the identity for version-range intersection."""
-        return VersionRange.full()
-
-    @staticmethod
-    def intersect_ranges(left: VersionRange, right: VersionRange) -> VersionRange:
-        """Intersect two ranges using the native version algebra."""
-        return left & right
-
-    @staticmethod
-    def range_contains(candidate: Candidate, allowed: VersionRange) -> bool:
-        """Test a candidate version against native bounds."""
-        return candidate.version in allowed
-
-    @staticmethod
-    def pin_allows(pin: Requirement, candidate: Candidate) -> bool:
-        """Check whether an original pin permits this withdrawn candidate."""
-        return canonicalize_name(pin.name) == candidate.base and pin.specifier.contains(
-            candidate.version, prereleases=True
-        )
-
-    @staticmethod
+    @override
     def pin_project(pin: Requirement) -> str:
-        """Return the normalized project named by an original pin."""
+        """Normalize the project named by an original pin."""
         return canonicalize_name(pin.name)
 
     @staticmethod
+    @override
     def base_name(package: str) -> str:
         """Remove an extras proxy from a package identifier."""
         return split_extra(package)[0]
-
-    @staticmethod
-    def base_candidate(candidate: Candidate) -> Candidate:
-        """Return the matching base identity for an extra candidate."""
-        return Candidate(
-            candidate.base, candidate.version, withdrawn=candidate.withdrawn
-        )
 
     def __init__(
         self,
@@ -176,22 +117,16 @@ class YankCandidates:
         preferences: Mapping[str, Version],
     ) -> None:
         """Start one target snapshot with the caller's preparation policy."""
+        super().__init__(unavailable_reason="required metadata is unavailable")
         self.provider = provider
         self.factory = factory
         self.preferences = preferences
-        self.candidates: dict[str, tuple[Candidate, ...]] = {}
-        self.facts: dict[Candidate, CandidateData | None] = {}
-        self.unavailable: set[Candidate] = set()
-        self.missing_listings: set[str] = set()
-        self.unavailable_reason = "required metadata is unavailable"
         self.rejections: dict[Candidate, MetadataBlock] = {}
         self.child_stats: ProviderStats = type(provider.stats)()
 
-    def choices(self, package: str) -> tuple[Candidate, ...]:
+    @override
+    def read_choices(self, package: str) -> tuple[Candidate, ...]:
         """List compatible candidates without preparing their metadata."""
-        cached = self.candidates.get(package)
-        if cached is not None:
-            return cached
         versions = self.provider.fetch_versions(package)
         if self.provider.coordinator.index.is_offline_listing_miss(
             split_extra(package)[0]
@@ -202,7 +137,6 @@ class YankCandidates:
             )
             self.unavailable_reason = msg
             self.missing_listings.add(package)
-            self.candidates[package] = ()
             return ()
         result = dict.fromkeys(
             Candidate(
@@ -210,13 +144,11 @@ class YankCandidates:
             )
             for _version, file in versions
         )
-        cached = tuple(
+        return tuple(
             candidate
             for candidate in result
             if self.installable(candidate, versions, assume_sorted=True)
         )
-        self.candidates[package] = cached
-        return cached
 
     def installable(
         self,
@@ -290,12 +222,9 @@ class YankCandidates:
             provider.yank_admissions = frozenset({(candidate.base, candidate.version)})
         return provider
 
-    def prepare(self, candidate: Candidate) -> CandidateData | None:
+    @override
+    def read_candidate(self, candidate: Candidate) -> CandidateData | None:
         """Prepare a candidate after the caller has checked permission to use it."""
-        if candidate in self.facts:
-            return self.facts[candidate]
-        if candidate in self.unavailable:
-            return None
         provider = self.preparation_provider(candidate)
         try:
             data = self.read_metadata(provider, candidate)
@@ -307,7 +236,6 @@ class YankCandidates:
             if provider is not self.provider:
                 merge_stats(self.child_stats, provider.stats)
                 self.provider.consulted_markers.update(provider.consulted_markers)
-        self.facts[candidate] = data
         return data
 
     def read_metadata(
@@ -358,46 +286,37 @@ class YankCandidates:
         *,
         choices: Sequence[Candidate] | None = None,
     ) -> list[Candidate]:
-        """Order non-yanked final releases and pre-releases before yanked candidates."""
+        """Order the prepared identities using the target's version policy."""
         available = self.choices(package) if choices is None else choices
-        result: list[Candidate] = []
+        return self.order_candidates(package, version_range, available)
+
+    @override
+    def order_candidate_batch(
+        self, package: str, candidates: Sequence[Candidate]
+    ) -> list[Candidate]:
+        """Apply target strategy and exact preferred labels within a release batch."""
         base = split_extra(package)[0]
         lowest = self.provider.wants_lowest(base)
-        for withdrawn in (False, True):
-            candidates = {
-                candidate.label: candidate
-                for candidate in available
-                if candidate.withdrawn == withdrawn
-            }
-            versions = sorted(
-                (candidate.version for candidate in candidates.values()), reverse=True
-            )
-            while versions:
-                accepted = list(version_range.filter(versions))
-                if not accepted:
-                    break
-                accepted.sort(key=lambda version: (len(version.release), str(version)))
-                accepted.sort(reverse=not lowest)
-                preferred = self.preferences.get(base)
-                if preferred is not None and preferred in accepted and not lowest:
-                    picked = next(
-                        (
-                            version
-                            for version in accepted
-                            if str(version) == str(preferred)
-                        ),
-                        accepted[accepted.index(preferred)],
-                    )
-                    accepted = [
-                        version for version in accepted if str(version) != str(picked)
-                    ]
-                    accepted.insert(0, picked)
-                result.extend(candidates[str(version)] for version in accepted)
-                exhausted = {str(version) for version in accepted}
-                versions = [
-                    version for version in versions if str(version) not in exhausted
-                ]
-        return result
+        ordered = sorted(
+            candidates,
+            key=lambda candidate: (len(candidate.version.release), candidate.label),
+        )
+        ordered.sort(key=lambda candidate: candidate.version, reverse=not lowest)
+        preferred = self.preferences.get(base)
+        if lowest or preferred is None:
+            return ordered
+
+        matching = [
+            candidate for candidate in ordered if candidate.version == preferred
+        ]
+        if not matching:
+            return ordered
+
+        picked = next(
+            (candidate for candidate in matching if candidate.label == str(preferred)),
+            matching[0],
+        )
+        return [picked, *(candidate for candidate in ordered if candidate != picked)]
 
     def adopt(
         self, selected: Mapping[str, Candidate]

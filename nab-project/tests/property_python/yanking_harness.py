@@ -10,6 +10,7 @@ from nab_project._testing.coordinator_fake import make_coordinator
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.policy import ExtrasMode
+from nab_provider.preference_provider import PreferenceProvider
 from nab_provider.provider import Provider
 from nab_provider.records import WheelFile
 from nab_provider.resolver_inputs import ProxyConstraints, build_resolver_inputs
@@ -155,7 +156,7 @@ class Harness:
         self.original_prepare: Callable[[Candidate], CandidateData | None] = (
             self.search.catalogue.prepare
         )
-        self.original_clauses = YankProxyProvider.consume_pending_clauses
+        self.original_clauses = PreferenceProvider.consume_pending_clauses
         self.original_new_query = self.search.new_query
         self.current_query = self.search
         self.observations: list[Observation] = []
@@ -188,7 +189,9 @@ class Harness:
         with (
             patch.object(self.search.catalogue, "prepare", self.prepare),
             patch.object(self.search, "new_query", self.new_query),
-            patch.object(YankProxyProvider, "consume_pending_clauses", observe_clauses),
+            patch.object(
+                PreferenceProvider, "consume_pending_clauses", observe_clauses
+            ),
         ):
             try:
                 pins, provider = self.search.resolve()

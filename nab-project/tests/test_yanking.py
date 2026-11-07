@@ -230,11 +230,19 @@ def test_late_extra_adds_a_pin() -> None:
 
 def test_withdrawn_artifact_can_supply_the_required_extra() -> None:
     results, _ = run_graph(
-        [("app", "2", False, []), ("app", "2", True, [])],
+        [("app", "2", False, ["missing"]), ("app", "2", True, [])],
         ["app[x]==2"],
         provided_extras={("app", "2", True): ("x",)},
     )
     assert results[0].success, results[0].error
+
+    lock = results[0].lock
+    assert lock is not None
+    pin = lock.pins["app"]
+    assert isinstance(pin, IndexPin)
+    assert [wheel.url for wheel in pin.wheels] == [
+        "https://example.test/app-2-True.whl"
+    ]
 
 
 def test_yank_does_not_suppress_a_live_prerelease() -> None:

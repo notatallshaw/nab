@@ -192,25 +192,56 @@ as a constraint. nab drives the resolver this way, with a PEP 440 range type.
 
 ## Reuse scoped artifact preference
 
-`nab-provider` supplies `nab_provider.preference.PreferenceSearch` for hosts that prefer working
-non-yanked artifacts before admitting a permitted yanked artifact. It shares the ancestor proofs,
-scoped queries and known-metadata checks used by nab's Python provider. The module's runtime imports
-require only the standard library and `nab-resolver`; the host retains metadata preparation and
-acquisition policy.
+`nab-provider` supplies `CataloguePreference` and `PreferenceProvider` for hosts that prefer working
+non-yanked artifacts before admitting a permitted yanked artifact. Nab's Python provider uses the
+same admission, ancestor proofs and scoped solver queries. The host retains acquisition, metadata
+preparation, candidate ordering and final diagnostics.
 
-Implement `PreferenceCatalogue` for your candidate identities, dependency facts, version ranges and
-original pin declarations. Candidate listings and identities stay fixed during a search. Prepared
-facts are immutable and the cache may only gain entries. With `refresh_incomplete=True`, a larger
-cache permits rechecking an incomplete proof. Record missing listings before returning their
-queries.
+Implement `PreferenceCatalogue` for your candidate identities, version ranges and original pin
+declarations. `prepare` caches immutable dependency facts after admission has been established.
+Candidate listings stay fixed during a search; prepared facts may only gain entries. Record missing
+listings and unavailable metadata separately from established absence.
 
-Subclass `PreferenceSearch` to expose your catalogue and retain solver statistics, then call `run`
-with a callback that resolves one `PreferenceScope`. Before preparing a yanked artifact, call
-`check` with that candidate and the selected assignment. Its result either allows preparation, rules
-out that assignment, or reports an incomplete proof. `run` schedules prerequisite queries and shares
-their work budget. Terminal resolver errors retain their classification. After resolution, `explain`
-identifies the selected input or dependency pins permitting each yank; the host constructs its own
-final result and diagnostics.
+For PEP 440 hosts, `PreparedVersionCatalogue` retains candidate lists and prepared facts. Implement
+`read_choices`, `read_candidate`, candidate ordering and host name normalization; supply the host's
+range class as `range_type`. `VersionCandidate` retains original version text, and hosts with extras
+proxies override its `base` property.
+
+Construct `PreferenceProvider.from_catalogue(catalogue, roots, input_pins, constraints)` and call
+`select()` to get the selected candidate identities. The provider schedules preference queries and
+shares their work budget. `provider.preference.explain(selected)` identifies the input or dependency
+pins permitting each selected yank. Use `CataloguePreference` directly when supplying a custom
+search budget or extending the search strategy.
+
+Hosts with additional selected-plan policy can supply `metadata_is_admitted`. Supply
+`query_is_complete` when a failed query requires host evidence beyond the cached facts. With
+`refresh_incomplete=True`, a larger fact cache permits rechecking an incomplete proof. A
+`resolver_factory` callback can construct a compatible resolver with host-specific availability
+handling. Terminal resolver errors retain their classification.
+
+Create a session with `PreparedResolution.from_catalogue(...)`, then call `solve()` for selected
+candidates, dependency edges and admission reasons. The optional `selection_policy(selected)`
+callback checks a complete reachable selection using only cached metadata. Omit it when no
+additional host policy is needed.
+
+Pass `on_candidate_considered(candidate)` to observe real candidate choices without preparing
+metadata. A candidate can be reported repeatedly across availability probes, scoped queries and
+preferred-only trials. Event counts do not measure rejection; proxy-package decisions emit no
+events.
+
+`exact_dependencies(parent)` can refine existing prepared dependency edges to known candidate
+identities. Each returned child's package must already occur in `parent`'s cached dependencies;
+missing edges raise `ResolutionInvariantError`. Entries are simultaneous requirements: different
+identities for one package conflict even at the same version. Original ranges, input constraints,
+withdrawal permission and selected-plan admission still apply. Keep the callback cache-only and its
+results stable throughout the prepared snapshot. Exact children can be selected without enumerating
+unrelated candidates.
+
+`nab_resolver.priority.compute_tier` orders conflicts and culprit evidence for native and host
+providers. The existing `nab_provider.priority` imports remain available as compatibility aliases.
+
+`nab_resolver.values.SlottedValue` supplies equality, hashing and representation for declared
+fields.
 
 ## The supported API
 
@@ -220,13 +251,21 @@ These module paths will not move without a major version bump:
 nab_resolver.errors     ResolutionError, ResolutionInvariantError,
                         ResolutionLimitError,
                         ResolutionStalledError, ResolutionTerminatedError
+nab_resolver.priority   CONFLICT_THRESHOLD, CULPRIT_DEMOTE_THRESHOLD,
+                        TIER_AFFECTED, TIER_CULPRIT, TIER_NORMAL,
+                        compute_tier, is_dominant_culprit
+nab_resolver.proofs     DependencyCause, dependency_terms, external_clauses,
+                        select_dependency_causes
 nab_resolver.ranges     Range
 nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,
                         ResolverObserver, ResolverProvider, Solution
+nab_resolver.result     IncompleteSelectionError, walk_selected
 nab_resolver.root       ROOT
 nab_resolver.testing    ProviderScenario, check_provider, check_provider_scenarios
 nab_resolver.types      Incompatibility, IncompatibilityCause,
                         RangeProtocol, RootRequirement, Term
+nab_resolver.values     SlottedValue
+nab_resolver.version_spans OrderedVersion, cached_dependency_span
 ```
 
 The package root binds no names, so importing `nab_resolver` pulls in no submodules. Anything else
