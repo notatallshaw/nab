@@ -51,6 +51,9 @@ timestamp.
 
 ### `--lock-policy {resolve,prefer-existing,reuse}`
 
+Set `lock-policy` in a project, user or system `nab.toml`, or through `NAB_LOCK_POLICY`. The CLI
+flag overrides those sources. The default is `resolve`.
+
 `resolve` (default) uses ordinary resolution. `prefer-existing` checks the previous lock's
 applicable versions against current listings, metadata and artifact rules. A modified or incomplete
 model falls back to ordinary solving with the saved versions as preferences. Missing or invalid

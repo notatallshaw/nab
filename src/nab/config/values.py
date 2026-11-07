@@ -15,6 +15,7 @@ __lazy_modules__ = (
     "itertools",
     "nab_index.file_urls",
     "nab_markersets.python_versions",
+    "nab_project.lock_policy",
     "nab_project.paths",
     "nab_project.workspace",
     "nab_provider._vendor.packaging.specifiers",
@@ -53,6 +54,7 @@ from nab_project.conflicts import (
     ConflictPolicy,
     ConflictSet,
 )
+from nab_project.lock_policy import LockPolicy
 from nab_project.paths import is_usable_path_name, resolve_path
 from nab_project.value import ValueType
 from nab_project.workspace import WorkspaceConfig
@@ -562,6 +564,11 @@ def parse_http_backend(value: object, where: str) -> str:
         msg = f"{where} must be one of {list(HTTP_BACKENDS)!r}, got {value!r}"
         raise SourceConfigError(msg)
     return lowered
+
+
+def parse_lock_policy(value: object, where: str) -> LockPolicy:
+    """Read how an existing lockfile participates in locking."""
+    return parse_enum(value, where, LockPolicy, LockPolicy.RESOLVE)
 
 
 def parse_max_concurrency(value: object, where: str) -> int:

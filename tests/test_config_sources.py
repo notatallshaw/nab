@@ -1030,6 +1030,7 @@ class TestReproducibilityNotice:
                 "offline": None,
                 "cache_dir": Path("/c"),
                 "http_backend": None,
+                "lock_policy": None,
                 "max_concurrency": 16,
                 "project_mode": None,
                 "project_requires_python": None,

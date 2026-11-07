@@ -498,7 +498,7 @@ class EnvironmentKeys(
 
 
 class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
-    """The four settings a user sets once, each also a ``NAB_*`` variable."""
+    """Settings a user can supply through files, environment and CLI."""
 
     offline = Tri(
         key=Layer[bool](
@@ -544,6 +544,18 @@ class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
         env=True,
         help="how many fetches may be in flight at once",
         on=("download", "config"),
+    )
+
+    lock_policy = Value[LockPolicyFlag | None](
+        mirrors=LockPolicy,
+        key=Layer[LockPolicy](
+            rdefault=LockPolicy.RESOLVE,
+            parse=values.parse_lock_policy,
+            render=hooks.render_enum_value,
+        ),
+        env=True,
+        help="resolve, check existing choices, or reuse a consistent saved lock",
+        on=("lock", "config"),
     )
 
 
@@ -710,14 +722,6 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
         default=False,
         negatable=True,
         help="resolve afresh and check the saved lock without writing",
-        on=("lock",),
-    )
-
-    lock_policy = Value[LockPolicyFlag](
-        mirrors=LockPolicy,
-        default="resolve",
-        help="resolve, check existing choices, or reuse a consistent saved lock",
-        docs="reference/cli.md",
         on=("lock",),
     )
 

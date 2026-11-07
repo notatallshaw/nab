@@ -4,10 +4,10 @@
 
 A setting's scope determines where Nab reads it:
 
-| Scope   | Settings                                                                | Accepted sources                                                 |
-| ------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Project | Resolve settings, such as `dist-policy`, `metadata-policy` and `matrix` | Project files and available `--project-*` flags                  |
-| User    | `offline`, `cache-dir`, `http-backend`, `max-concurrency`               | System, user or project `nab.toml`; `NAB_*` variables; CLI flags |
+| Scope   | Settings                                                                 | Accepted sources                                                 |
+| ------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| Project | Resolve settings, such as `dist-policy`, `metadata-policy` and `matrix`  | Project files and available `--project-*` flags                  |
+| User    | `offline`, `cache-dir`, `http-backend`, `max-concurrency`, `lock-policy` | System, user or project `nab.toml`; `NAB_*` variables; CLI flags |
 
 `pyproject.toml` accepts project settings under `[tool.nab]`. Standalone `nab.toml` files use keys
 at the top level. For example, a user file can set machine-specific defaults:
@@ -58,12 +58,13 @@ Directory-level `nab.toml` discovery uses the directory containing `pyproject.to
 
 Only user settings have `NAB_*` bindings:
 
-| Variable              | Option            | Value                          |
-| --------------------- | ----------------- | ------------------------------ |
-| `NAB_OFFLINE`         | `offline`         | `1`, `0`, `true` or `false`    |
-| `NAB_CACHE_DIR`       | `cache-dir`       | Cache path                     |
-| `NAB_HTTP_BACKEND`    | `http-backend`    | `urllib3`, `httpx` or `httpx2` |
-| `NAB_MAX_CONCURRENCY` | `max-concurrency` | Positive integer               |
+| Variable              | Option            | Value                                   |
+| --------------------- | ----------------- | --------------------------------------- |
+| `NAB_OFFLINE`         | `offline`         | `1`, `0`, `true` or `false`             |
+| `NAB_CACHE_DIR`       | `cache-dir`       | Cache path                              |
+| `NAB_HTTP_BACKEND`    | `http-backend`    | `urllib3`, `httpx` or `httpx2`          |
+| `NAB_LOCK_POLICY`     | `lock-policy`     | `resolve`, `prefer-existing` or `reuse` |
+| `NAB_MAX_CONCURRENCY` | `max-concurrency` | Positive integer                        |
 
 Unknown `NAB_*` names produce a warning. `-qq` and `NAB_VERBOSITY=silent` suppress it.
 `NAB_VERBOSITY` and `NAB_NO_PROGRESS` are [output settings](cli.md).

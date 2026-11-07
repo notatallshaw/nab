@@ -21,6 +21,7 @@ __lazy_modules__ = (
     "nab._run",
     "nab._version",
     "nab.config.model",
+    "nab.config.values",
     "nab.flagtypes",
     "nab.output",
     "nab_project",
@@ -139,6 +140,7 @@ from ._run import (
     select_input,
 )
 from .config.model import NabProjectConfig, ResolveMode, plan_targets
+from .config.values import SourceConfigError
 from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,
     DecisionOrderFlag,
@@ -241,7 +243,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     upgrade: bool = False,
     locked: bool = False,
     reproduce: bool = False,
-    lock_policy: LockPolicyFlag = "resolve",
+    lock_policy: LockPolicyFlag | None = None,
 ) -> None:
     """Resolve dependencies and emit a lockfile or pin list.
 
@@ -272,7 +274,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     ``--locked`` checks the saved solution without resolving or writing.
     ``--reproduce`` resolves afresh and checks that the output is identical.
     """
-    selected_lock_policy = LockPolicy(lock_policy)
+    selected_lock_policy = LockPolicy(lock_policy or "resolve")
     path, input_format = select_input(path, script)
     check_script_options(
         input_format,
@@ -311,6 +313,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         cli_offline=offline,
         cli_cache_dir=cache_dir,
         cli_http_backend=http_backend,
+        cli_lock_policy=lock_policy,
         cli_mode=project_mode,
         cli_requires_python=project_requires_python,
         cli_uploaded_prior_to=project_uploaded_prior_to,
@@ -342,6 +345,15 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
 
     ladder = read_config_ladder(path, overrides, input_format=input_format)
     _reject_python_flag_in_universal(ladder, python)
+    selected_lock_policy = _configured_lock_policy(
+        ladder,
+        current=selected_lock_policy,
+        output=output,
+        format_name=format,
+        locked=locked,
+        reproduce=reproduce,
+        upgrade=upgrade,
+    )
     anchor = _determine_lock_anchor(
         ladder,
         output=output,
@@ -759,6 +771,32 @@ class _LockRun(Record):
         if self.lock_policy is not LockPolicy.RESOLVE:
             arguments.extend(("--lock-policy", self.lock_policy.value))
         return arguments
+
+
+def _configured_lock_policy(
+    ladder: ConfigLadder,
+    *,
+    current: LockPolicy,
+    output: Path | None,
+    format_name: LockFormat,
+    locked: bool,
+    reproduce: bool,
+    upgrade: bool,
+) -> LockPolicy:
+    """Apply configured policy restrictions after explicit CLI checks."""
+    if isinstance(ladder, SourceConfigError):
+        return current
+    configured = LockPolicy(ladder["lock-policy"].value)
+    if configured is not current:
+        _validate_lock_mode(
+            output=output,
+            format=format_name,
+            locked=locked,
+            reproduce=reproduce,
+            upgrade=upgrade,
+            lock_policy=configured,
+        )
+    return configured
 
 
 def _validate_lock_mode(

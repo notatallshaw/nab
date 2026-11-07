@@ -87,6 +87,7 @@ def hermetic_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(_run, "config_search_roots", fake_roots)
     monkeypatch.delenv("NAB_OFFLINE", raising=False)
     monkeypatch.delenv("NAB_CACHE_DIR", raising=False)
+    monkeypatch.delenv("NAB_LOCK_POLICY", raising=False)
     monkeypatch.delenv("NAB_RESOLUTION", raising=False)
     return project_dir
 

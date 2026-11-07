@@ -87,6 +87,7 @@ _PAGES = (
     ("cache-dir", "reference/cache.md"),
     ("http-backend", "reference/cli.md"),
     ("max-concurrency", "reference/cli.md"),
+    ("lock-policy", "reference/cli.md"),
     ("path", "reference/cli.md"),
     ("action", "reference/cli.md"),
     ("key", "reference/cli.md"),
@@ -108,7 +109,6 @@ _PAGES = (
     ("upgrade", "reference/cli.md"),
     ("locked", "reference/cli.md"),
     ("reproduce", "reference/cli.md"),
-    ("lock-policy", "reference/cli.md"),
     ("include-rejected", "reference/cli.md"),
 )
 
@@ -192,8 +192,8 @@ class TestTheDeclaredTable:
 
         keyed = [row for row in ALL if row.key]
 
-        assert len(keyed) == 33
-        assert sum(1 for row in keyed if row.cli_flag) == 20
+        assert len(keyed) == 34
+        assert sum(1 for row in keyed if row.cli_flag) == 21
         assert sum(1 for row in keyed if not row.commands) == 13
 
     def test_the_sub_rows_spell_the_two_tables(self) -> None:
@@ -222,14 +222,15 @@ class TestTheDeclaredTable:
         keyed = [row for row in ALL if row.key]
 
         assert sum(row.scope is Scope.PROJECT for row in keyed) == 29
-        assert sum(row.scope is Scope.USER for row in keyed) == 4
+        assert sum(row.scope is Scope.USER for row in keyed) == 5
 
-    def test_the_environment_names_are_the_four_user_keys(self) -> None:
+    def test_the_environment_names_are_the_user_keys(self) -> None:
         assert [row.env_var for row in ALL if row.env_var] == [
             "NAB_OFFLINE",
             "NAB_CACHE_DIR",
             "NAB_HTTP_BACKEND",
             "NAB_MAX_CONCURRENCY",
+            "NAB_LOCK_POLICY",
         ]
 
     def test_a_row_declares_a_page_and_a_line_of_help(self) -> None:

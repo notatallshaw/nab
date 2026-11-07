@@ -134,6 +134,95 @@ def test_default_still_selects_new_highest_releases(registry: Registry) -> None:
     assert registry.versions() == {"a": "2", "b": "2"}
 
 
+@pytest.mark.parametrize("source", ["system", "user", "project", "environment"])
+@pytest.mark.parametrize("policy", ["prefer-existing", "reuse"])
+def test_file_and_environment_lock_policy_use_saved_versions(
+    registry: Registry,
+    monkeypatch: pytest.MonkeyPatch,
+    source: str,
+    policy: str,
+) -> None:
+    assert registry.command() == 0
+    registry.add_release()
+    if source == "environment":
+        monkeypatch.setenv("NAB_LOCK_POLICY", policy)
+    else:
+        directory = (
+            registry.project.parent
+            if source == "project"
+            else registry.project.parent.parent
+            / ("sys" if source == "system" else "usr")
+        )
+        directory.mkdir(exist_ok=True)
+        (directory / "nab.toml").write_text(f'lock-policy = "{policy}"\n')
+
+    ports_before = len(registry.ports)
+    assert registry.command() == 0
+    assert registry.versions() == {"a": "1", "b": "1"}
+    if policy == "reuse":
+        assert len(registry.ports) == ports_before
+    else:
+        assert registry.ports[-1].calls_to("request_metadata")
+
+
+def test_explicit_resolve_overrides_environment_and_file_reuse(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert registry.command() == 0
+    registry.add_release()
+    registry.project.with_name("nab.toml").write_text('lock-policy = "reuse"\n')
+    monkeypatch.setenv("NAB_LOCK_POLICY", "prefer-existing")
+
+    assert registry.command("--lock-policy", "resolve") == 0
+    assert registry.versions() == {"a": "2", "b": "2"}
+
+
+@pytest.mark.parametrize("value", ['"unknown"', "true", "17"])
+def test_invalid_file_lock_policy_is_rejected_before_transport(
+    registry: Registry, value: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry.project.with_name("nab.toml").write_text(f"lock-policy = {value}\n")
+
+    assert registry.command() == 1
+    assert not registry.ports
+    assert "lock-policy" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("argument", ["--locked", "--reproduce"])
+def test_configured_reuse_preserves_mode_restrictions(
+    registry: Registry, argument: str
+) -> None:
+    assert registry.command() == 0
+    registry.project.with_name("nab.toml").write_text('lock-policy = "reuse"\n')
+    ports_before = len(registry.ports)
+
+    assert registry.command(argument) == 1
+    assert len(registry.ports) == ports_before
+
+
+def test_config_inspection_reports_file_and_cli_lock_policy(
+    registry: Registry, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry.project.with_name("nab.toml").write_text('lock-policy = "reuse"\n')
+    assert run(("config", "get", "lock-policy", "--path", str(registry.project))) == 0
+    assert capsys.readouterr().out.strip() == "reuse"
+    assert (
+        run(
+            (
+                "config",
+                "get",
+                "lock-policy",
+                "--path",
+                str(registry.project),
+                "--lock-policy",
+                "resolve",
+            )
+        )
+        == 0
+    )
+    assert capsys.readouterr().out.strip() == "resolve"
+
+
 def test_missing_prior_uses_a_fresh_resolution(registry: Registry) -> None:
     registry.add_release()
 

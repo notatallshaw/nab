@@ -21,6 +21,7 @@ from .._cli.definition.model import (
     Tokens,
     VType,
 )
+from nab_project.lock_policy import LockPolicy
 from nab_provider.policy import (
     BuildPolicy,
     DecisionOrder,
@@ -517,6 +518,24 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="int",
         sample="4",
         help="how many fetches may be in flight at once",
+        docs="reference/cli.md",
+        generated=True,
+    ),
+    Opt(
+        "lock-policy",
+        scope=Scope.USER,
+        kind=Kind.VALUE,
+        vtype=VType.CHOICE,
+        choices=("resolve", "prefer-existing", "reuse"),
+        nullable=True,
+        env=True,
+        commands=("lock", "config"),
+        default=None,
+        rdefault=LockPolicy.RESOLVE,
+        parse=values.parse_lock_policy,
+        render=hooks.render_enum_value,
+        type_label="enum(resolve|prefer-existing|reuse)",
+        help="resolve, check existing choices, or reuse a consistent saved lock",
         docs="reference/cli.md",
         generated=True,
     ),

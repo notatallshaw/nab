@@ -81,6 +81,7 @@ _CLI_FLAG_CASES: tuple[tuple[str, str, str], ...] = (
     ("cache-dir", "wheels-cache", "wheels-cache"),
     ("http-backend", "httpx", "httpx"),
     ("http-backend", "httpx2", "httpx2"),
+    ("lock-policy", "reuse", "reuse"),
     ("max-concurrency", "5", "5"),
 )
 
