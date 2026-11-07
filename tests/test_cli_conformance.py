@@ -271,4 +271,4 @@ class TestHooksReadWhatTheWalkStores:
     def test_the_settable_keys_are_accounted_for(self) -> None:
         """A derivation that emptied would leave the case above with no rows."""
 
-        assert len(_SETTABLE) == 20
+        assert len(_SETTABLE) == 21

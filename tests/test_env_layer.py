@@ -274,7 +274,7 @@ def _rejections(environ: dict[str, str]) -> list[RejectedLayer]:
 def test_the_unknown_name_message_names_every_variable_nab_honours() -> None:
     """The message set is every ``NAB_*`` name that takes effect.
 
-    The four keyed rows that declare an env var plus the two the output
+    The keyed rows that declare an env var plus the two the output
     layer owns, which the layer skips but nab still reads.  The text is
     pinned whole because it is the list a user reads to find the name they
     meant.
@@ -284,7 +284,7 @@ def test_the_unknown_name_message_names_every_variable_nab_honours() -> None:
     assert rejected.reason == (
         "NAB_OFLINE is not a recognized nab setting and was ignored\n    try: use one of the known"
         " NAB_* variables: NAB_CACHE_DIR, NAB_HTTP_BACKEND,"
-        " NAB_MAX_CONCURRENCY, NAB_NO_PROGRESS, NAB_OFFLINE, NAB_VERBOSITY"
+        " NAB_LOCK_POLICY, NAB_MAX_CONCURRENCY, NAB_NO_PROGRESS, NAB_OFFLINE, NAB_VERBOSITY"
     )
 
 

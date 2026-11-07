@@ -33,7 +33,7 @@ def _cache_command() -> None:
 
 
 def _config_command() -> None:
-    """``nab config``: 34 parameters."""
+    """``nab config``: 35 parameters."""
     config_command(
         ConfigWords.action,
         ConfigWords.key,
@@ -66,6 +66,7 @@ def _config_command() -> None:
         cache_dir=UserKeys.cache_dir,
         http_backend=UserKeys.http_backend,
         max_concurrency=UserKeys.max_concurrency,
+        lock_policy=UserKeys.lock_policy,
         path=CacheWords.path,
         script=RunFlags.script,
         include_rejected=RunFlags.include_rejected,
@@ -104,6 +105,7 @@ def _lock() -> None:
         offline=UserKeys.offline,
         cache_dir=UserKeys.cache_dir,
         http_backend=UserKeys.http_backend,
+        lock_policy=UserKeys.lock_policy,
         output=CacheWords.output,
         script=RunFlags.script,
         format=RunFlags.format,
@@ -119,7 +121,6 @@ def _lock() -> None:
         upgrade=RunFlags.upgrade,
         locked=RunFlags.locked,
         reproduce=RunFlags.reproduce,
-        lock_policy=RunFlags.lock_policy,
     )
 
 
