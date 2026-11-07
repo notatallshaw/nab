@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="405" viewBox="0 0 1080 405" role="img" aria-labelledby="title desc">
+<title id="title">Scientific packages · Fresh lock · 9 consumer targets</title>
+<desc id="desc">cold: Nab default 1.4 s, Nab performance 1.1 s, uv 0.39 s, Poetry 2.1 s, PDM 7.6 s; hot: Nab default 0.23 s, Nab performance 0.22 s, uv 16 ms, Poetry 0.93 s, PDM 6.1 s. Medians of ten complete native commands per tool and cache state. Both panels use the same linear scale. Shorter is faster.</desc>
+<g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+<text x="24" y="28" fill="#1f2328" font-size="17" font-weight="600">Scientific packages · Fresh lock · 9 consumer targets</text>
+<text x="24" y="50" fill="#59636e" font-size="12">GitHub-hosted Ubuntu 24.04 · CPython 3.15.0 · 10 native commands per tool and cache state</text>
+<text x="195" y="81" fill="#1f2328" font-size="15" font-weight="600">Cold application cache</text>
+<path d="M195.000 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="195.000" y="353" fill="#59636e" font-size="11" text-anchor="middle">0 s</text>
+<path d="M275.000 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="275.000" y="353" fill="#59636e" font-size="11" text-anchor="middle">2 s</text>
+<path d="M355.000 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="355.000" y="353" fill="#59636e" font-size="11" text-anchor="middle">4 s</text>
+<path d="M435.000 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="435.000" y="353" fill="#59636e" font-size="11" text-anchor="middle">6 s</text>
+<path d="M515.000 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="515.000" y="353" fill="#59636e" font-size="11" text-anchor="middle">8 s</text>
+<rect id="cold-nab-default" x="195" y="102" width="56.492" height="25" rx="4" fill="#059669"/>
+<text x="259.492" y="120" fill="#1f2328" font-size="14">1.4 s</text>
+<rect id="cold-nab-performance" x="195" y="148" width="43.009" height="25" rx="4" fill="#0f766e"/>
+<text x="246.009" y="166" fill="#1f2328" font-size="14">1.1 s</text>
+<rect id="cold-uv" x="195" y="194" width="15.690" height="25" rx="4" fill="#2563eb"/>
+<text x="218.690" y="212" fill="#1f2328" font-size="14">0.39 s</text>
+<rect id="cold-poetry" x="195" y="240" width="84.475" height="25" rx="4" fill="#2563eb"/>
+<text x="287.475" y="258" fill="#1f2328" font-size="14">2.1 s</text>
+<rect id="cold-pdm" x="195" y="286" width="302.009" height="25" rx="4" fill="#2563eb"/>
+<text x="505.009" y="304" fill="#1f2328" font-size="14">7.6 s</text>
+<text x="655" y="81" fill="#1f2328" font-size="15" font-weight="600">Warm application cache</text>
+<path d="M655.000 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="655.000" y="353" fill="#59636e" font-size="11" text-anchor="middle">0 s</text>
+<path d="M735.000 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="735.000" y="353" fill="#59636e" font-size="11" text-anchor="middle">2 s</text>
+<path d="M815.000 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="815.000" y="353" fill="#59636e" font-size="11" text-anchor="middle">4 s</text>
+<path d="M895.000 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="895.000" y="353" fill="#59636e" font-size="11" text-anchor="middle">6 s</text>
+<path d="M975.000 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="975.000" y="353" fill="#59636e" font-size="11" text-anchor="middle">8 s</text>
+<rect id="hot-nab-default" x="655" y="102" width="9.239" height="25" rx="4" fill="#059669"/>
+<text x="672.239" y="120" fill="#1f2328" font-size="14">0.23 s</text>
+<rect id="hot-nab-performance" x="655" y="148" width="8.654" height="25" rx="4" fill="#0f766e"/>
+<text x="671.654" y="166" fill="#1f2328" font-size="14">0.22 s</text>
+<rect id="hot-uv" x="655" y="194" width="0.648" height="25" rx="4" fill="#2563eb"/>
+<text x="663.648" y="212" fill="#1f2328" font-size="14">16 ms</text>
+<rect id="hot-poetry" x="655" y="240" width="37.079" height="25" rx="4" fill="#2563eb"/>
+<text x="700.079" y="258" fill="#1f2328" font-size="14">0.93 s</text>
+<rect id="hot-pdm" x="655" y="286" width="244.555" height="25" rx="4" fill="#2563eb"/>
+<text x="907.555" y="304" fill="#1f2328" font-size="14">6.1 s</text>
+<text x="24" y="120" fill="#1f2328" font-size="15">Nab default</text>
+<text x="24" y="166" fill="#1f2328" font-size="15">Nab performance</text>
+<text x="24" y="212" fill="#1f2328" font-size="15">uv</text>
+<text x="24" y="258" fill="#1f2328" font-size="15">Poetry</text>
+<text x="24" y="304" fill="#1f2328" font-size="15">PDM</text>
+<text x="24" y="380" fill="#59636e" font-size="12">Includes CLI startup and native lock command; exports and independent validation excluded.</text>
+<text x="24" y="399" fill="#59636e" font-size="12">Application cache state only; OS caches were not cleared. Shorter is faster.</text>
+</g>
+</svg>
