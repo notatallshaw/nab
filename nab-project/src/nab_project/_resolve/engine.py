@@ -873,7 +873,11 @@ class _TargetAttempt:
     ) -> None:
         """Keep a validated model; discard trial state when it fails."""
         if hint is None or (
-            unchanged_only and any(root.package not in hint for root in roots)
+            unchanged_only
+            and any(
+                root.package not in hint or hint[root.package] not in root.constraint
+                for root in roots
+            )
         ):
             return
 
@@ -933,7 +937,17 @@ def _target_preferences(
     if not prior:
         return preferences, None
 
-    return {**preferences, **prior}, prior
+    merged = {**preferences, **prior}
+    # Extend only when the aligned model preserves this target's prior pins.
+    model_hint = (
+        prior
+        if any(
+            preferences.get(package, version) != version
+            for package, version in prior.items()
+        )
+        else merged
+    )
+    return merged, model_hint
 
 
 def _resolve_one_target(
@@ -968,7 +982,9 @@ def _resolve_one_target(
     except ResolutionError as exc:
         return TargetResult(target=target, success=False, error=exc)
 
-    preferences, prior = _target_preferences(settings, target, contexts, preferences)
+    preferences, model_hint = _target_preferences(
+        settings, target, contexts, preferences
+    )
 
     provider_factory = partial(
         _make_target_provider,
@@ -992,8 +1008,13 @@ def _resolve_one_target(
         attempt.try_preferred(
             root_requirements,
             resolver_constraints,
-            _preferred_hint(settings, prior or preferences, requirements, constraints),
-            unchanged_only=prior is not None,
+            _preferred_hint(
+                settings,
+                model_hint if model_hint is not None else preferences,
+                requirements,
+                constraints,
+            ),
+            unchanged_only=model_hint is not None,
         )
         provider, resolver = attempt.provider, attempt.resolver
         prior_stats = attempt.prior_stats

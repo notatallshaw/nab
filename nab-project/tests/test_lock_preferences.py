@@ -254,9 +254,11 @@ def test_current_base_group_controls_applicable_previous_versions(
     assert result.target_results[0].pins == {"a": Version("1" if base_group else "2")}
 
 
-def test_new_root_skips_an_impossible_unchanged_model(
+@pytest.fixture
+def prepared_modes(
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
+) -> list[bool]:
+    """Record each real provider preparation's unchanged-only mode."""
     prepared: list[bool] = []
     original = Provider.prepare_preferred_releases
 
@@ -270,22 +272,206 @@ def test_new_root_skips_an_impossible_unchanged_model(
         original(self, preferred, unchanged_only=unchanged_only)
 
     monkeypatch.setattr(Provider, "prepare_preferred_releases", observe)
+    return prepared
+
+
+@pytest.mark.parametrize("target_count", [1, 2])
+@pytest.mark.parametrize("previous_change", ["none", "root", "dependency"])
+def test_new_root_joins_later_target_preferred_models(
+    prepared_modes: list[bool],
+    target_count: int,
+    previous_change: str,
+) -> None:
+    new = make_wheel("1", package="new")
+    listings = {
+        "a": [make_wheel(version, package="a") for version in ("1", "2")],
+        "new": [new],
+    }
+    metadata = {}
+    for name, files in listings.items():
+        for wheel in files:
+            assert wheel.metadata_url is not None
+            dependencies = (
+                ("a>=2",) if name == "new" and previous_change == "dependency" else ()
+            )
+            metadata[wheel.metadata_url] = make_metadata(
+                name, wheel.version, *dependencies
+            )
+    port = make_coordinator(listings=listings, metadata_by_url=metadata)
+
+    result = resolve_with_coordinator(
+        port,
+        [target(), target("windows_amd64")][:target_count],
+        [Requirement("a>=2" if previous_change == "root" else "a"), Requirement("new")],
+        lock_preferences=LockPreferences(prior(wheel_package())),
+        inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+    )
+    result.raise_for_failure()
+
+    assert [item.pins for item in result.target_results] == [
+        {"a": Version("1" if previous_change == "none" else "2"), "new": Version("1")}
+    ] * target_count
+    assert prepared_modes == (
+        [True] * (target_count - 1) if previous_change == "none" else []
+    )
+
+
+def test_changed_root_bounds_refuse_prior_preparation(
+    prepared_modes: list[bool],
+) -> None:
     port = make_coordinator(
-        listings={name: [make_wheel("1", package=name)] for name in ("a", "new")},
+        listings={"a": [make_wheel(version, package="a") for version in ("1", "2")]},
         auto_metadata=True,
     )
 
     result = resolve_with_coordinator(
         port,
-        [target()],
+        [target(), target("windows_amd64")],
+        [Requirement("a>=2")],
+        lock_preferences=LockPreferences(prior(wheel_package())),
+        inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+    )
+    result.raise_for_failure()
+
+    assert [item.pins for item in result.target_results] == [
+        {"a": Version("2")},
+        {"a": Version("2")},
+    ]
+    assert prepared_modes == []
+
+
+def test_alignment_without_a_previous_lock_can_change_a_root_version(
+    prepared_modes: list[bool],
+) -> None:
+    port = make_coordinator(
+        listings={
+            "a": [
+                make_wheel("1", package="a", requires_python="<3.13"),
+                make_wheel("2", package="a", requires_python=">=3.13"),
+            ]
+        },
+        auto_metadata=True,
+    )
+
+    result = resolve_with_coordinator(
+        port,
+        [target(python="3.12"), target(python="3.13")],
+        [
+            Requirement('a>=1; python_version < "3.13"'),
+            Requirement('a>=2; python_version >= "3.13"'),
+        ],
+        inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+    )
+    result.raise_for_failure()
+
+    assert [item.pins for item in result.target_results] == [
+        {"a": Version("1")},
+        {"a": Version("2")},
+    ]
+    assert prepared_modes == [False]
+
+
+def test_new_root_alignment_preserves_each_targets_previous_version() -> None:
+    preferences = LockPreferences(
+        prior(
+            wheel_package(version="1", marker='sys_platform == "linux"'),
+            wheel_package(version="2", marker='sys_platform == "win32"'),
+        )
+    )
+    port = make_coordinator(
+        listings={
+            "a": [make_wheel(version, package="a") for version in ("1", "2")],
+            "new": [make_wheel("1", package="new")],
+        },
+        auto_metadata=True,
+    )
+
+    result = resolve_with_coordinator(
+        port,
+        [target(), target("windows_amd64")],
+        [Requirement("a"), Requirement("new")],
+        lock_preferences=preferences,
+        inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+    )
+    result.raise_for_failure()
+
+    assert [item.pins for item in result.target_results] == [
+        {"a": Version("1"), "new": Version("1")},
+        {"a": Version("2"), "new": Version("1")},
+    ]
+
+
+@pytest.mark.parametrize("metadata_python", [False, True])
+def test_new_root_alignment_rechecks_later_python_admission(
+    metadata_python: bool,
+) -> None:
+    a = make_wheel("1", package="a")
+    first = make_wheel(
+        "1", package="new", requires_python=None if metadata_python else "<3.13"
+    )
+    later = make_wheel("2", package="new", requires_python=">=3.13")
+    assert a.metadata_url is not None
+    assert first.metadata_url is not None
+    assert later.metadata_url is not None
+    port = make_coordinator(
+        listings={"a": [a], "new": [first, later]},
+        metadata_by_url={
+            a.metadata_url: make_metadata("a", "1"),
+            first.metadata_url: make_metadata(
+                "new", "1", requires_python="<3.13" if metadata_python else None
+            ),
+            later.metadata_url: make_metadata("new", "2", requires_python=">=3.13"),
+        },
+    )
+
+    result = resolve_with_coordinator(
+        port,
+        [target(python="3.12"), target(python="3.13")],
         [Requirement("a"), Requirement("new")],
         lock_preferences=LockPreferences(prior(wheel_package())),
         inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
     )
     result.raise_for_failure()
 
-    assert result.target_results[0].pins == {"a": Version("1"), "new": Version("1")}
-    assert prepared == []
+    assert [item.pins for item in result.target_results] == [
+        {"a": Version("1"), "new": Version("1")},
+        {"a": Version("1"), "new": Version("2")},
+    ]
+
+
+def test_new_root_alignment_reads_later_target_extra_dependencies() -> None:
+    wheels = {name: make_wheel("1", package=name) for name in ("a", "new", "child")}
+    metadata = {}
+    for name, wheel in wheels.items():
+        assert wheel.metadata_url is not None
+        metadata[wheel.metadata_url] = (
+            make_metadata(
+                "new",
+                "1",
+                'child; extra == "fast" and sys_platform == "win32"',
+                provides_extra=("fast",),
+            )
+            if name == "new"
+            else make_metadata(name, "1")
+        )
+    port = make_coordinator(
+        listings={name: [wheel] for name, wheel in wheels.items()},
+        metadata_by_url=metadata,
+    )
+
+    result = resolve_with_coordinator(
+        port,
+        [target(), target("windows_amd64")],
+        [Requirement("a"), Requirement("new[fast]")],
+        lock_preferences=LockPreferences(prior(wheel_package())),
+        inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+    )
+    result.raise_for_failure()
+
+    assert [item.pins for item in result.target_results] == [
+        {"a": Version("1"), "new": Version("1")},
+        {"a": Version("1"), "new": Version("1"), "child": Version("1")},
+    ]
 
 
 def test_default_and_explicit_groups_share_the_extra_context() -> None:
