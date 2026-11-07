@@ -212,6 +212,24 @@ def test_fact_ordering_preserves_preferences_and_strategy(
     assert facts.ordered("dep", VersionRange.empty()) == []
 
 
+@pytest.mark.parametrize(
+    ("preference", "expected"),
+    [
+        ("9", ["2", "1", "1.0"]),
+        ("1.0.0", ["1", "2", "1.0"]),
+    ],
+)
+def test_fact_ordering_handles_missing_preferred_versions_and_labels(
+    preference: str, expected: list[str]
+) -> None:
+    facts = catalogue([("dep", version, False, []) for version in ("1", "1.0", "2")])
+    facts.preferences = {"dep": Version(preference)}
+
+    assert [
+        candidate.label for candidate in facts.ordered("dep", VersionRange.full())
+    ] == expected
+
+
 def test_source_install_requires_a_source_in_the_selected_file_class() -> None:
     facts = catalogue([("dep", "2", False, [])])
     facts.provider.dist_policy = DistPolicy.SDIST_ONLY

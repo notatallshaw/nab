@@ -78,6 +78,7 @@ class PreferenceProvider(
             [ResolverProvider[Package, int], int], Resolver[Package, int]
         ]
         | None = None,
+        preferred_candidate: Callable[[str], CandidateType | None] | None = None,
     ) -> None:
         """Retain one search and the host's metadata and completeness policies."""
         self.preference = preference
@@ -96,6 +97,9 @@ class PreferenceProvider(
 
         self.items: dict[int, CandidateType] = {}
         self.identities: dict[CandidateType, int] = {}
+        self.package_tokens: dict[str, set[int]] = {}
+        self.matching_counts: dict[tuple[str, RangeProtocol[int]], int] = {}
+        self.immediate_metadata: set[int] = set()
         self.proofs: dict[PermissionProxy, dict[Support, int]] = {}
         self.supports: dict[int, Support] = {}
         self.decisions: Mapping[Package, int] = {}
@@ -107,6 +111,7 @@ class PreferenceProvider(
         self._metadata_is_admitted = metadata_is_admitted
         self._query_is_complete = query_is_complete
         self.resolver_factory = resolver_factory
+        self.preferred_candidate = preferred_candidate
 
     @staticmethod
     def from_catalogue(
@@ -224,6 +229,8 @@ class PreferenceProvider(
             token = len(self.items) + 1
             self.identities[candidate] = token
             self.items[token] = candidate
+            package = self.catalogue.candidate_package(candidate)
+            self.package_tokens.setdefault(package, set()).add(token)
         return token
 
     def encode_range(self, package: str, allowed: RangeType) -> Range[int]:
@@ -328,9 +335,8 @@ class PreferenceProvider(
         version_range: RangeProtocol[int],
         conflict_counts: Mapping[Package, int],
         culprit_counts: Mapping[Package, int] | None = None,
-    ) -> tuple[int, int]:
-        """Choose real candidates using conflict evidence, then permitted metadata."""
-        del version_range
+    ) -> tuple[int, int, int, int]:
+        """Propagate live metadata, then rank forced and preferred package choices."""
         if isinstance(package, str):
             # Restarts must revise real-package order while permission stays lazy.
             tier = compute_tier(
@@ -339,8 +345,37 @@ class PreferenceProvider(
                 0 if culprit_counts is None else culprit_counts.get(package, 0),
                 culprit_counts,
             )
-            return (0, tier)
-        return (1 if isinstance(package, MetadataProxy) else 2, 0)
+            token = self._preferred_token(package)
+            preferred_rank = int(token is None or token not in version_range)
+            return (
+                0,
+                tier,
+                min(self._matching_count(package, version_range), 2),
+                preferred_rank,
+            )
+        if isinstance(package, MetadataProxy):
+            if package.candidate in self.immediate_metadata:
+                return (-1, 0, 0, 0)
+            return (1, 0, 0, 0)
+        return (2, 0, 0, 0)
+
+    def _matching_count(self, package: str, allowed: RangeProtocol[int]) -> int:
+        """Count registered eligible identities without reading another listing."""
+        key = package, allowed
+        if key not in self.matching_counts:
+            self.matching_counts[key] = sum(
+                token in allowed for token in self.package_tokens.get(package, ())
+            )
+        return self.matching_counts[key]
+
+    def _preferred_token(self, package: str) -> int | None:
+        """Find an already registered host preference without preparing it."""
+        preferred = (
+            None
+            if self.preferred_candidate is None
+            else self.preferred_candidate(package)
+        )
+        return None if preferred is None else self.identities.get(preferred)
 
     def block_context(self, package: Package) -> None:
         """Reject selected choices without excluding a candidate globally."""
@@ -385,7 +420,7 @@ class PreferenceProvider(
         if isinstance(package, str):
             # Cached dependencies need incompatibilities before excluding candidates.
             allowed = self.constraints.get(package, self.catalogue.full_range())
-            return next(
+            token = next(
                 (
                     self.identify(c)
                     for c in self.catalogue.ordered(package, allowed)
@@ -393,6 +428,19 @@ class PreferenceProvider(
                 ),
                 None,
             )
+            if token is not None:
+                # Keep the offered domain before the decision narrows it to a singleton.
+                immediate = not self.catalogue.candidate_withdrawn(
+                    self.items[token]
+                ) and (
+                    self._matching_count(package, version_range) == 1
+                    or self._preferred_token(package) == token
+                )
+                if immediate:
+                    self.immediate_metadata.add(token)
+                else:
+                    self.immediate_metadata.discard(token)
+            return token
         if isinstance(package, PermissionProxy):
             return next(
                 (
@@ -499,11 +547,13 @@ class PreferenceProvider(
             metadata_is_admitted=self._metadata_is_admitted,
             query_is_complete=self._query_is_complete,
             resolver_factory=self.resolver_factory,
+            preferred_candidate=self.preferred_candidate,
         )
 
         # Scopes use one candidate snapshot and retain each choice's token identity.
         query.items = self.items
         query.identities = self.identities
+        query.package_tokens = self.package_tokens
 
         return query
 
