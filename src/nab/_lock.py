@@ -1441,7 +1441,7 @@ def _build_provenance(
         python_specifier = config.matrix.python
         platforms = tuple(p.label for p in config.matrix.platforms)
     else:
-        python_specifier = config.requires_python
+        python_specifier = config.inputs.requires_python
         platforms = ()
 
     return Provenance(
@@ -1455,7 +1455,7 @@ def _build_provenance(
         platforms=platforms,
         cli_project_overrides=cli_project_overrides,
         package_metadata_overrides=package_metadata_override_records(
-            config.package_overrides
+            config.inputs.package_overrides
         ),
     )
 

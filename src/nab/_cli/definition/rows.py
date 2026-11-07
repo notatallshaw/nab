@@ -14,6 +14,8 @@ if TYPE_CHECKING:
     import enum
     from collections.abc import Callable
 
+    from nab_project.config_schema import HostKey, Setting
+
     from .model import Scope
 
 T = TypeVar("T")
@@ -33,7 +35,7 @@ class Layer(Generic[C]):
     ``label`` overrides the inferred display type.
     """
 
-    __slots__ = ("label", "parse", "rdefault", "render", "sample")
+    __slots__ = ("label", "name", "parse", "rdefault", "render", "sample")
 
     def __class_getitem__(cls, item: object) -> type[Layer[Any]]:
         """Hand the class back: the parameter is the checker's alone."""
@@ -47,6 +49,7 @@ class Layer(Generic[C]):
         render: Callable[[C], str],
         label: str = "",
         sample: str = "",
+        name: str = "",
     ) -> None:
         """Record the ladder half of one row."""
         self.rdefault = rdefault
@@ -54,6 +57,47 @@ class Layer(Generic[C]):
         self.render = render
         self.label = label
         self.sample = sample
+        self.name = name
+
+    @classmethod
+    def from_setting(
+        cls,
+        setting: Setting[C],
+        *,
+        render: Callable[[C], str],
+        label: str = "",
+        sample: str = "",
+    ) -> Layer[C]:
+        """Attach CLI rendering to the library's project setting."""
+        return cls(
+            name=setting.name,
+            rdefault=setting.default,
+            parse=setting.parse,
+            render=render,
+            label=label,
+            sample=sample,
+        )
+
+    @classmethod
+    def from_host_setting(
+        cls,
+        setting: HostKey,
+        *,
+        rdefault: C,
+        parse: Callable[[Any, str], C],
+        render: Callable[[C], str],
+        label: str = "",
+        sample: str = "",
+    ) -> Layer[C]:
+        """Bind host parsing and defaults to the standalone format's key."""
+        return cls(
+            name=setting.name,
+            rdefault=rdefault,
+            parse=parse,
+            render=render,
+            label=label,
+            sample=sample,
+        )
 
 
 class Row:
@@ -122,6 +166,14 @@ class Row:
     def __set_name__(self, owner: type, name: str) -> None:
         """Take the row's long name from the attribute it is bound to."""
         self.name = name.replace("_", "-")
+        if self.key is not None and self.key.name:
+            if self.name != self.key.name:
+                message = (
+                    f"{owner.__name__}.{name} must bind configuration key "
+                    f"{self.key.name!r}"
+                )
+                raise ValueError(message)
+            self.name = self.key.name
 
     @override
     def __repr__(self) -> str:

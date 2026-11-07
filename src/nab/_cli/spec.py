@@ -367,4 +367,9 @@ PATH_DESTS: dict[str, tuple[str, ...]] = {
     "download": ("cache_dir", "path", "script", "output"),
 }
 
+DIST_POLICY_REPLACEMENTS: dict[str, str] = {
+    "prefer-wheel": "wheel-or-sdist",
+    "sdist-install": "sdist-only",
+}
+
 # fmt: on

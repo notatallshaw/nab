@@ -20,9 +20,9 @@ nab-resolver <----> nab-provider ----> nab-markersets
                      nab-index
 ```
 
-The CLI loads configuration and writes output; `nab-project` orchestrates resolution and builds
-lockfile data. Except for `nab-resolver`'s documented API, library APIs are experimental: pin exact
-versions when embedding them.
+The CLI applies flags and user settings and writes output; `nab-project` reads project
+configuration, orchestrates resolution and builds lockfile data. Except for `nab-resolver`'s
+documented API, library APIs are experimental: pin exact versions when embedding them.
 
 ## Package responsibilities
 
@@ -32,8 +32,8 @@ versions when embedding them.
 | `nab-markersets` | Marker parsing, algebra and bounded conversion reuse; callers own reuse lifetimes                            |
 | `nab-provider`   | Candidate/dependency selection, targets, tags, extras, metadata parsing, policies and result storage; no I/O |
 | `nab-index`      | Simple API, HTTP cache, wheel range reads, archive/VCS fetches and local indexes                             |
-| `nab-project`    | Fetch coordination, workspaces, PEP 517 builds, locks, downloads and resolve orchestration                   |
-| `nab`            | Configuration, CLI commands and output                                                                       |
+| `nab-project`    | Project configuration, resolution, fetch coordination, workspaces, builds, locks and downloads               |
+| `nab`            | CLI commands, flags, user settings and output                                                                |
 
 `nab-project` reads project files and PEP 723 script metadata into the declaration view used by
 resolution and saved-lock validation. The CLI selects the input format and applies configuration
@@ -58,9 +58,56 @@ matrix = Matrix(
 targets = matrix.expand()
 ```
 
-The provider expands and deduplicates targets and validates interpreter/ABI combinations. The CLI
-parses and renders the declarations. The project layer checks project metadata and whether the
-results can share a lock.
+The provider expands and deduplicates targets and validates interpreter/ABI combinations. The
+project library parses declarations and plans targets; the CLI supplies flag overrides and renders
+configuration. The project layer checks project metadata and whether the results can share a lock.
+
+### Reading project configuration in a library
+
+```python
+from pathlib import Path
+
+from nab_index.urllib3_async_transport import Urllib3AsyncTransport
+from nab_project.config import plan_targets, read_pyproject_config
+from nab_project.resolve import resolve_for_targets
+
+project_path = Path("pyproject.toml")
+config = read_pyproject_config(project_path)
+result = resolve_for_targets(
+    project_path,
+    Urllib3AsyncTransport(),
+    targets=plan_targets(config),
+    inputs=config.resolve_inputs(),
+)
+result.raise_for_failure()
+```
+
+This uses `nab-project` and `nab-index` without installing `nab`. The reader combines the input's
+`[tool.nab]` with the adjacent project's `nab.toml`; conflicting values are errors. It preserves
+workspace discovery, source-relative paths and target validation. Pass `discover_workspace=False`
+when the host owns workspace discovery and `anchor=` to fix relative upload cutoffs.
+
+User configuration files, environment variables and command-line overrides belong to the host. The
+library ignores the standalone file's `offline`, `cache-dir`, `http-backend` and `max-concurrency`
+values; it rejects those names in `[tool.nab]`. Nab's CLI uses the same project schema and
+validation with its own flag overrides and diagnostics.
+
+The result contains a `ResolveInputs` object in `config.inputs`, plus the declarations needed for
+target planning and workspace discovery. Operation defaults come from `ResolveInputs`; the file
+schema defines configuration keys and their interpretation. `config.resolve_inputs()` and
+`config.replace(indexes=...)` remain available to existing callers.
+
+Hosts can pass `ProjectOverrides` to the reader. Whole-setting replacements carry raw values and
+diagnostic labels; table overrides apply a host-owned update to the selected file table. The reader
+retains file provenance and checks conflicts between project files before applying table updates.
+Hosts do not construct source stacks. `Setting.parse` accepts a `ProjectValueContext` for callers
+that need to inspect individual values using a declaring directory, table prefix and cutoff anchor.
+
+The project schema reserves host extension names in standalone `nab.toml`, without defining their
+parsers or defaults. A host can pass `validate_host` when those values need validation. Nab binds
+its user-setting parsers to those names and owns CLI table syntax, user/system files, environment
+variables and display. Configuration vocabulary migrations belong to the project parser; the
+provider owns the resulting policy values.
 
 ## Dependencies between packages
 
@@ -217,7 +264,7 @@ retain their own behavior.
 ## The vendored packaging fork
 
 ```text
-nab.config, nab-project --> nab-provider._vendor.packaging
+nab CLI, nab-project --> nab-provider._vendor.packaging
 nab-markersets          --> vendored packaging, then released packaging
 ```
 

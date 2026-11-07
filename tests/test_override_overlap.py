@@ -26,7 +26,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from nab.config.values import check_package_override_overlap
+from nab_project.config_values import check_package_override_overlap
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.errors import ConfigError

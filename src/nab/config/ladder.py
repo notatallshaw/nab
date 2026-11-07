@@ -32,6 +32,12 @@ from typing import TYPE_CHECKING, Any
 import tomli
 
 from nab_project import toml_io
+from nab_project.config_schema import SETTINGS, project_file_conflict
+from nab_project.config_values import (
+    MatrixConfig,
+    SourceConfigError,
+    matrix_mode,
+)
 from nab_project.input_source import (
     InputFormat,
     ScriptMetadataError,
@@ -39,12 +45,11 @@ from nab_project.input_source import (
 )
 from nab_project.paths import PathState, path_state, realpath
 from nab_project.value import ValueType
-from nab_provider.policy import ResolveMode
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .. import env
 from .._cli.definition.model import Opt, Scope
-from .hooks import declaring_dir, key_prefix
+from .hooks import declaring_dir, key_prefix, project_value_context
 from .registry import OPTIONS
 from .subflags import (
     BY_PARENT,
@@ -54,7 +59,7 @@ from .subflags import (
     fold_cli_table,
     render_cli_table,
 )
-from .values import CliTableError, MatrixConfig, SourceConfigError, matrix_from_config
+from .values import CliTableError
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -156,10 +161,6 @@ class Origin(ValueType):
     def scope(self) -> str:
         """Return the provenance scope shown by ``nab config``."""
         return scope_label(self.kind)
-
-    def outranks(self, other: Origin) -> bool:
-        """Return whether this origin has strictly higher precedence."""
-        return PRECEDENCE[self.kind] > PRECEDENCE[other.kind]
 
 
 def scope_label(kind: SourceKind) -> str:
@@ -370,7 +371,7 @@ def _load_toml_layer(
                     continue
                 msg = f"{path}: {reason}"
                 raise SourceConfigError(msg)
-            values[key] = spec.parse(value, where)
+            values[key] = _parse_setting(spec, value, where)
             if key in BY_PARENT:
                 raw_tables[key] = value
 
@@ -689,11 +690,7 @@ def _apply_mode_default(effective: dict[str, EffectiveValue]) -> None:
     if mode.origin.kind is not SourceKind.DEFAULT or matrix is None:
         return
 
-    value = (
-        ResolveMode.UNIVERSAL
-        if len(matrix_from_config(matrix).expand()) > 1
-        else ResolveMode.SPECIFIC
-    )
+    value = matrix_mode(matrix)
     origin = Origin(SourceKind.DEFAULT, "inferred from matrix")
     effective["mode"] = EffectiveValue(
         spec=mode.spec,
@@ -710,7 +707,7 @@ def _folded(
     """Parse CLI table keys over the table declared by project files."""
     merged = fold_cli_table(spec, table, _file_raw(spec, all_layers))
     try:
-        value = spec.parse(merged, cli_table_label(spec))
+        value = _parse_setting(spec, merged, cli_table_label(spec))
     except SourceConfigError as exc:
         raise CliTableError(*exc.args) from exc
     return Origin(SourceKind.CLI, "cli"), value
@@ -755,19 +752,27 @@ def _check_project_file_conflict(
     spec: Opt, found: Sequence[tuple[Origin, Any]]
 ) -> None:
     """Reject a key set differently in both project files."""
-    by_kind = {origin.kind: value for origin, value in found}
-    input_kind = (
-        SourceKind.SCRIPT if SourceKind.SCRIPT in by_kind else SourceKind.PYPROJECT
+    conflict = project_file_conflict(
+        (origin.kind.value, value) for origin, value in found
     )
-    if input_kind not in by_kind or SourceKind.PROJECT_TOML not in by_kind:
+    if conflict is None:
         return
-    pyproject_value = by_kind[input_kind]
-    project_value = by_kind[SourceKind.PROJECT_TOML]
-    if pyproject_value == project_value:
-        return
-    report = DiagnosticMessage(
+    input_kind, pyproject_value, project_value = conflict
+    raise SourceConfigError(
+        project_file_conflict_message(spec, input_kind, pyproject_value, project_value)
+    )
+
+
+def project_file_conflict_message(
+    spec: Opt,
+    input_kind: str,
+    pyproject_value: object,
+    project_value: object,
+) -> DiagnosticMessage:
+    """Render conflicting project values using the host's option formatters."""
+    return DiagnosticMessage(
         (
-            f"config {spec.name!r} is set to conflicting values in {input_kind.value} "
+            f"config {spec.name!r} is set to conflicting values in {input_kind} "
             f"[tool.nab] ({spec.render(pyproject_value)!r}) and project-dir nab.toml ("
             f"{spec.render(project_value)!r}).  Both files sit at the same precedence "
             "level"
@@ -776,7 +781,6 @@ def _check_project_file_conflict(
             Suggestion("set the key in only one, or set them to the same value."),
         ),
     )
-    raise SourceConfigError(report)
 
 
 def build_cli_layer(values: Mapping[str, Any]) -> Layer:
@@ -797,7 +801,7 @@ def build_cli_layer(values: Mapping[str, Any]) -> Layer:
 
         # Parse hooks expect repeatable flags in their TOML list form.
         raw_value = list(value) if isinstance(value, tuple) else value
-        parsed[key] = spec.parse(raw_value, str(spec.cli_flag))
+        parsed[key] = _parse_setting(spec, raw_value, str(spec.cli_flag))
     return Layer(Origin(SourceKind.CLI, "cli"), parsed, raw_tables)
 
 
@@ -995,3 +999,11 @@ def project_cli_override_notice(
     lines = [header]
     lines.extend(f"  {flag} -> {rendered}" for flag, rendered in records)
     return "\n".join(lines) + "\n"
+
+
+def _parse_setting(spec: Opt, value: object, label: str) -> object:
+    """Parse project values with their context or delegate to a host parser."""
+    if spec.scope is Scope.PROJECT:
+        setting = next(setting for setting in SETTINGS if setting.name == spec.name)
+        return setting.parse(value, label, context=project_value_context())
+    return spec.parse(value, label)

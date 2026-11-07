@@ -2,6 +2,16 @@
 
 Supported imports:
 
+    nab_project.config  ConfigConflictError, ConfigConflictKind,
+        EnvironmentConfig, NabProjectConfig, plan_targets,
+        read_pyproject_config
+    nab_project.config_overrides  ProjectOverride, ProjectTableOverride,
+        ProjectOverrides, ProjectOverrideError
+    nab_project.config_schema  HostKey, HOST_SETTINGS, ProjectValueContext,
+        Setting, SETTINGS, project_file_conflict
+    nab_project.config_values  DIST_POLICY_REPLACEMENTS, MatrixConfig,
+        SourceConfigError, ProjectFileConflictError, matrix_from_config, matrix_mode,
+        check_package_override_overlap
     nab_project.input_source  InputFormat, ScriptMetadataError, read_input_document
     nab_project.script_metadata  ScriptMetadata, read_script_metadata
     nab_project.build_backend  project_metadata

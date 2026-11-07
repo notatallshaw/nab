@@ -18,6 +18,10 @@ from unittest.mock import patch
 
 import pytest
 
+from nab._cli.definition.model import Opt
+from nab._cli.definition.options import ALL
+from nab._cli.definition.rows import Layer as RowLayer
+from nab._cli.definition.rows import Row
 from nab.config.hooks import inspector_anchor
 from nab.config.ladder import (
     BY_KEY,
@@ -52,14 +56,15 @@ from nab.config.subflags import (
     cli_table_label,
     fold_cli_table,
 )
-from nab.config.values import (
+from nab.config.values import CliTableError
+from nab_index.multi_index import IndexConfig
+from nab_project.config_schema import HOST_SETTINGS, SETTINGS
+from nab_project.config_values import (
     _INDEX_KEYS,
-    CliTableError,
     MatrixConfig,
     SourceConfigError,
     parse_matrix,
 )
-from nab_index.multi_index import IndexConfig
 from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
@@ -1581,6 +1586,30 @@ class TestRegistryShape:
         keys = [spec.key for spec in OPTIONS]
         assert len(keys) == len(set(keys))
 
+    @pytest.mark.parametrize("rows", [ALL, OPTIONS], ids=["declared", "generated"])
+    def test_project_rows_use_the_library_schema(self, rows: tuple[Opt, ...]) -> None:
+        project = {
+            row.key: row
+            for row in rows
+            if row.scope is Scope.PROJECT and row.key is not None
+        }
+        assert project.keys() == {setting.name for setting in SETTINGS}
+
+        for setting in SETTINGS:
+            row = project[setting.name]
+            assert row.parse == setting.parse
+            assert row.rdefault == setting.default
+
+    def test_user_setting_names_are_reserved_by_the_standalone_format(self) -> None:
+        assert {row.key for row in OPTIONS if row.scope is Scope.USER} == {
+            key.name for key in HOST_SETTINGS
+        }
+
+    def test_row_cannot_rebind_a_project_key(self) -> None:
+        row = Row(help="test", key=RowLayer.from_setting(SETTINGS[0], render=str))
+        with pytest.raises(ValueError, match="must bind configuration key"):
+            row.__set_name__(type(self), "unrelated_name")
+
     def test_project_options_have_no_env_var(self) -> None:
         for spec in OPTIONS:
             if spec.scope is Scope.PROJECT:
@@ -2692,7 +2721,7 @@ class TestOverrideTables:
 
             (override,) = read_pyproject_config(
                 project, discover_workspace=False
-            ).package_overrides
+            ).inputs.package_overrides
             assert override.name == "demo"
             assert override.build_policy is BuildPolicy.NEVER
 

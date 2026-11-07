@@ -2726,7 +2726,7 @@ class TestPythonFlag:
     ) -> None:
         """``--python`` retargets the free-threaded platform before validation."""
         env = {**host_environment(), "python_full_version": "3.12.11"}
-        monkeypatch.setattr("nab.config.model.host_environment", lambda: env)
+        monkeypatch.setattr("nab_project.config.host_environment", lambda: env)
 
         pyproject = _make_pyproject(
             hermetic_roots,

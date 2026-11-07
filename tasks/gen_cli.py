@@ -13,13 +13,15 @@ import inspect
 import sys
 import textwrap
 from pathlib import Path
-from types import FunctionType, MappingProxyType
+from types import FunctionType, MappingProxyType, MethodType
 from typing import TYPE_CHECKING, Any
 
 from nab._cli.definition import model
 from nab._cli.definition.model import COMMANDS, UNSET, Kind, Opt
 from nab._cli.definition.options import ALL
 from nab.config.ladder import docs_path
+from nab_project.config_schema import Setting
+from nab_project.config_values import DIST_POLICY_REPLACEMENTS
 from nab_provider.value import field_names, is_record
 
 if TYPE_CHECKING:
@@ -168,6 +170,12 @@ def _module_text() -> str:
         "\n" + _block("COMMANDS", _COMMANDS_ANNOTATION, commands, "{"),
         "\n" + _dispatch_block(),
         "\n" + _paths_block(),
+        "\nDIST_POLICY_REPLACEMENTS: dict[str, str] = {\n"
+        + "".join(
+            f"    {_literal(old)}: {_literal(new)},\n"
+            for old, new in DIST_POLICY_REPLACEMENTS.items()
+        )
+        + "}\n",
         "\n# fmt: on\n",
     ]
     return "".join(parts)
@@ -444,9 +452,8 @@ def _spell(value: object, imports: _Imports, row: Opt) -> str:
     """Render ``value`` as source, adding required imports."""
     if isinstance(value, enum.Enum):
         return f"{_named(type(value), imports)}.{value.name}"
-    if isinstance(value, FunctionType):
-        package, _, module = value.__module__.rpartition(".")
-        return f"{imports.add(package, module)}.{value.__name__}"
+    if isinstance(value, (FunctionType, MethodType)):
+        return _callable_reference(value, imports)
     if isinstance(value, (str, int)) or value is None:
         return _literal(value)
     if isinstance(value, tuple):
@@ -459,6 +466,20 @@ def _spell(value: object, imports: _Imports, row: Opt) -> str:
 
     msg = f"{row.name} holds {value!r}, which the generator cannot render"
     raise SystemExit(msg)
+
+
+def _callable_reference(value: FunctionType | MethodType, imports: _Imports) -> str:
+    """Locate a configuration parser or a project setting's bound parser."""
+    if isinstance(value, MethodType):
+        setting = value.__self__
+        if not isinstance(setting, Setting):
+            message = "a bound configuration parser must belong to a project setting"
+            raise TypeError(message)
+        schema = imports.add("nab_project", "config_schema")
+        name = setting.name.upper().replace("-", "_")
+        return f"{schema}.{name}.parse"
+    package, _, module = value.__module__.rpartition(".")
+    return f"{imports.add(package, module)}.{value.__name__}"
 
 
 def _named(cls: type, imports: _Imports) -> str:

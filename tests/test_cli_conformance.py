@@ -18,9 +18,9 @@ from nab._cli.definition.model import COMMANDS, UNSET, Kind, Opt, Scope, VType
 from nab._cli.definition.options import ALL
 from nab._cli.parse import UsageError, parse
 from nab.cli import run
-from nab.config import values
 from nab.config.ladder import build_cli_layer
 from nab.flagtypes import ImplementationFlag, MatrixOrderFlag
+from nab_project import config_values as values
 
 _TESTS = Path(__file__).resolve().parent
 _FLAG_SPELLINGS = _TESTS / "data" / "lockfile_flag_spellings.txt"

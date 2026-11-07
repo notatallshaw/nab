@@ -76,4 +76,4 @@ def test_unc_file_index_is_not_rebased(tmp_path: Path) -> None:
     """Windows retains the declared UNC authority without requiring a live share."""
     url = "file://server/share"
     path = _project(tmp_path, url)
-    assert read_pyproject_config(path).indexes[0].url == url
+    assert read_pyproject_config(path).inputs.indexes[0].url == url

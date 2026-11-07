@@ -144,7 +144,7 @@ def test_mode_uses_effective_declared_targets(
 
     assert config.mode is mode
     assert len(plan_targets(config)) == target_count
-    assert config.build_policy is BuildPolicy.NEVER
+    assert config.inputs.build_policy is BuildPolicy.NEVER
 
 
 @pytest.mark.parametrize("mode", ["specific", "universal"])

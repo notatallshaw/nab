@@ -100,5 +100,5 @@ def test_override_conflict_repairs_resolve(
 
             if has_other_policy:
                 config = read_pyproject_config(path, discover_workspace=False)
-                assert config.package_overrides[0].allow_zip_sdists is True
-                assert config.index_overrides["local"].assume_fresh_seconds == 60
+                assert config.inputs.package_overrides[0].allow_zip_sdists is True
+                assert config.inputs.index_overrides["local"].assume_fresh_seconds == 60

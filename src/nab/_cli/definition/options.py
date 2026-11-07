@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, NewType
 
+from nab_project import config_schema as schema
+from nab_project.config_values import MatrixConfig
 from nab_project.conflicts import ConflictSet
 from nab_project.workspace import WorkspaceConfig
 from nab_provider.policy import (
@@ -25,11 +27,10 @@ from nab_provider.policy import (
     ResolveMode,
     VcsSource,
 )
-from nab_provider.records import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexConfig
+from nab_provider.records import IndexConfig
 from nab_provider.vcs_admission import VcsConfig
 
 from ...config import hooks, values
-from ...config.values import MatrixConfig
 from ...flagtypes import (
     BuildPolicyFlag,
     DecisionOrderFlag,
@@ -119,92 +120,70 @@ class ProjectKeys(
 
     resolution = Value[ResolutionFlag | None](
         mirrors=ResolutionStrategy,
-        key=Layer[ResolutionStrategy](
-            rdefault=ResolutionStrategy.HIGHEST,
-            parse=values.parse_resolution,
-            render=hooks.render_enum_value,
+        key=Layer[ResolutionStrategy].from_setting(
+            schema.RESOLUTION, render=hooks.render_enum_value
         ),
         help="which version of each package to prefer",
     )
 
     decision_order = Value[DecisionOrderFlag | None](
         mirrors=DecisionOrder,
-        key=Layer[DecisionOrder](
-            rdefault=DecisionOrder.ARRIVAL,
-            parse=values.parse_decision_order,
-            render=hooks.render_enum_value,
+        key=Layer[DecisionOrder].from_setting(
+            schema.DECISION_ORDER, render=hooks.render_enum_value
         ),
         help="whether an arrived listing may steer the decision order",
     )
 
     mode = Value[ModeFlag | None](
         mirrors=ResolveMode,
-        key=Layer[ResolveMode](
-            rdefault=ResolveMode.SPECIFIC,
-            parse=values.parse_mode,
-            render=hooks.render_enum_value,
+        key=Layer[ResolveMode].from_setting(
+            schema.MODE, render=hooks.render_enum_value
         ),
         help="resolve for this environment or across a matrix",
         docs="reference/target-matrix.md",
     )
 
     constraints = Many[Requirement](
-        key=Layer[tuple[str, ...]](
-            rdefault=(),
-            parse=values.parse_constraints,
-            render=hooks.render_string_tuple,
-            sample="attrs<24",
+        key=Layer[tuple[str, ...]].from_setting(
+            schema.CONSTRAINTS, render=hooks.render_string_tuple, sample="attrs<24"
         ),
         help="bound a package's versions without pulling it into the resolve",
     )
 
     default_groups = Many[Group](
-        key=Layer[tuple[str, ...]](
-            rdefault=(),
-            parse=values.parse_default_groups,
-            render=hooks.render_string_tuple,
-            sample="dev",
+        key=Layer[tuple[str, ...]].from_setting(
+            schema.DEFAULT_GROUPS, render=hooks.render_string_tuple, sample="dev"
         ),
         help="a dependency group every resolve selects",
         docs="reference/selection.md",
     )
 
     base_group = Value[Group | None](
-        key=Layer[str | None](
-            rdefault=None,
-            parse=values.parse_base_group,
-            render=hooks.render_optional_text,
-            sample="runtime",
+        key=Layer[str | None].from_setting(
+            schema.BASE_GROUP, render=hooks.render_optional_text, sample="runtime"
         ),
         help="the group name the project's own dependencies lock under",
         docs="reference/selection.md",
     )
 
     build_group = Value[Group | None](
-        key=Layer[str | None](
-            rdefault=None,
-            parse=values.parse_build_group,
-            render=hooks.render_optional_text,
-            sample="build",
+        key=Layer[str | None].from_setting(
+            schema.BUILD_GROUP, render=hooks.render_optional_text, sample="build"
         ),
         help="the group name [build-system].requires locks under",
         docs="reference/selection.md",
     )
 
     requires_python = Value[Specifier | None](
-        key=Layer[str | None](
-            rdefault=None,
-            parse=values.parse_requires_python,
-            render=hooks.render_optional_text,
-            sample=">=3.11",
+        key=Layer[str | None].from_setting(
+            schema.REQUIRES_PYTHON, render=hooks.render_optional_text, sample=">=3.11"
         ),
         help="the Python range the project supports, as a specifier",
     )
 
     uploaded_prior_to = Value[str | None](
-        key=Layer[datetime | None](
-            rdefault=None,
-            parse=hooks.parse_uploaded_prior_to,
+        key=Layer[datetime | str | None].from_setting(
+            schema.UPLOADED_PRIOR_TO,
             render=hooks.render_uploaded_prior_to,
             sample="P7D",
             label="datetime|PnD",
@@ -214,10 +193,8 @@ class ProjectKeys(
 
     dist_policy = Value[DistPolicyFlag | None](
         mirrors=DistPolicy,
-        key=Layer[tuple[DistPolicy, bool]](
-            rdefault=(DistPolicy.WHEEL_OR_SDIST, False),
-            parse=values.parse_dist_policy,
-            render=hooks.render_dist_policy,
+        key=Layer[tuple[DistPolicy, bool]].from_setting(
+            schema.DIST_POLICY, render=hooks.render_dist_policy
         ),
         help="which distribution kinds the resolve may pin",
         docs="reference/distribution-policy.md",
@@ -225,57 +202,47 @@ class ProjectKeys(
 
     metadata_policy = Value[MetadataPolicyFlag | None](
         mirrors=MetadataPolicy,
-        key=Layer[MetadataPolicy](
-            rdefault=MetadataPolicy.MATCH_ARTIFACT,
-            parse=values.parse_metadata_policy,
-            render=hooks.render_enum_value,
+        key=Layer[MetadataPolicy].from_setting(
+            schema.METADATA_POLICY, render=hooks.render_enum_value
         ),
         help="which artifact supplies dependency metadata",
         docs="reference/distribution-policy.md",
     )
 
     assume_universal_deps = Tri(
-        key=Layer[bool](
-            rdefault=False, parse=values.parse_bool, render=hooks.render_bool
+        key=Layer[bool].from_setting(
+            schema.ASSUME_UNIVERSAL_DEPS, render=hooks.render_bool
         ),
         help="assume dependency metadata applies across targets",
         docs="reference/build-policy.md",
     )
 
     allow_zip_sdists = Tri(
-        key=Layer[bool](
-            rdefault=False, parse=values.parse_bool, render=hooks.render_bool
-        ),
+        key=Layer[bool].from_setting(schema.ALLOW_ZIP_SDISTS, render=hooks.render_bool),
         help="allow legacy .zip source distributions",
         docs="reference/distribution-policy.md",
     )
 
     build_policy = Value[BuildPolicyFlag | None](
         mirrors=BuildPolicy,
-        key=Layer[BuildPolicy](
-            rdefault=BuildPolicy.BUILD_LOCAL,
-            parse=values.parse_build_policy,
-            render=hooks.render_enum_value,
+        key=Layer[BuildPolicy].from_setting(
+            schema.BUILD_POLICY, render=hooks.render_enum_value
         ),
         help="whether nab may build an sdist, and which ones",
         docs="reference/build-policy.md",
     )
 
     build_requires_depth = Value[int | None](
-        key=Layer[int](
-            rdefault=0,
-            parse=values.parse_build_requires_depth,
-            render=hooks.render_text,
-            sample="1",
+        key=Layer[int].from_setting(
+            schema.BUILD_REQUIRES_DEPTH, render=hooks.render_text, sample="1"
         ),
         help="how many build environments nab may open beneath the first",
         docs="reference/build-policy.md",
     )
 
     environment = Key(
-        Layer[Mapping[str, Any]](
-            rdefault=_EMPTY_MAPPING,
-            parse=values.parse_environment,
+        Layer[Mapping[str, Any]].from_setting(
+            schema.ENVIRONMENT,
             render=hooks.render_environment,
             label="table(python,platform[,knobs],implementation)",
         ),
@@ -284,9 +251,8 @@ class ProjectKeys(
     )
 
     marker_environment = Key(
-        Layer[Mapping[str, str]](
-            rdefault=_EMPTY_MAPPING,
-            parse=values.parse_marker_environment,
+        Layer[Mapping[str, str]].from_setting(
+            schema.MARKER_ENVIRONMENT,
             render=hooks.render_marker_environment,
             label="table(marker-var=str)",
         ),
@@ -296,31 +262,24 @@ class ProjectKeys(
     )
 
     vcs = Key(
-        Layer[VcsConfig](
-            rdefault=VcsConfig(),
-            parse=values.parse_vcs,
-            render=hooks.render_vcs,
-            label="table(vcs-policy)",
+        Layer[VcsConfig].from_setting(
+            schema.VCS, render=hooks.render_vcs, label="table(vcs-policy)"
         ),
         help="whether a requirement may name a VCS URL, and which ones",
         docs="how-to/vcs.md",
     )
 
     workspace = Key(
-        Layer[WorkspaceConfig | None](
-            rdefault=None,
-            parse=values.parse_workspace,
-            render=hooks.render_workspace,
-            label="table(members)",
+        Layer[WorkspaceConfig | None].from_setting(
+            schema.WORKSPACE, render=hooks.render_workspace, label="table(members)"
         ),
         help="the member paths a workspace root declares",
         docs="how-to/workspaces.md",
     )
 
     indexes = Key(
-        Layer[tuple[IndexConfig, ...]](
-            rdefault=(IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),),
-            parse=hooks.parse_indexes,
+        Layer[tuple[IndexConfig, ...]].from_setting(
+            schema.INDEXES,
             render=hooks.render_index_list,
             label="array-of-tables(name,url,serialization)",
         ),
@@ -329,9 +288,8 @@ class ProjectKeys(
     )
 
     local_sources = Key(
-        Layer[tuple[LocalSource, ...]](
-            rdefault=(),
-            parse=hooks.parse_local_sources,
+        Layer[tuple[LocalSource, ...]].from_setting(
+            schema.LOCAL_SOURCES,
             render=hooks.render_local_sources,
             label="array-of-tables(name,path)",
         ),
@@ -340,9 +298,8 @@ class ProjectKeys(
     )
 
     vcs_sources = Key(
-        Layer[tuple[VcsSource, ...]](
-            rdefault=(),
-            parse=values.parse_vcs_sources,
+        Layer[tuple[VcsSource, ...]].from_setting(
+            schema.VCS_SOURCES,
             render=hooks.render_vcs_sources,
             label="array-of-tables(name,url)",
         ),
@@ -351,9 +308,8 @@ class ProjectKeys(
     )
 
     archive_sources = Key(
-        Layer[tuple[ArchiveSource, ...]](
-            rdefault=(),
-            parse=values.parse_archive_sources,
+        Layer[tuple[ArchiveSource, ...]].from_setting(
+            schema.ARCHIVE_SOURCES,
             render=hooks.render_archive_sources,
             label="array-of-tables(name,url)",
         ),
@@ -362,9 +318,8 @@ class ProjectKeys(
     )
 
     packages = Key(
-        Layer[tuple[Any, ...]](
-            rdefault=(),
-            parse=hooks.parse_packages,
+        Layer[tuple[Any, ...]].from_setting(
+            schema.PACKAGES,
             render=hooks.render_package_overrides,
             label="table(package-override)",
         ),
@@ -373,9 +328,8 @@ class ProjectKeys(
     )
 
     package_rules = Key(
-        Layer[tuple[Any, ...]](
-            rdefault=(),
-            parse=hooks.parse_package_rules,
+        Layer[tuple[Any, ...]].from_setting(
+            schema.PACKAGE_RULES,
             render=hooks.render_package_overrides,
             label="array-of-tables(match,policy)",
         ),
@@ -384,9 +338,8 @@ class ProjectKeys(
     )
 
     index = Key(
-        Layer[Mapping[str, Any]](
-            rdefault=_EMPTY_MAPPING,
-            parse=hooks.parse_index_overrides,
+        Layer[Mapping[str, Any]].from_setting(
+            schema.INDEX,
             render=hooks.render_index_overrides,
             label="table(index-override)",
         ),
@@ -395,9 +348,8 @@ class ProjectKeys(
     )
 
     conflicts = Key(
-        Layer[tuple[ConflictSet, ...]](
-            rdefault=(),
-            parse=values.parse_conflicts,
+        Layer[tuple[ConflictSet, ...]].from_setting(
+            schema.CONFLICTS,
             render=hooks.render_conflicts,
             label="array-of-tables(members,policy)",
         ),
@@ -406,11 +358,8 @@ class ProjectKeys(
     )
 
     matrix = Key(
-        Layer[MatrixConfig | None](
-            rdefault=None,
-            parse=hooks.parse_matrix,
-            render=hooks.render_matrix,
-            label="table(python,platforms)",
+        Layer[MatrixConfig | None].from_setting(
+            schema.MATRIX, render=hooks.render_matrix, label="table(python,platforms)"
         ),
         help="the Python and platform axes a universal resolve covers",
         docs="reference/target-matrix.md",
@@ -491,15 +440,19 @@ class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
     """The four settings a user sets once, each also a ``NAB_*`` variable."""
 
     offline = Tri(
-        key=Layer[bool](
-            rdefault=False, parse=values.parse_bool, render=hooks.render_bool
+        key=Layer[bool].from_host_setting(
+            schema.OFFLINE,
+            rdefault=False,
+            parse=values.parse_bool,
+            render=hooks.render_bool,
         ),
         env=True,
         help="never hit the network; resolve from the cache alone",
     )
 
     cache_dir = Value[Path | None](
-        key=Layer[Path | None](
+        key=Layer[Path | None].from_host_setting(
+            schema.CACHE_DIR,
             rdefault=None,
             parse=values.parse_path,
             render=hooks.render_cache_dir,
@@ -512,12 +465,11 @@ class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
     )
 
     http_backend = Value[HttpBackend | None](
-        key=Layer[str](
+        key=Layer[str].from_host_setting(
+            schema.HTTP_BACKEND,
             rdefault="urllib3",
             parse=values.parse_http_backend,
             render=hooks.render_text,
-            # The one written label: the flag offers the alias's order and
-            # ``nab config explain`` prints them alphabetically.
             label="enum(httpx|httpx2|urllib3)",
         ),
         env=True,
@@ -525,7 +477,8 @@ class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
     )
 
     max_concurrency = Value[int | None](
-        key=Layer[int](
+        key=Layer[int].from_host_setting(
+            schema.MAX_CONCURRENCY,
             rdefault=8,
             parse=values.parse_max_concurrency,
             render=hooks.render_text,

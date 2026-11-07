@@ -21,6 +21,7 @@ from nab._cli.definition.options import ALL, TABLES
 from nab._cli.definition.tables import rows
 from nab.config import hooks, values
 from nab.config.ladder import SourceKind, docs_path, docs_url
+from nab_project import config_schema
 from nab_provider import policy
 
 _PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
@@ -405,7 +406,7 @@ class TestDerivedSpellings:
             "matrix",
             scope=Scope.PROJECT,
             rdefault=None,
-            parse=hooks.parse_matrix,
+            parse=config_schema.MATRIX.parse,
             render=hooks.render_matrix,
             help="the axes",
             docs="reference/cli.md",

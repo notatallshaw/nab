@@ -180,7 +180,7 @@ def test_script_configuration_has_its_own_origin(
     assert "wheel-only" in output
     assert str(script_source) in output
     config = read_pyproject_config(script_source, input_format=InputFormat.SCRIPT)
-    assert config.dist_policy.value == "wheel-only"
+    assert config.inputs.dist_policy.value == "wheel-only"
     assert (
         effective_config(script_source, input_format=InputFormat.SCRIPT)[
             "dist-policy"
@@ -695,7 +695,7 @@ def test_vcs_policy_repair_updates_both_declaring_files(script_source: Path) -> 
         )
 
     config = read_pyproject_config(script_source, input_format=InputFormat.SCRIPT)
-    assert config.vcs.policy.value == "allow"
+    assert config.inputs.vcs.policy.value == "allow"
 
 
 def test_environment_repair_updates_both_declaring_files(script_source: Path) -> None:
