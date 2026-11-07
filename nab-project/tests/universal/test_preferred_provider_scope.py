@@ -14,7 +14,7 @@ from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import InvalidUploadTimeError, MissingExtraError
 from nab_provider.policy import BuildPolicy, DecisionOrder
 from nab_provider.provider import Provider
-from nab_provider.tags import PlatformSpec
+from nab_provider.tags import PlatformSpec, TagSet
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import (
     FakeFetchPort,
@@ -364,3 +364,38 @@ def test_upload_cutoff_still_validates_historical_rows() -> None:
                 uploaded_prior_to=datetime(2021, 1, 1, tzinfo=timezone.utc),
             ),
         )
+
+
+def test_soft_preferences_keep_ordinary_first_target_preparation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Soft preferences retain the ordinary first-target search contract."""
+    older = make_wheel("1", package="a", hashes=(("sha256", "a" * 64),))
+    newer = make_wheel(
+        "2",
+        package="a",
+        tag="cp312-cp312-win_amd64",
+        hashes=(("sha256", "b" * 64),),
+    )
+    seen: set[str] = set()
+    accepts = TagSet.accepts
+
+    def observe(self: TagSet, filename: str) -> bool:
+        seen.add(filename)
+        return accepts(self, filename)
+
+    monkeypatch.setattr(TagSet, "accepts", observe)
+    port = make_coordinator(listings={"a": [older, newer]}, auto_metadata=True)
+
+    result = resolve_with_coordinator(
+        port,
+        [target("linux_x86_64")],
+        [Requirement("a")],
+        preferences={"a": Version("1")},
+        inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+    )
+    result.raise_for_failure()
+
+    assert result.target_results[0].pins == {"a": Version("1")}
+    assert seen == {older.filename, newer.filename}
+    assert port.calls_to("request_metadata")

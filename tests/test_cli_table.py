@@ -108,6 +108,7 @@ _PAGES = (
     ("upgrade", "reference/cli.md"),
     ("locked", "reference/cli.md"),
     ("reproduce", "reference/cli.md"),
+    ("lock-policy", "reference/cli.md"),
     ("include-rejected", "reference/cli.md"),
 )
 
@@ -186,8 +187,8 @@ class TestTheDeclaredTable:
         command = [row for row in ALL if row.commands and not row.is_global]
         file_only = [row for row in ALL if not row.commands]
 
-        assert (len(root), len(command), len(file_only)) == (7, 51, 13)
-        assert len(root) + len(command) + len(file_only) == len(ALL) == 71
+        assert (len(root), len(command), len(file_only)) == (7, 52, 13)
+        assert len(root) + len(command) + len(file_only) == len(ALL) == 72
 
         keyed = [row for row in ALL if row.key]
 
@@ -336,6 +337,7 @@ class TestTheEnumBackedChoiceRows:
             "mode": "ResolveMode",
             "dist-policy": "DistPolicy",
             "metadata-policy": "MetadataPolicy",
+            "lock-policy": "LockPolicy",
             "build-policy": "BuildPolicy",
         }
 

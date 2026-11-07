@@ -763,6 +763,7 @@ class Provider:
 
         # Preferred trials retain their own release-selection context.
         self._preferred_releases: dict[str, Version] | None = None
+        self._unchanged_preferred_model = False
         self._unrestricted_preferred_packages: set[str] = set()
         self._full_listing_filter_cache = listing_filter_cache
 
@@ -1640,8 +1641,14 @@ class Provider:
             else self._lookahead_versions,
         )
 
-    def prepare_preferred_releases(self, preferred: Mapping[str, Version]) -> None:
-        """Restrict a fresh model-proof provider; refusal requires a fresh provider."""
+    def prepare_preferred_releases(
+        self, preferred: Mapping[str, Version], *, unchanged_only: bool = False
+    ) -> None:
+        """Restrict a fresh model-proof provider; refusal requires a fresh provider.
+
+        With ``unchanged_only`` the caller must discard any changed model too.
+        Unrelated withdrawn releases then do not participate in its trial.
+        """
         # Reject partially prepared providers before narrowing their candidates.
         if (
             self.versions_cache
@@ -1672,6 +1679,7 @@ class Provider:
             releases[normalized] = version
 
         self._preferred_releases = releases
+        self._unchanged_preferred_model = unchanged_only
 
     def filter_distributions(
         self, normalized: str, files: Sequence[WheelFile | SdistFile]
@@ -1699,8 +1707,15 @@ class Provider:
             cache = self._full_listing_filter_cache
             preferred = self._preferred_releases.get(normalized)
 
-            # Withdrawals and forced alternatives still need the full listing.
-            if raw_versions or normalized in self._unrestricted_preferred_packages:
+            withdrawals_matter = raw_versions and (
+                not self._unchanged_preferred_model
+                or (normalized, preferred) in self.yanked_versions
+            )
+            # A withdrawn hinted release or a forced change needs all alternatives.
+            if (
+                withdrawals_matter
+                or normalized in self._unrestricted_preferred_packages
+            ):
                 self.listing_filter_cache = cache
             elif preferred is None:
                 # A complete preferred model cannot introduce an unknown package.
@@ -1708,9 +1723,15 @@ class Provider:
                 self.listing_filter_cache = None
             else:
                 assert cache is not None
-                files, self.listing_filter_cache = cache.selected_release(
+                release, restricted = cache.selected_release(
                     normalized, files, preferred
                 )
+                if self._unchanged_preferred_model and any(
+                    file.yanked for file in release
+                ):
+                    self.listing_filter_cache = cache
+                else:
+                    files, self.listing_filter_cache = release, restricted
 
         try:
             if not self.defer_yanked:

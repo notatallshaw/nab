@@ -49,6 +49,28 @@ stable decision order when comparing resolves. Requires pylock output to a file.
 Reset a relative upload cutoff (`P<n>D`) to the current time instead of reusing the existing lock's
 timestamp.
 
+### `--lock-policy {resolve,prefer-existing,reuse}`
+
+`resolve` (default) uses ordinary resolution. `prefer-existing` checks the previous lock's
+applicable versions against current listings, metadata and artifact rules. A modified or incomplete
+model falls back to ordinary solving with the saved versions as preferences. Missing or invalid
+locks use fresh resolution. This stability policy can choose a different valid solution from
+ordinary preference search.
+
+`reuse` first checks whether the saved solution remains consistent with current project inputs. On
+success it leaves the file unchanged without creating an index transport. It does not discover new
+releases, yanks, deleted files or changed remote metadata. A refused check falls back to
+`prefer-existing` and its current provider checks.
+
+Reuse currently supports ordinary project/script metadata and HTTP(S) index artifacts. File indexes,
+local/workspace/VCS/archive sources and saved local/direct-source artifacts require the live
+fallback. The root project file itself remains supported. Compatible dependency-bound edits may keep
+the existing lock unchanged; this does not refresh its timestamp or provenance.
+
+Nondefault policies require highest resolution and pylock output to a file, and cannot combine with
+`--locked`. `reuse` also cannot combine with `--reproduce`. `--upgrade` skips saved reuse and runs
+the live `prefer-existing` path so the new upload-window anchor is written.
+
 ### `--build-requirements`
 
 Lock `[build-system].requires` instead of project dependencies. Defaults to `pylock.build.toml` or

@@ -14,7 +14,7 @@ from nab_provider._vendor.packaging.markers import (
 if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
 
-    from nab_provider._vendor.packaging.markers import Marker
+    from nab_provider._vendor.packaging.markers import Environment, Marker
 
 __all__ = [
     "EnvironmentSource",
@@ -22,6 +22,7 @@ __all__ = [
     "classify_dependency",
     "evaluate_prepared",
     "host_environment",
+    "marker_environment",
     "marker_evaluation_error",
 ]
 
@@ -81,3 +82,20 @@ def classify_dependency(
         if evaluate_prepared(marker, env):
             matched.add(extra)
     return matched or None
+
+
+def marker_environment(environment: Mapping[str, str]) -> Environment:
+    """Copy a complete marker mapping into the standard environment type."""
+    return {
+        "implementation_name": environment["implementation_name"],
+        "implementation_version": environment["implementation_version"],
+        "os_name": environment["os_name"],
+        "platform_machine": environment["platform_machine"],
+        "platform_release": environment["platform_release"],
+        "platform_system": environment["platform_system"],
+        "platform_version": environment["platform_version"],
+        "platform_python_implementation": environment["platform_python_implementation"],
+        "python_full_version": environment["python_full_version"],
+        "python_version": environment["python_version"],
+        "sys_platform": environment["sys_platform"],
+    }

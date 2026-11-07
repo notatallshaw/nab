@@ -116,8 +116,11 @@ def test_fresh_provider_requirement_and_extra_version_agreement() -> None:
         )
 
 
+@pytest.mark.parametrize("unchanged_only", [False, True])
 @pytest.mark.parametrize("reason", ["prerelease", "cutoff", "no-cache"])
-def test_global_admission_contexts_keep_full_listing(reason: str) -> None:
+def test_global_admission_contexts_keep_full_listing(
+    reason: str, unchanged_only: bool
+) -> None:
     files = [make_wheel("1"), make_wheel("2rc1")]
     cache = None if reason == "no-cache" else ListingFilterCache()
     cutoff = datetime(2021, 1, 1, tzinfo=timezone.utc) if reason == "cutoff" else None
@@ -128,7 +131,9 @@ def test_global_admission_contexts_keep_full_listing(reason: str) -> None:
         uploaded_prior_to=cutoff,
     )
     preferred = Version("2rc1") if reason == "prerelease" else Version("1")
-    provider.prepare_preferred_releases({"pkg": preferred})
+    provider.prepare_preferred_releases(
+        {"pkg": preferred}, unchanged_only=unchanged_only
+    )
     provider.fetch_versions("pkg")
 
     assert provider.stats.distributions_seen == len(files)
@@ -160,8 +165,11 @@ def test_unknown_hint_package_refuses_instead_of_preparing_history() -> None:
     assert provider.choose_version("pkg", VersionRange.full()) is None
 
 
+@pytest.mark.parametrize("unchanged_only", [False, True])
 @pytest.mark.parametrize("package", ["pkg", "pkg[speed]"])
-def test_forced_change_uses_complete_view_before_preparation(package: str) -> None:
+def test_forced_change_uses_complete_view_before_preparation(
+    package: str, unchanged_only: bool
+) -> None:
     files = [make_wheel("1"), make_wheel("2")]
     port = make_coordinator(files)
     # Both releases are valid; only the incoming range forces the change.
@@ -180,7 +188,9 @@ def test_forced_change_uses_complete_view_before_preparation(package: str) -> No
         preferences={"pkg": Version("1")},
         listing_filter_cache=ListingFilterCache(),
     )
-    provider.prepare_preferred_releases({"pkg": Version("1")})
+    provider.prepare_preferred_releases(
+        {"pkg": Version("1")}, unchanged_only=unchanged_only
+    )
     required = SpecifierSet(">=2").to_range()
     provider.receive_partial_solution_hint({"pkg": required}, {})
     query = VersionRange.full() if package == "pkg[speed]" else required
@@ -241,8 +251,11 @@ def test_selected_filter_restores_shared_context_on_success_and_error(
     assert provider.listing_filter_cache is cache
 
 
+@pytest.mark.parametrize("unchanged_only", [False, True])
 @pytest.mark.parametrize("fault", ["sibling-deps", "metadata-hash"])
-def test_selected_release_preserves_metadata_checks(fault: str) -> None:
+def test_selected_release_preserves_metadata_checks(
+    fault: str, unchanged_only: bool
+) -> None:
     first = make_wheel("1")
     sibling = make_wheel("1.0")
 
@@ -252,7 +265,9 @@ def test_selected_release_preserves_metadata_checks(fault: str) -> None:
     files: list[DistFile] = [make_wheel("0"), first, sibling]
     port = make_coordinator(files)
     provider = Provider(port, target(), listing_filter_cache=ListingFilterCache())
-    provider.prepare_preferred_releases({"pkg": Version("1")})
+    provider.prepare_preferred_releases(
+        {"pkg": Version("1")}, unchanged_only=unchanged_only
+    )
 
     # The restricted view must preserve both sidecar failure paths.
     if fault == "metadata-hash":
@@ -276,3 +291,73 @@ def test_selected_release_preserves_metadata_checks(fault: str) -> None:
         )
         with pytest.raises(SiblingMetadataDivergenceError):
             provider.get_dependencies("pkg", Version("1"))
+
+
+@pytest.mark.parametrize("unchanged_only", [False, True])
+def test_unrelated_withdrawal_only_narrows_unchanged_model_trials(
+    unchanged_only: bool,
+) -> None:
+    files = append_yanked_file(
+        [make_wheel("1"), make_wheel("2")], make_wheel("0"), reason="withdrawn"
+    )
+    cache = ListingFilterCache()
+    port = make_coordinator(files)
+    provider = Provider(port, target(), listing_filter_cache=cache, defer_yanked=True)
+    provider.prepare_preferred_releases(
+        {"pkg": Version("1")}, unchanged_only=unchanged_only
+    )
+
+    selected = {version for version, _ in provider.fetch_versions("pkg")}
+
+    assert selected == (
+        {Version("1")} if unchanged_only else {Version("0"), Version("1"), Version("2")}
+    )
+    normal = Provider(port, target(), listing_filter_cache=cache, defer_yanked=True)
+    assert {version for version, _ in normal.fetch_versions("pkg")} == {
+        Version("0"),
+        Version("1"),
+        Version("2"),
+    }
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_withdrawn_alias_or_sibling_keeps_all_current_alternatives(
+    wrapped: bool,
+) -> None:
+    listing = append_yanked_file(
+        [make_wheel("1.0"), make_wheel("2")], make_wheel("1"), reason="withdrawn"
+    )
+    files = listing if wrapped else list(listing)
+    provider = Provider(
+        make_coordinator(files),
+        target(),
+        listing_filter_cache=ListingFilterCache(),
+        defer_yanked=True,
+    )
+    provider.prepare_preferred_releases({"pkg": Version("1.0")}, unchanged_only=True)
+
+    assert {version for version, _ in provider.fetch_versions("pkg")} == {
+        Version("1"),
+        Version("2"),
+    }
+
+
+def test_direct_plain_listing_preserves_withdrawn_sibling_alternatives() -> None:
+    listing = append_yanked_file(
+        [make_wheel("1.0"), make_wheel("2")], make_wheel("1"), reason="withdrawn"
+    )
+    files = list(listing)
+    port = make_coordinator(files)
+    provider = Provider(
+        port,
+        target(),
+        listing_filter_cache=ListingFilterCache(),
+        defer_yanked=True,
+    )
+    provider.prepare_preferred_releases({"pkg": Version("1.0")}, unchanged_only=True)
+    reference = Provider(port, target(), defer_yanked=True)
+
+    selected = provider.filter_distributions("pkg", files)
+
+    assert selected == reference.filter_distributions("pkg", files)
+    assert {version for version, _ in selected} == {Version("1"), Version("2")}
