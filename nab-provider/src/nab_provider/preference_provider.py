@@ -22,6 +22,7 @@ from .preference import (
     PreferenceScope,
     PreferenceSearch,
     PreparationStatus,
+    encode_dependencies,
 )
 
 if TYPE_CHECKING:
@@ -79,6 +80,7 @@ class PreferenceProvider(
         ]
         | None = None,
         preferred_candidate: Callable[[str], CandidateType | None] | None = None,
+        on_candidate_considered: Callable[[CandidateType], None] | None = None,
     ) -> None:
         """Retain one search and the host's metadata and completeness policies."""
         self.preference = preference
@@ -112,9 +114,10 @@ class PreferenceProvider(
         self._query_is_complete = query_is_complete
         self.resolver_factory = resolver_factory
         self.preferred_candidate = preferred_candidate
+        self.on_candidate_considered = on_candidate_considered
 
     @staticmethod
-    def from_catalogue(
+    def from_catalogue(  # noqa: PLR0913 - preserve independent public host hooks
         catalogue: PreferenceCatalogue[CandidateType, RangeType, PinnedRequirementType],
         roots: Mapping[str, RangeType],
         input_pins: Sequence[PinnedRequirementType],
@@ -131,6 +134,9 @@ class PreferenceProvider(
             [ResolverProvider[Package, int], int], Resolver[Package, int]
         ]
         | None = None,
+        on_candidate_considered: Callable[[CandidateType], None] | None = None,
+        exact_dependencies: Callable[[CandidateType], Sequence[CandidateType]]
+        | None = None,
     ) -> PreferenceProvider[CandidateType, RangeType, PinnedRequirementType]:
         """Own the default preference search and its cumulative query lifetime."""
         preference = CataloguePreference(
@@ -139,6 +145,7 @@ class PreferenceProvider(
             input_pins,
             constraints,
             refresh_incomplete=refresh_incomplete,
+            exact_dependencies=exact_dependencies,
         )
 
         return PreferenceProvider(
@@ -146,6 +153,7 @@ class PreferenceProvider(
             metadata_is_admitted=metadata_is_admitted,
             query_is_complete=query_is_complete,
             resolver_factory=resolver_factory,
+            on_candidate_considered=on_candidate_considered,
         )
 
     def empty_requirements(
@@ -246,6 +254,21 @@ class PreferenceProvider(
             if self.eligible(candidate):
                 result |= Range.singleton(self.identify(candidate))
         return result
+
+    def encode_candidate(
+        self, candidate: CandidateType, allowed: RangeType
+    ) -> Range[int]:
+        """Encode a known exact identity while retaining scope and input bounds."""
+        package = self.catalogue.candidate_package(candidate)
+        allowed = self.catalogue.intersect_ranges(
+            allowed, self.constraints.get(package, self.catalogue.full_range())
+        )
+        if not self.eligible(candidate) or not self.catalogue.range_contains(
+            candidate, allowed
+        ):
+            return Range[int].empty()
+
+        return Range[int].singleton(self.identify(candidate))
 
     def receive_decision_scan_hint(
         self,
@@ -419,15 +442,7 @@ class PreferenceProvider(
             return None
         if isinstance(package, str):
             # Cached dependencies need incompatibilities before excluding candidates.
-            allowed = self.constraints.get(package, self.catalogue.full_range())
-            token = next(
-                (
-                    self.identify(c)
-                    for c in self.catalogue.ordered(package, allowed)
-                    if self.eligible(c) and self.identify(c) in version_range
-                ),
-                None,
-            )
+            token = self.candidate_token(package, version_range)
             if token is not None:
                 # Keep the offered domain before the decision narrows it to a singleton.
                 immediate = not self.catalogue.candidate_withdrawn(
@@ -440,6 +455,10 @@ class PreferenceProvider(
                     self.immediate_metadata.add(token)
                 else:
                     self.immediate_metadata.discard(token)
+
+                # Choice probes can repeat before metadata is prepared.
+                if self.on_candidate_considered is not None:
+                    self.on_candidate_considered(self.items[token])
             return token
         if isinstance(package, PermissionProxy):
             return next(
@@ -451,6 +470,32 @@ class PreferenceProvider(
                 None,
             )
         return self.prepare_candidate(package, version_range)
+
+    def candidate_token(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
+        """Choose an identity without listing an already registered exact domain."""
+        allowed = self.constraints.get(package, self.catalogue.full_range())
+        if self.preference.exact_dependencies is not None:
+            for token in self.package_tokens.get(package, ()):
+                if version_range == Range.singleton(token):
+                    candidate = self.items[token]
+                    return (
+                        token
+                        if self.eligible(candidate)
+                        and self.catalogue.range_contains(candidate, allowed)
+                        else None
+                    )
+
+        return next(
+            (
+                self.identify(candidate)
+                for candidate in self.catalogue.ordered(package, allowed)
+                if self.eligible(candidate)
+                and self.identify(candidate) in version_range
+            ),
+            None,
+        )
 
     def prepare_candidate(
         self, package: MetadataProxy, version_range: RangeProtocol[int]
@@ -524,10 +569,15 @@ class PreferenceProvider(
         token = package.candidate
         data = self.catalogue.facts[self.items[token]]
         assert data is not None
-        return {
-            name: self.encode_range(name, allowed)
-            for name, allowed in data.dependencies.items()
-        }
+        dependencies = encode_dependencies(
+            self.catalogue,
+            self.items[token],
+            data.dependencies,
+            self.preference.exact_dependencies,
+            self.encode_range,
+            self.encode_candidate,
+        )
+        return dict(dependencies.items())
 
     def widen_decision(self, package: Package, version: int) -> None:
         """Keep incompatibilities specific to a candidate or permission reason."""
@@ -548,6 +598,7 @@ class PreferenceProvider(
             query_is_complete=self._query_is_complete,
             resolver_factory=self.resolver_factory,
             preferred_candidate=self.preferred_candidate,
+            on_candidate_considered=self.on_candidate_considered,
         )
 
         # Scopes use one candidate snapshot and retain each choice's token identity.

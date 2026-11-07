@@ -24,7 +24,12 @@ from nab_provider.preference_provider import (
     PermissionProxy,
     PreferenceProvider,
 )
-from nab_resolver.errors import ResolutionError, ResolutionLimitError
+from nab_provider.prepared_resolution import PreparedResolution
+from nab_resolver.errors import (
+    ResolutionError,
+    ResolutionInvariantError,
+    ResolutionLimitError,
+)
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver, ResolverProvider, ResolverStats
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
@@ -531,3 +536,461 @@ def test_incomplete_refresh_keeps_yanked_metadata_unprepared() -> None:
     assert withdrawn not in catalogue.facts
     assert provider.preference.outcomes
     assert set(provider.preference.outcomes.values()) == {PreparationStatus.INCOMPLETE}
+
+
+class FileChoice(Choice):
+    """Distinguish two opaque file identities at the same package version."""
+
+    __slots__ = ()
+
+    def __eq__(self, other: object) -> bool:
+        """Compare opaque file identity without equating version labels."""
+        return self is other
+
+    __hash__ = object.__hash__
+
+
+class ExactCatalogue(Catalogue):
+    """Refuse child enumeration while retaining its genuinely known identity."""
+
+    def __init__(
+        self,
+        choices: tuple[Choice, ...],
+        *,
+        forbidden: frozenset[str] = frozenset({"child"}),
+    ) -> None:
+        super().__init__(choices)
+        self.listed: list[str] = []
+        self.bases: dict[Choice, Choice] = {}
+        self.forbidden = forbidden
+
+    def choices(self, package: str) -> tuple[Choice, ...]:
+        self.listed.append(package)
+        if package in self.forbidden:
+            pytest.fail("exact child triggered an unrelated candidate listing")
+        return super().choices(package)
+
+    def base_candidate(self, candidate: Choice) -> Choice:
+        return self.bases.get(candidate, Catalogue.base_candidate(candidate))
+
+
+@pytest.mark.parametrize("preferred_child", ["none", "same", "different"])
+def test_exact_child_is_selected_without_listing_in_trials_and_fallback(
+    preferred_child: str,
+) -> None:
+    parent = Choice("parent", 1)
+    child = FileChoice("child", 1)
+    catalogue = ExactCatalogue((parent,))
+    catalogue.metadata[parent] = Data({"child": Range[int].full()})
+    preferred = {"parent": parent}
+    observed: list[Choice] = []
+    if preferred_child != "none":
+        preferred["child"] = (
+            child if preferred_child == "same" else FileChoice("child", 1)
+        )
+
+    result = PreparedResolution.from_catalogue(
+        catalogue,
+        {"parent": Range[int].full()},
+        (),
+        {},
+        preferred_candidate=preferred.get,
+        on_candidate_considered=observed.append,
+        exact_dependencies=lambda candidate: (child,) if candidate is parent else (),
+    ).solve()
+
+    assert result.candidates == {"parent": parent, "child": child}
+    assert result.candidates["child"] is child
+    assert result.edges == (("parent", "child"),)
+    assert catalogue.facts[child] == Data({})
+    assert any(candidate is child for candidate in observed)
+    assert "child" not in catalogue.listed
+
+
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_exact_child_still_requires_available_valid_metadata(unavailable: bool) -> None:
+    parent = Choice("parent", 1)
+    child = FileChoice("child", 1)
+    catalogue = ExactCatalogue((parent,))
+    catalogue.metadata[parent] = Data({"child": Range[int].full()})
+    if unavailable:
+        catalogue.unavailable.add(child)
+    else:
+        catalogue.metadata[child] = None
+    session = PreparedResolution.from_catalogue(
+        catalogue,
+        {"parent": Range[int].full()},
+        (),
+        {},
+        exact_dependencies=lambda candidate: (child,) if candidate is parent else (),
+    )
+
+    error = IncompletePreferenceError if unavailable else ResolutionError
+    with pytest.raises(error):
+        session.solve()
+
+    assert "child" not in catalogue.listed
+
+
+@pytest.mark.parametrize("preferred", [False, True])
+@pytest.mark.parametrize("terminal", [False, True])
+def test_exact_callback_error_preserves_classification_and_round_budget(
+    preferred: bool, terminal: bool
+) -> None:
+    parent = Choice("parent", 1)
+    catalogue = ExactCatalogue((parent,))
+    error = ResolutionInvariantError("invalid exact edge") if terminal else ValueError()
+
+    def exact_dependencies(_candidate: Choice) -> tuple[Choice, ...]:
+        raise error
+
+    session = PreparedResolution.from_catalogue(
+        catalogue,
+        {"parent": Range[int].full()},
+        (),
+        {},
+        preferred_candidate={"parent": parent}.get if preferred else None,
+        exact_dependencies=exact_dependencies,
+    )
+    initial = session.remaining_rounds
+    with pytest.raises(type(error)) as caught:
+        session.solve()
+
+    assert caught.value is error
+    assert session.stats.rounds > 0
+    assert session.remaining_rounds == initial - session.stats.rounds
+
+
+@pytest.mark.parametrize("constraint", [False, True])
+def test_exact_child_keeps_original_edge_and_input_bounds(constraint: bool) -> None:
+    parent = Choice("parent", 1)
+    child = FileChoice("child", 1)
+    catalogue = ExactCatalogue((parent,))
+    catalogue.metadata[parent] = Data(
+        {
+            "child": Range[int].full() if constraint else Range[int].singleton(2),
+        }
+    )
+    session = PreparedResolution.from_catalogue(
+        catalogue,
+        {"parent": Range[int].full()},
+        (),
+        {"child": Range[int].singleton(2)} if constraint else {},
+        exact_dependencies=lambda candidate: (child,) if candidate is parent else (),
+    )
+
+    with pytest.raises(ResolutionError):
+        session.solve()
+
+    assert child not in catalogue.facts
+    assert "child" not in catalogue.listed
+
+
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_exact_dependencies_are_conjunctive_at_equal_versions(duplicate: bool) -> None:
+    parent = Choice("parent", 1)
+    first = FileChoice("child", 1)
+    second = first if duplicate else FileChoice("child", 1)
+    catalogue = ExactCatalogue((parent,))
+    catalogue.metadata[parent] = Data({"child": Range[int].full()})
+    session = PreparedResolution.from_catalogue(
+        catalogue,
+        {"parent": Range[int].full()},
+        (),
+        {},
+        exact_dependencies=lambda candidate: (
+            (first, second) if candidate is parent else ()
+        ),
+    )
+
+    if duplicate:
+        assert session.solve().candidates == {"parent": parent, "child": first}
+    else:
+        with pytest.raises(ResolutionError):
+            session.solve()
+    assert "child" not in catalogue.listed
+
+
+def test_different_parents_cannot_choose_distinct_files_at_one_version() -> None:
+    first = Choice("first", 1)
+    second = Choice("second", 1)
+    child = FileChoice("child", 1)
+    other = FileChoice("child", 1)
+    catalogue = ExactCatalogue((first, second))
+    catalogue.metadata[first] = Data({"child": Range[int].full()})
+    catalogue.metadata[second] = Data({"child": Range[int].full()})
+    exact = {first: (child,), second: (other,)}
+    session = PreparedResolution.from_catalogue(
+        catalogue,
+        {"first": Range[int].full(), "second": Range[int].full()},
+        (),
+        {},
+        exact_dependencies=lambda candidate: exact.get(candidate, ()),
+    )
+
+    with pytest.raises(ResolutionError):
+        session.solve()
+
+    assert "child" not in catalogue.listed
+
+
+def test_exact_dependency_requires_an_original_prepared_edge() -> None:
+    parent = Choice("parent", 1)
+    child = FileChoice("child", 1)
+    catalogue = ExactCatalogue((parent,))
+    session = PreparedResolution.from_catalogue(
+        catalogue,
+        {"parent": Range[int].full()},
+        (),
+        {},
+        exact_dependencies=lambda candidate: (child,) if candidate is parent else (),
+    )
+
+    with pytest.raises(ResolutionInvariantError, match="no prepared dependency edge"):
+        session.solve()
+
+    assert child not in catalogue.facts
+    assert "child" not in catalogue.listed
+
+
+@pytest.mark.parametrize("live", [False, True])
+def test_scoped_queries_preserve_exact_identity_and_live_restrictions(
+    live: bool,
+) -> None:
+    parent = Choice("parent", 1)
+    child = FileChoice("child", 1, withdrawn=live)
+    other = FileChoice("child", 1)
+    catalogue = ExactCatalogue((parent,))
+    catalogue.metadata[parent] = Data({"child": Range[int].full()})
+    session = PreparedResolution.from_catalogue(
+        catalogue,
+        {"parent": Range[int].full()},
+        (Pin("child", 1),),
+        {},
+        exact_dependencies=lambda candidate: (child,) if candidate is parent else (),
+    )
+    scope = (
+        PreferenceScope[Choice](live=frozenset({"child"}))
+        if live
+        else PreferenceScope(fixed=frozenset({other}))
+    )
+
+    with pytest.raises(ResolutionError):
+        session.provider.run_query(scope)
+
+    assert child not in catalogue.facts
+    assert "child" not in catalogue.listed
+
+
+@pytest.mark.parametrize("compatible", [False, True])
+@pytest.mark.parametrize("forbid_listing", [False, True])
+def test_known_fact_proofs_retain_exact_identity_without_preparation(
+    compatible: bool,
+    forbid_listing: bool,
+) -> None:
+    parent = Choice("parent", 1)
+    child = FileChoice("child", 1)
+    other = child if compatible else FileChoice("child", 1)
+    catalogue = (
+        ExactCatalogue((parent,))
+        if forbid_listing
+        else Catalogue((parent, child, other))
+    )
+    catalogue.facts[parent] = Data({"child": Range[int].full()})
+    catalogue.facts[child] = Data({})
+    catalogue.facts[other] = Data({})
+    search = CataloguePreference(
+        catalogue,
+        {"parent": Range[int].full()},
+        (),
+        {},
+        exact_dependencies=lambda candidate: (child,) if candidate is parent else (),
+    )
+    context = _Context(PreferenceScope[Choice](), frozenset({parent, other}))
+    before = dict(catalogue.facts)
+    search.check_context(context)
+
+    assert (context in search.refuted) is not compatible
+    assert (context in search.possible) is compatible
+    assert catalogue.facts == before
+    if isinstance(catalogue, ExactCatalogue):
+        assert "child" not in catalogue.listed
+
+
+@pytest.mark.parametrize("pin_source", ["none", "input", "parent"])
+def test_exact_withdrawn_child_still_needs_original_pin_permission(
+    pin_source: str,
+) -> None:
+    parent = Choice("parent", 1)
+    child = FileChoice("child", 1, withdrawn=True)
+    catalogue = ExactCatalogue((parent,))
+    catalogue.metadata[parent] = Data(
+        {"child": Range[int].full()},
+        (Pin("child", 1),) if pin_source == "parent" else (),
+    )
+    session = PreparedResolution.from_catalogue(
+        catalogue,
+        {"parent": Range[int].full()},
+        (Pin("child", 1),) if pin_source == "input" else (),
+        {},
+        exact_dependencies=lambda candidate: (child,) if candidate is parent else (),
+    )
+
+    if pin_source == "none":
+        with pytest.raises(ResolutionError):
+            session.solve()
+        assert child not in catalogue.facts
+    else:
+        result = session.solve()
+        assert result.candidates == {"parent": parent, "child": child}
+        assert result.admission_sources["child"]
+        assert session.provider.preference.outcomes
+        assert session.provider.preference.possible
+    assert "child" not in catalogue.listed
+
+
+@pytest.mark.parametrize("compatible", [False, True])
+def test_frozen_extra_base_coupling_preserves_exact_identity(compatible: bool) -> None:
+    extra = FileChoice("child[feature]", 1)
+    child = FileChoice("child", 1)
+    other = child if compatible else FileChoice("child", 1)
+    catalogue = ExactCatalogue((extra,))
+    catalogue.bases[extra] = child
+    catalogue.facts[extra] = Data({"child": Range[int].full()})
+    catalogue.facts[child] = Data({})
+    search = CataloguePreference(
+        catalogue,
+        {extra.package: Range[int].full()},
+        (),
+        {},
+        exact_dependencies=lambda candidate: (other,) if candidate is extra else (),
+    )
+    context = _Context(PreferenceScope[Choice](), frozenset({extra, child}))
+    search.check_context(context)
+
+    assert (context in search.refuted) is not compatible
+    assert (context in search.possible) is compatible
+    assert "child" not in catalogue.listed
+
+
+@pytest.mark.parametrize("with_extra", [False, True])
+def test_unrelated_exact_edge_does_not_suppress_a_working_live_alternative(
+    with_extra: bool,
+) -> None:
+    parent = Choice("parent", 1)
+    withdrawn = FileChoice("child", 1, withdrawn=True)
+    live = FileChoice("child", 1)
+    base = FileChoice("auxiliary", 1)
+    auxiliary = FileChoice("auxiliary[feature]", 1) if with_extra else base
+    catalogue = ExactCatalogue(
+        (parent, withdrawn, live),
+        forbidden=frozenset({base.package, auxiliary.package}),
+    )
+    catalogue.metadata[parent] = Data(
+        {"child": Range[int].full(), auxiliary.package: Range[int].full()}
+    )
+    exact = {parent: (auxiliary,)}
+    if with_extra:
+        catalogue.bases[auxiliary] = base
+        catalogue.metadata[auxiliary] = Data({base.package: Range[int].full()})
+        exact[auxiliary] = (base,)
+    result = PreparedResolution.from_catalogue(
+        catalogue,
+        {"parent": Range[int].full()},
+        (Pin("child", 1),),
+        {},
+        exact_dependencies=lambda candidate: exact.get(candidate, ()),
+    ).solve()
+
+    expected = {"parent": parent, "child": live, auxiliary.package: auxiliary}
+    if with_extra:
+        expected[base.package] = base
+    assert result.candidates == expected
+    assert withdrawn not in catalogue.facts
+    assert "child" in catalogue.listed
+    assert "auxiliary" not in catalogue.listed
+
+
+def test_frozen_proof_keeps_normal_order_for_an_unrefined_dependency() -> None:
+    first = FileChoice("parent", 2)
+    second = FileChoice("parent", 1)
+    catalogue = Catalogue((first, second))
+    catalogue.facts[first] = Data({})
+    catalogue.facts[second] = Data({})
+    context = _Context(PreferenceScope[Choice](), frozenset())
+    provider = _KnownFacts(
+        catalogue, {}, context, exact_dependencies=lambda _candidate: ()
+    )
+    allowed = provider.encode("parent", Range[int].full())
+    before = dict(catalogue.facts)
+
+    result = Resolver(provider).resolve({"parent": allowed})
+
+    assert provider.items[result["parent"]] is first
+    assert catalogue.facts == before
+
+
+@pytest.mark.parametrize("pinned", [False, True])
+def test_exact_withdrawn_extra_keeps_base_identity_and_pin_permission(
+    pinned: bool,
+) -> None:
+    parent = Choice("parent", 1)
+    extra = FileChoice("child[feature]", 1, withdrawn=True)
+    child = FileChoice("child", 1, withdrawn=True)
+    catalogue = ExactCatalogue(
+        (parent,), forbidden=frozenset({"child", "child[feature]"})
+    )
+    catalogue.bases[extra] = child
+    catalogue.metadata[parent] = Data({extra.package: Range[int].full()})
+    catalogue.metadata[extra] = Data({"child": Range[int].singleton(1)})
+    exact = {parent: (extra,), extra: (child,)}
+    session = PreparedResolution.from_catalogue(
+        catalogue,
+        {"parent": Range[int].full()},
+        (Pin("child", 1),) if pinned else (),
+        {},
+        exact_dependencies=lambda candidate: exact.get(candidate, ()),
+    )
+
+    if pinned:
+        result = session.solve()
+        assert result.candidates == {
+            "parent": parent,
+            extra.package: extra,
+            "child": child,
+        }
+        assert result.admission_sources["child"]
+    else:
+        with pytest.raises(ResolutionError):
+            session.solve()
+        assert extra not in catalogue.facts
+        assert child not in catalogue.facts
+    assert not {"child", extra.package}.intersection(catalogue.listed)
+
+
+def test_exact_extra_cannot_require_a_different_base_file() -> None:
+    parent = Choice("parent", 1)
+    extra = FileChoice("child[feature]", 1, withdrawn=True)
+    child = FileChoice("child", 1, withdrawn=True)
+    other = FileChoice("child", 1, withdrawn=True)
+    catalogue = ExactCatalogue(
+        (parent,), forbidden=frozenset({"child", "child[feature]"})
+    )
+    catalogue.bases[extra] = child
+    catalogue.metadata[parent] = Data({extra.package: Range[int].full()})
+    catalogue.metadata[extra] = Data({"child": Range[int].full()})
+    exact = {parent: (extra,), extra: (other,)}
+    session = PreparedResolution.from_catalogue(
+        catalogue,
+        {"parent": Range[int].full()},
+        (Pin("child", 1),),
+        {},
+        exact_dependencies=lambda candidate: exact.get(candidate, ()),
+    )
+
+    with pytest.raises(ResolutionError):
+        session.solve()
+
+    assert child not in catalogue.facts
+    assert other not in catalogue.facts
+    assert not {"child", extra.package}.intersection(catalogue.listed)
