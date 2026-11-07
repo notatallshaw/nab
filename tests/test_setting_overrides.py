@@ -24,6 +24,7 @@ from nab.config.ladder import (
 from nab.config.model import read_pyproject_config
 from nab_project import toml_io
 from nab_project.input_source import InputFormat
+from nab_project.toml_writer import dumps_value
 from nab_provider.errors import ConfigError
 
 from .test_prefer_existing_cli import Registry
@@ -71,6 +72,8 @@ def test_structured_cli_value_matches_file_value(
     value: str,
 ) -> None:
     path = project(hermetic_roots)
+    if key == "local-sources":
+        value = dumps_value([{"name": "a", "path": str(hermetic_roots / "source")}])
     file = hermetic_roots / "nab.toml"
     file.write_text(f"{key} = {value}\n")
     arguments = ("config", "get", key, "--path", str(path))
@@ -449,3 +452,27 @@ def test_plain_dependency_override_keeps_its_replay_value() -> None:
         cli_settings=(argument,),
     )
     assert _run.config_override_arguments(overrides) == ["--setting", argument]
+
+
+def test_relative_source_assignment_uses_the_cli_working_directory(
+    hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = project(hermetic_roots)
+    working = hermetic_roots.parent / "command-directory"
+    working.mkdir()
+    monkeypatch.chdir(working)
+    argument = 'project.local-sources=[{name="a",path="source"}]'
+    overrides = _run._cli_overrides(
+        cli_resolution=None,
+        cli_offline=None,
+        cli_cache_dir=None,
+        cli_settings=(argument,),
+    )
+    effective = _run.effective_config(path, cli_overrides=overrides)
+    config = read_pyproject_config(
+        path,
+        cli_overrides=_run.project_config_overrides(overrides),
+        discover_workspace=False,
+    )
+    assert effective["local-sources"].value[0].path == str(working / "source")
+    assert config.local_sources[0].path == str(working / "source")
