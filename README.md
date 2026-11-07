@@ -149,73 +149,25 @@ See
 
 ## Performance
 
-`nab lock` checks dependency solutions separately for each declared target by default. These options
-can reduce work, with different tradeoffs:
+Nab checks each target separately and resolves afresh by default. Wheels can declare different
+dependencies, and package information can change after a lock is saved. These options reduce that
+work:
 
-| Option                              | Work saved                                       | Tradeoff                                                                                                                     |
-| ----------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `assume-consistent-metadata = true` | Reuse a release's wheel metadata across targets. | Assumes sibling wheels agree on identity, Requires-Python and dependencies; unread headers are not independently verified.   |
-| `--lock-policy prefer-existing`     | Try saved-lock versions before ordinary search.  | May retain older valid versions; changed inputs can make the extra checks slower.                                            |
-| `--lock-policy reuse`               | Leave an accepted saved solution unchanged.      | Does not look for new releases, yanks, removed artifacts or changed remote metadata. A miss uses live preference resolution. |
+| Option                              | Behavior and tradeoff                                                   |
+| ----------------------------------- | ----------------------------------------------------------------------- |
+| `assume-consistent-metadata = true` | Reuse wheel metadata across targets, assuming a release's wheels agree. |
+| `--lock-policy prefer-existing`     | Prefer saved versions when still valid; may keep older releases.        |
+| `--lock-policy reuse`               | Reuse a valid saved lock without checking for remote updates.           |
 
-To assume consistent wheel metadata, add this setting to the project's existing table:
-
-```toml
-[tool.nab]
-assume-consistent-metadata = true
-```
-
-Nab still evaluates conditional dependencies for every target and checks its selected artifacts and
-wheel tags. The reused core Requires-Python also applies to each target. See
-[distribution policies](docs/reference/distribution-policy.md) for scoped exceptions and
-[lock policies](docs/reference/cli.md) for saved-lock behavior.
-
-`metadata-policy = "prefer-wheel"`, `assume-universal-deps = true` and
-`dist-policy = { policy = "sdist-if-needed", trust-unverified-deps = true }` make separate choices
-about metadata sources, cross-target source dependencies and legacy source headers. They can admit
-assumptions that a project does not satisfy. See
-[distribution policies](docs/reference/distribution-policy.md). HTTP backend and concurrency
-settings affect throughput and resource use independently of these dependency assumptions.
+See [distribution policies](docs/reference/distribution-policy.md) and
+[lock policies](docs/reference/cli.md) for configuration and restrictions.
 
 ## Universal lock benchmark
 
-These measurements use Nab `f3c05aa4`, uv 0.13.7, Poetry 2.5.1 and PDM 2.29.6 on GitHub-hosted
-Ubuntu 24.04. The Python CLIs run on CPython 3.15.0 with the GIL enabled; Python 3.12.13 was
-selected beforehand for project operations. Each bar is the median of ten fresh processes, including
-startup and the native lock command. Exports and independent validation are outside the clock.
+Default and performance settings compared with uv, Poetry and PDM on GitHub-hosted Linux. Timings
+include CLI startup, with cold and warm application caches.
 
-Cold means an empty application cache; warm means a populated application cache. OS caches were not
-cleared. Fresh-lock runs have no existing lock. Existing-lock runs restore each tool's own prior
-lock before every command. Reuse can accept that lock without refreshing remote package information.
-
-The two Nab rows use the same installed Nab wheels and ordinary per-target resolution. Nab default
-uses the defaults. Nab performance uses `nab lock --http-backend httpx2` with this configuration,
-adding `--lock-policy reuse` for existing-lock runs:
-
-```toml
-[tool.nab]
-dist-policy = { policy = "wheel-only", trust-unverified-deps = true }
-assume-consistent-metadata = true
-assume-universal-deps = true
-metadata-policy = "prefer-wheel"
-```
-
-Concurrency stays at the default of eight. Wheel-only excludes releases without a usable wheel; it
-can fail where the default could use a source distribution. `assume-universal-deps` and
-`trust-unverified-deps` do not affect these wheel-only selections. The bundle does not speed up
-every task: adding `six==1.17.0` to the Requests lock took between about 4% and 12% longer with warm
-caches, with a middle estimate near 7.5% (99% interval).
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="docs/_static/universal-lock-benchmark-light.svg">
-    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/universal-lock-benchmark-dark.svg">
-    <img src="https://raw.githubusercontent.com/notatallshaw/nab/main/docs/_static/universal-lock-benchmark-light.svg" alt="Fresh Requests lock, cold and warm caches: Nab default, Nab performance, uv, Poetry and PDM. Shorter is faster." width="1080">
-  </picture>
-</p>
-
-Fresh locks for `requests==2.32.3`, checked on 48 consumer targets: Python 3.12 to 3.14, eight
-platforms and CPython/PyPy.
+Creating a new lock for a scientific Python project:
 
 <p align="center">
   <picture>
@@ -225,9 +177,7 @@ platforms and CPython/PyPy.
   </picture>
 </p>
 
-Fresh locks for NumPy 2.1.3, pandas 2.2.3, SciPy 1.14.1, Matplotlib 3.9.2 and scikit-learn 1.5.2,
-checked on nine consumer targets: CPython 3.10 to 3.12 on Linux x86-64, Apple Silicon macOS and
-Windows x86-64.
+Relocking the same project with unchanged inputs. Saved-lock reuse can be a no-op:
 
 <p align="center">
   <picture>
@@ -237,18 +187,9 @@ Windows x86-64.
   </picture>
 </p>
 
-The same scientific project with an existing lock and unchanged inputs. Accepted reuse leaves the
-saved lock unchanged.
-
-All tools receive the same root requirements and Python range. Nab declares the finite consumer
-matrix; the other tools use their normal native universal locking behavior. Every tool's selected
-dependencies and wheel metadata were independently checked on those consumer targets. Both Nab
-modes, uv, Poetry and PDM also preserve Jupyter's platform conditional dependencies across all nine
-tested targets. uv's
-[release-metadata consistency assumption](https://docs.astral.sh/uv/reference/internals/resolver/#metadata-consistency)
-does not discard conditional dependencies. The
-[Jupyter fixture and native commands](nab-project/benchmarks/readme/README.md) make the
-conditional-dependency check reproducible.
+Nab performance reuses wheel metadata and enables saved-lock reuse when relocking. It requires
+usable wheels and can be slower when dependencies change. See
+[benchmark settings and results](nab-project/benchmarks/readme/README.md) for details.
 
 ## Libraries
 
