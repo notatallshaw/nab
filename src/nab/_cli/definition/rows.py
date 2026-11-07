@@ -67,10 +67,13 @@ class Row:
 
     __slots__ = (
         "__orig_class__",
+        "action",
+        "alias",
         "default",
         "deprecated",
         "docs",
         "env",
+        "environ",
         "help",
         "key",
         "mirrors",
@@ -99,8 +102,14 @@ class Row:
         deprecated: bool = False,
         required: bool = False,
         mirrors: type[enum.Enum] | None = None,
+        action: bool = False,
+        alias: str = "",
+        environ: tuple[str, ...] = (),
     ) -> None:
         """Record one row; the table names it and fills its defaults."""
+        self.action = action
+        self.alias = alias
+        self.environ = environ
         self.help = help
         self.docs = docs
         self.short = short
@@ -141,9 +150,16 @@ class Count(Row):
             """Read the value a command receives for this row."""
             ...
 
-    def __init__(self, *, help: str, short: str = "", docs: str = "") -> None:  # noqa: A002
+    def __init__(
+        self,
+        *,
+        help: str,  # noqa: A002 - the declaration help field
+        short: str = "",
+        docs: str = "",
+        environ: tuple[str, ...] = (),
+    ) -> None:
         """Record one row; the table names it and fills its defaults."""
-        super().__init__(help=help, short=short, docs=docs, default=0)
+        super().__init__(help=help, short=short, docs=docs, default=0, environ=environ)
 
 
 class Switch(Row):
@@ -167,6 +183,8 @@ class Switch(Row):
         docs: str = "",
         on: tuple[str, ...] = (),
         negatable: bool = False,
+        action: bool = False,
+        environ: tuple[str, ...] = (),
     ) -> None:
         """Record one row; the table names it and fills its defaults."""
         super().__init__(
@@ -176,6 +194,8 @@ class Switch(Row):
             docs=docs,
             on=on,
             negatable=negatable,
+            action=action,
+            environ=environ,
         )
 
 
@@ -216,9 +236,19 @@ class Tri(Row):
         docs: str = "",
         on: tuple[str, ...] = (),
         env: bool = False,
+        negatable: bool = True,
     ) -> None:
         """Record one row; the table names it and fills its defaults."""
-        super().__init__(help=help, key=key, docs=docs, on=on, env=env, negatable=True)
+        super().__init__(
+            help=help, key=key, docs=docs, on=on, env=env, negatable=negatable
+        )
+
+
+class Toggle(Tri):
+    """A layered boolean with ordinary positive and negative flag forms."""
+
+    kind = "flag"
+    __slots__ = ()
 
 
 class Value(Row, Generic[T]):
@@ -245,6 +275,9 @@ class Value(Row, Generic[T]):
         env: bool = False,
         deprecated: bool = False,
         mirrors: type[enum.Enum] | None = None,
+        action: bool = False,
+        alias: str = "",
+        environ: tuple[str, ...] = (),
     ) -> None:
         """Record one row; the table names it and fills its defaults."""
         super().__init__(
@@ -257,6 +290,9 @@ class Value(Row, Generic[T]):
             env=env,
             deprecated=deprecated,
             mirrors=mirrors,
+            action=action,
+            alias=alias,
+            environ=environ,
         )
 
 
@@ -283,9 +319,10 @@ class Many(Row, Generic[T]):
         docs: str = "",
         on: tuple[str, ...] = (),
         key: Layer[Any] | None = None,
+        alias: str = "",
     ) -> None:
         """Record one row; the table names it and fills its defaults."""
-        super().__init__(help=help, docs=docs, on=on, key=key, default=())
+        super().__init__(help=help, docs=docs, on=on, key=key, default=(), alias=alias)
 
 
 class Star(Row, Generic[T]):
@@ -306,9 +343,11 @@ class Star(Row, Generic[T]):
         help: str,  # noqa: A002
         docs: str = "",
         on: tuple[str, ...] = (),
+        key: Layer[Any] | None = None,
+        env: bool = False,
     ) -> None:
         """Record one row; the table names it and fills its defaults."""
-        super().__init__(help=help, docs=docs, on=on, default=())
+        super().__init__(help=help, docs=docs, on=on, default=(), key=key, env=env)
 
 
 class Items(Star[T]):

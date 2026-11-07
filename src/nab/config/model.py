@@ -9,6 +9,8 @@ module owns the project side.
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "nab.config.assignments",
+    "nab.config.assignments",
     "nab_resolver.diagnostics",
     "datetime",
     "nab.config.hooks",
@@ -84,6 +86,7 @@ from nab_provider.target import (
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
+from .assignments import CliSetting
 from .hooks import resolve_anchor
 from .ladder import (
     EffectiveValue,
@@ -581,6 +584,8 @@ def _declared_by(ev: EffectiveValue) -> tuple[str, ...]:
     """Return the flags that declared this key, empty for a file source."""
     if ev.cli_table is None:
         return ()
+    if isinstance(ev.cli_table, CliSetting):
+        return ("--setting",)
     return tuple(key.flag for key in ev.cli_table.keys)
 
 

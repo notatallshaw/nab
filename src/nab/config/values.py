@@ -16,6 +16,8 @@ __lazy_modules__ = (
     "nab_index.file_urls",
     "nab_markersets.python_versions",
     "nab_project.lock_policy",
+    "nab_project",
+    "tomli",
     "nab_project.paths",
     "nab_project.workspace",
     "nab_provider._vendor.packaging.specifiers",
@@ -45,9 +47,12 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
 from urllib.parse import urlsplit
 
+import tomli
+
 from nab.policy_migrations import DIST_POLICY_REPLACEMENTS
 from nab_index.file_urls import is_file_url
 from nab_markersets.python_versions import validate_python_version
+from nab_project import toml_io
 from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
@@ -569,6 +574,35 @@ def parse_http_backend(value: object, where: str) -> str:
 def parse_lock_policy(value: object, where: str) -> LockPolicy:
     """Read how an existing lockfile participates in locking."""
     return parse_enum(value, where, LockPolicy, LockPolicy.RESOLVE)
+
+
+def parse_toml_value(value: str, where: str) -> object:
+    """Read one TOML value supplied outside a configuration document."""
+    try:
+        parsed = toml_io.loads("value = " + value)
+    except tomli.TOMLDecodeError as exc:
+        msg = f"{where}: expected a TOML value: {exc}"
+        raise SourceConfigError(msg) from exc
+    if set(parsed) != {"value"}:
+        msg = f"{where}: expected one TOML value"
+        raise SourceConfigError(msg)
+    return parsed["value"]
+
+
+def parse_run_selection(value: object, where: str) -> tuple[str, ...]:
+    """Read selected extras or groups as a TOML array, including in the environment."""
+    if isinstance(value, str):
+        value = parse_toml_value(value, where)
+    return parse_string_list(value, where)
+
+
+def parse_lock_format(value: object, where: str) -> str:
+    """Read the output format selected for lock generation."""
+    formats = ("pylock", "requirements", "requirements-without-hashes")
+    if not isinstance(value, str) or value not in formats:
+        msg = f"{where} must be one of {formats!r}, got {value!r}"
+        raise SourceConfigError(msg)
+    return value
 
 
 def parse_max_concurrency(value: object, where: str) -> int:

@@ -21,7 +21,6 @@ __lazy_modules__ = (
     "nab._run",
     "nab._version",
     "nab.config.model",
-    "nab.config.values",
     "nab.flagtypes",
     "nab.output",
     "nab_project",
@@ -133,14 +132,14 @@ from ._run import (
     _reject_python_flag_in_universal,
     _resolve_effective_cache_dir,
     check_script_options,
+    config_override_arguments,
     lock_anchor,
     project_config_overrides,
-    project_override_arguments,
     read_config_ladder,
+    require_pyproject_file,
     select_input,
 )
 from .config.model import NabProjectConfig, ResolveMode, plan_targets
-from .config.values import SourceConfigError
 from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,
     DecisionOrderFlag,
@@ -162,6 +161,8 @@ if TYPE_CHECKING:
     from nab_project.inputs import ResolveInputs
     from nab_project.lock_preferences import LockPreferences
     from nab_provider.target import ResolveTarget
+
+    from ._run import RunSettings
 
 
 _DEFAULT_PROJECT_PATH = Path("pyproject.toml")
@@ -202,19 +203,20 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     *,
     script: Path | None = None,
     output: Path | None = None,
-    format: LockFormat = "pylock",  # noqa: A002 - shadows builtin by convention
+    format: LockFormat | None = None,  # noqa: A002 - shadows builtin by convention
     http_backend: HttpBackend | None = None,
+    setting: tuple[str, ...] = (),
     cache_dir: Path | None = None,
-    cache: bool = True,
+    cache: bool | None = None,
     offline: bool | None = None,
     python: str | None = None,
     groups: tuple[str, ...] = (),
-    all_groups: bool = False,
+    all_groups: bool | None = None,
     extras: tuple[str, ...] = (),
-    all_extras: bool = False,
-    build_requirements: bool = False,
-    workspace_discovery: bool = True,
-    no_emit_workspace: bool = False,
+    all_extras: bool | None = None,
+    build_requirements: bool | None = None,
+    workspace_discovery: bool | None = None,
+    no_emit_workspace: bool | None = None,
     project_resolution: ResolutionFlag | None = None,
     project_mode: ModeFlag | None = None,
     project_requires_python: str | None = None,
@@ -274,45 +276,24 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     ``--locked`` checks the saved solution without resolving or writing.
     ``--reproduce`` resolves afresh and checks that the output is identical.
     """
-    selected_lock_policy = LockPolicy(lock_policy or "resolve")
     path, input_format = select_input(path, script)
-    check_script_options(
-        input_format,
-        groups=groups,
-        all_groups=all_groups,
-        extras=extras,
-        all_extras=all_extras,
-        build_requirements=build_requirements,
-        no_emit_workspace=no_emit_workspace,
-    )
-    if input_format is InputFormat.SCRIPT and output is None:
-        output = _script_output_path(path, format_name=format)
-    _validate_pylock_output_name(output=output, format=format)
-    _validate_lock_mode(
-        output=output,
-        format=format,
-        locked=locked,
-        reproduce=reproduce,
-        upgrade=upgrade,
-        lock_policy=selected_lock_policy,
-    )
-
-    if build_requirements:
-        _refuse_group_selection_with_build_requirements(
-            groups=groups,
-            all_groups=all_groups,
-            extras=extras,
-            all_extras=all_extras,
-            default_group=project_default_group,
-            base_group=project_base_group,
-            build_group=project_build_group,
-        )
+    require_pyproject_file(path, input_format=input_format)
 
     overrides = _cli_overrides(
         cli_resolution=project_resolution,
         cli_offline=offline,
         cli_cache_dir=cache_dir,
         cli_http_backend=http_backend,
+        cli_settings=setting,
+        cli_format=format,
+        cli_cache=cache,
+        cli_groups=groups,
+        cli_all_groups=all_groups,
+        cli_extras=extras,
+        cli_all_extras=all_extras,
+        cli_workspace_discovery=workspace_discovery,
+        cli_build_requirements=build_requirements,
+        cli_no_emit_workspace=no_emit_workspace,
         cli_lock_policy=lock_policy,
         cli_mode=project_mode,
         cli_requires_python=project_requires_python,
@@ -345,11 +326,13 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
 
     ladder = read_config_ladder(path, overrides, input_format=input_format)
     _reject_python_flag_in_universal(ladder, python)
-    selected_lock_policy = _configured_lock_policy(
-        ladder,
-        current=selected_lock_policy,
+    settings = _layered_run_settings_or_exit(ladder)
+    output = _lock_output(
+        path,
+        input_format,
         output=output,
-        format_name=format,
+        settings=settings,
+        project_overrides=project_overrides,
         locked=locked,
         reproduce=reproduce,
         upgrade=upgrade,
@@ -357,26 +340,27 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     anchor = _determine_lock_anchor(
         ladder,
         output=output,
-        format=format,
-        build_requirements=build_requirements,
+        format=settings.format,
+        build_requirements=settings.build_requirements,
         upgrade=upgrade,
     )
 
     config = _load_config(
         path,
-        discover_workspace=workspace_discovery,
+        discover_workspace=settings.workspace_discovery,
         anchor=anchor,
         cli_overrides=project_overrides,
         input_format=input_format,
     )
     inputs = config.resolve_inputs()
 
-    if build_requirements:
+    if settings.build_requirements:
         inputs = inputs_for_build_requirements(inputs)
 
     _check_targets_or_exit(config)
-    settings = _layered_run_settings_or_exit(ladder)
-    effective_cache_dir = _resolve_effective_cache_dir(settings.cache_dir, cache=cache)
+    effective_cache_dir = _resolve_effective_cache_dir(
+        settings.cache_dir, cache=settings.cache
+    )
 
     provenance = _build_provenance(
         path,
@@ -386,14 +370,14 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     )
 
     selected_groups = resolve_group_selection(
-        path, groups=groups, all_groups=all_groups
+        path, groups=settings.groups, all_groups=settings.all_groups
     )
     selected_extras = resolve_extra_selection(
-        path, extras=extras, all_extras=all_extras
+        path, extras=settings.extras, all_extras=settings.all_extras
     )
 
     workspace_to_drop = (
-        config.workspace_member_names if no_emit_workspace else frozenset()
+        config.workspace_member_names if settings.no_emit_workspace else frozenset()
     )
 
     if config.mode is ResolveMode.UNIVERSAL:
@@ -406,17 +390,17 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         path=path,
         output=output,
         groups=selected_groups,
-        all_groups=all_groups,
+        all_groups=settings.all_groups,
         extras=selected_extras,
-        all_extras=all_extras,
+        all_extras=settings.all_extras,
         offline=offline,
-        build_requirements=build_requirements,
-        workspace_discovery=workspace_discovery,
-        no_emit_workspace=no_emit_workspace,
+        build_requirements=settings.build_requirements,
+        workspace_discovery=settings.workspace_discovery,
+        no_emit_workspace=settings.no_emit_workspace,
         cli_overrides=overrides,
         upgrade=upgrade,
         input_format=input_format,
-        lock_policy=selected_lock_policy,
+        lock_policy=settings.lock_policy,
     )
 
     strategy = inputs.resolution if settings.resolution is None else settings.resolution
@@ -433,7 +417,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
 
     validation = (
         _lock_snapshot(run, config, inputs, workspace_to_drop)
-        if format == "pylock" and not reproduce
+        if settings.format == "pylock" and not reproduce
         else None
     )
 
@@ -457,7 +441,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         failure_prefix="cannot lock",
         groups=selected_groups,
         extras=selected_extras,
-        build_requirements=build_requirements,
+        build_requirements=settings.build_requirements,
         input_format=input_format,
         resolution_strategy=settings.resolution,
         lock_preferences=previous_lock,
@@ -491,12 +475,49 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     _emit_or_exit(
         lambda: _emit(
             lock_input,
-            format=format,
+            format=settings.format,
             output=output,
-            build_requirements=build_requirements,
+            build_requirements=settings.build_requirements,
             previous_lock=previous_lock,
         )
     )
+
+
+def _lock_output(
+    path: Path,
+    input_format: InputFormat,
+    *,
+    output: Path | None,
+    settings: RunSettings,
+    project_overrides: Mapping[str, object],
+    locked: bool,
+    reproduce: bool,
+    upgrade: bool,
+) -> Path | None:
+    """Validate effective lock controls and select the script output filename."""
+    check_script_options(
+        input_format,
+        groups=settings.groups,
+        all_groups=settings.all_groups,
+        extras=settings.extras,
+        all_extras=settings.all_extras,
+        build_requirements=settings.build_requirements,
+        no_emit_workspace=settings.no_emit_workspace,
+    )
+    if input_format is InputFormat.SCRIPT and output is None:
+        output = _script_output_path(path, format_name=settings.format)
+    _validate_pylock_output_name(output=output, format=settings.format)
+    _validate_lock_mode(
+        output=output,
+        format=settings.format,
+        locked=locked,
+        reproduce=reproduce,
+        upgrade=upgrade,
+        lock_policy=settings.lock_policy,
+    )
+    if settings.build_requirements:
+        _refuse_group_selection_with_build_requirements(settings, project_overrides)
+    return output
 
 
 def _script_output_path(path: Path, *, format_name: str) -> Path:
@@ -577,34 +598,17 @@ def _default_output_path(
 
 
 def _refuse_group_selection_with_build_requirements(
-    *,
-    groups: tuple[str, ...],
-    all_groups: bool,
-    extras: tuple[str, ...],
-    all_extras: bool,
-    default_group: tuple[str, ...],
-    base_group: str | None,
-    build_group: str | None,
+    settings: RunSettings, project_overrides: Mapping[str, object]
 ) -> None:
-    """Exit 1 when a run names a selection a build-requirements lock has none of.
-
-    Refusing is what keeps the flags honest.  ``--project-default-group``,
-    ``--project-base-group`` and ``--project-build-group`` would otherwise
-    be dropped by
-    :func:`~nab_project.resolve.inputs_for_build_requirements` after the run had
-    already printed a reproducibility notice and recorded them in the lock,
-    claiming an override that changed nothing.
-    """
-    named = (
-        bool(groups),
-        all_groups,
-        bool(extras),
-        all_extras,
-        bool(default_group),
-        base_group is not None,
-        build_group is not None,
+    """Refuse selections that a build-requirements lock would ignore."""
+    selected = (
+        settings.groups or settings.extras or settings.all_groups or settings.all_extras
     )
-    if not any(named):
+    overridden = any(
+        key in project_overrides
+        for key in ("default-groups", "base-group", "build-group")
+    )
+    if not selected and not overridden:
         return
     printer().error(
         "--build-requirements locks [build-system].requires, which has no"
@@ -739,67 +743,11 @@ class _LockRun(Record):
         return option_tokens("--output", (str(self.output),))
 
     def _content_arguments(self) -> list[str]:
-        """Return the flags that decide what the rewritten lock holds.
-
-        ``--all-groups`` and ``--all-extras`` stay as themselves rather than
-        expanding into the names they selected, because only the first name
-        of an expanded list may be option-shaped.
-        """
-        arguments: list[str] = []
-        if self.all_groups:
-            arguments.append("--all-groups")
-        else:
-            arguments += option_tokens("--groups", self.groups)
-
-        if self.all_extras:
-            arguments.append("--all-extras")
-        else:
-            arguments += option_tokens("--extras", self.extras)
-
-        if self.offline is not None:
-            arguments += option_tokens("--offline", (str(self.offline),))
-
-        if self.build_requirements:
-            arguments.append("--build-requirements")
-        if not self.workspace_discovery:
-            arguments.append("--no-workspace-discovery")
-        if self.no_emit_workspace:
-            arguments.append("--no-emit-workspace")
-
-        arguments += project_override_arguments(self.cli_overrides)
+        """Replay explicit settings while retaining the one-run upgrade action."""
+        arguments = config_override_arguments(self.cli_overrides)
         if self.upgrade:
             arguments.append("--upgrade")
-        if self.lock_policy is not LockPolicy.RESOLVE:
-            arguments.extend(("--lock-policy", self.lock_policy.value))
         return arguments
-
-
-def _configured_lock_policy(
-    ladder: ConfigLadder,
-    *,
-    current: LockPolicy,
-    output: Path | None,
-    format_name: LockFormat,
-    locked: bool,
-    reproduce: bool,
-    upgrade: bool,
-) -> LockPolicy:
-    """Apply configured policy restrictions after explicit CLI checks."""
-    if isinstance(ladder, SourceConfigError):
-        return current
-
-    configured = LockPolicy(ladder["lock-policy"].value)
-    if configured is not current:
-        _validate_lock_mode(
-            output=output,
-            format=format_name,
-            locked=locked,
-            reproduce=reproduce,
-            upgrade=upgrade,
-            lock_policy=configured,
-        )
-
-    return configured
 
 
 def _validate_lock_mode(

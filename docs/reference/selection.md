@@ -39,6 +39,24 @@ markers.
 Two members of an at-most-one or exactly-one conflict set cannot both be defaults. Adding a
 conflicting selection on the CLI can fork the resolve; see [Conflicts](../explanation/conflicts.md).
 
+## Workflow defaults
+
+The existing selection flags also accept user-scoped defaults in `nab.toml`:
+
+```toml
+groups = ["dev"]
+extras = ["test"]
+all-groups = false
+all-extras = false
+workspace-discovery = true
+build-requirements = false
+no-emit-workspace = false
+```
+
+These select this run's inputs; `default-groups` remains the project's separate installation-default
+policy. CLI values override files and environment settings. Use an empty whole-value assignment,
+such as `--setting 'user.groups=[]'`, to clear a configured selection.
+
 ## Dependency-group selection (PEP 735)
 
 - `--groups foo bar` folds the named groups from the project's `[dependency-groups]` table into the

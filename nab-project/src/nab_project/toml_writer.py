@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from typing import TypeGuard
 
-__all__ = ["dumps"]
+__all__ = ["dumps", "dumps_value"]
 
 _ENCODER = JSONEncoder(ensure_ascii=False)
 _BARE_KEY_CHARS = frozenset(
@@ -32,7 +32,8 @@ def _key(value: str) -> str:
     return value if value and _BARE_KEY_CHARS.issuperset(value) else _string(value)
 
 
-def _literal(value: object) -> str:
+def dumps_value(value: object) -> str:
+    """Serialize one TOML value as an inline literal."""
     if isinstance(value, str):
         return _string(value)
     if isinstance(value, bool):
@@ -71,11 +72,11 @@ def _collection(
         return (
             "{ "
             + ", ".join(
-                _key(key) + " = " + _literal(item) for key, item in value.items()
+                _key(key) + " = " + dumps_value(item) for key, item in value.items()
             )
             + " }"
         )
-    return "[" + ", ".join(_literal(item) for item in value) + "]"
+    return "[" + ", ".join(dumps_value(item) for item in value) + "]"
 
 
 def _table_array(value: object) -> TypeGuard[Sequence[Mapping[str, object]]]:
@@ -91,10 +92,10 @@ def _assignment(key: str, value: object, output: list[str]) -> None:
     name = _key(key)
     if isinstance(value, (list, tuple)) and value:
         output.append(name + " = [\n")
-        output.extend("    " + _literal(item) + ",\n" for item in value)
+        output.extend("    " + dumps_value(item) + ",\n" for item in value)
         output.append("]\n")
     else:
-        output.append(name + " = " + _literal(value) + "\n")
+        output.append(name + " = " + dumps_value(value) + "\n")
 
 
 def _table(

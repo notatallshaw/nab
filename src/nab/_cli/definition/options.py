@@ -29,6 +29,7 @@ from nab_provider.policy import (
 from nab_provider.records import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexConfig
 from nab_provider.vcs_admission import VcsConfig
 
+from ... import env
 from ...config import hooks, values
 from ...config.values import MatrixConfig
 from ...flagtypes import (
@@ -59,6 +60,7 @@ from .rows import (
     Pairs,
     Star,
     Switch,
+    Toggle,
     Tri,
     Value,
     Verb,
@@ -82,25 +84,30 @@ class Root(Table, on=GLOBAL, docs="reference/cli.md"):
     verbose = Count(
         short="v",
         help="raise verbosity; -v adds INFO records, -vv adds DEBUG",
+        environ=("NAB_VERBOSITY",),
     )
 
     quiet = Count(
         short="q",
         help="lower verbosity; -q drops the summary and notes, -qq keeps errors alone",
+        environ=("NAB_VERBOSITY",),
     )
 
     color = Value[ColorChoice](
         help="when to colour nab's output",
+        environ=("NO_COLOR", "FORCE_COLOR"),
     )
 
     no_color = Switch(
         default=False,
         help="shorthand for --color never",
+        environ=("NO_COLOR",),
     )
 
     no_progress = Switch(
         default=False,
         help="suppress the live progress line",
+        environ=("NAB_NO_PROGRESS",),
     )
 
     version = Eager(
@@ -558,6 +565,106 @@ class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
         on=("lock", "config"),
     )
 
+    format = Value[LockFormat | None](
+        key=Layer[str](
+            rdefault="pylock", parse=values.parse_lock_format, render=hooks.render_text
+        ),
+        env=True,
+        help=(
+            "emit pylock, requirements with index-pin hash lines, or requirements "
+            "without them"
+        ),
+        docs="reference/formats.md",
+        on=("lock", "config"),
+    )
+
+    cache = Toggle(
+        key=Layer[bool](
+            rdefault=True, parse=values.parse_bool, render=hooks.render_bool
+        ),
+        env=True,
+        help="read and write the on-disk cache",
+        docs="reference/cache.md",
+    )
+
+    groups = Star[str](
+        key=Layer[tuple[str, ...]](
+            rdefault=(),
+            parse=values.parse_run_selection,
+            render=hooks.render_string_tuple,
+            sample="dev",
+        ),
+        env=True,
+        help="the dependency groups to select",
+        docs="reference/selection.md",
+    )
+
+    all_groups = Toggle(
+        key=Layer[bool](
+            rdefault=False, parse=values.parse_bool, render=hooks.render_bool
+        ),
+        env=True,
+        help="select every dependency group",
+        docs="reference/selection.md",
+    )
+
+    extras = Star[str](
+        key=Layer[tuple[str, ...]](
+            rdefault=(),
+            parse=values.parse_run_selection,
+            render=hooks.render_string_tuple,
+            sample="dev",
+        ),
+        env=True,
+        help="the extras to select",
+        docs="reference/selection.md",
+    )
+
+    all_extras = Toggle(
+        key=Layer[bool](
+            rdefault=False, parse=values.parse_bool, render=hooks.render_bool
+        ),
+        env=True,
+        help="select every extra",
+        docs="reference/selection.md",
+    )
+
+    workspace_discovery = Toggle(
+        key=Layer[bool](
+            rdefault=True, parse=values.parse_bool, render=hooks.render_bool
+        ),
+        env=True,
+        help="resolve against the workspace members found in the tree",
+        docs="how-to/workspaces.md",
+    )
+
+    build_requirements = Toggle(
+        key=Layer[bool](
+            rdefault=False, parse=values.parse_bool, render=hooks.render_bool
+        ),
+        env=True,
+        help=(
+            "lock [build-system].requires; defaults to pylock.build.toml or "
+            "build-requirements.txt"
+        ),
+        docs="reference/selection.md",
+        on=("lock", "config"),
+    )
+
+    no_emit_workspace = Toggle(
+        key=Layer[bool](
+            rdefault=False, parse=values.parse_bool, render=hooks.render_bool
+        ),
+        negatable=False,
+        env=True,
+        help=(
+            "omit workspace pins but keep members in resolution; install them "
+            "outside a hashed-requirements run"
+        ),
+        docs="how-to/workspaces.md",
+        on=("lock", "config"),
+    )
+
 
 class ConfigWords(Table, on=("config",), docs="reference/cli.md"):
     """``nab config``'s two words, and the project path lock and download read."""
@@ -594,6 +701,7 @@ class CacheWords(Table, on=("cache",), docs="reference/cache.md"):
         help="the project file the configuration is read for",
         docs="reference/cli.md",
         on=("config",),
+        action=True,
     )
 
     output = Value[Path | None](
@@ -607,6 +715,7 @@ class CacheWords(Table, on=("cache",), docs="reference/cache.md"):
         ),
         docs="reference/formats.md",
         on=("lock",),
+        action=True,
     )
 
 
@@ -621,87 +730,19 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
         help="read dependencies and configuration from a PEP 723 Python script",
         docs="how-to/scripts.md",
         on=_LAYERED,
+        action=True,
     )
 
     output = Value[Path](
         default=Path("wheels"),
         help="the directory the artefacts are written to",
         on=("download",),
-    )
-
-    format = Value[LockFormat](
-        default="pylock",
-        help=(
-            "emit pylock, requirements with index-pin hash lines, or requirements "
-            "without them"
-        ),
-        docs="reference/formats.md",
-        on=("lock",),
-    )
-
-    cache = Switch(
-        default=True,
-        negatable=True,
-        help="read and write the on-disk cache",
-        docs="reference/cache.md",
+        action=True,
     )
 
     python = Value[str | None](
         help="resolve for this Python version instead of the running one",
-    )
-
-    groups = Star[str](
-        help="the dependency groups to select",
-        docs="reference/selection.md",
-    )
-
-    all_groups = Switch(
-        default=False,
-        negatable=True,
-        help="select every dependency group",
-        docs="reference/selection.md",
-    )
-
-    extras = Star[str](
-        help="the extras to select",
-        docs="reference/selection.md",
-    )
-
-    all_extras = Switch(
-        default=False,
-        negatable=True,
-        help="select every extra",
-        docs="reference/selection.md",
-    )
-
-    workspace_discovery = Switch(
-        default=True,
-        negatable=True,
-        help="resolve against the workspace members found in the tree",
-        docs="how-to/workspaces.md",
-    )
-
-    build_requirements = Switch(
-        default=False,
-        negatable=True,
-        help=(
-            "lock [build-system].requires; defaults to pylock.build.toml or "
-            "build-requirements.txt"
-        ),
-        docs="reference/selection.md",
-        on=("lock",),
-    )
-
-    # This bool is not negatable because its name already states the
-    # negation, so the table does not offer --no-no-emit-workspace.
-    no_emit_workspace = Switch(
-        default=False,
-        help=(
-            "omit workspace pins but keep members in resolution; install them "
-            "outside a hashed-requirements run"
-        ),
-        docs="how-to/workspaces.md",
-        on=("lock",),
+        alias="environment.python",
     )
 
     upgrade = Switch(
@@ -709,6 +750,7 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
         negatable=True,
         help="re-anchor a relative upload window to now",
         on=("lock",),
+        action=True,
     )
 
     locked = Switch(
@@ -716,6 +758,7 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
         negatable=True,
         help="check the saved solution without resolving or writing",
         on=("lock",),
+        action=True,
     )
 
     reproduce = Switch(
@@ -723,6 +766,14 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
         negatable=True,
         help="resolve afresh and check the saved lock without writing",
         on=("lock",),
+        action=True,
+    )
+
+    settings = Many[str](
+        help="override configuration with project.KEY=TOML or user.KEY=TOML",
+        docs="reference/configuration-sources.md",
+        on=_LAYERED,
+        alias="*",
     )
 
     include_rejected = Switch(
@@ -730,6 +781,7 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
         negatable=True,
         help="report the sources a config error would have refused",
         on=("config",),
+        action=True,
     )
 
 
@@ -744,4 +796,6 @@ TABLES = (
     RunFlags,
 )
 
-ALL: tuple[Opt, ...] = build_options(*TABLES)
+ALL: tuple[Opt, ...] = build_options(
+    *TABLES, environment_names=env.OUTPUT_OWNED | {env.NO_COLOR, env.FORCE_COLOR}
+)

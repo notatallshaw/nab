@@ -208,6 +208,29 @@ Review each stacked pull request against its own parent. Put readability fixes o
 that introduces or changes the function, then rebase its descendants. Keep behavior, failure order,
 public interfaces and measurement boundaries unchanged.
 
+## Adding configuration options
+
+Declare settings in `src/nab/_cli/definition/options.py` with a `Layer`, source scope, parser and
+renderer. Project policy stays in project configuration; user runtime/workflow settings also have
+`NAB_*` variables. Every key is available through the namespaced `--setting` form, including
+structured values without a dedicated flag.
+
+The declaration rejects CLI-only settings and keys without a CLI route. Shortcuts must identify an
+existing configuration key or registered environment form. Input/output selectors and one-run action
+flags must be marked explicitly; a scalar preference cannot be marked as an action to bypass
+layering.
+
+Regenerate both projections after changing the declaration:
+
+```bash
+python tasks/gen_cli.py --write
+python tasks/gen_bijection.py --write
+```
+
+Keep behavior tests for source precedence, actual command consumption and replay. The surface checks
+belong in `tests/test_option_surfaces.py`; configuration assignments are exercised in
+`tests/test_setting_overrides.py`.
+
 ## Markdown source
 
 Use `hatch run lint:fmt` to format Markdown and Python, or `hatch run lint:fmt-check` to check both.

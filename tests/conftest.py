@@ -17,7 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from nab import _run
-from nab.config.ladder import SourceRoots
+from nab.config.ladder import OPTIONS, SourceRoots
 from nab.output import reset_run
 
 if TYPE_CHECKING:
@@ -85,9 +85,9 @@ def hermetic_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         )
 
     monkeypatch.setattr(_run, "config_search_roots", fake_roots)
-    monkeypatch.delenv("NAB_OFFLINE", raising=False)
-    monkeypatch.delenv("NAB_CACHE_DIR", raising=False)
-    monkeypatch.delenv("NAB_LOCK_POLICY", raising=False)
+    for spec in OPTIONS:
+        if spec.env_var is not None:
+            monkeypatch.delenv(spec.env_var, raising=False)
     monkeypatch.delenv("NAB_RESOLUTION", raising=False)
 
     return project_dir

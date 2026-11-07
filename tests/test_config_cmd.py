@@ -25,6 +25,7 @@ import tomli
 
 import nab._config_cmd as config_cmd
 from nab import _run as nab_run
+from nab._cli.definition.model import Kind
 from nab._config_cmd import config_command
 from nab._download import download
 from nab._lock import lock
@@ -83,6 +84,15 @@ _CLI_FLAG_CASES: tuple[tuple[str, str, str], ...] = (
     ("http-backend", "httpx2", "httpx2"),
     ("lock-policy", "reuse", "reuse"),
     ("max-concurrency", "5", "5"),
+    ("format", "requirements", "requirements"),
+    ("cache", "False", "false"),
+    ("groups", "dev", "dev"),
+    ("all-groups", "True", "true"),
+    ("extras", "test", "test"),
+    ("all-extras", "True", "true"),
+    ("workspace-discovery", "False", "false"),
+    ("build-requirements", "True", "true"),
+    ("no-emit-workspace", "True", "true"),
 )
 
 # The ``--project-*`` flags ``nab download`` is driven with, and the argv value
@@ -1027,7 +1037,13 @@ class TestCliFlagValues:
         base = ["get", key, "--path", str(hermetic_roots / "pyproject.toml")]
 
         assert _run_config(base) != f"{printed}\n"
-        assert _run_config([*base, _CLI_FLAGS[key], argv_value]) == f"{printed}\n"
+        spec = next(spec for spec in OPTIONS if spec.name == key)
+        if spec.kind is Kind.FLAG:
+            flag = _CLI_FLAGS[key] if argv_value == "True" else "--no-" + key
+            arguments = [*base, flag]
+        else:
+            arguments = [*base, _CLI_FLAGS[key], argv_value]
+        assert _run_config(arguments) == f"{printed}\n"
 
     def test_every_flagged_option_has_a_case(self) -> None:
         covered = {key for key, _, _ in _CLI_FLAG_CASES}

@@ -1371,7 +1371,7 @@ def test_remedy_puts_an_option_shaped_project_path_after_the_separator(
         "./-weird.toml", "--offline", "True", "--no-cache", "--reproduce", status=1
     )
 
-    refresh = ["--offline", "True", "--", "-weird.toml"]
+    refresh = ["--offline", "True", "--no-cache", "--", "-weird.toml"]
     remedy = _remedy(*refresh)
 
     assert (
@@ -1399,7 +1399,7 @@ def test_remedy_attaches_an_option_shaped_output_path(
         f"--output={out}", "--offline", "True", "--no-cache", "--reproduce", status=1
     )
 
-    refresh = [f"--output={out}", "--offline", "True"]
+    refresh = [f"--output={out}", "--offline", "True", "--no-cache"]
     remedy = _remedy(*refresh)
 
     assert (
@@ -1429,9 +1429,9 @@ def test_remedy_attaches_an_option_shaped_group_and_override(
     )
 
     refresh = [
-        *["--groups=-dev", "test"],
-        *["--offline", "True"],
         "--project-default-group=-dev",
+        *["--offline", "True"],
+        *["--groups=-dev", "test"],
     ]
 
     _lock_cli(*refresh, "--reproduce", status=1)
@@ -1469,7 +1469,7 @@ def test_remedy_names_all_groups_and_all_extras_not_what_they_selected(
         'test = []\n"-dev" = []\n',
     )
 
-    refresh = ["--all-groups", "--all-extras", "--offline", "True"]
+    refresh = ["--offline", "True", "--all-groups", "--all-extras"]
 
     _lock_cli(*refresh, "--reproduce", status=1)
 
@@ -1500,7 +1500,7 @@ def test_remedy_for_an_option_shaped_extra_fails_on_the_name_not_the_parse(
         '"-gpu" = []\n',
     )
 
-    refresh = ["--extras=-gpu", "--offline", "True"]
+    refresh = ["--offline", "True", "--extras=-gpu"]
 
     _lock_cli(*refresh, "--reproduce", status=1)
 
@@ -1539,16 +1539,16 @@ def test_remedy_carries_every_run_shaping_flag(
     refresh = [
         str(pyproject),
         *["--output", str(out)],
-        *["--groups", "dev", "test"],
-        *["--extras", "cpu", "gpu"],
-        *["--offline", "True"],
-        "--no-workspace-discovery",
-        "--no-emit-workspace",
         *["--project-resolution", "lowest"],
         *["--project-constraint", "foo<2"],
         *["--project-constraint", "bar<3"],
         *["--project-requires-python", ">=3.9"],
         *["--python", "3.12"],
+        *["--offline", "True"],
+        *["--groups", "dev", "test"],
+        *["--extras", "cpu", "gpu"],
+        "--no-workspace-discovery",
+        "--no-emit-workspace",
         "--upgrade",
     ]
 

@@ -103,6 +103,7 @@ def test_the_packages_that_publish_a_table_are_pinned() -> None:
     Emptying it turns the ``supported`` rule off for every package.
     """
     assert check_boundaries.PUBLISHES_SUPPORTED_PATHS == (
+        "nab_index",
         "nab_markersets",
         "nab_resolver",
         "nab_provider",
@@ -356,3 +357,27 @@ def test_lock_operation_policy_uses_its_owning_module(
         assert (
             "supports LockPolicy at nab_project.lock_policy" in capsys.readouterr().err
         )
+
+
+@pytest.mark.parametrize(("module", "status"), [("urls", 0), ("file_urls", 1)])
+def test_url_output_uses_the_supported_index_module(
+    workspace: FakeWorkspace,
+    capsys: pytest.CaptureFixture[str],
+    module: str,
+    status: int,
+) -> None:
+    workspace.add(
+        "nab-index",
+        docstring="URL utilities.\n\nSupported imports:\n\n    nab_index.urls  strip_userinfo\n",
+        urls="def strip_userinfo(value):\n    return value\n",
+        file_urls="from .urls import strip_userinfo\n",
+    )
+    workspace.add(
+        "url-consumer",
+        requires=("nab-index",),
+        use=f"from nab_index.{module} import strip_userinfo\n",
+    )
+    workspace.publishes_supported_paths("nab_index")
+    assert check_boundaries.main() == status
+    if status:
+        assert "supports strip_userinfo at nab_index.urls" in capsys.readouterr().err

@@ -16,6 +16,8 @@ __lazy_modules__ = (
     "datetime",
     "nab",
     "nab._cli.parse",
+    "nab._cli.definition.model",
+    "nab.config.assignments",
     "nab.config.hooks",
     "nab.config.subflags",
     "nab.output",
@@ -38,13 +40,16 @@ import tomli
 from nab_markersets.python_versions import validate_python_version
 from nab_project import toml_io
 from nab_project.input_source import InputFormat
+from nab_project.lock_policy import LockPolicy
 from nab_project.paths import PathState, path_state, realpath
 from nab_provider.policy import ResolveMode
 from nab_provider.value import Record
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from . import env
+from ._cli.definition.model import Kind
 from ._cli.parse import option_tokens
+from .config.assignments import CliSetting
 from .config.hooks import inspector_anchor
 from .config.ladder import (
     OPTIONS,
@@ -70,6 +75,9 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from nab_provider.provider import ResolutionStrategy
+
+    from ._cli.definition.model import Opt
+    from .flagtypes import LockFormat
 
 
 def require_pyproject_file(
@@ -266,6 +274,16 @@ class RunSettings(Record):
         "http_backend",
         "max_concurrency",
         "cli_project_overrides",
+        "lock_policy",
+        "format",
+        "cache",
+        "groups",
+        "all_groups",
+        "extras",
+        "all_extras",
+        "workspace_discovery",
+        "build_requirements",
+        "no_emit_workspace",
     )
 
     resolution: ResolutionStrategy | None
@@ -273,10 +291,20 @@ class RunSettings(Record):
     cache_dir: Path | None
     http_backend: str
     max_concurrency: int
+    lock_policy: LockPolicy
+    format: LockFormat
+    cache: bool
+    groups: tuple[str, ...]
+    all_groups: bool
+    extras: tuple[str, ...]
+    all_extras: bool
+    workspace_discovery: bool
+    build_requirements: bool
+    no_emit_workspace: bool
     # Explicit --project-* overrides as rendered flag/value pairs.
     cli_project_overrides: tuple[tuple[str, str], ...]
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - one keyword per validated run setting
         self,
         *,
         resolution: ResolutionStrategy | None,
@@ -285,6 +313,16 @@ class RunSettings(Record):
         http_backend: str,
         max_concurrency: int,
         cli_project_overrides: tuple[tuple[str, str], ...],
+        lock_policy: LockPolicy = LockPolicy.RESOLVE,
+        format: LockFormat = "pylock",  # noqa: A002 - the matching record/configuration field
+        cache: bool = True,
+        groups: tuple[str, ...] = (),
+        all_groups: bool = False,
+        extras: tuple[str, ...] = (),
+        all_extras: bool = False,
+        workspace_discovery: bool = True,
+        build_requirements: bool = False,
+        no_emit_workspace: bool = False,
     ) -> None:
         self.resolution = resolution
         self.offline = offline
@@ -292,6 +330,16 @@ class RunSettings(Record):
         self.http_backend = http_backend
         self.max_concurrency = max_concurrency
         self.cli_project_overrides = cli_project_overrides
+        self.lock_policy = lock_policy
+        self.format = format
+        self.cache = cache
+        self.groups = groups
+        self.all_groups = all_groups
+        self.extras = extras
+        self.all_extras = all_extras
+        self.workspace_discovery = workspace_discovery
+        self.build_requirements = build_requirements
+        self.no_emit_workspace = no_emit_workspace
 
 
 _BOTH_PYTHON_AXES = "--python and --project-environment-python both set the python axis"
@@ -304,6 +352,16 @@ def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a reg
     cli_cache_dir: Path | None,
     cli_http_backend: str | None = None,
     cli_lock_policy: str | None = None,
+    cli_settings: tuple[str, ...] = (),
+    cli_format: str | None = None,
+    cli_cache: bool | None = None,
+    cli_groups: tuple[str, ...] = (),
+    cli_all_groups: bool | None = None,
+    cli_extras: tuple[str, ...] = (),
+    cli_all_extras: bool | None = None,
+    cli_workspace_discovery: bool | None = None,
+    cli_build_requirements: bool | None = None,
+    cli_no_emit_workspace: bool | None = None,
     cli_max_concurrency: int | None = None,
     cli_mode: str | None = None,
     cli_requires_python: str | None = None,
@@ -351,6 +409,16 @@ def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a reg
         "cache_dir": cli_cache_dir,
         "http_backend": cli_http_backend,
         "lock_policy": cli_lock_policy,
+        "setting": cli_settings,
+        "format": cli_format,
+        "cache": cli_cache,
+        "groups": cli_groups,
+        "all_groups": cli_all_groups,
+        "extras": cli_extras,
+        "all_extras": cli_all_extras,
+        "workspace_discovery": cli_workspace_discovery,
+        "build_requirements": cli_build_requirements,
+        "no_emit_workspace": cli_no_emit_workspace,
         "max_concurrency": cli_max_concurrency,
         "project_mode": cli_mode,
         "project_requires_python": cli_requires_python,
@@ -444,30 +512,43 @@ def project_config_overrides(
     return {key: value for key, value in cli_overrides.items() if key in project_keys}
 
 
-def project_override_arguments(cli_overrides: Mapping[str, object]) -> list[str]:
-    """Return the CLI tokens that re-apply this run's ``--project-*`` overrides.
-
-    Takes the raw map :func:`_cli_overrides` built, not the config subset, so
-    ``resolution`` is carried too: it shapes the resolve without entering the
-    merged config.  A repeatable flag is emitted once per element, and a
-    table key is re-spelled flag by flag with the tokens the user typed.
-    """
+def config_override_arguments(cli_overrides: Mapping[str, object]) -> list[str]:
+    """Return the arguments that reapply explicit configuration overrides."""
     arguments: list[str] = []
     for spec in OPTIONS:
-        if spec.scope is not Scope.PROJECT:
-            continue
-        value = cli_overrides.get(spec.name)
-        if isinstance(value, CliTable):
-            for key in value.keys:
-                arguments += option_tokens(key.flag, key.tokens)
-            continue
-        flag = spec.cli_flag
-        if flag is None or value is None:
-            continue
-        items = value if isinstance(value, tuple) else (value,)
-        for item in items:
-            arguments += option_tokens(flag, (str(item),))
+        arguments += _override_tokens(spec, cli_overrides.get(spec.name))
     return arguments
+
+
+def _override_tokens(spec: Opt, value: object) -> list[str]:
+    """Render one whole assignment, table overlay or dedicated option."""
+    if isinstance(value, CliSetting):
+        return option_tokens("--setting", (value.display,))
+    if isinstance(value, CliTable):
+        return [
+            token for key in value.keys for token in option_tokens(key.flag, key.tokens)
+        ]
+    flag = spec.cli_flag
+    if flag is None or value is None:
+        return []
+    if spec.kind is Kind.FLAG:
+        return _toggle_tokens(spec, flag, value)
+    if spec.kind is Kind.STAR and isinstance(value, tuple):
+        return option_tokens(flag, tuple(str(item) for item in value))
+    items = value if isinstance(value, tuple) else (value,)
+    return [token for item in items for token in option_tokens(flag, (str(item),))]
+
+
+def _toggle_tokens(spec: Opt, flag: str, value: object) -> list[str]:
+    """Preserve false overrides, including a toggle without a negative flag."""
+    if not isinstance(value, bool):
+        msg = f"{spec.name} requires a boolean CLI value"
+        raise TypeError(msg)
+    if value:
+        return [flag]
+    if spec.negatable:
+        return ["--no-" + flag.removeprefix("--")]
+    return option_tokens("--setting", (f"{spec.scope_name}.{spec.name}=false",))
 
 
 def _layered_run_settings(effective: Mapping[str, EffectiveValue]) -> RunSettings:
@@ -485,6 +566,16 @@ def _layered_run_settings(effective: Mapping[str, EffectiveValue]) -> RunSetting
         cache_dir=effective["cache-dir"].value,
         http_backend=effective["http-backend"].value,
         max_concurrency=effective["max-concurrency"].value,
+        lock_policy=effective["lock-policy"].value,
+        format=effective["format"].value,
+        cache=effective["cache"].value,
+        groups=effective["groups"].value,
+        all_groups=effective["all-groups"].value,
+        extras=effective["extras"].value,
+        all_extras=effective["all-extras"].value,
+        workspace_discovery=effective["workspace-discovery"].value,
+        build_requirements=effective["build-requirements"].value,
+        no_emit_workspace=effective["no-emit-workspace"].value,
         cli_project_overrides=project_cli_override_records(effective),
     )
 
@@ -498,6 +589,9 @@ def _layered_run_settings_or_exit(
     ``produces_lock`` selects its wording.
     """
     if isinstance(ladder, SourceConfigError):
+        if isinstance(ladder.__cause__, OSError):
+            printer().error(str(ladder))
+            sys.exit(1)
         _fail_config(ladder)
     settings = _layered_run_settings(ladder)
     notice = project_cli_override_notice(ladder, produces_lock=produces_lock)

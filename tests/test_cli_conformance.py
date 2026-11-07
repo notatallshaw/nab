@@ -239,6 +239,8 @@ _BOOL_TOKENS = ("True", "False")
 
 def _tokens(row: Opt) -> tuple[str, ...]:
     """Every token ``row``'s flag accepts, or the one token it documents."""
+    if row.kind is Kind.FLAG:
+        return ("True", "False") if row.negatable else ("True",)
     if row.vtype is VType.CHOICE:
         return row.choices
     if row.vtype is VType.BOOL:
@@ -246,9 +248,13 @@ def _tokens(row: Opt) -> tuple[str, ...]:
     return (row.sample,)
 
 
-def _walked(row: Opt, token: str) -> object:
-    """What the walk stores for ``row`` when its flag is given ``token``."""
-    line = (row.commands[0], row.cli_flag, token)
+def _walked(row: Opt, argument: str) -> object:
+    """What the walk stores for ``row`` when its flag is given ``argument``."""
+    if row.kind is Kind.FLAG:
+        flag = row.cli_flag if argument == "True" else "--no-" + row.name
+        line = (row.commands[0], flag)
+    else:
+        line = (row.commands[0], row.cli_flag, argument)
     return parse(line, cli_spec.ROOT, cli_spec.COMMANDS, "nab").values[row.dest]
 
 
@@ -271,4 +277,4 @@ class TestHooksReadWhatTheWalkStores:
     def test_the_settable_keys_are_accounted_for(self) -> None:
         """A derivation that emptied would leave the case above with no rows."""
 
-        assert len(_SETTABLE) == 21
+        assert len(_SETTABLE) == 30
