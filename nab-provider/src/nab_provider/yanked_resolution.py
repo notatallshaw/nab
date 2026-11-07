@@ -29,6 +29,7 @@ from .preference_provider import (
     PermissionProxy,
     PreferenceProvider,
 )
+from .prepared_resolution import PreparedResolution
 from .yank_candidates import Candidate, YankCandidates, add_range, is_pin, merge_stats
 from .yank_preference import (
     IncompletePreferenceError,
@@ -74,6 +75,30 @@ class YankProxyProvider(PreferenceProvider["Candidate", "VersionRange", Requirem
         super().__init__(preference)
         self._native_preference = preference
         self._native_catalogue = catalogue
+        self.session = PreparedResolution(
+            self, preferred_candidate=self._preferred_candidate
+        )
+
+    def _preferred_candidate(self, package: str) -> Candidate | None:
+        """Offer cached live preferences without reading another listing."""
+        catalogue = self._native_catalogue
+        base = catalogue.base_name(package)
+        version = catalogue.preferences.get(base)
+        versions = catalogue.provider.versions_cache.get(base)
+        if version is None or versions is None or catalogue.provider.wants_lowest(base):
+            return None
+
+        candidate = Candidate(package, version, withdrawn=False)
+        if not any(
+            value == version and str(value) == candidate.label and not file.yanked
+            for value, file in versions
+        ):
+            return None
+        return (
+            candidate
+            if catalogue.installable(candidate, versions, assume_sorted=True)
+            else None
+        )
 
     def _failure_diagnostics(
         self, error: ResolutionError
@@ -122,7 +147,7 @@ class YankProxyProvider(PreferenceProvider["Candidate", "VersionRange", Requirem
     def resolve(self) -> tuple[dict[str, Version], Provider]:
         """Check non-yanked alternatives before adopting the selected candidates."""
         try:
-            selected = self.select()
+            result = self.session.solve()
         except (IncompletePreferenceError, ResolutionTerminatedError):
             raise
         except ResolutionError as exc:
@@ -137,4 +162,6 @@ class YankProxyProvider(PreferenceProvider["Candidate", "VersionRange", Requirem
                 self._native_catalogue.provider.stats,
                 self._native_catalogue.child_stats,
             )
-        return self._native_preference.adopt(selected)
+        pins, provider = self._native_catalogue.adopt(result.candidates)
+        provider.yank_admission_sources = result.admission_sources
+        return pins, provider

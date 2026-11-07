@@ -286,46 +286,37 @@ class YankCandidates(PreparedVersionCatalogue[Candidate, CandidateData]):
         *,
         choices: Sequence[Candidate] | None = None,
     ) -> list[Candidate]:
-        """Order non-yanked final releases and pre-releases before yanked candidates."""
+        """Order the prepared identities using the target's version policy."""
         available = self.choices(package) if choices is None else choices
-        result: list[Candidate] = []
+        return self.order_candidates(package, version_range, available)
+
+    @override
+    def order_candidate_batch(
+        self, package: str, candidates: Sequence[Candidate]
+    ) -> list[Candidate]:
+        """Apply target strategy and exact preferred labels within a release batch."""
         base = split_extra(package)[0]
         lowest = self.provider.wants_lowest(base)
-        for withdrawn in (False, True):
-            candidates = {
-                candidate.label: candidate
-                for candidate in available
-                if candidate.withdrawn == withdrawn
-            }
-            versions = sorted(
-                (candidate.version for candidate in candidates.values()), reverse=True
-            )
-            while versions:
-                accepted = list(version_range.filter(versions))
-                if not accepted:
-                    break
-                accepted.sort(key=lambda version: (len(version.release), str(version)))
-                accepted.sort(reverse=not lowest)
-                preferred = self.preferences.get(base)
-                if preferred is not None and preferred in accepted and not lowest:
-                    picked = next(
-                        (
-                            version
-                            for version in accepted
-                            if str(version) == str(preferred)
-                        ),
-                        accepted[accepted.index(preferred)],
-                    )
-                    accepted = [
-                        version for version in accepted if str(version) != str(picked)
-                    ]
-                    accepted.insert(0, picked)
-                result.extend(candidates[str(version)] for version in accepted)
-                exhausted = {str(version) for version in accepted}
-                versions = [
-                    version for version in versions if str(version) not in exhausted
-                ]
-        return result
+        ordered = sorted(
+            candidates,
+            key=lambda candidate: (len(candidate.version.release), candidate.label),
+        )
+        ordered.sort(key=lambda candidate: candidate.version, reverse=not lowest)
+        preferred = self.preferences.get(base)
+        if lowest or preferred is None:
+            return ordered
+
+        matching = [
+            candidate for candidate in ordered if candidate.version == preferred
+        ]
+        if not matching:
+            return ordered
+
+        picked = next(
+            (candidate for candidate in matching if candidate.label == str(preferred)),
+            matching[0],
+        )
+        return [picked, *(candidate for candidate in ordered if candidate != picked)]
 
     def adopt(
         self, selected: Mapping[str, Candidate]

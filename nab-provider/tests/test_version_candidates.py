@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from nab_provider._compat import override
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
@@ -103,3 +105,50 @@ def test_extra_base_keeps_its_native_withdrawal_identity() -> None:
     assert type(base) is Candidate
     assert base == Candidate("sample", Version("1.0"), withdrawn=True)
     assert base.label == "1.0"
+
+
+@pytest.mark.parametrize(
+    ("prereleases", "expected"),
+    [
+        (None, ["2.0", "2", "1", "3b1", "!4", "!5b1"]),
+        (True, ["3b1", "2.0", "2", "1", "!5b1", "!4"]),
+        (False, ["2.0", "2", "1", "!4"]),
+    ],
+)
+def test_release_batches_preserve_host_prerelease_policy_and_label_order(
+    prereleases: bool | None, expected: list[str]
+) -> None:
+    class OrderedCatalogue(Catalogue):
+        @override
+        def candidate_prereleases(self, package: str) -> bool | None:
+            assert package == "sample"
+            return prereleases
+
+    catalogue = OrderedCatalogue()
+    choices = [
+        VersionCandidate("sample", Version(version), withdrawn=withdrawn)
+        for version, withdrawn in (
+            ("3b1", False),
+            ("1", False),
+            ("4", True),
+            ("2.0", False),
+            ("2", False),
+            ("5b1", True),
+        )
+    ]
+    actual = catalogue.order_candidates("sample", VersionRange.full(), choices)
+
+    assert [
+        ("!" if candidate.withdrawn else "") + candidate.label for candidate in actual
+    ] == expected
+    assert catalogue.metadata_reads == []
+    assert catalogue.order_candidates("sample", VersionRange.empty(), choices) == []
+
+
+def test_automatic_fallback_keeps_an_admitted_prerelease_without_a_final() -> None:
+    catalogue = Catalogue()
+    choice = VersionCandidate("sample", Version("2b1"), withdrawn=False)
+
+    assert catalogue.order_candidates("sample", VersionRange.full(), [choice]) == [
+        choice
+    ]

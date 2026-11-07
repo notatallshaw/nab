@@ -219,24 +219,16 @@ Hosts with additional selected-plan policy can supply `metadata_is_admitted`. Su
 `resolver_factory` callback can construct a compatible resolver with host-specific availability
 handling. Terminal resolver errors retain their classification.
 
+Create a session with `PreparedResolution.from_catalogue(...)`, then call `solve()` for selected
+candidates, dependency edges and admission reasons. The optional `selection_policy(selected)`
+callback checks a complete reachable selection using only cached metadata. Omit it when no
+additional host policy is needed.
+
 `nab_resolver.priority.compute_tier` orders conflicts and culprit evidence for native and host
 providers. The existing `nab_provider.priority` imports remain available as compatibility aliases.
 
-## Keep independent keyed domains
-
-`nab_resolver.keyed_ranges.KeyedRange` applies scalar range operations independently to each key.
-Construct it from a default range and finite key-specific replacements. Keys need equality and
-hashing, and the default also governs keys the provider has not encountered.
-
-Subclass it to supply the host's `empty`, `full`, `singleton` and `__contains__` methods. The shared
-algebra retains that subclass. Keep scalar admission policy in the subclass's constructor, so every
-derived range applies the same domain restriction.
-
-`nab_resolver.values.SlottedValue` supplies exact-class equality, hashing and representation for
-declared fields. `FrozenValue` adds immutable slots and copying. Declare the fields in
-`__match_args__`, initialize their slots in the constructor and override `identity()` when ordinary
-field equality does not identify the value. Nab's provider retains its `SlottedValue` import as a
-compatibility alias.
+`nab_resolver.values.SlottedValue` supplies equality, hashing and representation for declared
+fields.
 
 ## The supported API
 
@@ -246,7 +238,6 @@ These module paths will not move without a major version bump:
 nab_resolver.errors     ResolutionError, ResolutionInvariantError,
                         ResolutionLimitError,
                         ResolutionStalledError, ResolutionTerminatedError
-nab_resolver.keyed_ranges KeyedRange
 nab_resolver.priority   CONFLICT_THRESHOLD, CULPRIT_DEMOTE_THRESHOLD,
                         TIER_AFFECTED, TIER_CULPRIT, TIER_NORMAL,
                         compute_tier, is_dominant_culprit
@@ -260,7 +251,7 @@ nab_resolver.root       ROOT
 nab_resolver.testing    ProviderScenario, check_provider, check_provider_scenarios
 nab_resolver.types      Incompatibility, IncompatibilityCause,
                         RangeProtocol, RootRequirement, Term
-nab_resolver.values     FrozenValue, SlottedValue
+nab_resolver.values     SlottedValue
 nab_resolver.version_spans OrderedVersion, cached_dependency_span
 ```
 

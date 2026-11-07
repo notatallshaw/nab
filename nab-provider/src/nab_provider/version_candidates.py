@@ -148,6 +148,50 @@ class VersionCatalogue(ABC, Generic[CandidateType]):
             candidate.base, candidate.version, withdrawn=candidate.withdrawn
         )
 
+    def candidate_prereleases(self, package: str) -> bool | None:
+        """Return the host's explicit prerelease policy, or automatic selection."""
+        del package
+        return None
+
+    def order_candidate_batch(
+        self, package: str, candidates: Sequence[CandidateType]
+    ) -> list[CandidateType]:
+        """Order a release batch, retaining equal-version file order."""
+        del package
+        return sorted(candidates, key=lambda candidate: candidate.version, reverse=True)
+
+    def order_candidates(
+        self,
+        package: str,
+        allowed: VersionRange,
+        choices: Sequence[CandidateType],
+    ) -> list[CandidateType]:
+        """Order live and withdrawn release batches using the host's policy."""
+        result: list[CandidateType] = []
+        prereleases = self.candidate_prereleases(package)
+        for withdrawn in (False, True):
+            remaining = [
+                candidate for candidate in choices if candidate.withdrawn == withdrawn
+            ]
+            while remaining:
+                accepted = list(
+                    allowed.filter(
+                        remaining,
+                        key=lambda candidate: candidate.version,
+                        prereleases=prereleases,
+                    )
+                )
+                if not accepted:
+                    break
+
+                # Automatic prerelease fallback is reconsidered after each batch.
+                result.extend(self.order_candidate_batch(package, accepted))
+                exhausted = set(accepted)
+                remaining = [
+                    candidate for candidate in remaining if candidate not in exhausted
+                ]
+        return result
+
 
 CandidateDataType = TypeVar("CandidateDataType", bound=VersionCandidateData)
 

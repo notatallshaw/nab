@@ -11,6 +11,7 @@ Supported imports:
                              IncompletePreferenceError, UnavailableMetadataError
     nab_provider.preference_provider  PreferenceProvider, MetadataProxy,
                                       PermissionProxy, Package
+    nab_provider.prepared_resolution  PreparedResolution, PreparedSolution
     nab_provider.version_candidates  VersionCandidate, VersionCandidateData,
                                      VersionCatalogue,
                                      PreparedVersionCatalogue, is_pin
