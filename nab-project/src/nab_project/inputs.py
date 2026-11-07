@@ -43,6 +43,7 @@ class ResolveInputs(ValueType):
     __slots__ = __match_args__ = (
         "archive_sources",
         "assume_universal_deps",
+        "assume_consistent_metadata",
         "allow_zip_sdists",
         "base_group",
         "build_group",
@@ -68,6 +69,7 @@ class ResolveInputs(ValueType):
 
     archive_sources: tuple[ArchiveSource, ...]
     assume_universal_deps: bool
+    assume_consistent_metadata: bool
     allow_zip_sdists: bool
     base_group: str | None
     build_group: str | None
@@ -95,6 +97,7 @@ class ResolveInputs(ValueType):
         *,
         archive_sources: tuple[ArchiveSource, ...] = (),
         assume_universal_deps: bool = False,
+        assume_consistent_metadata: bool = False,
         allow_zip_sdists: bool = False,
         base_group: str | None = None,
         build_group: str | None = None,
@@ -120,6 +123,7 @@ class ResolveInputs(ValueType):
         """Record the settings, each defaulting to what a bare project gets."""
         self.archive_sources = archive_sources
         self.assume_universal_deps = assume_universal_deps
+        self.assume_consistent_metadata = assume_consistent_metadata
         self.allow_zip_sdists = allow_zip_sdists
         self.base_group = base_group
         self.build_group = build_group
