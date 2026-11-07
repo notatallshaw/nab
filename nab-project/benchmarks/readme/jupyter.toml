@@ -1,0 +1,19 @@
+[project]
+name = "benchmark-jupyter9"
+version = "0.0.0"
+requires-python = ">=3.12,<3.15"
+dependencies = ["jupyter==1.1.1", "python-dateutil==2.9.0.post0"]
+
+[tool.nab.matrix]
+python = ">=3.12,<3.15"
+platforms = ["linux_x86_64", "macos_arm64", "windows_amd64"]
+implementations = ["cpython"]
+
+[tool.uv]
+package = false
+
+[tool.poetry]
+package-mode = false
+
+[tool.pdm]
+distribution = false

@@ -84,7 +84,7 @@ These controls apply during locking; your installer may still build a locked sou
 
 ## Soundness
 
-Nab checks dependencies and artifact compatibility for every environment you declare.
+By default, Nab checks dependencies and artifact compatibility for every environment you declare.
 
 - Nab uses each target's preferred wheel metadata; uv
   [assumes consistent metadata across a release's wheels](https://docs.astral.sh/uv/reference/internals/resolver/#metadata-consistency).
@@ -147,25 +147,49 @@ uploaded-prior-to = false
 See
 [package and index policies](https://nab.readthedocs.io/en/stable/reference/package-policy.html).
 
+## Performance
+
+Nab checks each target separately and resolves afresh by default. Wheels can declare different
+dependencies, and package information can change after a lock is saved. These options reduce that
+work:
+
+| Option                              | Behavior and tradeoff                                                   |
+| ----------------------------------- | ----------------------------------------------------------------------- |
+| `assume-consistent-metadata = true` | Reuse wheel metadata across targets, assuming a release's wheels agree. |
+| `--lock-policy prefer-existing`     | Prefer saved versions when still valid; may keep older releases.        |
+| `--lock-policy reuse`               | Reuse a valid saved lock without checking for remote updates.           |
+
+See [distribution policies](docs/reference/distribution-policy.md) and
+[lock policies](docs/reference/cli.md) for configuration and restrictions.
+
 ## Universal lock benchmark
+
+Default and performance settings compared with uv, Poetry and PDM on GitHub-hosted Linux. Timings
+include CLI startup, with cold and warm application caches.
+
+Creating a new lock for a scientific Python project:
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: light)" srcset="docs/_static/universal-lock-benchmark-light.svg">
-    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/universal-lock-benchmark-dark.svg">
-    <img src="https://raw.githubusercontent.com/notatallshaw/nab/main/docs/_static/universal-lock-benchmark-light.svg" alt="Cold and warm universal lock timings for nab, uv, Poetry and PDM, including startup. Each bar shows total time; shorter is faster." width="960">
+    <source media="(prefers-color-scheme: light)" srcset="docs/_static/universal-lock-scientific9-light.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/universal-lock-scientific9-dark.svg">
+    <img src="https://raw.githubusercontent.com/notatallshaw/nab/main/docs/_static/universal-lock-scientific9-light.svg" alt="Fresh scientific lock, cold and warm caches: Nab default, Nab performance, uv, Poetry and PDM. Shorter is faster." width="1080">
   </picture>
 </p>
 
-Fresh universal locks for `requests==2.32.3` on Python 3.12, 3.13 and 3.14. All four select matching
-packages and usable wheels across 48 checked targets: eight platforms × three Python versions ×
-CPython/PyPy.
+Relocking the same project with unchanged inputs. Saved-lock reuse can be a no-op:
 
-Nab validates dependencies and artifact compatibility for all 48 target environments;
-[uv](https://docs.astral.sh/uv/reference/internals/resolver/#wheel-tags),
-[Poetry](https://github.com/python-poetry/poetry/blob/2.5.1/src/poetry/repositories/http_repository.py#L402-L406)
-and [PDM](https://github.com/pdm-project/pdm/blob/2.29.3/src/pdm/models/candidates.py#L493-L513)
-omit full per-target validation, which could potentially produce unsound universal locks.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="docs/_static/universal-lock-relock-scientific9-light.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/universal-lock-relock-scientific9-dark.svg">
+    <img src="https://raw.githubusercontent.com/notatallshaw/nab/main/docs/_static/universal-lock-relock-scientific9-light.svg" alt="Unchanged scientific project with an existing lock, cold and warm caches: Nab default, Nab performance, uv, Poetry and PDM. Shorter is faster." width="1080">
+  </picture>
+</p>
+
+Nab performance reuses wheel metadata and enables saved-lock reuse when relocking. It requires
+usable wheels and can be slower when dependencies change. See
+[benchmark settings and results](nab-project/benchmarks/readme/README.md) for details.
 
 ## Libraries
 
