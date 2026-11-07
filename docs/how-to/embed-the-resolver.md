@@ -243,6 +243,123 @@ providers. The existing `nab_provider.priority` imports remain available as comp
 `nab_resolver.values.SlottedValue` supplies equality, hashing and representation for declared
 fields.
 
+## Hosts with native requirement objects
+
+Implement `nab_provider.callbacks.CallbackHost` to keep your own hashable requirement and candidate
+objects. `CallbackProvider` supplies range algebra, dependency facts, query scopes and original
+failure causes. The host keeps acquisition, matching and candidate order.
+
+| Method                                                   | Host responsibility                                                                                         |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `identify(value)`                                        | Return the package identifier of a requirement or candidate.                                                |
+| `find_matches(package, requirements, incompatibilities)` | Return a fresh `CandidateQuery` in native order, respecting the supplied declarations and exact exclusions. |
+| `is_satisfied_by(requirement, candidate)`                | Evaluate a stable requirement meaning.                                                                      |
+| `get_dependencies(candidate)`                            | Return original declarations that remain stable for this operation.                                         |
+| `exact_candidate(requirement)`                           | Return an eligible identity forced by this declaration, or `None`; do not acquire metadata here.            |
+| `preference(package, requirements)`                      | Return mutually orderable package priorities without preparation.                                           |
+
+A query owns its `may_expand` flag. A lazy producer may set it while enumerating candidates; it is
+read only after exhaustion. Set it when pending declarations could admit matches. Otherwise an empty
+query can stop before unrelated metadata is inspected. Forced, eligible identities with unread
+dependencies are inspected before declaring that context exhausted.
+
+```python
+from collections.abc import Mapping, Sequence
+from typing import NamedTuple
+
+from nab_provider.callbacks import CallbackProvider, CandidateQuery
+from nab_resolver.predicate_ranges import PredicateRange
+from nab_resolver.resolver import Resolver
+
+
+class NativeRequirement(NamedTuple):
+    package: int
+    revisions: frozenset[str]
+
+
+class NativeCandidate(NamedTuple):
+    package: int
+    revision: str
+
+
+class NativeHost:
+    def identify(
+        self, requirement_or_candidate: NativeRequirement | NativeCandidate
+    ) -> int:
+        return requirement_or_candidate.package
+
+    def is_satisfied_by(
+        self, requirement: NativeRequirement, candidate: NativeCandidate
+    ) -> bool:
+        return (
+            requirement.package == candidate.package
+            and candidate.revision in requirement.revisions
+        )
+
+    def find_matches(
+        self,
+        package: int,
+        requirements: Mapping[int, Sequence[NativeRequirement]],
+        incompatibilities: Mapping[int, Sequence[NativeCandidate]],
+    ) -> CandidateQuery[NativeCandidate]:
+        candidates = (
+            NativeCandidate(package, revision)
+            for revision in {10: ("stable",), 20: ("ready",)}.get(package, ())
+        )
+        return CandidateQuery(
+            candidate
+            for candidate in candidates
+            if candidate not in incompatibilities.get(package, ())
+            and all(
+                self.is_satisfied_by(requirement, candidate)
+                for requirement in requirements[package]
+            )
+        )
+
+    def get_dependencies(
+        self, candidate: NativeCandidate
+    ) -> tuple[NativeRequirement, ...]:
+        return (
+            (NativeRequirement(20, frozenset({"ready"})),)
+            if candidate.package == 10
+            else ()
+        )
+
+    def exact_candidate(self, requirement: NativeRequirement) -> NativeCandidate | None:
+        return None
+
+    def preference(
+        self, package: int, requirements: Mapping[int, Sequence[NativeRequirement]]
+    ) -> int:
+        return package
+
+
+provider = CallbackProvider(
+    NativeHost(), [NativeRequirement(10, frozenset({"stable"}))]
+)
+resolver = Resolver(
+    provider,
+    range_type=PredicateRange,
+    availability_generation=provider.availability_generation,
+)
+solution = resolver.solve(provider.root_requirements())
+print({package: candidate.revision for package, candidate in solution.pins.items()})
+```
+
+```text
+{10: 'stable', 20: 'ready'}
+```
+
+The adapter keeps metadata from cached or orphaned decisions out of active declarations. It tries
+alternatives of a later root before replacing an earlier root's selected value.
+`DecisionRetreat(package)` in a provider's `consume_force_backtrack_targets()` result reconsiders a
+selected value while retaining its earlier derived bounds.
+
+Use a fresh provider for each operation. Candidate eligibility must stay stable for unchanged active
+declarations; cache population alone must not grant permission.
+`provider.failure_causes(error.incompatibility)` recovers original declarations when a
+`ResolutionError` has a proof. Errors without a proof retain their terminal classification.
+
 ## The supported API
 
 These module paths will not move without a major version bump:
@@ -251,6 +368,7 @@ These module paths will not move without a major version bump:
 nab_resolver.errors     ResolutionError, ResolutionInvariantError,
                         ResolutionLimitError,
                         ResolutionStalledError, ResolutionTerminatedError
+nab_resolver.predicate_ranges PredicateAlgebra, PredicateRange
 nab_resolver.priority   CONFLICT_THRESHOLD, CULPRIT_DEMOTE_THRESHOLD,
                         TIER_AFFECTED, TIER_CULPRIT, TIER_NORMAL,
                         compute_tier, is_dominant_culprit
@@ -262,7 +380,7 @@ nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,
 nab_resolver.result     IncompleteSelectionError, walk_selected
 nab_resolver.root       ROOT
 nab_resolver.testing    ProviderScenario, check_provider, check_provider_scenarios
-nab_resolver.types      Incompatibility, IncompatibilityCause,
+nab_resolver.types      DecisionRetreat, Incompatibility, IncompatibilityCause,
                         RangeProtocol, RootRequirement, Term
 nab_resolver.values     SlottedValue
 nab_resolver.version_spans OrderedVersion, cached_dependency_span

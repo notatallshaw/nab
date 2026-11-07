@@ -44,6 +44,17 @@ selecting a script does not discover an enclosing workspace.
 build projects; it does not preserve source formatting or comments. Datetime values use a `T`
 separator.
 
+### Native host values
+
+`nab-provider` owns the callback adapter's candidate queries, dependency facts, eligibility scopes
+and original declarations. Hosts supply their own matching and acquisition rules. The adapter reuses
+`nab-resolver`'s conflict handling, deferred queries and targeted backtracking.
+
+`nab-resolver` owns the predicate range algebra used by this adapter. Its Boolean formulas and exact
+candidate exceptions have no Python version, URL, hash or installation policy. The native version
+catalogue keeps PEP 440 and release policy in `nab-provider`; the callback adapter obtains those
+meanings from its host.
+
 ### Matrix ownership
 
 ```python

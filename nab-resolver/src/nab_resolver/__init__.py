@@ -9,6 +9,7 @@ renamed or relocated in any release.
     nab_resolver.errors     ResolutionError, ResolutionInvariantError,
                             ResolutionLimitError,
                             ResolutionStalledError, ResolutionTerminatedError
+    nab_resolver.predicate_ranges PredicateAlgebra, PredicateRange
     nab_resolver.priority   CONFLICT_THRESHOLD, CULPRIT_DEMOTE_THRESHOLD,
                             TIER_AFFECTED, TIER_CULPRIT, TIER_NORMAL,
                             compute_tier, is_dominant_culprit
@@ -21,7 +22,7 @@ renamed or relocated in any release.
     nab_resolver.root       ROOT
     nab_resolver.testing    ProviderScenario, check_provider,
                             check_provider_scenarios
-    nab_resolver.types      Incompatibility, IncompatibilityCause,
+    nab_resolver.types      DecisionRetreat, Incompatibility, IncompatibilityCause,
                             RangeProtocol, RootRequirement, Term
     nab_resolver.values     SlottedValue
     nab_resolver.version_spans OrderedVersion, cached_dependency_span

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
 __all__ = [
+    "DecisionRetreat",
     "Incompatibility",
     "IncompatibilityCause",
     "IncompatibilityState",
@@ -43,6 +44,16 @@ VersionType = TypeVar("VersionType", bound=Hashable)
 # Contravariant so packaging.ranges.VersionRange (accepts Version | str)
 # can satisfy RangeProtocol[Version].
 VersionType_contra = TypeVar("VersionType_contra", bound=Hashable, contravariant=True)
+
+
+class DecisionRetreat(Generic[PackageType]):
+    """Reconsider a selected value while retaining its earlier derived bounds."""
+
+    __slots__ = ("package",)
+
+    def __init__(self, package: PackageType) -> None:
+        """Retain the package decision to reconsider."""
+        self.package = package
 
 
 class RangeProtocol(Protocol[VersionType_contra]):

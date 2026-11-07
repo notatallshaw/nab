@@ -45,6 +45,7 @@ from .ranges import Range
 from .result import build_solution_data
 from .root import ROOT
 from .types import (
+    DecisionRetreat,
     Incompatibility,
     IncompatibilityCause,
     IncompatibilityState,
@@ -289,16 +290,15 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         """
         ...
 
-    def consume_force_backtrack_targets(self) -> list[PackageType]:
-        """Return packages the provider wants force-backtracked.
+    def consume_force_backtrack_targets(
+        self,
+    ) -> Sequence[PackageType | DecisionRetreat[PackageType]]:
+        """Return culprit packages or selected decisions to reconsider.
 
-        Drained after every ``choose_version`` call. When non-empty,
-        the resolver bumps each package's culprit count past the
-        demote threshold, queues it, and fires
-        ``apply_targeted_backtrack`` without waiting for the normal
-        conflict-count threshold.
-
-        Providers without a force-backtrack signal return an empty list.
+        Drained after every ``choose_version`` call. Plain package keys use
+        culprit promotion and ``apply_targeted_backtrack``. A
+        ``DecisionRetreat(package)`` retains bounds derived before its decision.
+        Providers without a signal return an empty sequence.
         """
         ...
 
@@ -385,7 +385,9 @@ class BaseProvider(Generic[PackageType, VersionType]):
         """Return no clauses: ``choose_version`` queues none."""
         return []
 
-    def consume_force_backtrack_targets(self) -> list[PackageType]:
+    def consume_force_backtrack_targets(
+        self,
+    ) -> Sequence[PackageType | DecisionRetreat[PackageType]]:
         """Return no targets: there is no force-backtrack signal to give."""
         return []
 
@@ -1120,10 +1122,37 @@ class Resolver(Generic[PackageType, VersionType]):
             changed_package = ROOT
         return changed_package, restart_threshold, restarts_remaining
 
+    def _retreat_decisions(
+        self, requests: Sequence[DecisionRetreat[PackageType]]
+    ) -> PackageType | None:
+        """Retreat before a requested decision while retaining its prior bounds."""
+        level = self.solution.decision_level
+        triggering = None
+        for request in requests:
+            for assignment in self.solution.assignments_for(request.package):
+                if assignment.is_decision and assignment.package is not ROOT:
+                    before = assignment.decision_level - 1
+                    if before < level:
+                        level, triggering = before, request.package
+                    break
+        if triggering is not None:
+            self.solution.backtrack(level)
+            self.stats.targeted_backtracks += 1
+        return triggering
+
     def _apply_force_requests(self, targets: list[Any]) -> Any | None:
         """Apply requested retreats and clear deferred queries after a backtrack."""
         self.priority_epoch += 1
-        triggering = conflict.force_targeted_backtrack(self, targets)
+        culprits = [
+            target for target in targets if not isinstance(target, DecisionRetreat)
+        ]
+        decisions = [
+            target for target in targets if isinstance(target, DecisionRetreat)
+        ]
+        triggering = conflict.force_targeted_backtrack(self, culprits)
+        decision = self._retreat_decisions(decisions)
+        if decision is not None:
+            triggering = decision
         if triggering is not None and self.deferred is not None:
             self.deferred.clear()
         return triggering
