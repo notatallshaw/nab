@@ -71,7 +71,7 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
             provider.preferred_candidate = preferred_candidate
 
     @classmethod
-    def from_catalogue(
+    def from_catalogue(  # noqa: PLR0913 - preserve independent public host hooks
         cls,
         catalogue: PreferenceCatalogue[CandidateType, RangeType, PinnedRequirementType],
         roots: Mapping[str, RangeType],
@@ -81,6 +81,9 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
         refresh_incomplete: bool = False,
         selection_policy: Callable[[Mapping[str, CandidateType]], bool] | None = None,
         preferred_candidate: Callable[[str], CandidateType | None] | None = None,
+        on_candidate_considered: Callable[[CandidateType], None] | None = None,
+        exact_dependencies: Callable[[CandidateType], Sequence[CandidateType]]
+        | None = None,
         max_rounds: int | None = None,
     ) -> PreparedResolution[CandidateType, RangeType, PinnedRequirementType]:
         """Use the shared query engine with the host's preparation and policy."""
@@ -96,6 +99,8 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
             constraints,
             refresh_incomplete=refresh_incomplete,
             metadata_is_admitted=admission,
+            on_candidate_considered=on_candidate_considered,
+            exact_dependencies=exact_dependencies,
         )
         if max_rounds is not None:
             provider.preference.remaining = max_rounds
@@ -144,6 +149,7 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
             self.provider.preference,
             preferred,
             metadata_is_admitted=self.metadata_admission,
+            on_candidate_considered=self.provider.on_candidate_considered,
         )
         if any(trial.preferred(package) is None for package in self.provider.roots):
             return None
@@ -250,8 +256,13 @@ class _PreferredProvider(
             [CandidateType, Mapping[str, CandidateType]], bool
         ]
         | None,
+        on_candidate_considered: Callable[[CandidateType], None] | None = None,
     ) -> None:
-        super().__init__(preference, metadata_is_admitted=metadata_is_admitted)
+        super().__init__(
+            preference,
+            metadata_is_admitted=metadata_is_admitted,
+            on_candidate_considered=on_candidate_considered,
+        )
         self.read_preferred = preferred
         self.preferred_choices: dict[str, CandidateType | None] = {}
 
@@ -292,7 +303,13 @@ class _PreferredProvider(
         if candidate is None:
             return None
         token = self.identify(candidate)
-        return token if token in version_range else None
+        if token not in version_range:
+            return None
+
+        # A refused trial still considered its real candidate choices.
+        if self.on_candidate_considered is not None:
+            self.on_candidate_considered(candidate)
+        return token
 
 
 class _PreferredTokens(

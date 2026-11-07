@@ -224,6 +224,19 @@ candidates, dependency edges and admission reasons. The optional `selection_poli
 callback checks a complete reachable selection using only cached metadata. Omit it when no
 additional host policy is needed.
 
+Pass `on_candidate_considered(candidate)` to observe real candidate choices without preparing
+metadata. A candidate can be reported repeatedly across availability probes, scoped queries and
+preferred-only trials. Event counts do not measure rejection; proxy-package decisions emit no
+events.
+
+`exact_dependencies(parent)` can refine existing prepared dependency edges to known candidate
+identities. Each returned child's package must already occur in `parent`'s cached dependencies;
+missing edges raise `ResolutionInvariantError`. Entries are simultaneous requirements: different
+identities for one package conflict even at the same version. Original ranges, input constraints,
+withdrawal permission and selected-plan admission still apply. Keep the callback cache-only and its
+results stable throughout the prepared snapshot. Exact children can be selected without enumerating
+unrelated candidates.
+
 `nab_resolver.priority.compute_tier` orders conflicts and culprit evidence for native and host
 providers. The existing `nab_provider.priority` imports remain available as compatibility aliases.
 

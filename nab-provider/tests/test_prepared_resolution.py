@@ -344,6 +344,7 @@ def test_preferred_token_view_is_a_consistent_readonly_mapping() -> None:
     assert trial.preferred("app") == app
     assert trial.preferred("missing") is None
     assert trial.choose_version("missing", Range[int].full()) is None
+    assert trial.choose_version("app", Range[int].empty()) is None
     token = trial.identify(app)
     view = _PreferredTokens(trial)
 
