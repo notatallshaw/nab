@@ -378,8 +378,6 @@ def test_reuse_declines_the_existing_file_index_fingerprint_collision(
 ) -> None:
     first = registry.project.parent / os.fsdecode(b"index-\xff")
     second = registry.project.parent / os.fsdecode(second_bytes)
-    first.mkdir()
-    second.mkdir()
     text = (
         registry.project.read_text()
         + f'\n[[tool.nab.indexes]]\nname="local"\nurl="{first.as_uri()}"\n'
