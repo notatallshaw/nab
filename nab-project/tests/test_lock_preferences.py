@@ -268,10 +268,12 @@ def prepared_modes(
         *,
         unchanged_only: bool = False,
     ) -> None:
+        """Record the mode without replacing real provider preparation."""
         prepared.append(unchanged_only)
         original(self, preferred, unchanged_only=unchanged_only)
 
     monkeypatch.setattr(Provider, "prepare_preferred_releases", observe)
+
     return prepared
 
 
@@ -297,6 +299,7 @@ def test_new_root_joins_later_target_preferred_models(
             metadata[wheel.metadata_url] = make_metadata(
                 name, wheel.version, *dependencies
             )
+
     port = make_coordinator(listings=listings, metadata_by_url=metadata)
 
     result = resolve_with_coordinator(
@@ -410,9 +413,11 @@ def test_new_root_alignment_rechecks_later_python_admission(
         "1", package="new", requires_python=None if metadata_python else "<3.13"
     )
     later = make_wheel("2", package="new", requires_python=">=3.13")
+
     assert a.metadata_url is not None
     assert first.metadata_url is not None
     assert later.metadata_url is not None
+
     port = make_coordinator(
         listings={"a": [a], "new": [first, later]},
         metadata_by_url={
@@ -454,6 +459,7 @@ def test_new_root_alignment_reads_later_target_extra_dependencies() -> None:
             if name == "new"
             else make_metadata(name, "1")
         )
+
     port = make_coordinator(
         listings={name: [wheel] for name, wheel in wheels.items()},
         metadata_by_url=metadata,

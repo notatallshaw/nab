@@ -872,6 +872,7 @@ class _TargetAttempt:
         unchanged_only: bool = False,
     ) -> None:
         """Keep a validated model; discard trial state when it fails."""
+        # Reject impossible unchanged trials before narrowing provider candidates.
         if hint is None or (
             unchanged_only
             and any(
@@ -938,6 +939,7 @@ def _target_preferences(
         return preferences, None
 
     merged = {**preferences, **prior}
+
     # Extend only when the aligned model preserves this target's prior pins.
     model_hint = (
         prior
@@ -947,6 +949,7 @@ def _target_preferences(
         )
         else merged
     )
+
     return merged, model_hint
 
 
