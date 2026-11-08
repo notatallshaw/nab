@@ -389,7 +389,8 @@ class BaseProvider(Generic[PackageType, VersionType]):
         self,
     ) -> Sequence[PackageType | DecisionRetreat[PackageType]]:
         """Return no targets: there is no force-backtrack signal to give."""
-        return []
+        targets: list[PackageType | DecisionRetreat[PackageType]] = []
+        return targets
 
     def narrow_for_display(
         self, package: PackageType, constraint: RangeProtocol[VersionType]
