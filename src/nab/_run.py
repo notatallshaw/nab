@@ -333,10 +333,12 @@ class RunSettings(Record):
         self.lock_policy = lock_policy
         self.format = format
         self.cache = cache
+
         self.groups = groups
         self.all_groups = all_groups
         self.extras = extras
         self.all_extras = all_extras
+
         self.workspace_discovery = workspace_discovery
         self.build_requirements = build_requirements
         self.no_emit_workspace = no_emit_workspace
@@ -524,17 +526,21 @@ def _override_tokens(spec: Opt, value: object) -> list[str]:
     """Render one whole assignment, table overlay or dedicated option."""
     if isinstance(value, CliSetting):
         return option_tokens("--setting", (value.display,))
+
     if isinstance(value, CliTable):
         return [
             token for key in value.keys for token in option_tokens(key.flag, key.tokens)
         ]
+
     flag = spec.cli_flag
     if flag is None or value is None:
         return []
+
     if spec.kind is Kind.FLAG:
         return _toggle_tokens(spec, flag, value)
     if spec.kind is Kind.STAR and isinstance(value, tuple):
         return option_tokens(flag, tuple(str(item) for item in value))
+
     items = value if isinstance(value, tuple) else (value,)
     return [token for item in items for token in option_tokens(flag, (str(item),))]
 
@@ -544,15 +550,18 @@ def _toggle_tokens(spec: Opt, flag: str, value: object) -> list[str]:
     if not isinstance(value, bool):
         msg = f"{spec.name} requires a boolean CLI value"
         raise TypeError(msg)
+
     if value:
         return [flag]
     if spec.negatable:
         return ["--no-" + flag.removeprefix("--")]
+
+    # Assign false explicitly when the flag has no negative form.
     return option_tokens("--setting", (f"{spec.scope_name}.{spec.name}=false",))
 
 
 def _layered_run_settings(effective: Mapping[str, EffectiveValue]) -> RunSettings:
-    """Fold the effective registry values into a subcommand's run knobs.
+    """Build command settings from the effective configuration.
 
     ``resolution`` stays ``None`` (config wins downstream) when no source
     above the default set it, preserving the contract that the resolver

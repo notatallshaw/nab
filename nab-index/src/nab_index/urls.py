@@ -13,7 +13,10 @@ def strip_userinfo(url: str) -> str:
     userinfo, sep, host = parts.netloc.rpartition("@")
     if not sep:
         return url
+
+    # SSH uses the login name to identify the remote account.
     if parts.scheme.endswith("ssh"):
         login = userinfo.split(":", 1)[0]
         host = f"{login}@{host}"
+
     return urlunsplit(parts._replace(netloc=host))

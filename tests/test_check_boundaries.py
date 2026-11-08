@@ -102,6 +102,7 @@ def test_the_packages_that_publish_a_table_are_pinned() -> None:
 
     Emptying it turns the ``supported`` rule off for every package.
     """
+
     assert check_boundaries.PUBLISHES_SUPPORTED_PATHS == (
         "nab_index",
         "nab_markersets",
@@ -378,6 +379,8 @@ def test_url_output_uses_the_supported_index_module(
         use=f"from nab_index.{module} import strip_userinfo\n",
     )
     workspace.publishes_supported_paths("nab_index")
+
     assert check_boundaries.main() == status
+
     if status:
         assert "supports strip_userinfo at nab_index.urls" in capsys.readouterr().err

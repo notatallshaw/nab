@@ -278,6 +278,7 @@ def test_the_unknown_name_message_names_every_variable_nab_honours() -> None:
 
     supported = {spec.env_var for spec in OPTIONS if spec.env_var} | env.OUTPUT_OWNED
     reported = set(re.findall(r"\bNAB_[A-Z][A-Z_]*\b", rejected.reason))
+
     assert reported == supported | {"NAB_OFLINE"}
 
 

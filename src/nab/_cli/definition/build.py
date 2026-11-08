@@ -99,19 +99,23 @@ def build_options(
     """Build options only when each setting has a second configuration form."""
     declared = tuple(row for table in tables for row in rows(table))
     built = tuple(build_option(row) for row in declared)
+
+    # Validate cross-option links after all declarations are available.
     for row in declared:
         _check_surface(row, declared, environment_names)
+
     return built
 
 
 def _check_surface(
     row: Row, declared: tuple[Row, ...], environment_names: AbstractSet[str]
 ) -> None:
-    """Keep ordinary settings layered and require explicit actions or aliases."""
+    """Keep settings layered and validate declared actions and shortcuts."""
     alternatives = bool(row.alias) + bool(row.environ) + row.action
     if alternatives > 1 or (row.key is not None and alternatives):
         msg = f"{row.name} declares competing setting/action forms"
         raise ValueError(msg)
+
     if row.key is not None:
         if not row.kind and not any(other.alias == "*" for other in declared):
             msg = (
@@ -120,8 +124,10 @@ def _check_surface(
             )
             raise ValueError(msg)
         return
+
     if row.under or row.kind in {"positional", "verb", "eager"}:
         return
+
     if row.action:
         if row.kind != "flag" and _read(row).vtype != "path":
             msg = (
@@ -130,21 +136,24 @@ def _check_surface(
             )
             raise ValueError(msg)
         return
+
     if row.environ:
         missing = set(row.environ) - environment_names
         if missing:
             msg = f"{row.name} names unregistered environment forms: {sorted(missing)}"
             raise ValueError(msg)
         return
+
     if row.alias:
         _check_alias(row, declared)
         return
+
     msg = f"{row.name} is CLI-only; declare a layered setting, alias or explicit action"
     raise ValueError(msg)
 
 
 def _check_alias(row: Row, declared: tuple[Row, ...]) -> None:
-    """Check that a shortcut reaches a declared setting or the assignment parser."""
+    """Check shortcuts to settings or the assignment parser."""
     if row.alias == "*":
         if row.name != "settings" or row.kind != "append":
             msg = (
@@ -152,10 +161,12 @@ def _check_alias(row: Row, declared: tuple[Row, ...]) -> None:
             )
             raise ValueError(msg)
         return
+
     key, dot, child = row.alias.partition(".")
     if not any(other.name == key and other.key is not None for other in declared):
         msg = f"{row.name} aliases an undeclared setting {key!r}"
         raise ValueError(msg)
+
     if dot and not any(
         other.name == child and other.under == key for other in declared
     ):

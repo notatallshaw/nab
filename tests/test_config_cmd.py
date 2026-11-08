@@ -1037,12 +1037,14 @@ class TestCliFlagValues:
         base = ["get", key, "--path", str(hermetic_roots / "pyproject.toml")]
 
         assert _run_config(base) != f"{printed}\n"
+
         spec = next(spec for spec in OPTIONS if spec.name == key)
         if spec.kind is Kind.FLAG:
             flag = _CLI_FLAGS[key] if argv_value == "True" else "--no-" + key
             arguments = [*base, flag]
         else:
             arguments = [*base, _CLI_FLAGS[key], argv_value]
+
         assert _run_config(arguments) == f"{printed}\n"
 
     def test_every_flagged_option_has_a_case(self) -> None:

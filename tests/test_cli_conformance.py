@@ -241,10 +241,13 @@ def _tokens(row: Opt) -> tuple[str, ...]:
     """Every token ``row``'s flag accepts, or the one token it documents."""
     if row.kind is Kind.FLAG:
         return ("True", "False") if row.negatable else ("True",)
+
     if row.vtype is VType.CHOICE:
         return row.choices
+
     if row.vtype is VType.BOOL:
         return _BOOL_TOKENS
+
     return (row.sample,)
 
 
@@ -255,6 +258,7 @@ def _walked(row: Opt, argument: str) -> object:
         line = (row.commands[0], flag)
     else:
         line = (row.commands[0], row.cli_flag, argument)
+
     return parse(line, cli_spec.ROOT, cli_spec.COMMANDS, "nab").values[row.dest]
 
 

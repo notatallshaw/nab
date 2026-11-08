@@ -59,21 +59,22 @@ Directory-level `nab.toml` discovery uses the directory containing `pyproject.to
 
 Only user settings have `NAB_*` bindings:
 
-| Variable              | Option            | Value                                   |
-| --------------------- | ----------------- | --------------------------------------- |
-| `NAB_OFFLINE`         | `offline`         | `1`, `0`, `true` or `false`             |
-| `NAB_CACHE_DIR`       | `cache-dir`       | Cache path                              |
-| `NAB_HTTP_BACKEND`    | `http-backend`    | `urllib3`, `httpx` or `httpx2`          |
-| `NAB_LOCK_POLICY`     | `lock-policy`     | `resolve`, `prefer-existing` or `reuse` |
-| `NAB_MAX_CONCURRENCY` | `max-concurrency` | Positive integer                        |
-
-| `NAB_FORMAT` | `format` | `pylock`, `requirements` or `requirements-without-hashes` | |
-`NAB_CACHE` | `cache` | `1`, `0`, `true` or `false` | | `NAB_GROUPS` | `groups` | TOML array, such
-as `["dev"]` | | `NAB_ALL_GROUPS` | `all-groups` | `1`, `0`, `true` or `false` | | `NAB_EXTRAS` |
-`extras` | TOML array, such as `["test"]` | | `NAB_ALL_EXTRAS` | `all-extras` | `1`, `0`, `true` or
-`false` | | `NAB_WORKSPACE_DISCOVERY` | `workspace-discovery` | `1`, `0`, `true` or `false` | |
-`NAB_BUILD_REQUIREMENTS` | `build-requirements` | `1`, `0`, `true` or `false` | |
-`NAB_NO_EMIT_WORKSPACE` | `no-emit-workspace` | `1`, `0`, `true` or `false` |
+| Variable                  | Option                | Value                                                     |
+| ------------------------- | --------------------- | --------------------------------------------------------- |
+| `NAB_OFFLINE`             | `offline`             | `1`, `0`, `true` or `false`                               |
+| `NAB_CACHE_DIR`           | `cache-dir`           | Cache path                                                |
+| `NAB_HTTP_BACKEND`        | `http-backend`        | `urllib3`, `httpx` or `httpx2`                            |
+| `NAB_LOCK_POLICY`         | `lock-policy`         | `resolve`, `prefer-existing` or `reuse`                   |
+| `NAB_MAX_CONCURRENCY`     | `max-concurrency`     | Positive integer                                          |
+| `NAB_FORMAT`              | `format`              | `pylock`, `requirements` or `requirements-without-hashes` |
+| `NAB_CACHE`               | `cache`               | `1`, `0`, `true` or `false`                               |
+| `NAB_GROUPS`              | `groups`              | TOML array, such as `["dev"]`                             |
+| `NAB_ALL_GROUPS`          | `all-groups`          | `1`, `0`, `true` or `false`                               |
+| `NAB_EXTRAS`              | `extras`              | TOML array, such as `["test"]`                            |
+| `NAB_ALL_EXTRAS`          | `all-extras`          | `1`, `0`, `true` or `false`                               |
+| `NAB_WORKSPACE_DISCOVERY` | `workspace-discovery` | `1`, `0`, `true` or `false`                               |
+| `NAB_BUILD_REQUIREMENTS`  | `build-requirements`  | `1`, `0`, `true` or `false`                               |
+| `NAB_NO_EMIT_WORKSPACE`   | `no-emit-workspace`   | `1`, `0`, `true` or `false`                               |
 
 Unknown `NAB_*` names produce a warning. `-qq` and `NAB_VERBOSITY=silent` suppress it.
 `NAB_VERBOSITY` and `NAB_NO_PROGRESS` are [output settings](cli.md).
@@ -83,16 +84,23 @@ Unknown `NAB_*` names produce a warning. `-qq` and `NAB_VERBOSITY=silent` suppre
 Every configuration key accepts a namespaced `--setting` assignment using its file value syntax:
 
 ```bash
-nab lock --setting 'project.indexes=[{name="internal",url="https://pypi.example.com/simple/"}]'
+# Use a private package index.
+nab lock --setting \
+  'project.indexes=[{name="internal",url="https://pypi.example.com/simple/"}]'
+
+# Replace a package's dependency declarations.
 nab lock --setting 'project.packages={example={dependencies=["requests>=2"]}}'
+
+# Reuse a valid saved lock.
 nab lock --setting 'user.lock-policy="reuse"'
 ```
 
 `project` and `user` identify the setting's scope. Strings need TOML quotes; arrays and inline
-tables use ordinary TOML syntax. Relative paths in assignments are relative to the working
-directory. An assignment replaces the whole value; repeated assignments to the same key keep the
-last value. Embedded URL credentials are omitted from recorded overrides; supply authentication
-separately.
+tables use ordinary TOML syntax.
+
+- Relative paths are resolved from the working directory.
+- Assignments replace whole values. Repeating a key keeps its last value.
+- Recorded overrides omit embedded URL credentials. Supply authentication separately.
 
 Named scalar/list flags remain available. The `--project-matrix-*` and `--project-environment-*`
 families change one table key and retain the other file-supplied keys. A whole-value assignment

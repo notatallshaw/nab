@@ -583,9 +583,12 @@ def parse_toml_value(value: str, where: str) -> object:
     except tomli.TOMLDecodeError as exc:
         msg = f"{where}: expected a TOML value: {exc}"
         raise SourceConfigError(msg) from exc
+
+    # Parsing a value must not accept additional TOML assignments.
     if set(parsed) != {"value"}:
         msg = f"{where}: expected one TOML value"
         raise SourceConfigError(msg)
+
     return parsed["value"]
 
 

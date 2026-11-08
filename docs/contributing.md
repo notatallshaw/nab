@@ -211,14 +211,18 @@ public interfaces and measurement boundaries unchanged.
 ## Adding configuration options
 
 Declare settings in `src/nab/_cli/definition/options.py` with a `Layer`, source scope, parser and
-renderer. Project policy stays in project configuration; user runtime/workflow settings also have
-`NAB_*` variables. Every key is available through the namespaced `--setting` form, including
-structured values without a dedicated flag.
+renderer:
+
+- Project policy stays in project configuration.
+- User runtime and workflow settings also have `NAB_*` variables.
+- Every key accepts a namespaced `--setting` assignment, including structured values without a named
+  flag.
 
 The declaration rejects CLI-only settings and keys without a CLI route. Shortcuts must identify an
-existing configuration key or registered environment form. Input/output selectors and one-run action
-flags must be marked explicitly; a scalar preference cannot be marked as an action to bypass
-layering.
+existing configuration key or registered environment form.
+
+Mark input/output selectors and one-run actions explicitly. A scalar preference cannot be marked as
+an action to bypass layering.
 
 Regenerate both projections after changing the declaration:
 

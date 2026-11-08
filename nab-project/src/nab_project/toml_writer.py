@@ -76,6 +76,7 @@ def _collection(
             )
             + " }"
         )
+
     return "[" + ", ".join(dumps_value(item) for item in value) + "]"
 
 

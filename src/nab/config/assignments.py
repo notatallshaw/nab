@@ -48,13 +48,16 @@ class CliSetting:
             "constraints",
         }:
             return self.written
+
         try:
             safe = _safe_value(self.value, self.key)
         except ValueError as exc:
             msg = f"--setting {self.key}: invalid URL or requirement in the override"
             raise SourceConfigError(msg) from exc
+
         if safe is self.value or safe == self.value:
             return self.written
+
         name = self.written.partition("=")[0]
         return name + "=" + dumps_value(safe)
 
@@ -64,15 +67,20 @@ def _safe_value(value: object, field: str) -> object:
     if isinstance(value, str):
         if field in {"url", "allowed-repos"}:
             return strip_userinfo(value)
+
+        # Requirement URLs need PEP 508 parsing; other strings stay unchanged.
         if field in {"dependencies", "constraints"}:
             requirement = parse_requirement(value)
             if requirement.url is not None:
                 return value.replace(requirement.url, strip_userinfo(requirement.url))
         return value
+
     if isinstance(value, list):
         return [_safe_value(item, field) for item in value]
+
     if isinstance(value, dict):
         return {key: _safe_value(item, key) for key, item in value.items()}
+
     return value
 
 
@@ -89,16 +97,22 @@ def parse_settings(
         if not separator or not dot or scope not in {"project", "user"}:
             msg = "--setting expects project.KEY=TOML or user.KEY=TOML"
             raise SourceConfigError(msg)
+
         spec = specs.get(key)
         if spec is None:
             msg = f"--setting: unknown configuration key {key!r}"
             raise SourceConfigError(msg)
+
         if scope != spec.scope_name:
             msg = f"--setting: {key!r} belongs to the {spec.scope_name} namespace"
             raise SourceConfigError(msg)
+
+        # Mixed flag forms are refused before the value is parsed.
         if key in native:
             msg = f"--setting: {key!r} is also set by a dedicated flag; use one form"
             raise SourceConfigError(msg)
+
         value = parse_toml_value(expression, f"--setting {name}")
         result[key] = CliSetting(key, value, argument)
+
     return result

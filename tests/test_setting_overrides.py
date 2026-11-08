@@ -53,6 +53,7 @@ def project(directory: Path) -> Path:
     """Create the input whose file and CLI forms are compared."""
     path = directory / "pyproject.toml"
     path.write_text('[project]\nname="x"\nversion="0"\n')
+
     return path
 
 
@@ -74,10 +75,13 @@ def test_structured_cli_value_matches_file_value(
     path = project(hermetic_roots)
     if key == "local-sources":
         value = dumps_value([{"name": "a", "path": str(hermetic_roots / "source")}])
+
     file = hermetic_roots / "nab.toml"
     file.write_text(f"{key} = {value}\n")
     arguments = ("config", "get", key, "--path", str(path))
+
     assert run(arguments) == 0
+
     from_file = capsys.readouterr().out
     file.unlink()
 
@@ -100,6 +104,7 @@ def test_invalid_assignment_reports_its_cli_source(
     hermetic_roots: Path, capsys: pytest.CaptureFixture[str], assignment: str
 ) -> None:
     path = project(hermetic_roots)
+
     assert (
         run(("config", "get", "offline", "--path", str(path), "--setting", assignment))
         == 1
@@ -137,6 +142,7 @@ def test_competing_override_forms_are_refused(
     hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     path = project(hermetic_roots)
+
     assert (
         run(
             (
@@ -162,6 +168,7 @@ def test_whole_value_replaces_file_table_and_explain_reports_winner(
     path = project(hermetic_roots)
     (hermetic_roots / "nab.toml").write_text('[packages.a]\ndependencies=["b"]\n')
     argument = "project.packages={c={dependencies=[]}}"
+
     assert (
         run(
             (
@@ -176,7 +183,9 @@ def test_whole_value_replaces_file_table_and_explain_reports_winner(
         )
         == 0
     )
+
     output = capsys.readouterr().out
+
     assert argument in output
     assert "shadowed" in output
     assert "merged" not in output
@@ -191,15 +200,19 @@ def test_metadata_assignment_reaches_resolution_and_replay(
 
     assert registry.command("--setting", argument) == 0
     assert registry.versions() == {"a": "1"}
+
     document = toml_io.load_path(registry.output)
+
     assert registry.command(*document["tool"]["nab"]["cli-project-overrides"]) == 0
     assert registry.versions() == {"a": "1"}
+
     overrides = _run._cli_overrides(
         cli_resolution=None,
         cli_offline=None,
         cli_cache_dir=None,
         cli_settings=(argument,),
     )
+
     assert registry.command(*_run.config_override_arguments(overrides)) == 0
     assert registry.versions() == {"a": "1"}
 
@@ -209,7 +222,9 @@ def test_user_assignment_selects_reuse_without_transport(
 ) -> None:
     registry = Registry(hermetic_roots)
     monkeypatch.setattr("nab_project.resolve.FetchCoordinator", registry.coordinator)
+
     assert registry.command() == 0
+
     registry.add_release()
     ports_before = len(registry.ports)
 
@@ -224,7 +239,7 @@ def test_user_assignment_selects_reuse_without_transport(
     ids=lambda row: row.name,
 )
 def test_every_user_setting_reaches_the_run_controls(spec: Opt, tmp_path: Path) -> None:
-    """The declaration supplies the field name at this schema introspection boundary."""
+    """Check each declared setting against its RunSettings field."""
     if spec.vtype is VType.BOOL:
         raw = not spec.rdefault
     elif spec.kind is Kind.STAR:
@@ -239,11 +254,13 @@ def test_every_user_setting_reaches_the_run_controls(spec: Opt, tmp_path: Path) 
         raw = str(tmp_path / "alternate-cache")
     else:
         raw = spec.rdefault + 1
+
     expected = spec.parse(raw, "test CLI value")
     effective = resolve_config(
         [], Layer(Origin(SourceKind.ENV, "env"), {}), build_cli_layer({spec.name: raw})
     )
     controls = _run._layered_run_settings(effective)
+
     assert getattr(controls, spec.name.replace("-", "_")) == expected
 
 
@@ -262,6 +279,7 @@ def test_configured_group_and_extra_selection_changes_the_lock(
         f.write(
             '\n[project.optional-dependencies]\nextra=["c==1"]\n[dependency-groups]\ndev=["d==1"]\n'
         )
+
     options = (
         {"all-groups": "true", "all-extras": "true"}
         if select_all
@@ -277,7 +295,9 @@ def test_configured_group_and_extra_selection_changes_the_lock(
 
     assert registry.command() == 0
     assert registry.versions() == {"a": "1", "b": "1", "c": "1", "d": "1"}
+
     document = toml_io.load_path(registry.output)
+
     assert document["extras"] == ["extra"]
     assert document["dependency-groups"] == ["dev"]
 
@@ -293,8 +313,11 @@ def test_configured_output_format_changes_the_written_artifact(
     )
 
     assert registry.command() == 0
+
     outputs = list(hermetic_roots.glob("requirements-*.txt"))
+
     assert len(outputs) == 2
+
     for output in outputs:
         requirements = output.read_text()
         assert "a==1" in requirements
@@ -313,11 +336,14 @@ def test_replayed_user_flags_preserve_explicit_false_and_whole_selections() -> N
         cli_workspace_discovery=True,
         cli_no_emit_workspace=False,
     )
+    # Reparse generated arguments through the actual CLI grammar.
     arguments = _run.config_override_arguments(overrides)
     parsed = parse(("lock", *arguments), cli_spec.ROOT, cli_spec.COMMANDS, "nab")
     parameters = {spec.cli_param: spec.default for spec in OPTIONS if spec.cli_param}
     parameters.update(parsed.values)
     overrides = build_cli_overrides(parameters, {})
+
+    # File defaults deliberately disagree with the explicit replay values.
     file = Layer(
         Origin(SourceKind.PROJECT_TOML, "nab.toml"),
         {
@@ -333,6 +359,7 @@ def test_replayed_user_flags_preserve_explicit_false_and_whole_selections() -> N
             [file], Layer(Origin(SourceKind.ENV, "env"), {}), build_cli_layer(overrides)
         )
     )
+
     assert controls.cache is False
     assert controls.all_groups is False
     assert controls.groups == ("dev", "test")
@@ -382,11 +409,14 @@ def test_invalid_assignment_url_is_not_echoed_into_the_notice(
     argument = (
         'project.indexes=[{name="bad",url="https://user:example-password@[broken"}]'
     )
+
     assert (
         run(("config", "get", "indexes", "--path", str(path), "--setting", argument))
         == 1
     )
+
     error = capsys.readouterr().err
+
     assert "invalid URL" in error
     assert "example-password" not in error
 
@@ -396,6 +426,7 @@ def test_dependency_urls_are_recorded_without_passwords(
 ) -> None:
     path = project(hermetic_roots)
     argument = 'project.packages={a={dependencies=["b @ https://user:example-password@example.com/b.whl"]}}'
+
     assert (
         run(("config", "get", "packages", "--path", str(path), "--setting", argument))
         == 0
@@ -408,10 +439,12 @@ def test_scoped_boolean_metadata_assertion_has_a_cli_form(
 ) -> None:
     path = project(hermetic_roots)
     argument = "project.packages={a={assume-consistent-metadata=true}}"
+
     assert (
         run(("config", "get", "packages", "--path", str(path), "--setting", argument))
         == 0
     )
+
     overrides = _run._cli_overrides(
         cli_resolution=None,
         cli_offline=None,
@@ -423,6 +456,7 @@ def test_scoped_boolean_metadata_assertion_has_a_cli_form(
         cli_overrides=_run.project_config_overrides(overrides),
         discover_workspace=False,
     )
+
     assert config.package_overrides[0].assume_consistent_metadata is True
 
 
@@ -430,6 +464,7 @@ def test_incompatible_environment_assignment_names_its_cli_form(
     hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     registry = Registry(hermetic_roots)
+
     assert registry.command("--setting", 'project.environment={python="3.12"}') == 1
     assert "--setting" in capsys.readouterr().err
 
@@ -451,6 +486,7 @@ def test_plain_dependency_override_keeps_its_replay_value() -> None:
         cli_cache_dir=None,
         cli_settings=(argument,),
     )
+
     assert _run.config_override_arguments(overrides) == ["--setting", argument]
 
 
@@ -474,5 +510,6 @@ def test_relative_source_assignment_uses_the_cli_working_directory(
         cli_overrides=_run.project_config_overrides(overrides),
         discover_workspace=False,
     )
+
     assert effective["local-sources"].value[0].path == str(working / "source")
     assert config.local_sources[0].path == str(working / "source")

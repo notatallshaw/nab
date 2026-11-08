@@ -504,8 +504,10 @@ def _lock_output(
         build_requirements=settings.build_requirements,
         no_emit_workspace=settings.no_emit_workspace,
     )
+    # Select the effective output before checking lock-only actions.
     if input_format is InputFormat.SCRIPT and output is None:
         output = _script_output_path(path, format_name=settings.format)
+
     _validate_pylock_output_name(output=output, format=settings.format)
     _validate_lock_mode(
         output=output,
@@ -515,8 +517,10 @@ def _lock_output(
         upgrade=upgrade,
         lock_policy=settings.lock_policy,
     )
+
     if settings.build_requirements:
         _refuse_group_selection_with_build_requirements(settings, project_overrides)
+
     return output
 
 

@@ -305,8 +305,10 @@ def build_cli_overrides(
         if value is None or (isinstance(value, tuple) and not value):
             continue
         out[spec.name] = value
+    # Include named sub-flags before checking whole-value assignments for conflicts.
     out.update(build_cli_tables(locals_by_param, flags))
     out.update(parse_settings(locals_by_param.get("setting", ()), BY_KEY, out))
+
     return out
 
 
@@ -710,8 +712,9 @@ def _apply_mode_default(effective: dict[str, EffectiveValue]) -> None:
 def _folded(
     spec: Opt, table: CliTable | CliSetting, all_layers: Sequence[Layer]
 ) -> tuple[Origin, Any]:
-    """Parse a whole assignment or merge named sub-flags over a file table."""
+    """Parse a whole assignment or apply named flags over a file table."""
     if isinstance(table, CliSetting):
+        # CLI paths are relative to the working directory, not a config file.
         with declaring_dir(Path.cwd()):
             value = spec.parse(
                 table.value, f"--setting {table.written.partition('=')[0]}"
@@ -719,11 +722,13 @@ def _folded(
         # Replay formatting is part of accepting the CLI value.
         _ = table.display
         return Origin(SourceKind.CLI, "cli"), value
+
     merged = fold_cli_table(spec, table, _file_raw(spec, all_layers))
     try:
         value = spec.parse(merged, cli_table_label(spec))
     except SourceConfigError as exc:
         raise CliTableError(*exc.args) from exc
+
     return Origin(SourceKind.CLI, "cli"), value
 
 
@@ -802,6 +807,7 @@ def build_cli_layer(values: Mapping[str, Any]) -> Layer:
         if isinstance(value, (CliTable, CliSetting)):
             raw_tables[key] = value
             continue
+
         if not spec.commands:
             msg = f"{key} takes no command line, so no CLI layer can set it"
             raise ValueError(msg)
@@ -809,6 +815,7 @@ def build_cli_layer(values: Mapping[str, Any]) -> Layer:
         # Parse hooks expect repeatable flags in their TOML list form.
         raw_value = list(value) if isinstance(value, tuple) else value
         parsed[key] = spec.parse(raw_value, str(spec.cli_flag))
+
     return Layer(Origin(SourceKind.CLI, "cli"), parsed, raw_tables)
 
 
@@ -951,29 +958,28 @@ def _require_key(effective: Mapping[str, EffectiveValue], key: str) -> Effective
 def project_cli_override_records(
     effective: Mapping[str, EffectiveValue],
 ) -> tuple[tuple[str, str], ...]:
-    """Return the ``(flag, value)`` pairs for PROJECT options set on the CLI.
+    """Record project CLI overrides for lock provenance and notices.
 
-    A PROJECT option changes the resolved set, so a CLI override means the
-    result no longer derives from the committed files alone.  These pairs
-    drive both the reproducibility notice and the auditable record written
-    into the lockfile provenance.  A table key is recorded flag by flag,
-    each with the tokens that flag was given. Whole-value assignments retain their
-    namespaced form.
+    Whole assignments keep their scope; table flags keep their supplied arguments.
     """
     records: list[tuple[str, str]] = []
     for spec in OPTIONS:
         if spec.scope is not Scope.PROJECT:
             continue
+
         ev = effective[spec.name]
         if isinstance(ev.cli_table, CliSetting):
             records.append(("--setting", ev.cli_table.display))
             continue
+
         if ev.cli_table is not None:
             records.extend((key.flag, key.written) for key in ev.cli_table.keys)
             continue
+
         if ev.origin.kind is not SourceKind.CLI or spec.cli_flag is None:
             continue
         records.append((spec.cli_flag, spec.render(ev.value)))
+
     return tuple(records)
 
 

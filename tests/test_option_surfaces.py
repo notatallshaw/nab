@@ -80,6 +80,7 @@ def test_environment_alternative_must_be_registered() -> None:
 
     with pytest.raises(ValueError, match="unregistered environment"):
         build_options(Output)
+
     assert len(build_options(Output, environment_names={"NAB_COLOR"})) == 1
 
 

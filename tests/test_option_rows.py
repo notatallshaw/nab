@@ -186,6 +186,7 @@ class TestWhatEachKindLowersTo:
                 Actions, Selections, environment_names={"NAB_VERBOSITY"}
             )
         }
+
         assert built["verbose"].kind is Kind.COUNT
         assert built["check"].kind is Kind.FLAG
         assert built["script"].kind is Kind.VALUE
