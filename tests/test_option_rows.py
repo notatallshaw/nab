@@ -167,19 +167,30 @@ class TestWhatEachKindLowersTo:
     """The kind, and the default a row that writes none is given."""
 
     def test_built_options_match_the_parser_kinds(self) -> None:
-        class Fixture(Table, on=GLOBAL, docs="reference/cli.md"):
-            """One row of each kind that takes no configuration key."""
-
-            verbose = Count(help="louder")
-            cache = Switch(default=True, negatable=True, help="use the cache")
+        class Actions(Table, on=GLOBAL, docs="reference/cli.md"):
+            verbose = Count(help="louder", environ=("NAB_VERBOSITY",))
+            check = Switch(default=False, help="check this invocation", action=True)
             version = Eager(short="V", help="print the version and exit")
-            python = Value[str](help="the interpreter")
-            groups = Star[str](help="the groups")
+            script = Value[Path](help="the input script", action=True)
             path = Operand[Path](default=Path("pyproject.toml"), help="the project")
             action = Verb[Literal["dir", "verify"]](help="what to do")
 
-        built = {row.name: row for row in build_options(Fixture)}
+        class Selections(
+            Table, on=("lock",), scope=Scope.USER, docs="reference/cli.md"
+        ):
+            groups = Star[str](key=_layer(rdefault=(), sample="dev"), help="the groups")
+
+        built = {
+            row.name: row
+            for row in build_options(
+                Actions, Selections, environment_names={"NAB_VERBOSITY"}
+            )
+        }
+
         assert built["verbose"].kind is Kind.COUNT
+        assert built["check"].kind is Kind.FLAG
+        assert built["script"].kind is Kind.VALUE
+        assert built["groups"].kind is Kind.STAR
         assert built["version"].kind is Kind.EAGER
         assert built["action"].kind is Kind.VERB
         assert built["action"].vtype is VType.STR
@@ -187,9 +198,7 @@ class TestWhatEachKindLowersTo:
 
     def test_a_flag_the_parser_may_leave_absent_hands_its_command_none(self) -> None:
         class Fixture(Table, on=GLOBAL, docs="reference/cli.md"):
-            """A value row that writes no default."""
-
-            python = Value[str | None](help="the interpreter")
+            script = Value[Path | None](help="the input script", action=True)
 
         assert build_options(Fixture)[0].default is None
 

@@ -76,9 +76,13 @@ class _ScanRecordingProvider(Provider):
     def __init__(
         self,
         coordinator: FakeFetchPort,
-        decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
+        decision_order: DecisionOrder | None = None,
     ) -> None:
-        super().__init__(coordinator, decision_order=decision_order)
+        if decision_order is None:
+            super().__init__(coordinator)
+        else:
+            super().__init__(coordinator, decision_order=decision_order)
+
         self.scan_reads: list[tuple[str, int, bool]] = []
         self._matching: dict[str, int] = {}
 
@@ -115,7 +119,7 @@ def _coordinator(
 
 
 def _two_package_resolver(
-    *, resident: bool, decision_order: DecisionOrder
+    *, resident: bool, decision_order: DecisionOrder | None
 ) -> tuple[Resolver[str, Version], _ScanRecordingProvider]:
     """Resolver over a three-version ``alpha`` and a one-version ``beta``.
 
@@ -145,6 +149,7 @@ def _two_package_resolver(
         resolver.solution.derive(
             package, VersionRange.full(), positive=True, cause=_cause()
         )
+
     return resolver, provider
 
 
@@ -159,7 +164,9 @@ def _scan_keys(*, resident: bool, decision_order: DecisionOrder) -> dict[str, ob
     }
 
 
-def _decided_first(*, resident: bool, decision_order: DecisionOrder) -> str | None:
+def _decided_first(
+    *, resident: bool, decision_order: DecisionOrder | None
+) -> str | None:
     """Return the package the scan would decide next."""
     resolver, _ = _two_package_resolver(
         resident=resident, decision_order=decision_order
@@ -192,7 +199,7 @@ class TestOneKeyHoldsTogether:
     def test_priority_and_readiness_agree_within_a_scan(self) -> None:
         """The half that misses first makes the other half miss too."""
         coordinator = _coordinator({"foo": [make_wheel(package="foo")]})
-        provider = Provider(coordinator)
+        provider = Provider(coordinator, decision_order=DecisionOrder.ARRIVAL)
         rng = VersionRange.full()
 
         provider.begin_decision_scan()
@@ -204,11 +211,13 @@ class TestOneKeyHoldsTogether:
     def test_readiness_holds_for_the_rest_of_the_scan(self) -> None:
         """A name seen in flight stays in flight however often it is read."""
         coordinator = _coordinator({"foo": [make_wheel(package="foo")]})
-        provider = Provider(coordinator)
+        provider = Provider(coordinator, decision_order=DecisionOrder.ARRIVAL)
 
         provider.begin_decision_scan()
+
         assert provider.is_ready("foo") is False
         assert provider.is_ready("foo") is False
+
         priority = provider.prioritize("foo", VersionRange.full(), {})
 
         assert priority[1] == _NO_LISTING_PRIOR
@@ -216,10 +225,11 @@ class TestOneKeyHoldsTogether:
     def test_the_extras_proxy_reads_like_its_base(self) -> None:
         """A proxy and its base answer from the same frozen view."""
         coordinator = _coordinator({"foo": [make_wheel(package="foo")]})
-        provider = Provider(coordinator)
+        provider = Provider(coordinator, decision_order=DecisionOrder.ARRIVAL)
         rng = VersionRange.full()
 
         provider.begin_decision_scan()
+
         assert provider.prioritize("foo[socks]", rng, {})[1] == _NO_LISTING_PRIOR
         assert provider.is_ready("foo[socks]") is False
         assert provider.prioritize("foo", rng, {})[1] == _NO_LISTING_PRIOR
@@ -235,13 +245,15 @@ class TestOneKeyHoldsTogether:
                 ]
             }
         )
-        provider = Provider(coordinator)
+        provider = Provider(coordinator, decision_order=DecisionOrder.ARRIVAL)
         rng = VersionRange.full()
 
         provider.begin_decision_scan()
+
         assert provider.is_ready("foo") is False
 
         provider.begin_decision_scan()
+
         assert provider.is_ready("foo") is True
         assert provider.prioritize("foo", rng, {})[1] == 2
 
@@ -250,7 +262,10 @@ class TestTheArrivalProbe:
     """The probe ``begin_decision_scan`` hands back for in-flight keys."""
 
     def test_a_name_still_in_flight_denies_the_probe(self) -> None:
-        provider = Provider(_coordinator({"foo": [make_wheel(package="foo")]}))
+        provider = Provider(
+            _coordinator({"foo": [make_wheel(package="foo")]}),
+            decision_order=DecisionOrder.ARRIVAL,
+        )
 
         probe = provider.begin_decision_scan()
 
@@ -258,8 +273,12 @@ class TestTheArrivalProbe:
         assert probe("foo") is False
 
     def test_the_next_scan_probes_the_arrival(self) -> None:
-        provider = Provider(_coordinator({"foo": [make_wheel(package="foo")]}))
+        provider = Provider(
+            _coordinator({"foo": [make_wheel(package="foo")]}),
+            decision_order=DecisionOrder.ARRIVAL,
+        )
         provider.begin_decision_scan()
+
         assert provider.is_ready("foo") is False
 
         probe = provider.begin_decision_scan()
@@ -274,8 +293,12 @@ class TestTheArrivalProbe:
         and ``prioritize`` writes that only once the listing lands, so a probe
         reading it would hold the proxy past the arrival it waits on.
         """
-        provider = Provider(_coordinator({"foo": [make_wheel(package="foo")]}))
+        provider = Provider(
+            _coordinator({"foo": [make_wheel(package="foo")]}),
+            decision_order=DecisionOrder.ARRIVAL,
+        )
         provider.begin_decision_scan()
+
         assert provider.is_ready("foo") is False
 
         probe = provider.begin_decision_scan()
@@ -285,7 +308,7 @@ class TestTheArrivalProbe:
         assert provider.is_ready("foo[socks]") is False
 
     def test_a_cached_base_lands_without_the_index(self) -> None:
-        provider = Provider(_coordinator({}))
+        provider = Provider(_coordinator({}), decision_order=DecisionOrder.ARRIVAL)
         provider.versions_cache["foo"] = [(Version("1.0"), make_wheel(package="foo"))]
 
         probe = provider.begin_decision_scan()
@@ -314,7 +337,7 @@ class TestScanKeysShareOneView:
             },
             {"arriving": [make_wheel(package="arriving")]},
         )
-        provider = _ScanRecordingProvider(coordinator)
+        provider = _ScanRecordingProvider(coordinator, DecisionOrder.ARRIVAL)
         provider.versions_cache["cached"] = [
             (Version("1.0"), make_wheel(package="cached"))
         ]
@@ -325,6 +348,7 @@ class TestScanKeysShareOneView:
             resolver.solution.derive(
                 package, VersionRange.full(), positive=True, cause=_cause()
             )
+
         return resolver, provider
 
     def test_every_key_agrees_with_itself(self) -> None:
@@ -354,6 +378,13 @@ class TestScanKeysShareOneView:
 
 class TestStableOrderIgnoresArrival:
     """Under ``stable`` the scan settles a listing rather than ranking its absence."""
+
+    def test_default_ignores_which_listings_had_arrived(self) -> None:
+        """The provider default counts listings before choosing either way."""
+        warm = _decided_first(resident=True, decision_order=None)
+        cold = _decided_first(resident=False, decision_order=None)
+
+        assert warm == cold == "beta"
 
     def test_a_listing_that_lands_mid_scan_is_counted_now(self) -> None:
         """The count reflects the listing after its in-flight sentinel clears."""
@@ -429,8 +460,8 @@ class TestStableOrderIgnoresArrival:
 
         assert warm == cold == "beta"
 
-    def test_the_default_decides_on_what_happened_to_have_landed(self) -> None:
-        """The default decides on cache warmth, which is what the option closes."""
+    def test_arrival_decides_on_what_happened_to_have_landed(self) -> None:
+        """Explicit arrival lets cache warmth affect the chosen package."""
         warm = _decided_first(resident=True, decision_order=DecisionOrder.ARRIVAL)
         cold = _decided_first(resident=False, decision_order=DecisionOrder.ARRIVAL)
 

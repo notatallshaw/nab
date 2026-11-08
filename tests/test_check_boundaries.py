@@ -102,7 +102,9 @@ def test_the_packages_that_publish_a_table_are_pinned() -> None:
 
     Emptying it turns the ``supported`` rule off for every package.
     """
+
     assert check_boundaries.PUBLISHES_SUPPORTED_PATHS == (
+        "nab_index",
         "nab_markersets",
         "nab_resolver",
         "nab_provider",
@@ -168,6 +170,37 @@ def test_generated_writer_uses_its_supported_module(
     assert check_boundaries.main() == status
     if status:
         assert "supports dumps at nab_project.toml_writer" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("module", "status"), [("lock_preferences", 0), ("resolve", 1)]
+)
+def test_previous_lock_preferences_use_their_project_module(
+    workspace: FakeWorkspace,
+    capsys: pytest.CaptureFixture[str],
+    module: str,
+    status: int,
+) -> None:
+    workspace.add(
+        "nab-project",
+        docstring="Previous lock policy.\n\nSupported imports:\n\n    nab_project.lock_preferences  LockPreferences\n",
+        lock_preferences="class LockPreferences:\n    pass\n",
+        resolve="from .lock_preferences import LockPreferences\n",
+    )
+    workspace.add(
+        "lock-consumer",
+        requires=("nab-project",),
+        use=f"from nab_project.{module} import LockPreferences\n",
+    )
+    workspace.publishes_supported_paths("nab_project")
+
+    assert check_boundaries.main() == status
+
+    if status:
+        assert (
+            "supports LockPreferences at nab_project.lock_preferences"
+            in capsys.readouterr().err
+        )
 
 
 def test_clean_tree_passes(
@@ -297,3 +330,57 @@ def test_package_with_no_directory_names_itself(workspace: FakeWorkspace) -> Non
 
     with pytest.raises(SystemExit, match="pkg-ghost is in the release package list"):
         check_boundaries.packages()
+
+
+@pytest.mark.parametrize(("module", "status"), [("lock_policy", 0), ("lockfile", 1)])
+def test_lock_operation_policy_uses_its_owning_module(
+    workspace: FakeWorkspace,
+    capsys: pytest.CaptureFixture[str],
+    module: str,
+    status: int,
+) -> None:
+    workspace.add(
+        "nab-project",
+        docstring="Lock operation policy.\n\nSupported imports:\n\n    nab_project.lock_policy  LockPolicy\n",
+        lock_policy="class LockPolicy:\n    pass\n",
+        lockfile="from .lock_policy import LockPolicy\n",
+    )
+    workspace.add(
+        "lock-consumer",
+        requires=("nab-project",),
+        use=f"from nab_project.{module} import LockPolicy\n",
+    )
+    workspace.publishes_supported_paths("nab_project")
+
+    assert check_boundaries.main() == status
+
+    if status:
+        assert (
+            "supports LockPolicy at nab_project.lock_policy" in capsys.readouterr().err
+        )
+
+
+@pytest.mark.parametrize(("module", "status"), [("urls", 0), ("file_urls", 1)])
+def test_url_output_uses_the_supported_index_module(
+    workspace: FakeWorkspace,
+    capsys: pytest.CaptureFixture[str],
+    module: str,
+    status: int,
+) -> None:
+    workspace.add(
+        "nab-index",
+        docstring="URL utilities.\n\nSupported imports:\n\n    nab_index.urls  strip_userinfo\n",
+        urls="def strip_userinfo(value):\n    return value\n",
+        file_urls="from .urls import strip_userinfo\n",
+    )
+    workspace.add(
+        "url-consumer",
+        requires=("nab-index",),
+        use=f"from nab_index.{module} import strip_userinfo\n",
+    )
+    workspace.publishes_supported_paths("nab_index")
+
+    assert check_boundaries.main() == status
+
+    if status:
+        assert "supports strip_userinfo at nab_index.urls" in capsys.readouterr().err

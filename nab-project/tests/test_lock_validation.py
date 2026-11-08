@@ -149,12 +149,15 @@ def test_input_snapshot_ignores_formatting_and_search_preferences(
     second = snapshot_inputs(
         path,
         ResolveInputs(
-            decision_order=DecisionOrder.STABLE, resolution=ResolutionStrategy.LOWEST
+            decision_order=DecisionOrder.ARRIVAL, resolution=ResolutionStrategy.LOWEST
         ),
         _targets(),
     )
+
     assert first == second
+
     path.write_text(path.read_text().replace("Demo>=1", "Demo>=2"))
+
     assert snapshot_inputs(path, ResolveInputs(), _targets()) != first
 
 

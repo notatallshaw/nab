@@ -38,6 +38,7 @@ from nab.config.values import (
     _PEP508_MARKER_VARIABLES,
     MatrixConfig,
     SourceConfigError,
+    parse_decision_order,
 )
 from nab_index.multi_index import IndexConfig
 from nab_markersets._compat import get_int_max_str_digits
@@ -2045,12 +2046,17 @@ class TestPolicies:
             read_pyproject_config(path)
 
     def test_decision_order_reaches_the_config(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[tool.nab]\ndecision-order = "stable"\n')
-        assert read_pyproject_config(path).decision_order is DecisionOrder.STABLE
+        path = write(tmp_path, '[tool.nab]\ndecision-order = "arrival"\n')
 
-    def test_decision_order_defaults_to_arrival(self, tmp_path: Path) -> None:
-        path = write(tmp_path, "[tool.nab]\n")
         assert read_pyproject_config(path).decision_order is DecisionOrder.ARRIVAL
+
+    def test_decision_order_defaults_to_stable(self, tmp_path: Path) -> None:
+        assert NabProjectConfig().decision_order is DecisionOrder.STABLE
+        assert parse_decision_order(None, "decision-order") is DecisionOrder.STABLE
+
+        path = write(tmp_path, "[tool.nab]\n")
+
+        assert read_pyproject_config(path).decision_order is DecisionOrder.STABLE
 
 
 _UNIVERSAL_MATRIX = (
@@ -6944,6 +6950,104 @@ class TestAssumeUniversalDeps:
             "widget>=2",
         ]
         assert [entry.assume_universal_deps for entry in overrides] == [True, False]
+
+
+class TestAssumeConsistentMetadata:
+    """The assertion follows the global and scoped configuration rules."""
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_global_value_reaches_resolve_inputs(
+        self, tmp_path: Path, enabled: bool
+    ) -> None:
+        path = write(
+            tmp_path,
+            f"[tool.nab]\nassume-consistent-metadata = {str(enabled).lower()}\n",
+        )
+
+        config = read_pyproject_config(path)
+
+        assert config.assume_consistent_metadata is enabled
+        assert config.resolve_inputs().assume_consistent_metadata is enabled
+
+    @pytest.mark.parametrize(
+        "surface",
+        [
+            '[tool.nab.packages."widget < 2"]\n',
+            '[[tool.nab.package-rules]]\nmatch = ["widget < 2"]\n',
+            "[tool.nab.index.pypi]\n",
+        ],
+    )
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_scoped_value_preserves_explicit_false(
+        self, tmp_path: Path, surface: str, enabled: bool
+    ) -> None:
+        path = write(
+            tmp_path,
+            surface + f"assume-consistent-metadata = {str(enabled).lower()}\n",
+        )
+
+        config = read_pyproject_config(path)
+        overrides = (
+            tuple(config.index_overrides.values())
+            if config.index_overrides
+            else config.package_overrides
+        )
+
+        assert len(overrides) == 1
+        assert overrides[0].assume_consistent_metadata is enabled
+        assert config.assume_consistent_metadata is False
+
+    @pytest.mark.parametrize(
+        "surface",
+        [
+            "[tool.nab]\n",
+            "[tool.nab.packages.widget]\n",
+            '[[tool.nab.package-rules]]\nmatch = ["widget"]\n',
+            "[tool.nab.index.pypi]\n",
+        ],
+    )
+    def test_non_boolean_is_rejected(self, tmp_path: Path, surface: str) -> None:
+        path = write(tmp_path, surface + "assume-consistent-metadata = 1\n")
+
+        with pytest.raises(ConfigError, match="assume-consistent-metadata.*boolean"):
+            read_pyproject_config(path)
+
+    @pytest.mark.parametrize("right", ["true", "false"])
+    def test_overlapping_assertions_are_rejected(
+        self, tmp_path: Path, right: str
+    ) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."widget < 3"]\n'
+            "assume-consistent-metadata = true\n"
+            '[[tool.nab.package-rules]]\nmatch = ["widget >= 2"]\n'
+            f"assume-consistent-metadata = {right}\n",
+        )
+
+        with pytest.raises(
+            ConfigError, match="assume-consistent-metadata.*overlapping versions"
+        ):
+            read_pyproject_config(path)
+
+    def test_disjoint_assertions_are_preserved(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.packages."widget < 2"]\n'
+            "assume-consistent-metadata = true\n"
+            '[[tool.nab.package-rules]]\nmatch = ["widget >= 2"]\n'
+            "assume-consistent-metadata = false\n",
+        )
+
+        overrides = read_pyproject_config(path).package_overrides
+
+        assert [str(entry.requirement) for entry in overrides] == [
+            "widget<2",
+            "widget>=2",
+        ]
+        assert [entry.assume_consistent_metadata for entry in overrides] == [
+            True,
+            False,
+        ]
 
 
 class TestPyprojectParseCount:

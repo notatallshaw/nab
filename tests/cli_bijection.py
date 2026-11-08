@@ -33,7 +33,7 @@ def _cache_command() -> None:
 
 
 def _config_command() -> None:
-    """``nab config``: 33 parameters."""
+    """``nab config``: 45 parameters."""
     config_command(
         ConfigWords.action,
         ConfigWords.key,
@@ -49,6 +49,7 @@ def _config_command() -> None:
         project_dist_policy=ProjectKeys.dist_policy,
         project_metadata_policy=ProjectKeys.metadata_policy,
         project_assume_universal_deps=ProjectKeys.assume_universal_deps,
+        project_assume_consistent_metadata=ProjectKeys.assume_consistent_metadata,
         project_allow_zip_sdists=ProjectKeys.allow_zip_sdists,
         project_build_policy=ProjectKeys.build_policy,
         project_build_requires_depth=ProjectKeys.build_requires_depth,
@@ -65,14 +66,25 @@ def _config_command() -> None:
         cache_dir=UserKeys.cache_dir,
         http_backend=UserKeys.http_backend,
         max_concurrency=UserKeys.max_concurrency,
+        lock_policy=UserKeys.lock_policy,
+        format=UserKeys.format,
+        cache=UserKeys.cache,
+        groups=UserKeys.groups,
+        all_groups=UserKeys.all_groups,
+        extras=UserKeys.extras,
+        all_extras=UserKeys.all_extras,
+        workspace_discovery=UserKeys.workspace_discovery,
+        build_requirements=UserKeys.build_requirements,
+        no_emit_workspace=UserKeys.no_emit_workspace,
         path=CacheWords.path,
         script=RunFlags.script,
+        setting=RunFlags.settings,
         include_rejected=RunFlags.include_rejected,
     )
 
 
 def _lock() -> None:
-    """``nab lock``: 43 parameters."""
+    """``nab lock``: 46 parameters."""
     lock(
         ConfigWords.path,
         project_resolution=ProjectKeys.resolution,
@@ -87,6 +99,7 @@ def _lock() -> None:
         project_dist_policy=ProjectKeys.dist_policy,
         project_metadata_policy=ProjectKeys.metadata_policy,
         project_assume_universal_deps=ProjectKeys.assume_universal_deps,
+        project_assume_consistent_metadata=ProjectKeys.assume_consistent_metadata,
         project_allow_zip_sdists=ProjectKeys.allow_zip_sdists,
         project_build_policy=ProjectKeys.build_policy,
         project_build_requires_depth=ProjectKeys.build_requires_depth,
@@ -102,26 +115,28 @@ def _lock() -> None:
         offline=UserKeys.offline,
         cache_dir=UserKeys.cache_dir,
         http_backend=UserKeys.http_backend,
+        lock_policy=UserKeys.lock_policy,
+        format=UserKeys.format,
+        cache=UserKeys.cache,
+        groups=UserKeys.groups,
+        all_groups=UserKeys.all_groups,
+        extras=UserKeys.extras,
+        all_extras=UserKeys.all_extras,
+        workspace_discovery=UserKeys.workspace_discovery,
+        build_requirements=UserKeys.build_requirements,
+        no_emit_workspace=UserKeys.no_emit_workspace,
         output=CacheWords.output,
         script=RunFlags.script,
-        format=RunFlags.format,
-        cache=RunFlags.cache,
         python=RunFlags.python,
-        groups=RunFlags.groups,
-        all_groups=RunFlags.all_groups,
-        extras=RunFlags.extras,
-        all_extras=RunFlags.all_extras,
-        workspace_discovery=RunFlags.workspace_discovery,
-        build_requirements=RunFlags.build_requirements,
-        no_emit_workspace=RunFlags.no_emit_workspace,
         upgrade=RunFlags.upgrade,
         locked=RunFlags.locked,
         reproduce=RunFlags.reproduce,
+        setting=RunFlags.settings,
     )
 
 
 def _download() -> None:
-    """``nab download``: 38 parameters."""
+    """``nab download``: 40 parameters."""
     download(
         ConfigWords.path,
         project_resolution=ProjectKeys.resolution,
@@ -136,6 +151,7 @@ def _download() -> None:
         project_dist_policy=ProjectKeys.dist_policy,
         project_metadata_policy=ProjectKeys.metadata_policy,
         project_assume_universal_deps=ProjectKeys.assume_universal_deps,
+        project_assume_consistent_metadata=ProjectKeys.assume_consistent_metadata,
         project_allow_zip_sdists=ProjectKeys.allow_zip_sdists,
         project_build_policy=ProjectKeys.build_policy,
         project_build_requires_depth=ProjectKeys.build_requires_depth,
@@ -152,13 +168,14 @@ def _download() -> None:
         cache_dir=UserKeys.cache_dir,
         http_backend=UserKeys.http_backend,
         max_concurrency=UserKeys.max_concurrency,
+        cache=UserKeys.cache,
+        groups=UserKeys.groups,
+        all_groups=UserKeys.all_groups,
+        extras=UserKeys.extras,
+        all_extras=UserKeys.all_extras,
+        workspace_discovery=UserKeys.workspace_discovery,
         script=RunFlags.script,
         output=RunFlags.output,
-        cache=RunFlags.cache,
         python=RunFlags.python,
-        groups=RunFlags.groups,
-        all_groups=RunFlags.all_groups,
-        extras=RunFlags.extras,
-        all_extras=RunFlags.all_extras,
-        workspace_discovery=RunFlags.workspace_discovery,
+        setting=RunFlags.settings,
     )

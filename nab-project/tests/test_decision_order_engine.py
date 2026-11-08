@@ -1,9 +1,4 @@
-"""Tests that the configured decision order reaches the search.
-
-``nab-provider/tests/test_decision_scan.py`` covers the scan itself,
-``DecisionOrder.STABLE`` included; the config that selects it is only
-exercised by a whole resolve.
-"""
+"""Configured decision order controls when a resolve waits for listings."""
 
 from __future__ import annotations
 
@@ -47,12 +42,10 @@ def _sidecar(
     return f"{make_wheel(version, package=package).url}.metadata", text
 
 
-def _engine_counters(decision_order: DecisionOrder) -> _Counters:
-    """Resolve ``alpha`` and ``beta`` off a cold index under ``decision_order``.
+def _engine_counters(decision_order: DecisionOrder | None = None) -> _Counters:
+    """Resolve alpha and beta using pending listings.
 
-    ``beta`` pins ``alpha`` to its oldest version, so a scan that ranks
-    ``alpha`` while ``beta``'s listing is in flight decides ``alpha`` on its
-    own five versions and has to take that decision back.
+    Beta requires the oldest alpha, so deciding alpha first requires backtracking.
     """
     pending: dict[str, Sequence[WheelFile | SdistFile]] = {
         "alpha": [make_wheel(version, package="alpha") for version in _ALPHA_VERSIONS],
@@ -62,16 +55,19 @@ def _engine_counters(decision_order: DecisionOrder) -> _Counters:
     sidecars = [_sidecar("alpha", version) for version in _ALPHA_VERSIONS]
     sidecars.append(_sidecar("beta", "1.0", requires="alpha==1.0"))
 
+    inputs = ResolveInputs(build_policy=BuildPolicy.NEVER)
+    if decision_order is not None:
+        inputs.decision_order = decision_order
+
     result = resolve_with_coordinator(
         make_coordinator(pending_listings=pending, metadata_by_url=dict(sidecars)),
         Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)).expand(),
         [Requirement("alpha"), Requirement("beta")],
-        inputs=ResolveInputs(
-            build_policy=BuildPolicy.NEVER, decision_order=decision_order
-        ),
+        inputs=inputs,
     )
 
     target = result.target_results[0]
+
     return _Counters(
         pins={name: str(version) for name, version in target.pins.items()},
         decisions=target.decisions,
@@ -84,6 +80,17 @@ def _engine_counters(decision_order: DecisionOrder) -> _Counters:
 class TestTheConfiguredOrderReachesTheSearch:
     """A resolve searches in the order the project config asked for."""
 
+    def test_default_settles_the_listing_before_deciding(self) -> None:
+        """Unset order follows the stable scheduling contract."""
+
+        assert _engine_counters() == _Counters(
+            pins={"alpha": "1.0", "beta": "1.0"},
+            decisions=3,
+            rounds=3,
+            conflicts=0,
+            backjumps=0,
+        )
+
     def test_stable_settles_the_listing_before_deciding(self) -> None:
         """Waiting for ``beta`` pins both packages without backtracking."""
         assert _engine_counters(DecisionOrder.STABLE) == _Counters(
@@ -94,8 +101,9 @@ class TestTheConfiguredOrderReachesTheSearch:
             backjumps=0,
         )
 
-    def test_the_default_decides_before_the_listing_lands(self) -> None:
+    def test_arrival_decides_before_the_listing_lands(self) -> None:
         """The same input under ``arrival`` reaches the same pins by backtracking."""
+
         assert _engine_counters(DecisionOrder.ARRIVAL) == _Counters(
             pins={"alpha": "1.0", "beta": "1.0"},
             decisions=4,

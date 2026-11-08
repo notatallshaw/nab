@@ -79,6 +79,7 @@ if TYPE_CHECKING:
     from ..declarations import DependencyDeclaration
     from ..fetch import FetchCoordinator
     from ..inputs import ResolveInputs
+    from ..lock_preferences import LockPreferences
     from ..lockfile import TargetLock
 
 
@@ -125,6 +126,24 @@ class _ResolveObserver(ResolverObserver[str, "Version"]):
         _logger.debug("backjumped from level %d to %d", from_level, to_level)
         if self._sink is not None:
             self._sink.on_pin(to_level)
+
+
+class _TrialDecisions(ResolverObserver[str, "Version"]):
+    """Buffer decisions until an unchanged saved model is accepted."""
+
+    def __init__(self, observer: ResolverObserver[str, Version]) -> None:
+        """Keep the real observer outside the provisional trial."""
+        self._observer = observer
+        self._decisions: list[tuple[str, Version, int]] = []
+
+    @override
+    def on_decision(self, package: str, version: Version, level: int) -> None:
+        self._decisions.append((package, version, level))
+
+    def publish(self) -> None:
+        """Deliver only the decisions of an accepted unchanged model."""
+        for package, version, level in self._decisions:
+            self._observer.on_decision(package, version, level)
 
 
 class InstallContexts(Record):
@@ -627,6 +646,7 @@ class _EngineSettings(Record):
         "warned_dropped_markers",
         "artifacts",
         "preferred_names",
+        "lock_preferences",
     )
 
     coordinator: FetchCoordinator
@@ -658,6 +678,7 @@ class _EngineSettings(Record):
     # Lock artifacts shared by the targets of one resolve.
     artifacts: ArtifactMemo
     preferred_names: set[str]
+    lock_preferences: LockPreferences | None
 
     def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
@@ -676,6 +697,7 @@ class _EngineSettings(Record):
         warned_dropped_markers: set[tuple[str, str]] | FactoryDefault = FACTORY,
         artifacts: ArtifactMemo | FactoryDefault = FACTORY,
         preferred_names: set[str] | FactoryDefault = FACTORY,
+        lock_preferences: LockPreferences | None = None,
     ) -> None:
         self.coordinator = coordinator
         self.inputs = inputs
@@ -693,6 +715,7 @@ class _EngineSettings(Record):
         self.warned_dropped_markers = factory_value(warned_dropped_markers, set)
         self.artifacts = factory_value(artifacts, ArtifactMemo)
         self.preferred_names = factory_value(preferred_names, set)
+        self.lock_preferences = lock_preferences
 
 
 def _threaded_preferences(
@@ -759,6 +782,7 @@ def _make_target_provider(
         index_overrides=inputs.index_overrides,
         trust_unverified_sdist_deps=inputs.trust_unverified_sdist_deps,
         assume_universal_deps=inputs.assume_universal_deps,
+        assume_consistent_metadata=inputs.assume_consistent_metadata,
         vcs_config=inputs.vcs,
         local_sources=list(inputs.local_sources) or None,
         vcs_sources=list(inputs.vcs_sources) or None,
@@ -844,12 +868,28 @@ class _TargetAttempt:
         roots: Sequence[RootRequirement[str, Version]],
         constraints: Mapping[str, VersionRange],
         hint: Mapping[str, Version] | None,
+        *,
+        unchanged_only: bool = False,
     ) -> None:
-        """Retain only a proved model; failed provider state stays behind."""
-        if hint is None:
+        """Keep a validated model; discard trial state when it fails."""
+        # Reject impossible unchanged trials before narrowing provider candidates.
+        if hint is None or (
+            unchanged_only
+            and any(
+                root.package not in hint or hint[root.package] not in root.constraint
+                for root in roots
+            )
+        ):
             return
 
-        self.provider.prepare_preferred_releases(hint)
+        self.provider.prepare_preferred_releases(hint, unchanged_only=unchanged_only)
+
+        # Buffer decisions until the saved model is accepted unchanged.
+        observer = self.resolver.observer
+        decisions = _TrialDecisions(observer) if unchanged_only else None
+        if decisions is not None:
+            self.resolver.observer = decisions
+
         try:
             self.pins = self.resolver.try_resolve_preferred(roots, hint, constraints)
         except ResolutionTerminatedError:
@@ -861,12 +901,56 @@ class _TargetAttempt:
             YankAdmissionRequiredError,
         ):
             self.pins = None
+        finally:
+            self.resolver.observer = observer
+
+        if decisions is not None and self.pins is not None:
+            if any(version != hint[package] for package, version in self.pins.items()):
+                self.pins = None
+            else:
+                decisions.publish()
 
         # A refused trial has consumed both its provider and solver.
         if self.pins is None:
             self.prior_stats = _target_stats(self.resolver, self.provider)
             self.provider = self._factory()
             self.resolver = _new_target_resolver(self.provider, self._progress)
+
+
+def _target_preferences(
+    settings: _EngineSettings,
+    target: ResolveTarget,
+    contexts: InstallContexts | None,
+    preferences: Mapping[str, Version],
+) -> tuple[Mapping[str, Version], Mapping[str, Version] | None]:
+    """Return version preferences and saved pins for this target's model trial."""
+    if settings.lock_preferences is None:
+        return preferences, None
+
+    members = list(contexts.selectors if contexts is not None else target.selection)
+    if settings.inputs.base_group is not None:
+        members.append(("group", settings.inputs.base_group))
+
+    # Project planning has already combined defaults and requested members.
+    prior = settings.lock_preferences.versions_for(
+        target, selection=members, default_groups=()
+    )
+    if not prior:
+        return preferences, None
+
+    merged = {**preferences, **prior}
+
+    # Extend only when the aligned model preserves this target's prior pins.
+    model_hint = (
+        prior
+        if any(
+            preferences.get(package, version) != version
+            for package, version in prior.items()
+        )
+        else merged
+    )
+
+    return merged, model_hint
 
 
 def _resolve_one_target(
@@ -901,6 +985,10 @@ def _resolve_one_target(
     except ResolutionError as exc:
         return TargetResult(target=target, success=False, error=exc)
 
+    preferences, model_hint = _target_preferences(
+        settings, target, contexts, preferences
+    )
+
     provider_factory = partial(
         _make_target_provider,
         settings,
@@ -910,6 +998,7 @@ def _resolve_one_target(
         root_extras,
         preferences,
     )
+    # A refused trial must not leave provider state in the fallback solver.
     attempt = _TargetAttempt(provider_factory, settings.progress)
     provider, resolver = attempt.provider, attempt.resolver
 
@@ -922,7 +1011,13 @@ def _resolve_one_target(
         attempt.try_preferred(
             root_requirements,
             resolver_constraints,
-            _preferred_hint(settings, preferences, requirements, constraints),
+            _preferred_hint(
+                settings,
+                model_hint if model_hint is not None else preferences,
+                requirements,
+                constraints,
+            ),
+            unchanged_only=model_hint is not None,
         )
         provider, resolver = attempt.provider, attempt.resolver
         prior_stats = attempt.prior_stats

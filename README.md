@@ -84,7 +84,7 @@ These controls apply during locking; your installer may still build a locked sou
 
 ## Soundness
 
-Nab checks dependencies and artifact compatibility for every environment you declare.
+By default, Nab checks dependencies and artifact compatibility for every environment you declare.
 
 - Nab uses each target's preferred wheel metadata; uv
   [assumes consistent metadata across a release's wheels](https://docs.astral.sh/uv/reference/internals/resolver/#metadata-consistency).
@@ -147,25 +147,68 @@ uploaded-prior-to = false
 See
 [package and index policies](https://nab.readthedocs.io/en/stable/reference/package-policy.html).
 
+## Performance
+
+Nab checks each target's wheel metadata and honors Python upper bounds by default. These checks can
+catch incompatible dependencies that uv's [optimizations](#soundness) may miss.
+
+Nab resolves afresh to check for package changes. Decision order defaults to `stable`, so HTTP
+response timing does not steer pin choices.
+
+Configure these options in `nab.toml` beside `pyproject.toml`:
+
+| Option                              | Behavior and tradeoff                                                          |
+| ----------------------------------- | ------------------------------------------------------------------------------ |
+| `lock-policy = "resolve"` (default) | Resolve afresh using current package information.                              |
+| `lock-policy = "prefer-existing"`   | Prefer saved versions when still valid; may keep older releases.               |
+| `lock-policy = "reuse"`             | Reuse a valid saved lock without checking for remote updates.                  |
+| `decision-order = "arrival"`        | Reduce HTTP waits by processing listings as they arrive; pin choices may vary. |
+| `assume-consistent-metadata = true` | Reuse wheel metadata across targets, assuming a release's wheels agree.        |
+
+`reuse` is close to
+[uv's default behavior for an unchanged project](https://docs.astral.sh/uv/concepts/projects/sync/#checking-the-lockfile):
+keep the existing lock without looking for package updates.
+
+See [distribution policies](docs/reference/distribution-policy.md) and
+[lock policies](docs/reference/cli.md) for configuration and restrictions.
+
 ## Universal lock benchmark
+
+Cold and warm cache timings compare Nab's default and performance settings with uv, Poetry and PDM.
+
+Creating a fresh lock for NumPy, pandas, SciPy, Matplotlib and scikit-learn:
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: light)" srcset="docs/_static/universal-lock-benchmark-light.svg">
-    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/universal-lock-benchmark-dark.svg">
-    <img src="https://raw.githubusercontent.com/notatallshaw/nab/main/docs/_static/universal-lock-benchmark-light.svg" alt="Cold and warm universal lock timings for nab, uv, Poetry and PDM, including startup. Each bar shows total time; shorter is faster." width="960">
+    <source media="(prefers-color-scheme: light)" srcset="docs/_static/universal-lock-scientific9-light.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/universal-lock-scientific9-dark.svg">
+    <img src="https://raw.githubusercontent.com/notatallshaw/nab/main/docs/_static/universal-lock-scientific9-light.svg" alt="Fresh scientific lock, cold and warm caches: Nab default, Nab performance, uv, Poetry and PDM. Shorter is faster." width="1080">
   </picture>
 </p>
 
-Fresh universal locks for `requests==2.32.3` on Python 3.12, 3.13 and 3.14. All four select matching
-packages and usable wheels across 48 checked targets: eight platforms × three Python versions ×
-CPython/PyPy.
+Relocking NumPy, pandas, SciPy, Matplotlib and scikit-learn with unchanged inputs. Saved-lock reuse
+can be a no-op:
 
-Nab validates dependencies and artifact compatibility for all 48 target environments;
-[uv](https://docs.astral.sh/uv/reference/internals/resolver/#wheel-tags),
-[Poetry](https://github.com/python-poetry/poetry/blob/2.5.1/src/poetry/repositories/http_repository.py#L402-L406)
-and [PDM](https://github.com/pdm-project/pdm/blob/2.29.3/src/pdm/models/candidates.py#L493-L513)
-omit full per-target validation, which could potentially produce unsound universal locks.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="docs/_static/universal-lock-relock-scientific9-light.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/universal-lock-relock-scientific9-dark.svg">
+    <img src="https://raw.githubusercontent.com/notatallshaw/nab/main/docs/_static/universal-lock-relock-scientific9-light.svg" alt="Unchanged scientific project with an existing lock, cold and warm caches: Nab default, Nab performance, uv, Poetry and PDM. Shorter is faster." width="1080">
+  </picture>
+</p>
+
+Nab performance uses these settings in `nab.toml`:
+
+```toml
+http-backend = "httpx2"
+decision-order = "arrival"
+dist-policy = "wheel-only"
+metadata-policy = "prefer-wheel"
+assume-consistent-metadata = true
+```
+
+Existing-lock runs also set `lock-policy = "reuse"`. `wheel-only` considers prebuilt wheels and
+excludes source distributions. These settings can be slower when dependencies change.
 
 ## Libraries
 

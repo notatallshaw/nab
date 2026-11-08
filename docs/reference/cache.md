@@ -138,3 +138,6 @@ symlink out of it.
 If the cache is read-only, full, or over quota, nab warns once and continues index fetches without
 storing new records. Existing readable records can still be used. Cloning a VCS source or extracting
 an archive requires a writable cache directory and fails without one.
+
+Set `cache = false` in `nab.toml` or `NAB_CACHE=false` to disable cache use by default. The CLI
+cache flags override those sources.

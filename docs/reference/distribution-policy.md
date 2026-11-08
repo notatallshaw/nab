@@ -43,6 +43,46 @@ When sources are allowed and no usable wheel remains, Nab reads source metadata.
 may need a [permitted build](build-policy.md). Wheel metadata can come from a
 [sidecar, range request or full download](lockfile.md#metadata-selection).
 
+## Assuming wheel metadata is consistent
+
+To allow targets to reuse one wheel's metadata for a selected release:
+
+```toml
+[tool.nab]
+assume-consistent-metadata = true
+```
+
+The default is `false`: each target reads the wheel it would install. When enabled, the first
+wheel's metadata can supply dependencies for later targets. Markers are still evaluated for each
+target.
+
+If a release's wheels declare different dependencies, this assumption can produce an incomplete or
+incorrect lock.
+
+| Metadata or artifact  | Validation                                                                                            |
+| --------------------- | ----------------------------------------------------------------------------------------------------- |
+| Selected artifacts    | Wheel tags, listing-level `Requires-Python`, distribution policies, upload cutoffs and yanking rules. |
+| Shared wheel metadata | Name and version must match the release; `Requires-Python` must admit each target.                    |
+| Unread wheel metadata | Its identity, `Requires-Python` and advertised metadata hashes are not checked.                       |
+
+Sharing metadata does not make an incompatible wheel installable or establish that all wheels agree.
+
+Set the option globally, per package, in a package rule or per index. A scoped `false` cancels a
+global `true`; package and index declarations for the same field conflict.
+
+- CLI options: `--project-assume-consistent-metadata` and `--no-project-assume-consistent-metadata`.
+- Global settings apply to project locking, not isolated build-requirements resolves.
+
+Locks created before this setting was introduced need one `nab lock` run to refresh their validation
+records before using `--locked`. Changing the setting also requires regenerating the lock.
+
+This assumption concerns complete wheel metadata. The separate
+[assume-universal-deps](build-policy.md#assuming-dependencies-are-universal) option borrows
+dependency declarations for dynamic source metadata while retaining that source's identity and
+Python requirements.
+
+Neither option changes `trust-unverified-deps` for older source metadata.
+
 ## Include sdists only when needed
 
 Use this setting to omit source archives when wheels cover the environments that need each selected

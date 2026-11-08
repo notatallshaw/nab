@@ -45,6 +45,7 @@ from ._run import (
     check_script_options,
     project_config_overrides,
     read_config_ladder,
+    require_pyproject_file,
     select_input,
 )
 from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
@@ -67,16 +68,17 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     script: Path | None = None,
     output: Path = Path("wheels"),
     http_backend: HttpBackend | None = None,
+    setting: tuple[str, ...] = (),
     cache_dir: Path | None = None,
-    cache: bool = True,
+    cache: bool | None = None,
     offline: bool | None = None,
     python: str | None = None,
     max_concurrency: int | None = None,
-    workspace_discovery: bool = True,
+    workspace_discovery: bool | None = None,
     groups: tuple[str, ...] = (),
-    all_groups: bool = False,
+    all_groups: bool | None = None,
     extras: tuple[str, ...] = (),
-    all_extras: bool = False,
+    all_extras: bool | None = None,
     project_resolution: ResolutionFlag | None = None,
     project_mode: ModeFlag | None = None,
     project_requires_python: str | None = None,
@@ -84,6 +86,7 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     project_dist_policy: DistPolicyFlag | None = None,
     project_metadata_policy: MetadataPolicyFlag | None = None,
     project_assume_universal_deps: bool | None = None,
+    project_assume_consistent_metadata: bool | None = None,
     project_allow_zip_sdists: bool | None = None,
     project_build_policy: BuildPolicyFlag | None = None,
     project_build_requires_depth: int | None = None,
@@ -125,25 +128,19 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     ``nab lock``.
     """
     path, input_format = select_input(path, script)
-    check_script_options(
-        input_format,
-        groups=groups,
-        all_groups=all_groups,
-        extras=extras,
-        all_extras=all_extras,
-    )
-    selected_groups = resolve_group_selection(
-        path, groups=groups, all_groups=all_groups
-    )
-    selected_extras = resolve_extra_selection(
-        path, extras=extras, all_extras=all_extras
-    )
-
+    require_pyproject_file(path, input_format=input_format)
     overrides = _cli_overrides(
         cli_resolution=project_resolution,
         cli_offline=offline,
         cli_cache_dir=cache_dir,
         cli_http_backend=http_backend,
+        cli_settings=setting,
+        cli_cache=cache,
+        cli_groups=groups,
+        cli_all_groups=all_groups,
+        cli_extras=extras,
+        cli_all_extras=all_extras,
+        cli_workspace_discovery=workspace_discovery,
         cli_max_concurrency=max_concurrency,
         cli_mode=project_mode,
         cli_requires_python=project_requires_python,
@@ -151,6 +148,7 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
         cli_dist_policy=project_dist_policy,
         cli_metadata_policy=project_metadata_policy,
         cli_assume_universal_deps=project_assume_universal_deps,
+        cli_assume_consistent_metadata=project_assume_consistent_metadata,
         cli_allow_zip_sdists=project_allow_zip_sdists,
         cli_build_policy=project_build_policy,
         cli_build_requires_depth=project_build_requires_depth,
@@ -175,16 +173,31 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
 
     ladder = read_config_ladder(path, overrides, input_format=input_format)
     _reject_python_flag_in_universal(ladder, python)
+    settings = _layered_run_settings_or_exit(ladder, produces_lock=False)
+    check_script_options(
+        input_format,
+        groups=settings.groups,
+        all_groups=settings.all_groups,
+        extras=settings.extras,
+        all_extras=settings.all_extras,
+    )
+    selected_groups = resolve_group_selection(
+        path, groups=settings.groups, all_groups=settings.all_groups
+    )
+    selected_extras = resolve_extra_selection(
+        path, extras=settings.extras, all_extras=settings.all_extras
+    )
 
     config = _load_config(
         path,
-        discover_workspace=workspace_discovery,
+        discover_workspace=settings.workspace_discovery,
         cli_overrides=project_overrides,
         input_format=input_format,
     )
 
-    settings = _layered_run_settings_or_exit(ladder, produces_lock=False)
-    effective_cache_dir = _resolve_effective_cache_dir(settings.cache_dir, cache=cache)
+    effective_cache_dir = _resolve_effective_cache_dir(
+        settings.cache_dir, cache=settings.cache
+    )
     _check_targets_or_exit(config)
 
     transport = _make_transport(settings.http_backend)

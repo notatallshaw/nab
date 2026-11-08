@@ -10,6 +10,7 @@ be read directly without a second fetch.  This module also owns the
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "nab_index.urls",
     "nab_resolver.diagnostics",
     "collections",
     "datetime",
@@ -37,10 +38,11 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, TypeVar
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import quote
 
 import tomli
 
+from nab_index.urls import strip_userinfo
 from nab_provider._vendor.packaging.pylock import Pylock, PylockValidationError
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
@@ -294,26 +296,6 @@ def read_lockfile_packages(path: Path) -> dict[str, Version] | None:
     return {
         str(pkg.name): pkg.version for pkg in pylock.packages if pkg.version is not None
     }
-
-
-def strip_userinfo(url: str) -> str:
-    """Return ``url`` with credential userinfo removed.
-
-    Lockfiles are committed to version control, so an index or VCS URL
-    carrying an embedded ``user:password`` must not be written verbatim.
-    An SSH login such as ``git@`` is the protocol login, not a secret,
-    and is required to clone, so it is kept (only an embedded password is
-    dropped); host case and port are preserved.  A no-op for URLs without
-    userinfo.
-    """
-    parts = urlsplit(url)
-    userinfo, sep, host = parts.netloc.rpartition("@")
-    if not sep:
-        return url
-    if parts.scheme.endswith("ssh"):
-        login = userinfo.split(":", 1)[0]
-        host = f"{login}@{host}"
-    return urlunsplit(parts._replace(netloc=host))
 
 
 def build_target_lock(

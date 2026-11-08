@@ -9,6 +9,8 @@ module owns the project side.
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "nab.config.assignments",
+    "nab.config.assignments",
     "nab_resolver.diagnostics",
     "datetime",
     "nab.config.hooks",
@@ -84,6 +86,7 @@ from nab_provider.target import (
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
+from .assignments import CliSetting
 from .hooks import resolve_anchor
 from .ladder import (
     EffectiveValue,
@@ -182,6 +185,7 @@ class NabProjectConfig(ValueType):
         "build_requires_depth",
         "trust_unverified_sdist_deps",
         "assume_universal_deps",
+        "assume_consistent_metadata",
         "environment",
         "indexes",
         "vcs",
@@ -222,6 +226,7 @@ class NabProjectConfig(ValueType):
     build_requires_depth: int
     trust_unverified_sdist_deps: bool
     assume_universal_deps: bool
+    assume_consistent_metadata: bool
     # The declared resolve environment from ``[tool.nab.environment]``, or
     # ``None`` for the host.  Mutually exclusive with ``matrix``.
     environment: EnvironmentConfig | None
@@ -271,6 +276,7 @@ class NabProjectConfig(ValueType):
         build_requires_depth: int = 0,
         trust_unverified_sdist_deps: bool = False,
         assume_universal_deps: bool = False,
+        assume_consistent_metadata: bool = False,
         environment: EnvironmentConfig | None = None,
         indexes: tuple[IndexConfig, ...] = _DEFAULT_INDEXES,
         vcs: VcsConfig = _DEFAULT_VCS,
@@ -279,7 +285,7 @@ class NabProjectConfig(ValueType):
         archive_sources: tuple[ArchiveSource, ...] = (),
         matrix: MatrixConfig | None = None,
         resolution: ResolutionStrategy = ResolutionStrategy.HIGHEST,
-        decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
+        decision_order: DecisionOrder = DecisionOrder.STABLE,
         workspace: WorkspaceConfig | None = None,
         conflicts: tuple[ConflictSet, ...] = (),
         package_overrides: tuple[PackageOverride, ...] = (),
@@ -303,6 +309,7 @@ class NabProjectConfig(ValueType):
         self.build_requires_depth = build_requires_depth
         self.trust_unverified_sdist_deps = trust_unverified_sdist_deps
         self.assume_universal_deps = assume_universal_deps
+        self.assume_consistent_metadata = assume_consistent_metadata
         self.environment = environment
         self.indexes = indexes
         self.vcs = vcs
@@ -556,6 +563,7 @@ def _config_from_effective(
         build_requires_depth=effective["build-requires-depth"].value,
         trust_unverified_sdist_deps=trust_unverified,
         assume_universal_deps=effective["assume-universal-deps"].value,
+        assume_consistent_metadata=effective["assume-consistent-metadata"].value,
         environment=environment,
         indexes=indexes,
         vcs=vcs_config,
@@ -576,6 +584,8 @@ def _declared_by(ev: EffectiveValue) -> tuple[str, ...]:
     """Return the flags that declared this key, empty for a file source."""
     if ev.cli_table is None:
         return ()
+    if isinstance(ev.cli_table, CliSetting):
+        return ("--setting",)
     return tuple(key.flag for key in ev.cli_table.keys)
 
 

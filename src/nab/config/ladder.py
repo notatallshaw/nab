@@ -15,6 +15,7 @@ __lazy_modules__ = (
     "nab",
     "nab._cli.definition.model",
     "nab.config.hooks",
+    "nab.config.assignments",
     "nab.config.subflags",
     "nab.config.values",
     "nab_project",
@@ -44,6 +45,7 @@ from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .. import env
 from .._cli.definition.model import Opt, Scope
+from .assignments import CliSetting, parse_settings
 from .hooks import declaring_dir, key_prefix
 from .registry import OPTIONS
 from .subflags import (
@@ -231,8 +233,8 @@ class EffectiveValue(ValueType):
     # Bindings in ascending precedence; the final binding wins.
     stack: tuple[tuple[Origin, Any], ...]
     rejected: tuple[RejectedLayer, ...]
-    # CLI keys folded into a table option.
-    cli_table: CliTable | None
+    # An explicit whole-value assignment or named table sub-flags.
+    cli_table: CliTable | CliSetting | None
 
     def __init__(
         self,
@@ -241,7 +243,7 @@ class EffectiveValue(ValueType):
         origin: Origin,
         stack: tuple[tuple[Origin, Any], ...],
         rejected: tuple[RejectedLayer, ...] = (),
-        cli_table: CliTable | None = None,
+        cli_table: CliTable | CliSetting | None = None,
     ) -> None:
         """Record the value ``origin`` bound for ``spec``."""
         self.spec = spec
@@ -303,7 +305,10 @@ def build_cli_overrides(
         if value is None or (isinstance(value, tuple) and not value):
             continue
         out[spec.name] = value
+    # Include named sub-flags before checking whole-value assignments for conflicts.
     out.update(build_cli_tables(locals_by_param, flags))
+    out.update(parse_settings(locals_by_param.get("setting", ()), BY_KEY, out))
+
     return out
 
 
@@ -705,14 +710,25 @@ def _apply_mode_default(effective: dict[str, EffectiveValue]) -> None:
 
 
 def _folded(
-    spec: Opt, table: CliTable, all_layers: Sequence[Layer]
+    spec: Opt, table: CliTable | CliSetting, all_layers: Sequence[Layer]
 ) -> tuple[Origin, Any]:
-    """Parse CLI table keys over the table declared by project files."""
+    """Parse a whole assignment or apply named flags over a file table."""
+    if isinstance(table, CliSetting):
+        # CLI paths are relative to the working directory, not a config file.
+        with declaring_dir(Path.cwd()):
+            value = spec.parse(
+                table.value, f"--setting {table.written.partition('=')[0]}"
+            )
+        # Replay formatting is part of accepting the CLI value.
+        _ = table.display
+        return Origin(SourceKind.CLI, "cli"), value
+
     merged = fold_cli_table(spec, table, _file_raw(spec, all_layers))
     try:
         value = spec.parse(merged, cli_table_label(spec))
     except SourceConfigError as exc:
         raise CliTableError(*exc.args) from exc
+
     return Origin(SourceKind.CLI, "cli"), value
 
 
@@ -788,9 +804,10 @@ def build_cli_layer(values: Mapping[str, Any]) -> Layer:
     raw_tables: dict[str, Any] = {}
     for key, value in values.items():
         spec = BY_KEY[key]
-        if isinstance(value, CliTable):
+        if isinstance(value, (CliTable, CliSetting)):
             raw_tables[key] = value
             continue
+
         if not spec.commands:
             msg = f"{key} takes no command line, so no CLI layer can set it"
             raise ValueError(msg)
@@ -798,6 +815,7 @@ def build_cli_layer(values: Mapping[str, Any]) -> Layer:
         # Parse hooks expect repeatable flags in their TOML list form.
         raw_value = list(value) if isinstance(value, tuple) else value
         parsed[key] = spec.parse(raw_value, str(spec.cli_flag))
+
     return Layer(Origin(SourceKind.CLI, "cli"), parsed, raw_tables)
 
 
@@ -881,11 +899,12 @@ def render_explain(
         winner = i == winner_index
         gutter = ">" if winner else " "
         status = _explain_status(ev, i, winner_index)
-        rendered = (
-            render_cli_table(ev.cli_table)
-            if winner and ev.cli_table is not None
-            else ev.spec.render(value)
-        )
+        if winner and isinstance(ev.cli_table, CliSetting):
+            rendered = ev.cli_table.display
+        elif winner and isinstance(ev.cli_table, CliTable):
+            rendered = render_cli_table(ev.cli_table)
+        else:
+            rendered = ev.spec.render(value)
         lines.append(
             f"{gutter} {origin.scope:<{_LIST_SCOPE_W}} {rendered:<{_LIST_VALUE_W}}"
             f" {status:<{_EXPLAIN_STATUS_W}} {origin.label}"
@@ -906,7 +925,7 @@ def _explain_status(ev: EffectiveValue, index: int, winner_index: int) -> str:
     """
     if index == winner_index:
         return "winner"
-    if ev.cli_table is not None and index == winner_index - 1:
+    if isinstance(ev.cli_table, CliTable) and index == winner_index - 1:
         return "merged"
     return "shadowed"
 
@@ -939,26 +958,28 @@ def _require_key(effective: Mapping[str, EffectiveValue], key: str) -> Effective
 def project_cli_override_records(
     effective: Mapping[str, EffectiveValue],
 ) -> tuple[tuple[str, str], ...]:
-    """Return the ``(flag, value)`` pairs for PROJECT options set on the CLI.
+    """Record project CLI overrides for lock provenance and notices.
 
-    A PROJECT option changes the resolved set, so a CLI override means the
-    result no longer derives from the committed files alone.  These pairs
-    drive both the reproducibility notice and the auditable record written
-    into the lockfile provenance.  A table key is recorded flag by flag,
-    each with the tokens that flag was given; a row with no flag at all is
-    set from a file alone and cannot appear.
+    Whole assignments keep their scope; table flags keep their supplied arguments.
     """
     records: list[tuple[str, str]] = []
     for spec in OPTIONS:
         if spec.scope is not Scope.PROJECT:
             continue
+
         ev = effective[spec.name]
+        if isinstance(ev.cli_table, CliSetting):
+            records.append(("--setting", ev.cli_table.display))
+            continue
+
         if ev.cli_table is not None:
             records.extend((key.flag, key.written) for key in ev.cli_table.keys)
             continue
+
         if ev.origin.kind is not SourceKind.CLI or spec.cli_flag is None:
             continue
         records.append((spec.cli_flag, spec.render(ev.value)))
+
     return tuple(records)
 
 

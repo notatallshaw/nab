@@ -198,24 +198,27 @@ def _help_block(texts: list[str]) -> str:
     return f"HELP: tuple[str, ...] = (\n{body}\n)\n"
 
 
-def _help_literal_lines(text: str) -> list[str]:
+def _help_literal_lines(
+    text: str, *, indent: str = _INDENT, head: str = ""
+) -> list[str]:
     """Render one help string, wrapping long values as adjacent literals."""
     literal = _literal(text)
-    if len(_INDENT) + len(literal) + 1 <= _WIDTH:
-        return [f"{_INDENT}{literal},"]
+    if len(indent) + len(head) + len(literal) + 1 <= _WIDTH:
+        return [f"{indent}{head}{literal},"]
 
-    width = _WIDTH - len(_INDENT * 2) - 3
+    continuation = indent + _INDENT
+    width = _WIDTH - len(continuation) - 3
     parts = textwrap.wrap(
         text,
         width=width,
         break_long_words=False,
         break_on_hyphens=False,
     )
-    lines = [f"{_INDENT}("]
+    lines = [f"{indent}{head}("]
     for index, part in enumerate(parts):
         separator = " " if index < len(parts) - 1 else ""
-        lines.append(f"{_INDENT * 2}{_literal(part + separator)}")
-    lines.append(f"{_INDENT}),")
+        lines.append(f"{continuation}{_literal(part + separator)}")
+    lines.append(f"{indent}),")
     return lines
 
 
@@ -433,6 +436,8 @@ def _keyword(head: str, value: object, imports: _Imports, row: Opt) -> list[str]
     """Write one ``Opt`` keyword, wrapping a tuple that exceeds the limit."""
     indent = _INDENT * 2
     line = f"{indent}{head}{_spell(value, imports, row)},"
+    if head == "help=" and isinstance(value, str) and len(line) > _WIDTH:
+        return _help_literal_lines(value, indent=indent, head=head)
     if isinstance(value, tuple) and len(line) > _WIDTH:
         items = [_spell(item, imports, row) for item in value]
         return _wrapped(f"{head}(", items, "),", indent)

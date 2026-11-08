@@ -25,6 +25,7 @@ import tomli
 
 import nab._config_cmd as config_cmd
 from nab import _run as nab_run
+from nab._cli.definition.model import Kind
 from nab._config_cmd import config_command
 from nab._download import download
 from nab._lock import lock
@@ -62,7 +63,7 @@ _CLI_FLAGS: dict[str, str] = {
 # ``config get`` then prints.
 _CLI_FLAG_CASES: tuple[tuple[str, str, str], ...] = (
     ("resolution", "lowest", "lowest"),
-    ("decision-order", "stable", "stable"),
+    ("decision-order", "arrival", "arrival"),
     ("mode", "universal", "universal"),
     ("constraints", "foo<2", "foo<2"),
     ("default-groups", "dev", "dev"),
@@ -73,6 +74,7 @@ _CLI_FLAG_CASES: tuple[tuple[str, str, str], ...] = (
     ("dist-policy", "sdist-only", "sdist-only"),
     ("metadata-policy", "prefer-wheel", "prefer-wheel"),
     ("assume-universal-deps", "True", "true"),
+    ("assume-consistent-metadata", "True", "true"),
     ("allow-zip-sdists", "True", "true"),
     ("build-policy", "never", "never"),
     ("build-requires-depth", "3", "3"),
@@ -80,7 +82,17 @@ _CLI_FLAG_CASES: tuple[tuple[str, str, str], ...] = (
     ("cache-dir", "wheels-cache", "wheels-cache"),
     ("http-backend", "httpx", "httpx"),
     ("http-backend", "httpx2", "httpx2"),
+    ("lock-policy", "reuse", "reuse"),
     ("max-concurrency", "5", "5"),
+    ("format", "requirements", "requirements"),
+    ("cache", "False", "false"),
+    ("groups", "dev", "dev"),
+    ("all-groups", "True", "true"),
+    ("extras", "test", "test"),
+    ("all-extras", "True", "true"),
+    ("workspace-discovery", "False", "false"),
+    ("build-requirements", "True", "true"),
+    ("no-emit-workspace", "True", "true"),
 )
 
 # The ``--project-*`` flags ``nab download`` is driven with, and the argv value
@@ -101,6 +113,7 @@ _DOWNLOAD_PROJECT_ARGV: tuple[tuple[str, str], ...] = (
     ("--project-dist-policy", "sdist-only"),
     ("--project-metadata-policy", "prefer-wheel"),
     ("--project-assume-universal-deps", "True"),
+    ("--project-assume-consistent-metadata", "True"),
     ("--project-allow-zip-sdists", "True"),
     ("--project-build-policy", "never"),
     ("--project-build-requires-depth", "3"),
@@ -1024,7 +1037,15 @@ class TestCliFlagValues:
         base = ["get", key, "--path", str(hermetic_roots / "pyproject.toml")]
 
         assert _run_config(base) != f"{printed}\n"
-        assert _run_config([*base, _CLI_FLAGS[key], argv_value]) == f"{printed}\n"
+
+        spec = next(spec for spec in OPTIONS if spec.name == key)
+        if spec.kind is Kind.FLAG:
+            flag = _CLI_FLAGS[key] if argv_value == "True" else "--no-" + key
+            arguments = [*base, flag]
+        else:
+            arguments = [*base, _CLI_FLAGS[key], argv_value]
+
+        assert _run_config(arguments) == f"{printed}\n"
 
     def test_every_flagged_option_has_a_case(self) -> None:
         covered = {key for key, _, _ in _CLI_FLAG_CASES}

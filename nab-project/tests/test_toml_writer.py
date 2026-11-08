@@ -8,7 +8,7 @@ from datetime import date, datetime, time, timezone
 import pytest
 
 from nab_project import toml_io
-from nab_project.toml_writer import dumps
+from nab_project.toml_writer import dumps, dumps_value
 
 
 @pytest.mark.parametrize(
@@ -129,3 +129,19 @@ def test_unsupported_value() -> None:
 def test_offset_time_is_refused() -> None:
     with pytest.raises(ValueError, match="offset times"):
         dumps({"time": time(3, 4, 5, tzinfo=timezone.utc)})
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"package": {"dependencies": ["a>=1"]}},
+        [{"name": "index", "url": "https://example.com/simple/"}],
+        [],
+        {},
+        'a string with "quotes"',
+        True,
+        42,
+    ],
+)
+def test_inline_values_roundtrip(value: object) -> None:
+    assert toml_io.loads("value = " + dumps_value(value))["value"] == value

@@ -120,6 +120,14 @@ only fetched siblings, so it may not detect every disagreement. For a dynamic sd
 metadata, [assume-universal-deps](../reference/build-policy.md#assuming-dependencies-are-universal)
 explicitly permits reusing dependency declarations from a same-version wheel.
 
+The opt-in
+[assume-consistent-metadata](../reference/distribution-policy.md#assuming-wheel-metadata-is-consistent)
+policy lets targets share one wheel's complete metadata for a release within one operation. Each
+target still evaluates its own markers and applies its artifact restrictions.
+
+Unread wheels are not independently validated. By default, Nab uses each target's own wheel.
+`assume-universal-deps` only shares dependency declarations for dynamic source metadata.
+
 ## Patch-release markers
 
 A minor target normally covers all its patch releases. This dependency changes within Python 3.11:

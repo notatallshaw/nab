@@ -133,6 +133,8 @@ class InMemoryIndex:
 
         # Share each text's parse across the target providers of one resolve.
         self._parsed_metadata: dict[tuple[str, str], tuple[tuple[str, Any], ...]] = {}
+        self._consistent_wheel_metadata: dict[str, dict[str, tuple[str, str]]] = {}
+        self._consistent_metadata_contexts: dict[str, object] = {}
 
         # Sdist metadata after PEP 643 dynamic deps have been resolved from the
         # bundled pyproject.toml or a PEP 517 backend.  Shared across targets so
@@ -209,6 +211,8 @@ class InMemoryIndex:
 
             materialised = YankedListing(materialised, withdrawn_versions=withdrawn)
         with self._publishing(key):
+            self._consistent_wheel_metadata.pop(package, None)
+            self._consistent_metadata_contexts.pop(package, None)
             # The marks land first, so an unlocked reader sees them with the listing.
             if offline_miss:
                 self._offline_listing_misses.add(package)
@@ -274,6 +278,9 @@ class InMemoryIndex:
         chose, which left the other configured indexes unasked.
         """
         with self._lock:
+            if self._listing_indexes.get(package) != index_name:
+                self._consistent_wheel_metadata.pop(package, None)
+                self._consistent_metadata_contexts.pop(package, None)
             self._listing_indexes[package] = index_name
             if pinned:
                 self._pinned_listings.add(package)
@@ -343,6 +350,64 @@ class InMemoryIndex:
         """
         with self._lock:
             return self._read_metadata(package, version, metadata_url)
+
+    def consistent_metadata_context(
+        self, package: str, files: Sequence[WheelFile | SdistFile]
+    ) -> object | None:
+        """Return the sharing token for this raw listing and its serving index."""
+        with self._lock:
+            if self._listings.get(package) is not files:
+                return None
+
+            context = self._consistent_metadata_contexts.get(package)
+            if context is None:
+                context = object()
+                self._consistent_metadata_contexts[package] = context
+            return context
+
+    def get_consistent_wheel_metadata(
+        self, package: str, version: str, *, context: object | None
+    ) -> str | None:
+        """Return shared release metadata while its source is unchanged."""
+        with self._lock:
+            if (
+                context is None
+                or self._consistent_metadata_contexts.get(package) is not context
+            ):
+                return None
+
+            sources = self._consistent_wheel_metadata.get(package)
+            if sources is None:
+                return None
+
+            representative = sources.get(version)
+            if representative is None:
+                return None
+
+            # A replacement or fetch error invalidates the shared source.
+            url, text = representative
+            if self._metadata.get((package, version, url)) != text or (
+                (package, version, url) in self._metadata_errors
+                or (package, version, None) in self._metadata_errors
+            ):
+                sources.pop(version)
+                return None
+
+            return text
+
+    def store_consistent_wheel_metadata(
+        self, package: str, version: str, url: str, text: str, *, context: object | None
+    ) -> None:
+        """Remember the first validated wheel source for an opted-in release."""
+        with self._lock:
+            # Publish only to the context that admitted this wheel's metadata.
+            if (
+                context is not None
+                and self._consistent_metadata_contexts.get(package) is context
+                and self._metadata.get((package, version, url)) == text
+            ):
+                sources = self._consistent_wheel_metadata.setdefault(package, {})
+                sources.setdefault(version, (url, text))
 
     def _share_slot_text(self, release: tuple[str, str], text: str) -> str:
         """Return the str already held for ``release`` equal to ``text``, or hold it.

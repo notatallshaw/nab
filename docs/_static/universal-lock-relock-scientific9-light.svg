@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="365" viewBox="0 0 1080 365" role="img" aria-labelledby="title desc">
+<title id="title">Scientific packages · Existing lock</title>
+<desc id="desc">cold: Nab default 1.2 s, Nab performance 0.12 s, uv 8.8 ms, Poetry 1.4 s, PDM 14 s; hot: Nab default 0.41 s, Nab performance 0.12 s, uv 8.5 ms, Poetry 0.99 s, PDM 13 s. Elapsed time. Both panels use the same linear scale. Shorter is faster. Resolver cores: uv Rust; Nab, Poetry and PDM Python.</desc>
+<g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+<text x="24" y="28" fill="#1f2328" font-size="17" font-weight="600">Scientific packages · Existing lock</text>
+<text x="24" y="50" fill="#59636e" font-size="12">GitHub-hosted Linux · CPython 3.15.0</text>
+<text x="195" y="81" fill="#1f2328" font-size="15" font-weight="600">Cold cache</text>
+<path d="M195.000 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="195.000" y="353" fill="#59636e" font-size="11" text-anchor="middle">0 s</text>
+<path d="M301.667 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="301.667" y="353" fill="#59636e" font-size="11" text-anchor="middle">5 s</text>
+<path d="M408.333 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="408.333" y="353" fill="#59636e" font-size="11" text-anchor="middle">10 s</text>
+<path d="M515.000 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="515.000" y="353" fill="#59636e" font-size="11" text-anchor="middle">15 s</text>
+<rect id="cold-nab-default" x="195" y="102" width="26.439" height="25" rx="4" fill="#059669"/>
+<text x="229.439" y="120" fill="#1f2328" font-size="14">1.2 s</text>
+<rect id="cold-nab-performance" x="195" y="148" width="2.607" height="25" rx="4" fill="#0f766e"/>
+<text x="205.607" y="166" fill="#1f2328" font-size="14">0.12 s</text>
+<rect id="cold-uv" x="195" y="194" width="0.187" height="25" rx="4" fill="#2563eb"/>
+<text x="203.187" y="212" fill="#1f2328" font-size="14">8.8 ms</text>
+<rect id="cold-poetry" x="195" y="240" width="29.286" height="25" rx="4" fill="#2563eb"/>
+<text x="232.286" y="258" fill="#1f2328" font-size="14">1.4 s</text>
+<rect id="cold-pdm" x="195" y="286" width="297.288" height="25" rx="4" fill="#2563eb"/>
+<text x="500.288" y="304" fill="#1f2328" font-size="14">14 s</text>
+<text x="655" y="81" fill="#1f2328" font-size="15" font-weight="600">Warm cache</text>
+<path d="M655.000 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="655.000" y="353" fill="#59636e" font-size="11" text-anchor="middle">0 s</text>
+<path d="M761.667 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="761.667" y="353" fill="#59636e" font-size="11" text-anchor="middle">5 s</text>
+<path d="M868.333 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="868.333" y="353" fill="#59636e" font-size="11" text-anchor="middle">10 s</text>
+<path d="M975.000 94V335" stroke="#d1d9e0" stroke-opacity="0.55"/>
+<text x="975.000" y="353" fill="#59636e" font-size="11" text-anchor="middle">15 s</text>
+<rect id="hot-nab-default" x="655" y="102" width="8.677" height="25" rx="4" fill="#059669"/>
+<text x="671.677" y="120" fill="#1f2328" font-size="14">0.41 s</text>
+<rect id="hot-nab-performance" x="655" y="148" width="2.601" height="25" rx="4" fill="#0f766e"/>
+<text x="665.601" y="166" fill="#1f2328" font-size="14">0.12 s</text>
+<rect id="hot-uv" x="655" y="194" width="0.182" height="25" rx="4" fill="#2563eb"/>
+<text x="663.182" y="212" fill="#1f2328" font-size="14">8.5 ms</text>
+<rect id="hot-poetry" x="655" y="240" width="21.034" height="25" rx="4" fill="#2563eb"/>
+<text x="684.034" y="258" fill="#1f2328" font-size="14">0.99 s</text>
+<rect id="hot-pdm" x="655" y="286" width="284.423" height="25" rx="4" fill="#2563eb"/>
+<text x="947.423" y="304" fill="#1f2328" font-size="14">13 s</text>
+<text x="24" y="116" fill="#1f2328" font-size="15">Nab default</text>
+<text x="24" y="132" fill="#59636e" font-size="11">Python core</text>
+<text x="24" y="162" fill="#1f2328" font-size="15">Nab performance</text>
+<text x="24" y="178" fill="#59636e" font-size="11">Python core</text>
+<text x="24" y="208" fill="#1f2328" font-size="15">uv</text>
+<text x="24" y="224" fill="#59636e" font-size="11">Rust core</text>
+<text x="24" y="254" fill="#1f2328" font-size="15">Poetry</text>
+<text x="24" y="270" fill="#59636e" font-size="11">Python core</text>
+<text x="24" y="300" fill="#1f2328" font-size="15">PDM</text>
+<text x="24" y="316" fill="#59636e" font-size="11">Python core</text>
+</g>
+</svg>

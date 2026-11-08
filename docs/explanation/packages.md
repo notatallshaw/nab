@@ -138,6 +138,27 @@ The provider shares a candidate view only when all tag groups have identical adm
 target retains wheel ranking, metadata validation and marker evaluation. Views hold no learned
 clauses or pending rejections, and their cache lasts one project resolve.
 
+## Previous-lock preferences
+
+`nab-project` projects a saved PEP 751 lock onto each target's combined extras and groups.
+`LockPreferences` supplies versions to `nab-provider`, which checks live candidates, metadata and
+artifacts. The CLI exposes this policy through
+[`--lock-policy prefer-existing`](../reference/cli.md#--lock-policy-resolveprefer-existingreuse).
+
+With `prefer-existing`, the project:
+
+1. Tries the saved dependency graph against current package information.
+2. Discards the trial provider and solver if the graph changes or cannot be reused.
+3. Starts fresh solving with the saved versions as preferences.
+
+Old dependency declarations and artifact records are not reused.
+
+`LockPolicy.REUSE` checks the saved solution before live resolution. Unsupported mutable or file
+sources use live resolution. An accepted lock stays unchanged and no index transport is created;
+remote freshness is not checked.
+
+The CLI selects the policy and reports whether the saved lock was reused.
+
 ## Driving the provider without networking
 
 ```python

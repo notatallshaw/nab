@@ -60,4 +60,6 @@ Universal mode (`[tool.nab].mode = "universal"`) is supported for all three form
 If any target fails, nab writes no lock or requirements output. The report goes to stderr and the
 command exits `1`; see [Resolution failures](diagnostics.md).
 
+Set `format` in `nab.toml` or `NAB_FORMAT` to choose a workflow default. `--format` overrides it.
+
 [pep 751]: https://packaging.python.org/en/latest/specifications/pylock-toml/

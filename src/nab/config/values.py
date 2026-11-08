@@ -15,6 +15,9 @@ __lazy_modules__ = (
     "itertools",
     "nab_index.file_urls",
     "nab_markersets.python_versions",
+    "nab_project.lock_policy",
+    "nab_project",
+    "tomli",
     "nab_project.paths",
     "nab_project.workspace",
     "nab_provider._vendor.packaging.specifiers",
@@ -44,15 +47,19 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
 from urllib.parse import urlsplit
 
+import tomli
+
 from nab.policy_migrations import DIST_POLICY_REPLACEMENTS
 from nab_index.file_urls import is_file_url
 from nab_markersets.python_versions import validate_python_version
+from nab_project import toml_io
 from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
     ConflictPolicy,
     ConflictSet,
 )
+from nab_project.lock_policy import LockPolicy
 from nab_project.paths import is_usable_path_name, resolve_path
 from nab_project.value import ValueType
 from nab_project.workspace import WorkspaceConfig
@@ -564,6 +571,43 @@ def parse_http_backend(value: object, where: str) -> str:
     return lowered
 
 
+def parse_lock_policy(value: object, where: str) -> LockPolicy:
+    """Read how an existing lockfile participates in locking."""
+    return parse_enum(value, where, LockPolicy, LockPolicy.RESOLVE)
+
+
+def parse_toml_value(value: str, where: str) -> object:
+    """Read one TOML value supplied outside a configuration document."""
+    try:
+        parsed = toml_io.loads("value = " + value)
+    except tomli.TOMLDecodeError as exc:
+        msg = f"{where}: expected a TOML value: {exc}"
+        raise SourceConfigError(msg) from exc
+
+    # Parsing a value must not accept additional TOML assignments.
+    if set(parsed) != {"value"}:
+        msg = f"{where}: expected one TOML value"
+        raise SourceConfigError(msg)
+
+    return parsed["value"]
+
+
+def parse_run_selection(value: object, where: str) -> tuple[str, ...]:
+    """Read selected extras or groups as a TOML array, including in the environment."""
+    if isinstance(value, str):
+        value = parse_toml_value(value, where)
+    return parse_string_list(value, where)
+
+
+def parse_lock_format(value: object, where: str) -> str:
+    """Read the output format selected for lock generation."""
+    formats = ("pylock", "requirements", "requirements-without-hashes")
+    if not isinstance(value, str) or value not in formats:
+        msg = f"{where} must be one of {formats!r}, got {value!r}"
+        raise SourceConfigError(msg)
+    return value
+
+
 def parse_max_concurrency(value: object, where: str) -> int:
     """Return the ``max-concurrency`` row's positive count."""
     # TOML supplies an int; env/CLI supply a string.  bool is an int
@@ -621,7 +665,7 @@ def parse_build_policy(value: object, where: str) -> BuildPolicy:
 
 def parse_decision_order(value: object, where: str) -> DecisionOrder:
     """Read ``decision-order``: the order the resolver decides packages in."""
-    return parse_enum(value, where, DecisionOrder, DecisionOrder.ARRIVAL)
+    return parse_enum(value, where, DecisionOrder, DecisionOrder.STABLE)
 
 
 def parse_marker_environment(value: object, where: str) -> dict[str, str]:
@@ -833,6 +877,7 @@ _PACKAGE_OVERRIDE_BODY_KEYS = frozenset(
         "dist-policy",
         "metadata-policy",
         "assume-universal-deps",
+        "assume-consistent-metadata",
         "allow-zip-sdists",
         "build-policy",
         "uploaded-prior-to",
@@ -850,6 +895,7 @@ _INDEX_OVERRIDE_KEYS = frozenset(
         "dist-policy",
         "metadata-policy",
         "assume-universal-deps",
+        "assume-consistent-metadata",
         "allow-zip-sdists",
         "build-policy",
         "uploaded-prior-to",
@@ -870,6 +916,7 @@ _PACKAGE_POLICY_FIELDS = (
     ("metadata-policy", "metadata_policy"),
     ("dist-policy.trust-unverified-deps", "dist_trust_unverified_deps"),
     ("assume-universal-deps", "assume_universal_deps"),
+    ("assume-consistent-metadata", "assume_consistent_metadata"),
     ("allow-zip-sdists", "allow_zip_sdists"),
     ("build-policy", "build_policy"),
     ("uploaded-prior-to", "uploaded_prior_to"),
@@ -1025,6 +1072,15 @@ def _build_package_overrides(
         if "assume-universal-deps" in body
         else None
     )
+    assume_consistent_metadata = (
+        _parse_bool(
+            f"{where}.assume-consistent-metadata",
+            body["assume-consistent-metadata"],
+            default=False,
+        )
+        if "assume-consistent-metadata" in body
+        else None
+    )
     allow_zip_sdists = (
         _parse_bool(
             f"{where}.allow-zip-sdists", body["allow-zip-sdists"], default=False
@@ -1063,6 +1119,7 @@ def _build_package_overrides(
         or metadata_policy is not None
         or dist_trust is not None
         or assume_universal_deps is not None
+        or assume_consistent_metadata is not None
         or allow_zip_sdists is not None
         or build_policy is not None
         or uploaded_prior_to is not None
@@ -1099,6 +1156,7 @@ def _build_package_overrides(
             metadata_policy=metadata_policy,
             dist_trust_unverified_deps=dist_trust,
             assume_universal_deps=assume_universal_deps,
+            assume_consistent_metadata=assume_consistent_metadata,
             allow_zip_sdists=allow_zip_sdists,
             build_policy=build_policy,
             uploaded_prior_to=uploaded_prior_to,
@@ -1261,6 +1319,15 @@ def _parse_index_override_body(
         if "assume-universal-deps" in body
         else None
     )
+    assume_consistent_metadata = (
+        _parse_bool(
+            f"{where}.assume-consistent-metadata",
+            body["assume-consistent-metadata"],
+            default=False,
+        )
+        if "assume-consistent-metadata" in body
+        else None
+    )
     allow_zip_sdists = (
         _parse_bool(
             f"{where}.allow-zip-sdists", body["allow-zip-sdists"], default=False
@@ -1295,6 +1362,7 @@ def _parse_index_override_body(
         or metadata_policy is not None
         or dist_trust is not None
         or assume_universal_deps is not None
+        or assume_consistent_metadata is not None
         or allow_zip_sdists is not None
         or build_policy is not None
         or uploaded_prior_to is not None
@@ -1313,6 +1381,7 @@ def _parse_index_override_body(
         metadata_policy=metadata_policy,
         dist_trust_unverified_deps=dist_trust,
         assume_universal_deps=assume_universal_deps,
+        assume_consistent_metadata=assume_consistent_metadata,
         allow_zip_sdists=allow_zip_sdists,
         build_policy=build_policy,
         uploaded_prior_to=uploaded_prior_to,

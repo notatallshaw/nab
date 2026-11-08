@@ -49,6 +49,39 @@ stable decision order when comparing resolves. Requires pylock output to a file.
 Reset a relative upload cutoff (`P<n>D`) to the current time instead of reusing the existing lock's
 timestamp.
 
+### `--lock-policy {resolve,prefer-existing,reuse}`
+
+Set `lock-policy` in a project, user or system `nab.toml`, or through `NAB_LOCK_POLICY`. The CLI
+flag overrides those sources. The default is `resolve`.
+
+| Policy              | Behavior                                                                    |
+| ------------------- | --------------------------------------------------------------------------- |
+| `resolve` (default) | Resolve afresh using current package information.                           |
+| `prefer-existing`   | Check saved versions against current listings, metadata and artifact rules. |
+| `reuse`             | Keep a valid saved lock without checking for remote changes.                |
+
+With `prefer-existing`, a changed or incomplete model falls back to ordinary solving with saved
+versions as preferences. Missing or invalid locks use fresh resolution. Preferring the old model can
+choose a different valid solution from ordinary search.
+
+`reuse` checks the saved solution against current project inputs. If accepted, the file is unchanged
+and no index transport is created. New releases, yanks, deleted files and changed remote metadata
+are not discovered. A refused check falls back to `prefer-existing`.
+
+Reuse supports ordinary project/script metadata and HTTP(S) index artifacts. File indexes,
+local/workspace/VCS/archive sources and saved local/direct-source artifacts require live resolution.
+The root project file itself is supported.
+
+Compatible dependency-bound edits may keep the lock unchanged, including its timestamp and
+provenance.
+
+Restrictions:
+
+- Nondefault policies require highest resolution, pylock output to a file and no `--locked`.
+- `reuse` cannot combine with `--reproduce`.
+- `--upgrade` skips reuse and uses live `prefer-existing` checks to write the new upload-window
+  anchor.
+
 ### `--build-requirements`
 
 Lock `[build-system].requires` instead of project dependencies. Defaults to `pylock.build.toml` or
