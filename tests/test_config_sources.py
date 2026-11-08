@@ -248,12 +248,14 @@ class TestDecisionOrderLadder:
     def test_default_is_stable(self, tmp_path: Path) -> None:
         _project(tmp_path)
         eff = _resolve(SourceRoots(project_dir=tmp_path))
+
         assert eff["decision-order"].value is DecisionOrder.STABLE
         assert eff["decision-order"].origin.kind is SourceKind.DEFAULT
 
     def test_pyproject_sets_decision_order(self, tmp_path: Path) -> None:
         _project(tmp_path, 'decision-order = "arrival"\n')
         eff = _resolve(SourceRoots(project_dir=tmp_path))
+
         assert eff["decision-order"].value is DecisionOrder.ARRIVAL
         assert eff["decision-order"].origin.kind is SourceKind.PYPROJECT
 
@@ -261,6 +263,7 @@ class TestDecisionOrderLadder:
         _project(tmp_path)
         _write(tmp_path / "nab.toml", 'decision-order = "arrival"\n')
         eff = _resolve(SourceRoots(project_dir=tmp_path))
+
         assert eff["decision-order"].value is DecisionOrder.ARRIVAL
         assert eff["decision-order"].origin.kind is SourceKind.PROJECT_TOML
 

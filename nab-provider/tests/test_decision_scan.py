@@ -82,6 +82,7 @@ class _ScanRecordingProvider(Provider):
             super().__init__(coordinator)
         else:
             super().__init__(coordinator, decision_order=decision_order)
+
         self.scan_reads: list[tuple[str, int, bool]] = []
         self._matching: dict[str, int] = {}
 
@@ -148,6 +149,7 @@ def _two_package_resolver(
         resolver.solution.derive(
             package, VersionRange.full(), positive=True, cause=_cause()
         )
+
     return resolver, provider
 
 
@@ -212,8 +214,10 @@ class TestOneKeyHoldsTogether:
         provider = Provider(coordinator, decision_order=DecisionOrder.ARRIVAL)
 
         provider.begin_decision_scan()
+
         assert provider.is_ready("foo") is False
         assert provider.is_ready("foo") is False
+
         priority = provider.prioritize("foo", VersionRange.full(), {})
 
         assert priority[1] == _NO_LISTING_PRIOR
@@ -225,6 +229,7 @@ class TestOneKeyHoldsTogether:
         rng = VersionRange.full()
 
         provider.begin_decision_scan()
+
         assert provider.prioritize("foo[socks]", rng, {})[1] == _NO_LISTING_PRIOR
         assert provider.is_ready("foo[socks]") is False
         assert provider.prioritize("foo", rng, {})[1] == _NO_LISTING_PRIOR
@@ -244,9 +249,11 @@ class TestOneKeyHoldsTogether:
         rng = VersionRange.full()
 
         provider.begin_decision_scan()
+
         assert provider.is_ready("foo") is False
 
         provider.begin_decision_scan()
+
         assert provider.is_ready("foo") is True
         assert provider.prioritize("foo", rng, {})[1] == 2
 
@@ -271,6 +278,7 @@ class TestTheArrivalProbe:
             decision_order=DecisionOrder.ARRIVAL,
         )
         provider.begin_decision_scan()
+
         assert provider.is_ready("foo") is False
 
         probe = provider.begin_decision_scan()
@@ -290,6 +298,7 @@ class TestTheArrivalProbe:
             decision_order=DecisionOrder.ARRIVAL,
         )
         provider.begin_decision_scan()
+
         assert provider.is_ready("foo") is False
 
         probe = provider.begin_decision_scan()
@@ -339,6 +348,7 @@ class TestScanKeysShareOneView:
             resolver.solution.derive(
                 package, VersionRange.full(), positive=True, cause=_cause()
             )
+
         return resolver, provider
 
     def test_every_key_agrees_with_itself(self) -> None:

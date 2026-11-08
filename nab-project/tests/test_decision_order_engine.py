@@ -1,9 +1,4 @@
-"""Tests that the configured decision order reaches the search.
-
-``nab-provider/tests/test_decision_scan.py`` covers the scan itself,
-``DecisionOrder.STABLE`` included; the config that selects it is only
-exercised by a whole resolve.
-"""
+"""Configured decision order controls when a resolve waits for listings."""
 
 from __future__ import annotations
 
@@ -48,11 +43,9 @@ def _sidecar(
 
 
 def _engine_counters(decision_order: DecisionOrder | None = None) -> _Counters:
-    """Resolve ``alpha`` and ``beta`` off a cold index under ``decision_order``.
+    """Resolve alpha and beta using pending listings.
 
-    ``beta`` pins ``alpha`` to its oldest version, so a scan that ranks
-    ``alpha`` while ``beta``'s listing is in flight decides ``alpha`` on its
-    own five versions and has to take that decision back.
+    Beta requires the oldest alpha, so deciding alpha first requires backtracking.
     """
     pending: dict[str, Sequence[WheelFile | SdistFile]] = {
         "alpha": [make_wheel(version, package="alpha") for version in _ALPHA_VERSIONS],
@@ -65,6 +58,7 @@ def _engine_counters(decision_order: DecisionOrder | None = None) -> _Counters:
     inputs = ResolveInputs(build_policy=BuildPolicy.NEVER)
     if decision_order is not None:
         inputs.decision_order = decision_order
+
     result = resolve_with_coordinator(
         make_coordinator(pending_listings=pending, metadata_by_url=dict(sidecars)),
         Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)).expand(),
@@ -73,6 +67,7 @@ def _engine_counters(decision_order: DecisionOrder | None = None) -> _Counters:
     )
 
     target = result.target_results[0]
+
     return _Counters(
         pins={name: str(version) for name, version in target.pins.items()},
         decisions=target.decisions,
@@ -87,6 +82,7 @@ class TestTheConfiguredOrderReachesTheSearch:
 
     def test_default_settles_the_listing_before_deciding(self) -> None:
         """Unset order follows the stable scheduling contract."""
+
         assert _engine_counters() == _Counters(
             pins={"alpha": "1.0", "beta": "1.0"},
             decisions=3,
@@ -107,6 +103,7 @@ class TestTheConfiguredOrderReachesTheSearch:
 
     def test_arrival_decides_before_the_listing_lands(self) -> None:
         """The same input under ``arrival`` reaches the same pins by backtracking."""
+
         assert _engine_counters(DecisionOrder.ARRIVAL) == _Counters(
             pins={"alpha": "1.0", "beta": "1.0"},
             decisions=4,
