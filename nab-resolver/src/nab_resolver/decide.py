@@ -96,8 +96,7 @@ def choose_package_to_decide(
             tiebreak_cache[package] = tiebreak
         return (ready_penalty, priority, tiebreak)
 
-    if excluded is not None:
-        resolver.solution.take_changed_packages()
+    if bool(excluded):
         return min(undecided, key=sort_key)
 
     changed = resolver.solution.take_changed_packages()
