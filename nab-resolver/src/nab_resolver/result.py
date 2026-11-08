@@ -17,16 +17,61 @@ __lazy_modules__ = (
 )
 
 from collections import deque
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from .types import IncompatibilityCause, PackageType, VersionType
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping
+    from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 
     from .types import Incompatibility, RangeProtocol
 
-__all__ = ["build_solution_data"]
+__all__ = ["IncompleteSelectionError", "build_solution_data", "walk_selected"]
+
+SelectedCandidateType = TypeVar("SelectedCandidateType")
+
+
+class IncompleteSelectionError(Exception):
+    """A reachable package lacks a selected candidate or readable dependencies."""
+
+    def __init__(self, package: object) -> None:
+        """Retain the first incomplete package in traversal order."""
+        self.package = package
+        super().__init__(f"Incomplete selected metadata for {package!r}")
+
+
+def walk_selected(
+    roots: Iterable[PackageType],
+    selected: Mapping[PackageType, SelectedCandidateType],
+    dependency_names: Callable[
+        [PackageType, SelectedCandidateType], Collection[PackageType] | None
+    ],
+    *,
+    depth_first: bool = False,
+) -> Iterator[tuple[PackageType, SelectedCandidateType, Collection[PackageType]]]:
+    """Visit the selected reachable graph once using the caller's metadata policy.
+
+    None from ``dependency_names`` means unread metadata; callback exceptions propagate.
+    """
+    seen: set[PackageType] = set()
+    pending: deque[PackageType] = deque(roots)
+    while pending:
+        package = pending.pop() if depth_first else pending.popleft()
+        if package in seen:
+            continue
+
+        candidate = selected.get(package)
+        if candidate is None:
+            raise IncompleteSelectionError(package)
+
+        dependencies = dependency_names(package, candidate)
+        if dependencies is None:
+            raise IncompleteSelectionError(package)
+
+        # Revisit suppression applies only after the caller has supplied metadata.
+        seen.add(package)
+        yield package, candidate, dependencies
+        pending.extend(child for child in dependencies if child not in seen)
 
 
 def build_solution_data(
@@ -66,22 +111,15 @@ def build_solution_data(
     # recording each dependency crossed on the way.
     edges: list[tuple[PackageType, PackageType]] = []
     reachable: set[PackageType] = set()
-    queue: deque[PackageType] = deque(root_required)
-    while queue:
-        package = queue.popleft()
-        if package in reachable:
-            continue
-        reachable.add(package)
-
-        version = all_decisions.get(package)
-        if version is None:  # pragma: no cover
-            unreachable = f"Bug: reachable package {package!r} has no decision"
-            raise RuntimeError(unreachable)
-
-        for dep_package in get_dependencies(package, version):
-            edges.append((package, dep_package))
-            if dep_package not in reachable:
-                queue.append(dep_package)
+    try:
+        for package, _, dependencies in walk_selected(
+            root_required, all_decisions, get_dependencies
+        ):
+            reachable.add(package)
+            edges.extend((package, child) for child in dependencies)
+    except IncompleteSelectionError as error:
+        unreachable = f"Bug: reachable package {error.package!r} has no decision"
+        raise RuntimeError(unreachable) from error
 
     return (
         {

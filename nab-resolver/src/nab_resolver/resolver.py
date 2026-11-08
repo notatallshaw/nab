@@ -38,12 +38,14 @@ from typing import TYPE_CHECKING, Any, Final, Generic, Protocol
 from . import conflict, decide, incompat_index, propagate
 from ._compat import override
 from .decision_queue import DecisionQueue
+from .deferred import DeferredChoices
 from .errors import ResolutionError, ResolutionLimitError
 from .partial_solution import PartialSolution
 from .ranges import Range
 from .result import build_solution_data
 from .root import ROOT
 from .types import (
+    DecisionRetreat,
     Incompatibility,
     IncompatibilityCause,
     IncompatibilityState,
@@ -267,8 +269,9 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
     ) -> None:
         """Accept a snapshot of positive ranges and decisions.
 
-        Called before ``choose_version`` so providers can forward-check the
-        candidate's dependencies against accumulated constraints.
+        Delivered after propagation when undecided packages remain, before
+        availability refresh and package ordering. The following version query
+        uses the same snapshot unless the provider is replaced.
         ``decisions`` is the subset with concrete versions (not derivations);
         decision-based reasoning is safer because decisions cannot be undone
         in isolation.  Default is a no-op.
@@ -287,16 +290,15 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         """
         ...
 
-    def consume_force_backtrack_targets(self) -> list[PackageType]:
-        """Return packages the provider wants force-backtracked.
+    def consume_force_backtrack_targets(
+        self,
+    ) -> Sequence[PackageType | DecisionRetreat[PackageType]]:
+        """Return culprit packages or selected decisions to reconsider.
 
-        Drained after every ``choose_version`` call. When non-empty,
-        the resolver bumps each package's culprit count past the
-        demote threshold, queues it, and fires
-        ``apply_targeted_backtrack`` without waiting for the normal
-        conflict-count threshold.
-
-        Providers without a force-backtrack signal return an empty list.
+        Drained after every ``choose_version`` call. Plain package keys use
+        culprit promotion and ``apply_targeted_backtrack``. A
+        ``DecisionRetreat(package)`` retains bounds derived before its decision.
+        Providers without a signal return an empty sequence.
         """
         ...
 
@@ -340,7 +342,7 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
 
 
 class BaseProvider(Generic[PackageType, VersionType]):
-    """Defaults for the six provider methods a synchronous provider does not need.
+    """Defaults for optional provider behavior.
 
     Supplies ``begin_decision_scan``, ``is_ready``,
     ``receive_partial_solution_hint``, ``consume_pending_clauses``,
@@ -383,9 +385,12 @@ class BaseProvider(Generic[PackageType, VersionType]):
         """Return no clauses: ``choose_version`` queues none."""
         return []
 
-    def consume_force_backtrack_targets(self) -> list[PackageType]:
+    def consume_force_backtrack_targets(
+        self,
+    ) -> Sequence[PackageType | DecisionRetreat[PackageType]]:
         """Return no targets: there is no force-backtrack signal to give."""
-        return []
+        targets: list[PackageType | DecisionRetreat[PackageType]] = []
+        return targets
 
     def narrow_for_display(
         self, package: PackageType, constraint: RangeProtocol[VersionType]
@@ -656,6 +661,8 @@ class Resolver(Generic[PackageType, VersionType]):
         range_type: type[RangeProtocol[Any]] = Range,
         root_version: Any = 1,
         format_range: Callable[[Any], str] = str,
+        *,
+        availability_generation: Callable[[], int] | None = None,
     ) -> None:
         """Create a resolver with the given provider and optional observer.
 
@@ -666,6 +673,18 @@ class Resolver(Generic[PackageType, VersionType]):
         :class:`packaging.ranges.VersionRange` requires a parseable
         version string or :class:`~packaging.version.Version` here.
 
+        ``availability_generation`` defers failed queries when candidate
+        availability depends on current decisions.
+        Its monotonically increasing result invalidates deferred queries when
+        provider operations reveal candidates; reading it must not change
+        availability. Missing packages are retried
+        after other decisions, and an exhausted sweep records absence guarded
+        by all current decisions. The provider must ensure such an absence
+        remains true whenever those decisions and requirements hold, regardless
+        of later cache population. Availability must not change asynchronously
+        between the final generation check and clause recording. Omitting this
+        callback keeps the static candidate-universe contract.
+
         ``format_range`` renders a constraint in a failure report.  It travels
         with ``range_type``: the default ``str`` reads well for
         :class:`~nab_resolver.ranges.Range`, while a range type whose ``str``
@@ -673,6 +692,11 @@ class Resolver(Generic[PackageType, VersionType]):
         """
         self.provider = provider
         self.preferred_trial_consumed = False
+        self.deferred = (
+            None
+            if availability_generation is None
+            else DeferredChoices[PackageType](availability_generation)
+        )
 
         # Recording the provider rather than a flag keeps the answer tied to
         # the object it was asked about, so a provider swapped into
@@ -815,7 +839,8 @@ class Resolver(Generic[PackageType, VersionType]):
         ``~range_type.empty()``, which may be strictly narrower; see
         :class:`~nab_resolver.types.RangeProtocol`.
 
-        Raises ``ResolutionError`` if no solution exists.
+        Raises ``ResolutionError`` if resolution fails.
+        A limit does not prove unsatisfiability.
         """
         if self.preferred_trial_consumed:
             message = (
@@ -851,13 +876,32 @@ class Resolver(Generic[PackageType, VersionType]):
                 continue
 
             # Phase 3: Decision making.
-            next_package = decide.choose_package_to_decide(self)
+            hinted_provider = (
+                decide.refresh_provider_hint(self)
+                if self.solution.undecided_packages()
+                else None
+            )
+
+            deferred = self.deferred
+            if deferred is not None:
+                deferred.refresh(self.stats.derivations, self.stats.decisions)
+            next_package = decide.choose_package_to_decide(
+                self, None if deferred is None else deferred.packages.keys()
+            )
             if next_package is None:
-                # All packages decided; the spec requires filtering out
-                # any unreachable extras before returning.
+                if deferred is not None and deferred.packages:
+                    deferred.refresh(self.stats.derivations, self.stats.decisions)
+                    if not deferred.packages:
+                        continue
+                    changed_package = next(iter(deferred.packages))
+                    decide.record_contextual_no_versions(self, changed_package)
+                    deferred.clear()
+                    continue
                 return self._build_result()
 
-            changed_package = self._decide_next(next_package)
+            changed_package = self._decide_next(
+                next_package, hinted_provider=hinted_provider
+            )
 
         exceeded_message = f"Resolution exceeded {self.max_iterations} iterations"
         raise ResolutionLimitError(exceeded_message)
@@ -1060,6 +1104,8 @@ class Resolver(Generic[PackageType, VersionType]):
         restarts_remaining: int,
     ) -> tuple[Any, int, int]:
         """Run conflict resolution, targeted backtrack, and restart phases."""
+        if self.deferred is not None:
+            self.deferred.clear()
         self.stats.conflicts += 1
         self.observer.on_conflict(conflicting_incompatibility)
         learned = conflict.conflict_resolution(self, conflicting_incompatibility)
@@ -1077,9 +1123,51 @@ class Resolver(Generic[PackageType, VersionType]):
             changed_package = ROOT
         return changed_package, restart_threshold, restarts_remaining
 
-    def _decide_next(self, next_package: Any) -> Any:
+    def _retreat_decisions(
+        self, requests: Sequence[DecisionRetreat[PackageType]]
+    ) -> PackageType | None:
+        """Retreat before a requested decision while retaining its prior bounds."""
+        level = self.solution.decision_level
+        triggering = None
+        for request in requests:
+            for assignment in self.solution.assignments_for(request.package):
+                if assignment.is_decision and assignment.package is not ROOT:
+                    before = assignment.decision_level - 1
+                    if before < level:
+                        level, triggering = before, request.package
+                    break
+        if triggering is not None:
+            self.solution.backtrack(level)
+            self.stats.targeted_backtracks += 1
+        return triggering
+
+    def _apply_force_requests(self, targets: list[Any]) -> Any | None:
+        """Apply requested retreats and clear deferred queries after a backtrack."""
+        self.priority_epoch += 1
+        culprits = [
+            target for target in targets if not isinstance(target, DecisionRetreat)
+        ]
+        decisions = [
+            target for target in targets if isinstance(target, DecisionRetreat)
+        ]
+        triggering = conflict.force_targeted_backtrack(self, culprits)
+        decision = self._retreat_decisions(decisions)
+        if decision is not None:
+            triggering = decision
+        if triggering is not None and self.deferred is not None:
+            self.deferred.clear()
+        return triggering
+
+    def _decide_next(
+        self,
+        next_package: Any,
+        *,
+        hinted_provider: ResolverProvider[Any, Any] | None = None,
+    ) -> Any:
         """Run the decision phase for ``next_package``. Return next changed package."""
-        chosen_version = decide.choose_version(self, next_package)
+        chosen_version = decide.choose_version(
+            self, next_package, hinted_provider=hinted_provider
+        )
         had_pending = decide.absorb_pending_clauses(self)
 
         # Provider-driven force back-track. When the provider returns
@@ -1087,8 +1175,7 @@ class Resolver(Generic[PackageType, VersionType]):
         # blockers before the candidate is decided.
         force_targets = list(self.provider.consume_force_backtrack_targets())
         if force_targets:
-            self.priority_epoch += 1
-            triggering = conflict.force_targeted_backtrack(self, force_targets)
+            triggering = self._apply_force_requests(force_targets)
             if triggering is not None:
                 return triggering
 
@@ -1185,6 +1272,8 @@ class Resolver(Generic[PackageType, VersionType]):
         constraints: Mapping[PackageType, RangeProtocol[VersionType]] | None,
     ) -> None:
         """Reset solver state for a new resolution."""
+        if self.deferred is not None:
+            self.deferred.clear()
         self.incompatibilities.clear()
         self.package_to_incompatibilities.clear()
         self.clause_contradicted_at.clear()

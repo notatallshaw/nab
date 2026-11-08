@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Hashable, Mapping, Sequence
 
     from .resolver import ResolverProvider, Solution
-    from .types import Incompatibility, RangeProtocol
+    from .types import DecisionRetreat, Incompatibility, RangeProtocol
 
     _ProbeState = Callable[[ResolverProvider[_PackageType, VersionType]], object]
     _Requirements = Mapping[_PackageType, RangeProtocol[VersionType]]
@@ -365,7 +365,9 @@ class _CheckingProvider(BaseProvider[_PackageType, VersionType]):
         return clauses
 
     @override
-    def consume_force_backtrack_targets(self) -> list[_PackageType]:
+    def consume_force_backtrack_targets(
+        self,
+    ) -> Sequence[_PackageType | DecisionRetreat[_PackageType]]:
         """Check availability agreement after all pending work is known."""
         targets = self.provider.consume_force_backtrack_targets()
 

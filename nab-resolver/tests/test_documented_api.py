@@ -23,6 +23,16 @@ assert loaded == [], f"imported submodules: {loaded}"
 
 
 SUPPORTED_API = {
+    "nab_resolver.predicate_ranges": {"PredicateAlgebra", "PredicateRange"},
+    "nab_resolver.priority": {
+        "CONFLICT_THRESHOLD",
+        "CULPRIT_DEMOTE_THRESHOLD",
+        "TIER_AFFECTED",
+        "TIER_CULPRIT",
+        "TIER_NORMAL",
+        "compute_tier",
+        "is_dominant_culprit",
+    },
     "nab_resolver.testing": {
         "ProviderScenario",
         "check_provider",
@@ -46,6 +56,7 @@ SUPPORTED_API = {
     },
     "nab_resolver.root": {"ROOT"},
     "nab_resolver.types": {
+        "DecisionRetreat",
         "Incompatibility",
         "IncompatibilityCause",
         "RangeProtocol",

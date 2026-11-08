@@ -826,3 +826,34 @@ class TestAssignmentEntries:
                     Range.at_least(2),
                     Range.full(),
                 )
+
+
+def test_items_view_keeps_decisions_after_backtracking() -> None:
+    ps = PartialSolution[str, int]()
+    ps.decide("first", 1)
+    view = ps.decisions().items()
+    assert dict(view) == {"first": 1}
+
+    ps.backtrack(0)
+    ps.decide("first", 2)
+    ps.decide("later", 3)
+
+    assert dict(view) == {"first": 1}
+    assert ("first", 1) in view
+    assert ("first", 2) not in view
+    assert view == {("first", 1)}
+
+
+def test_items_view_applies_frozen_values_and_omits_later_keys() -> None:
+    ps = PartialSolution[str, int]()
+    cause = Incompatibility([], cause=IncompatibilityCause.ROOT)
+    original = Range.at_least(1)
+    ps.derive("first", original, positive=True, cause=cause)
+    view = ps.positive_ranges().items()
+
+    ps.derive("first", Range.at_most(2), positive=True, cause=cause)
+    ps.derive("later", Range.singleton(1), positive=True, cause=cause)
+
+    assert dict(view) == {"first": original}
+    assert ("first", original) in view
+    assert "later" not in dict(view)

@@ -2,10 +2,20 @@
 
 Supported imports:
 
+    nab_provider.callbacks  CallbackHost, CallbackProvider, CandidateQuery,
+                            RequirementCause
+    nab_provider.candidate_stream  CandidateGroupRejectedError, ordered_candidates
     nab_provider.diagnostics  Diagnostic, ResolutionMessage
     nab_provider.priority  compute_tier
     nab_provider.environment  classify_dependency, marker_environment
-    nab_provider.preference  PreferenceSearch, PreferenceScope, PreparationStatus,
+    nab_provider.preference  CataloguePreference, PreferenceSearch, PreferenceScope,
+                             PreparationStatus,
                              PreferenceCatalogue, DependencyData,
                              IncompletePreferenceError, UnavailableMetadataError
+    nab_provider.preference_provider  PreferenceProvider, MetadataProxy,
+                                      PermissionProxy, Package
+    nab_provider.prepared_resolution  PreparedResolution, PreparedSolution
+    nab_provider.version_candidates  VersionCandidate, VersionCandidateData,
+                                     VersionCatalogue,
+                                     PreparedVersionCatalogue, is_pin
 """

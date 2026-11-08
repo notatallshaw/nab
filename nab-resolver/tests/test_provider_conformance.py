@@ -9,9 +9,11 @@ from hypothesis import strategies as st
 
 from nab_resolver.errors import ResolutionError, ResolutionLimitError
 from nab_resolver.ranges import Range
-from nab_resolver.resolver import BaseProvider
+from nab_resolver.resolver import BaseProvider, Resolver
+from nab_resolver.root import ROOT
 from nab_resolver.testing import ProviderScenario, check_provider
 from nab_resolver.types import (
+    DecisionRetreat,
     Incompatibility,
     IncompatibilityCause,
     RangeProtocol,
@@ -496,3 +498,92 @@ def test_provider_cannot_mutate_the_query_range(phase: str) -> None:
 
     with pytest.raises(AssertionError, match="mutated.*range"):
         check_fixture({"app": {1: {}, 2: {}}}, MutatingQuery)
+
+
+def test_decision_retreat_preserves_the_parent_that_derived_child_bounds() -> None:
+    """Reconsider a child file without discarding the parent version constraint."""
+    graph = {
+        "parent": {1: {"lib": Range.singleton(1) | Range.singleton(2)}},
+        "lib": {1: {}, 2: {}},
+        "extra": {1: {"lib": Range.singleton(1)}},
+    }
+
+    class Provider(FixtureProvider):
+        def __init__(self) -> None:
+            super().__init__(graph)
+            self.decisions: Mapping[str, int] = {}
+            self.requests: list[DecisionRetreat[str]] = []
+            self.retreated = False
+            self.preserved: list[bool] = []
+
+        def receive_partial_solution_hint(
+            self,
+            positive_ranges: Mapping[str, RangeProtocol[int]],
+            decisions: Mapping[str, int],
+        ) -> None:
+            self.decisions = decisions
+            if self.retreated and "lib" not in decisions:
+                self.preserved.append(
+                    "parent" in decisions
+                    and 1 in positive_ranges["lib"]
+                    and 3 not in positive_ranges["lib"]
+                )
+
+        def choose_version(
+            self, package: str, version_range: RangeProtocol[int]
+        ) -> int | None:
+            if (
+                package == "extra"
+                and self.decisions.get("lib") == 2
+                and not self.retreated
+            ):
+                self.requests.extend(
+                    [
+                        DecisionRetreat("lib"),
+                        DecisionRetreat("lib"),
+                        DecisionRetreat("missing"),
+                    ]
+                )
+                self.retreated = True
+            return super().choose_version(package, version_range)
+
+        def consume_force_backtrack_targets(self) -> list[DecisionRetreat[str]]:
+            requests = self.requests
+            self.requests = []
+            return requests
+
+        def prioritize(
+            self,
+            package: str,
+            version_range: RangeProtocol[int],
+            conflict_counts: Mapping[str, int],
+            culprit_counts: Mapping[str, int] | None = None,
+        ) -> int:
+            if self.retreated and package == "extra":
+                return -1
+            return {"parent": 0, "lib": 1, "extra": 2}[package]
+
+    provider = Provider()
+    resolver = Resolver(provider, range_type=Range)
+    solution = resolver.solve({"parent": Range.full(), "extra": Range.full()})
+    assert solution.pins == {"parent": 1, "extra": 1, "lib": 1}
+    assert provider.preserved
+    assert all(provider.preserved)
+    assert resolver.stats.targeted_backtracks == 1
+
+
+def test_stale_decision_retreats_leave_the_root_and_completed_choices_in_place() -> (
+    None
+):
+    provider = FixtureProvider({"app": {1: {}}})
+    resolver = Resolver(provider, range_type=Range)
+    resolver.solve({"app": Range.full()})
+    before = resolver.solution.decisions()
+    assert (
+        resolver._apply_force_requests(
+            [DecisionRetreat(ROOT), DecisionRetreat("missing")]
+        )
+        is None
+    )
+    assert resolver.solution.decisions() == before
+    assert resolver.stats.targeted_backtracks == 0

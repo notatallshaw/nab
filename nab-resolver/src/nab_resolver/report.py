@@ -13,6 +13,7 @@ __lazy_modules__ = ("nab_resolver.root",)
 
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+from .proofs import dependency_terms
 from .root import ROOT
 from .types import IncompatibilityCause, PackageType, Term, VersionType
 
@@ -129,7 +130,10 @@ def _shown_terms(
     The comparison runs on exactly what the reader sees, so a requirement is
     read as printed, un-narrowed, the way the line states it.
     """
-    if incompatibility.cause is IncompatibilityCause.NO_VERSIONS:
+    if incompatibility.cause in {
+        IncompatibilityCause.NO_VERSIONS,
+        IncompatibilityCause.CONTEXTUAL_NO_VERSIONS,
+    }:
         return {term.package: term for term in incompatibility.terms}
     return {
         term.package: _narrow_positive(term, narrow) for term in incompatibility.terms
@@ -241,31 +245,6 @@ def _narrowed_away(
     return found
 
 
-def _dependency_pair(
-    incompatibility: Incompatibility[Any, Any], terms: Sequence[Term[Any, Any]]
-) -> tuple[Term[Any, Any], Term[Any, Any]] | None:
-    """Return the parent and dependency terms of a DEPENDENCY clause, else None.
-
-    ``terms`` are the clause's terms as the line renders them, which is not
-    ``incompatibility.terms`` once narrowing has been applied.  A package
-    depending on itself merges the two terms into one, so the dependency side
-    is rebuilt from the range the clause carries.
-    """
-    if incompatibility.cause is not IncompatibilityCause.DEPENDENCY:
-        return None
-
-    if len(terms) == _ATTRIBUTION_CLAUSE_TERMS:
-        parent, dependency = terms
-        return parent, dependency
-
-    dependency_range = incompatibility.dependency_range
-    if len(terms) != 1 or dependency_range is None:
-        return None
-
-    (parent,) = terms
-    return parent, Term(parent.package, dependency_range, positive=False)
-
-
 def _render_line(
     incompatibility: Incompatibility[Any, Any],
     narrow: _NarrowFn | None,
@@ -276,10 +255,16 @@ def _render_line(
     terms = incompatibility.terms
     # An availability line renders its own range: narrowing it onto the listing
     # is what let it stop covering the requirement it closes against.
-    if narrow is not None and cause is not IncompatibilityCause.NO_VERSIONS:
+    if narrow is not None and cause not in {
+        IncompatibilityCause.NO_VERSIONS,
+        IncompatibilityCause.CONTEXTUAL_NO_VERSIONS,
+    }:
         terms = [_narrow_positive(term, narrow) for term in terms]
 
-    attributed = _dependency_pair(incompatibility, terms)
+    if cause is IncompatibilityCause.CONTEXTUAL_NO_VERSIONS:
+        return _render_contextual_no_versions(incompatibility, format_range)
+
+    attributed = dependency_terms(incompatibility, terms)
     if attributed is not None:
         parent, dep = attributed
         plural = _is_full(parent)
@@ -308,6 +293,21 @@ def _render_line(
         return f"because the user constrained {subject}"
 
     return _render_prefix_line(cause, terms, format_range)
+
+
+def _render_contextual_no_versions(
+    incompatibility: Incompatibility[PackageType, VersionType], format_range: _FormatFn
+) -> str:
+    """Render an absence with its supporting decisions."""
+    unavailable, *guards = incompatibility.terms
+    context = " and ".join(format_term(term, format_range) for term in guards)
+    if incompatibility.constraint_range is not None:
+        requirement = _with_range(
+            str(unavailable.package), format_range(incompatibility.constraint_range)
+        )
+        return f"because the user constrained {requirement} with {context} selected"
+    requirement = _format_requirement(unavailable, format_range)
+    return f"because no versions of {requirement} are available with {context} selected"
 
 
 def _render_prefix_line(
