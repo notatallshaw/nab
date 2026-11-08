@@ -437,6 +437,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         else None
     )
 
+    # Try saved reuse before opening any index transport.
     if _reuse_consistent_lock(run, inputs, validation):
         return
 
@@ -786,6 +787,7 @@ def _configured_lock_policy(
     """Apply configured policy restrictions after explicit CLI checks."""
     if isinstance(ladder, SourceConfigError):
         return current
+
     configured = LockPolicy(ladder["lock-policy"].value)
     if configured is not current:
         _validate_lock_mode(
@@ -796,6 +798,7 @@ def _configured_lock_policy(
             upgrade=upgrade,
             lock_policy=configured,
         )
+
     return configured
 
 
@@ -816,14 +819,17 @@ def _validate_lock_mode(
     if lock_policy is not LockPolicy.RESOLVE and locked:
         printer().error("nondefault --lock-policy cannot be combined with --locked.")
         sys.exit(1)
+
     if lock_policy is not LockPolicy.RESOLVE and (
         format != "pylock" or is_stdout(output)
     ):
         printer().error("nondefault --lock-policy requires pylock output to a file.")
         sys.exit(1)
+
     if lock_policy is LockPolicy.REUSE and reproduce:
         printer().error("--lock-policy reuse cannot be combined with --reproduce.")
         sys.exit(1)
+
     if (locked or reproduce) and (format != "pylock" or is_stdout(output)):
         printer().error("lock checks are only supported for pylock output to a file.")
         sys.exit(1)
@@ -848,6 +854,7 @@ def _reuse_consistent_lock(
     # An upgrade must emit its new anchor even when constraints are unchanged.
     if run.lock_policy is not LockPolicy.REUSE or snapshot is None or run.upgrade:
         return False
+
     current, targets = snapshot
     target = _check_target_path(run)
     if not can_reuse_saved_lock(
@@ -862,6 +869,7 @@ def _reuse_consistent_lock(
         input_format=run.input_format,
     ):
         return False
+
     printer().done(f"Reused consistent lockfile {target}")
     return True
 

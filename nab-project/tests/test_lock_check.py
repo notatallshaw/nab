@@ -626,9 +626,12 @@ def test_standard_requires_python_keeps_every_admitted_micro_slice(
 def test_reuse_policy_preserves_the_standard_saved_check(tmp_path: Path) -> None:
     lock, path, inputs, targets = _saved(tmp_path)
     current = snapshot_inputs(path, inputs, targets)
+
     assert can_reuse_saved_lock(lock, path, current, inputs, targets)
+
     path.write_text(path.read_text().replace("demo>=1", "demo>=2"))
     current = snapshot_inputs(path, inputs, targets)
+
     assert not can_reuse_saved_lock(lock, path, current, inputs, targets)
 
 
@@ -681,6 +684,7 @@ def test_reuse_policy_refuses_unqualified_source_contexts(
                 ),
             )
         )
+
     assert not can_reuse_saved_lock(lock, path, current, inputs, targets)
 
 
@@ -700,6 +704,7 @@ def test_reuse_policy_declines_valid_local_artifact_records(
     document["tool"]["nab"]["validation"]["contents-sha256"] = content_digest(document)
     _replace_record(lock, document)
     _check(case)
+
     assert not can_reuse_saved_lock(
         lock, path, snapshot_inputs(path, inputs, targets), inputs, targets
     )
@@ -734,9 +739,11 @@ def test_reuse_policy_limits_saved_source_kinds(tmp_path: Path, source: str) -> 
         )
         artifact["name"] = "demo-1.tar.gz"
         package["sdist"] = artifact
+
     Pylock.from_dict(document)
     document["tool"]["nab"]["validation"]["contents-sha256"] = content_digest(document)
     _replace_record(lock, document)
+
     assert can_reuse_saved_lock(
         lock, path, snapshot_inputs(path, inputs, targets), inputs, targets
     ) is (source == "sdist-http")

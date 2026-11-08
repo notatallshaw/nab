@@ -408,11 +408,15 @@ def _reuse_inputs_supported(current: Mapping[str, Any], inputs: ResolveInputs) -
         return False
     if any(not _http_url(index.url) for index in inputs.indexes):
         return False
+
+    # Direct URLs lack the index artifact identities required for reuse.
     requirements = [*current["constraints"]]
     for group in current["roots"].values():
         requirements.extend(group)
+
     if any(parse_requirement(text).url is not None for text in requirements):
         return False
+
     return not any(
         requirement.url is not None
         for override in inputs.package_overrides
@@ -429,14 +433,17 @@ def _reuse_artifacts_supported(lock: Pylock) -> bool:
             or package.archive is not None
         ):
             return False
+
         if any(
             wheel.path is not None or not _http_url(wheel.url)
             for wheel in package.wheels or ()
         ):
             return False
+
         sdist = package.sdist
         if sdist is not None and (sdist.path is not None or not _http_url(sdist.url)):
             return False
+
     return True
 
 
@@ -456,10 +463,12 @@ def can_reuse_saved_lock(  # noqa: PLR0913 - mirror the saved checker inputs and
     try:
         if not _reuse_inputs_supported(current, inputs):
             return False
+
         # Validation format 1 cannot distinguish every file-URL source identity.
         saved = Pylock.from_dict(toml_io.load_path(lockfile))
         if not _reuse_artifacts_supported(saved):
             return False
+
         check_saved_lock(
             lockfile,
             path,
@@ -480,4 +489,5 @@ def can_reuse_saved_lock(  # noqa: PLR0913 - mirror the saved checker inputs and
         PylockValidationError,
     ):
         return False
+
     return True

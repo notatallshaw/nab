@@ -16,7 +16,9 @@ def test_complete_mapping_is_copied_without_losing_fields() -> None:
     actual = marker_environment(supplied)
 
     assert actual == supplied
+
     actual["sys_platform"] = "linux"
+
     assert supplied["sys_platform"] == "win32"
 
 

@@ -193,6 +193,7 @@ def test_previous_lock_preferences_use_their_project_module(
     workspace.publishes_supported_paths("nab_project")
 
     assert check_boundaries.main() == status
+
     if status:
         assert (
             "supports LockPreferences at nab_project.lock_preferences"
@@ -348,7 +349,9 @@ def test_lock_operation_policy_uses_its_owning_module(
         use=f"from nab_project.{module} import LockPolicy\n",
     )
     workspace.publishes_supported_paths("nab_project")
+
     assert check_boundaries.main() == status
+
     if status:
         assert (
             "supports LockPolicy at nab_project.lock_policy" in capsys.readouterr().err

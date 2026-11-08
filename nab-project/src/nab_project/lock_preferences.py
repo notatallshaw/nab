@@ -40,6 +40,7 @@ class LockPreferences:
             for package in lock.packages
             if package.version is not None
         )
+
         advertised: set[Tag] = set()
         for package in lock.packages:
             for wheel in package.wheels or ():
@@ -110,9 +111,11 @@ def read_lock_preferences(path: Path) -> LockPreferences | None:
     """Read optional prior version hints, refusing an unreadable or invalid lock."""
     if not path_state(path).should_read:
         return None
+
     try:
         with path.open("rb") as stream:
             lock = Pylock.from_dict(toml_io.load(stream))
     except (OSError, ValueError, RecursionError, PylockValidationError):
         return None
+
     return LockPreferences(lock)

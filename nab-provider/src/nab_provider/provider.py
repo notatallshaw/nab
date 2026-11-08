@@ -1649,10 +1649,9 @@ class Provider:
     def prepare_preferred_releases(
         self, preferred: Mapping[str, Version], *, unchanged_only: bool = False
     ) -> None:
-        """Restrict a fresh model-proof provider; refusal requires a fresh provider.
+        """Restrict a fresh provider to saved versions for a model check.
 
-        With ``unchanged_only`` the caller must discard any changed model too.
-        Unrelated withdrawn releases then do not participate in its trial.
+        Failed trials require a fresh provider; unchanged-only trials reject changes.
         """
         # Reject partially prepared providers before narrowing their candidates.
         if (

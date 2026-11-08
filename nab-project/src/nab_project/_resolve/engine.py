@@ -129,7 +129,7 @@ class _ResolveObserver(ResolverObserver[str, "Version"]):
 
 
 class _TrialDecisions(ResolverObserver[str, "Version"]):
-    """Hold checked-trial decisions until the application accepts its model."""
+    """Buffer decisions until an unchanged saved model is accepted."""
 
     def __init__(self, observer: ResolverObserver[str, Version]) -> None:
         """Keep the real observer outside the provisional trial."""
@@ -871,17 +871,20 @@ class _TargetAttempt:
         *,
         unchanged_only: bool = False,
     ) -> None:
-        """Retain only a proved model; failed provider state stays behind."""
+        """Keep a validated model; discard trial state when it fails."""
         if hint is None or (
             unchanged_only and any(root.package not in hint for root in roots)
         ):
             return
 
         self.provider.prepare_preferred_releases(hint, unchanged_only=unchanged_only)
+
+        # Buffer decisions until the saved model is accepted unchanged.
         observer = self.resolver.observer
         decisions = _TrialDecisions(observer) if unchanged_only else None
         if decisions is not None:
             self.resolver.observer = decisions
+
         try:
             self.pins = self.resolver.try_resolve_preferred(roots, hint, constraints)
         except ResolutionTerminatedError:
@@ -893,7 +896,6 @@ class _TargetAttempt:
             YankAdmissionRequiredError,
         ):
             self.pins = None
-
         finally:
             self.resolver.observer = observer
 
@@ -916,13 +918,14 @@ def _target_preferences(
     contexts: InstallContexts | None,
     preferences: Mapping[str, Version],
 ) -> tuple[Mapping[str, Version], Mapping[str, Version] | None]:
-    """Return merged version preferences and the applicable prior-model hint."""
+    """Return version preferences and saved pins for this target's model trial."""
     if settings.lock_preferences is None:
         return preferences, None
 
     members = list(contexts.selectors if contexts is not None else target.selection)
     if settings.inputs.base_group is not None:
         members.append(("group", settings.inputs.base_group))
+
     # Project planning has already combined defaults and requested members.
     prior = settings.lock_preferences.versions_for(
         target, selection=members, default_groups=()
@@ -976,6 +979,7 @@ def _resolve_one_target(
         root_extras,
         preferences,
     )
+    # A refused trial must not leave provider state in the fallback solver.
     attempt = _TargetAttempt(provider_factory, settings.progress)
     provider, resolver = attempt.provider, attempt.resolver
 

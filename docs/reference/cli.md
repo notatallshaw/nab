@@ -54,25 +54,33 @@ timestamp.
 Set `lock-policy` in a project, user or system `nab.toml`, or through `NAB_LOCK_POLICY`. The CLI
 flag overrides those sources. The default is `resolve`.
 
-`resolve` (default) uses ordinary resolution. `prefer-existing` checks the previous lock's
-applicable versions against current listings, metadata and artifact rules. A modified or incomplete
-model falls back to ordinary solving with the saved versions as preferences. Missing or invalid
-locks use fresh resolution. This stability policy can choose a different valid solution from
-ordinary preference search.
+| Policy              | Behavior                                                                    |
+| ------------------- | --------------------------------------------------------------------------- |
+| `resolve` (default) | Resolve afresh using current package information.                           |
+| `prefer-existing`   | Check saved versions against current listings, metadata and artifact rules. |
+| `reuse`             | Keep a valid saved lock without checking for remote changes.                |
 
-`reuse` first checks whether the saved solution remains consistent with current project inputs. On
-success it leaves the file unchanged without creating an index transport. It does not discover new
-releases, yanks, deleted files or changed remote metadata. A refused check falls back to
-`prefer-existing` and its current provider checks.
+With `prefer-existing`, a changed or incomplete model falls back to ordinary solving with saved
+versions as preferences. Missing or invalid locks use fresh resolution. Preferring the old model can
+choose a different valid solution from ordinary search.
 
-Reuse currently supports ordinary project/script metadata and HTTP(S) index artifacts. File indexes,
-local/workspace/VCS/archive sources and saved local/direct-source artifacts require the live
-fallback. The root project file itself remains supported. Compatible dependency-bound edits may keep
-the existing lock unchanged; this does not refresh its timestamp or provenance.
+`reuse` checks the saved solution against current project inputs. If accepted, the file is unchanged
+and no index transport is created. New releases, yanks, deleted files and changed remote metadata
+are not discovered. A refused check falls back to `prefer-existing`.
 
-Nondefault policies require highest resolution and pylock output to a file, and cannot combine with
-`--locked`. `reuse` also cannot combine with `--reproduce`. `--upgrade` skips saved reuse and runs
-the live `prefer-existing` path so the new upload-window anchor is written.
+Reuse supports ordinary project/script metadata and HTTP(S) index artifacts. File indexes,
+local/workspace/VCS/archive sources and saved local/direct-source artifacts require live resolution.
+The root project file itself is supported.
+
+Compatible dependency-bound edits may keep the lock unchanged, including its timestamp and
+provenance.
+
+Restrictions:
+
+- Nondefault policies require highest resolution, pylock output to a file and no `--locked`.
+- `reuse` cannot combine with `--reproduce`.
+- `--upgrade` skips reuse and uses live `prefer-existing` checks to write the new upload-window
+  anchor.
 
 ### `--build-requirements`
 

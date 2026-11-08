@@ -312,7 +312,9 @@ def test_unrelated_withdrawal_only_narrows_unchanged_model_trials(
     assert selected == (
         {Version("1")} if unchanged_only else {Version("0"), Version("1"), Version("2")}
     )
+
     normal = Provider(port, target(), listing_filter_cache=cache, defer_yanked=True)
+
     assert {version for version, _ in normal.fetch_versions("pkg")} == {
         Version("0"),
         Version("1"),

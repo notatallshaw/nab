@@ -140,19 +140,24 @@ clauses or pending rejections, and their cache lasts one project resolve.
 
 ## Previous-lock preferences
 
-`nab-project` owns projecting a saved PEP 751 lock onto each current target's combined extras and
-groups. Its `LockPreferences` supplies versions; `nab-provider` still owns live candidate admission,
-metadata validation and artifact selection. The CLI exposes this policy through
+`nab-project` projects a saved PEP 751 lock onto each target's combined extras and groups.
+`LockPreferences` supplies versions to `nab-provider`, which checks live candidates, metadata and
+artifacts. The CLI exposes this policy through
 [`--lock-policy prefer-existing`](../reference/cli.md#--lock-policy-resolveprefer-existingreuse).
 
-The project tries an unchanged reachable model before ordinary search. A refused or modified trial
-discards its provider and solver, retaining version preferences for fresh solving. Old dependency
-declarations and artifact records are not reused.
+With `prefer-existing`, the project:
 
-The project's `LockPolicy.REUSE` uses the existing saved-solution checker before live resolution.
-Its source-domain refusal keeps unsupported mutable/file identities on the live path. An accepted
-file remains unchanged and no index transport is created; remote freshness is deliberately not
-checked. The CLI parses the operation choice and reports whether the saved lock was reused.
+1. Tries the saved dependency graph against current package information.
+2. Discards the trial provider and solver if the graph changes or cannot be reused.
+3. Starts fresh solving with the saved versions as preferences.
+
+Old dependency declarations and artifact records are not reused.
+
+`LockPolicy.REUSE` checks the saved solution before live resolution. Unsupported mutable or file
+sources use live resolution. An accepted lock stays unchanged and no index transport is created;
+remote freshness is not checked.
+
+The CLI selects the policy and reports whether the saved lock was reused.
 
 ## Driving the provider without networking
 

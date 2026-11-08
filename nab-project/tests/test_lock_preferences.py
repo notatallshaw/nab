@@ -67,6 +67,7 @@ def prior(*packages: Package) -> Pylock:
         dependency_groups=("lint",),
     )
     lock.validate()
+
     return lock
 
 
@@ -133,7 +134,9 @@ def test_old_artifact_priority_cannot_change_the_package_version() -> None:
         wheel_package(), wheel_package("b", tag="cp312-cp312-manylinux_2_17_x86_64")
     )
     consumer = target()
+
     assert consumer.tags is not None
+
     expected = {
         str(package.name): package.version
         for package, _artifact in lock.select(
@@ -323,7 +326,7 @@ def test_target_fork_members_are_used_when_no_selection_is_passed() -> None:
 
 
 def test_modified_prior_model_uses_the_ordinary_preference_search() -> None:
-    """A new dependency must not commit a model built in a different decision order."""
+    """A changed saved model falls back to the ordinary preference search."""
 
     old = LockPreferences(prior(wheel_package("a"), wheel_package("b")))
 
@@ -343,9 +346,11 @@ def test_modified_prior_model_uses_the_ordinary_preference_search() -> None:
             metadata[wheel.metadata_url] = make_metadata(
                 "a", wheel.version, "b==2" if wheel.version == "1" else "b==1"
             )
+
         for wheel in b_wheels:
             assert wheel.metadata_url is not None
             metadata[wheel.metadata_url] = make_metadata("b", wheel.version)
+
         return make_coordinator(
             listings={"a": a_wheels, "b": b_wheels}, metadata_by_url=metadata
         )
@@ -473,11 +478,13 @@ def changed_registry(case: str) -> FakeFetchPort:
             requires_python=requires_python,
             provides_extra=("new",) if version == "3" else (),
         )
+
     a_files: list[WheelFile | SdistFile] = list(a_wheels)
     if case == "yanked":
         a_files = append_yanked_file(
             list(a_wheels[1:]), a_wheels[0], reason="withdrawn"
         )
+
     listings = {"a": a_files}
     for package in ("b", "bonus", "unrelated"):
         files = []
@@ -487,10 +494,12 @@ def changed_registry(case: str) -> FakeFetchPort:
             assert wheel.metadata_url is not None
             metadata[wheel.metadata_url] = make_metadata(package, version)
         listings[package] = files
+
     port = make_coordinator(listings=listings, metadata_by_url=metadata)
     if case == "source":
         port.indexes.append(IndexConfig("current", "https://current.example/simple/"))
         port.index.store_listing_index("a", "current")
+
     return port
 
 
@@ -520,6 +529,7 @@ def test_changed_inputs_recheck_current_choices(case: str) -> None:
     if case == "group":
         consumers = [item.with_selection((("group", "new"),)) for item in consumers]
         roots.append(Requirement("bonus"))
+
     inputs = ResolveInputs(
         build_policy=BuildPolicy.NEVER, decision_order=DecisionOrder.STABLE
     )
@@ -552,6 +562,7 @@ def test_changed_inputs_recheck_current_choices(case: str) -> None:
     assert [item.lock for item in reused.target_results] == [
         item.lock for item in expected
     ]
+
     for result in reused.target_results:
         assert result.lock is not None
         for pin in result.lock.pins.values():
@@ -560,7 +571,9 @@ def test_changed_inputs_recheck_current_choices(case: str) -> None:
                 and not wheel.url.startswith("https://old.example/")
                 for wheel in pin.wheels
             )
+
     if case in {"metadata", "source"}:
         assert reused.target_results[0].pins["b"] == Version("3")
+
     if case in {"removed", "yanked", "python", "requirements", "extra"}:
         assert reused.target_results[0].pins["a"] == Version("3")
