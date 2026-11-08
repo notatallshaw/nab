@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Hashable, Mapping
+from itertools import islice
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 from nab_resolver.errors import (
@@ -19,7 +20,7 @@ from ._compat import override
 from .preference_provider import MetadataProxy, Package, PreferenceProvider
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Iterator, Sequence
+    from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 
     from nab_resolver.resolver import ResolverProvider, ResolverStats
     from nab_resolver.types import RangeProtocol
@@ -62,11 +63,13 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
         metadata_admission: Callable[[CandidateType, Mapping[str, CandidateType]], bool]
         | None = None,
         preferred_candidate: Callable[[str], CandidateType | None] | None = None,
+        try_live: bool = False,
     ) -> None:
         """Own query wiring while the supplied provider retains its facts."""
         self.provider = provider
         self.metadata_admission = metadata_admission
         self.preferred_candidate = preferred_candidate
+        self.try_live = try_live
         if preferred_candidate is not None:
             provider.preferred_candidate = preferred_candidate
 
@@ -85,8 +88,13 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
         exact_dependencies: Callable[[CandidateType], Sequence[CandidateType]]
         | None = None,
         max_rounds: int | None = None,
+        try_live: bool = False,
     ) -> PreparedResolution[CandidateType, RangeType, PinnedRequirementType]:
-        """Use the shared query engine with the host's preparation and policy."""
+        """Use the shared query engine with the host's preparation and policy.
+
+        ``try_live`` first excludes withdrawn choices, returning to admission
+        proofs when a matching exact pin could permit one.
+        """
         admission = (
             None
             if selection_policy is None
@@ -108,6 +116,7 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
             provider,
             metadata_admission=admission,
             preferred_candidate=preferred_candidate,
+            try_live=try_live,
         )
         if refresh_incomplete:
             provider.resolver_factory = session._new_resolver
@@ -177,11 +186,58 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
             if isinstance(package, str)
         }
 
+    def _try_live(self) -> dict[str, CandidateType] | None:
+        """Try live choices, yielding to admission proofs when an exact pin matters."""
+        self._check_round_budget()
+        trial = _LiveProvider(
+            self.provider.preference,
+            preferred_candidate=self.preferred_candidate,
+            on_candidate_considered=self.provider.on_candidate_considered,
+        )
+        trial.items = self.provider.items
+        trial.identities = self.provider.identities
+        trial.package_tokens = self.provider.package_tokens
+        resolver = self._new_resolver(trial, self.remaining_rounds)
+        try:
+            roots: dict[Package, Range[int]] = {
+                name: trial.encode_range(name, allowed)
+                for name, allowed in trial.roots.items()
+            }
+            pins = resolver.resolve(roots)
+        except _WithdrawalProofRequiredError:
+            return None
+        except ResolutionTerminatedError:
+            raise
+        except ResolutionError:
+            return None
+        finally:
+            self.provider.preference.record_solver_stats(resolver.stats)
+            self.provider.preference.spend(resolver.stats.rounds)
+
+        selected = {
+            name: trial.items[token]
+            for name, token in pins.items()
+            if isinstance(name, str)
+        }
+        if trial.incomplete:
+            return None
+        admission = self.metadata_admission
+        if admission is not None:
+            subjects: Iterable[CandidateType] = selected.values()
+            if isinstance(admission, _SelectedAdmission):
+                # A requested root validates the whole reachable model in one call.
+                subjects = (selected[name] for name in islice(self.provider.roots, 1))
+            if any(not admission(candidate, selected) for candidate in subjects):
+                return None
+        return selected
+
     def solve(self) -> PreparedSolution[CandidateType]:
         """Resolve once, retaining exact choices for host adoption and diagnostics."""
         self._check_round_budget()
         try:
             selected = self._try_preferred()
+            if selected is None and self.try_live:
+                selected = self._try_live()
             if selected is None:
                 selected = self.provider.select()
         except ResolutionTerminatedError:
@@ -203,6 +259,68 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
             tuple(self.provider.roots),
             self.provider.preference.explain(selected),
         )
+
+
+class _WithdrawalProofRequiredError(Exception):
+    """An observed exact declaration can permit a withdrawn candidate."""
+
+
+class _LiveProvider(
+    PreferenceProvider[CandidateType, RangeType, PinnedRequirementType]
+):
+    """Keep metadata sequencing while trying live choices before admission proofs."""
+
+    def __init__(
+        self,
+        preference: PreferenceSearch[CandidateType, RangeType, PinnedRequirementType],
+        *,
+        preferred_candidate: Callable[[str], CandidateType | None] | None,
+        on_candidate_considered: Callable[[CandidateType], None] | None,
+    ) -> None:
+        super().__init__(
+            preference,
+            preferred_candidate=preferred_candidate,
+            on_candidate_considered=on_candidate_considered,
+        )
+        self.pins: Sequence[PinnedRequirementType] = self.input_pins
+
+    @override
+    def receive_decision_scan_hint(
+        self,
+        positive_ranges: Mapping[Package, RangeProtocol[int]],
+        decisions: Mapping[Package, int],
+    ) -> None:
+        self.positive = positive_ranges
+        self.decisions = decisions
+
+    @override
+    def is_ready(self, package: Package) -> bool:
+        """Live metadata needs no withdrawal-permission proof."""
+        del package
+        return True
+
+    @override
+    def eligible(self, candidate: CandidateType) -> bool:
+        if self.catalogue.candidate_withdrawn(candidate):
+            if any(self.catalogue.pin_allows(pin, candidate) for pin in self.pins):
+                raise _WithdrawalProofRequiredError
+            return False
+        return super().eligible(candidate)
+
+    @override
+    def get_dependencies(
+        self, package: Package, version: int
+    ) -> dict[Package, Range[int]]:
+        if not isinstance(package, MetadataProxy):
+            return super().get_dependencies(package, version)
+
+        data = self.catalogue.facts[self.items[package.candidate]]
+        assert data is not None
+        self.pins = (*self.input_pins, *data.pins)
+        try:
+            return super().get_dependencies(package, version)
+        finally:
+            self.pins = self.input_pins
 
 
 class _SelectedAdmission(Generic[CandidateType, RangeType, PinnedRequirementType]):

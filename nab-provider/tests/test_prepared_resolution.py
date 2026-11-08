@@ -39,6 +39,156 @@ class ObservedCatalogue(Catalogue):
         return super().choices(package)
 
 
+def test_live_trial_retains_the_host_model_policy() -> None:
+    newer, older = Choice("app", 2), Choice("app", 1)
+    catalogue = Catalogue((newer, older))
+    session = PreparedResolution.from_catalogue(
+        catalogue,
+        {"app": Range.full()},
+        (),
+        {},
+        selection_policy=lambda selected: selected["app"] == older,
+        try_live=True,
+    )
+
+    assert session.solve().candidates == {"app": older}
+
+
+def test_live_trial_checks_the_complete_host_model_once() -> None:
+    app, dep = Choice("app", 1), Choice("dep", 1)
+    catalogue = Catalogue((app, dep))
+    catalogue.metadata[app] = Data({"dep": Range.singleton(1)})
+    observed: list[dict[str, Choice]] = []
+
+    def policy(selected: Mapping[str, Choice]) -> bool:
+        observed.append(dict(selected))
+        return True
+
+    session = PreparedResolution.from_catalogue(
+        catalogue, {"app": Range.full()}, (), {}, selection_policy=policy, try_live=True
+    )
+
+    assert session.solve().candidates == {"app": app, "dep": dep}
+    assert observed == [{"app": app, "dep": dep}]
+
+
+def test_live_trial_keeps_candidate_specific_admission_checks() -> None:
+    app, dep = Choice("app", 1), Choice("dep", 1)
+    catalogue = Catalogue((app, dep))
+    catalogue.metadata[app] = Data({"dep": Range.singleton(1)})
+    observed: list[Choice] = []
+
+    def policy(candidate: Choice, selected: Mapping[str, Choice]) -> bool:
+        assert selected == {"app": app, "dep": dep}
+        observed.append(candidate)
+        return True
+
+    provider = PreferenceProvider.from_catalogue(
+        catalogue, {"app": Range.full()}, (), {}, metadata_is_admitted=policy
+    )
+    session = PreparedResolution(provider, metadata_admission=policy, try_live=True)
+
+    assert session.solve().candidates == {"app": app, "dep": dep}
+    assert set(observed) == {app, dep}
+
+
+def test_live_trial_checks_extra_base_bounds_before_reading_its_metadata() -> None:
+    extra = Choice("app[x]", 1)
+    base = Choice("app", 2)
+    catalogue = Catalogue((extra, base))
+    catalogue.metadata[extra] = Data({"unused": Range.full()})
+    session = PreparedResolution.from_catalogue(
+        catalogue,
+        {"app[x]": Range.singleton(1), "app": Range.singleton(2)},
+        (),
+        {},
+        try_live=True,
+    )
+
+    with pytest.raises(ResolutionError):
+        session.solve()
+    assert extra not in catalogue.facts
+    assert not any(choice.package == "unused" for choice in catalogue.facts)
+
+
+def test_live_trial_keeps_newer_parents_whose_pins_admit_a_withdrawn_child() -> None:
+    newer, older = Choice("app", 2), Choice("app", 1)
+    live, withdrawn = Choice("dep", 1), Choice("dep", 2, withdrawn=True)
+    catalogue = Catalogue((newer, older, withdrawn, live))
+    catalogue.metadata[newer] = Data({"dep": Range.singleton(2)}, (Pin("dep", 2),))
+    catalogue.metadata[older] = Data({"dep": Range.singleton(1)})
+    session = PreparedResolution.from_catalogue(
+        catalogue, {"app": Range.full()}, (), {}, try_live=True
+    )
+
+    assert session.solve().candidates == {"app": newer, "dep": withdrawn}
+    assert older not in catalogue.facts
+
+
+def test_live_trial_retains_input_pin_permission() -> None:
+    withdrawn = Choice("dep", 2, withdrawn=True)
+    catalogue = Catalogue((withdrawn,))
+    session = PreparedResolution.from_catalogue(
+        catalogue,
+        {"dep": Range.singleton(2)},
+        (Pin("dep", 2),),
+        {},
+        try_live=True,
+    )
+
+    assert session.solve().candidates == {"dep": withdrawn}
+
+
+def test_live_trial_uses_live_releases_without_reading_withdrawn_metadata() -> None:
+    live, withdrawn = Choice("dep", 1), Choice("dep", 2, withdrawn=True)
+    catalogue = Catalogue((withdrawn, live))
+    session = PreparedResolution.from_catalogue(
+        catalogue, {"dep": Range.full()}, (), {}, try_live=True
+    )
+
+    assert session.solve().candidates == {"dep": live}
+    assert withdrawn not in catalogue.facts
+
+
+def test_live_trial_does_not_restart_after_spending_the_shared_budget() -> None:
+    app, dep = Choice("app", 1), Choice("dep", 1)
+    catalogue = Catalogue((app, dep))
+    catalogue.metadata[app] = Data({"dep": Range.singleton(1)})
+    session = PreparedResolution.from_catalogue(
+        catalogue, {"app": Range.full()}, (), {}, try_live=True, max_rounds=1
+    )
+
+    with pytest.raises(ResolutionLimitError):
+        session.solve()
+    assert session.remaining_rounds == 0
+
+
+def test_live_trial_preserves_a_real_unsatisfiable_result() -> None:
+    app = Choice("app", 1)
+    catalogue = Catalogue((app,))
+    catalogue.metadata[app] = Data({"missing": Range.full()})
+    session = PreparedResolution.from_catalogue(
+        catalogue, {"app": Range.full()}, (), {}, try_live=True
+    )
+
+    with pytest.raises(ResolutionError) as caught:
+        session.solve()
+    assert not isinstance(caught.value, ResolutionLimitError)
+
+
+def test_unknown_metadata_does_not_hide_a_known_live_solution() -> None:
+    newer, older, unknown = Choice("app", 2), Choice("app", 1), Choice("dep", 1)
+    catalogue = Catalogue((newer, older, unknown))
+    catalogue.metadata[newer] = Data({"dep": Range.singleton(1)})
+    catalogue.unavailable.add(unknown)
+    session = PreparedResolution.from_catalogue(
+        catalogue, {"app": Range.full()}, (), {}, try_live=True
+    )
+
+    assert session.solve().candidates == {"app": older}
+    assert unknown not in catalogue.facts
+
+
 def test_preferred_graph_needs_no_full_listing() -> None:
     app = Choice("app", 1)
     dep = Choice("dep", 1)
@@ -359,7 +509,7 @@ def test_preferred_token_view_is_a_consistent_readonly_mapping() -> None:
     assert catalogue.listed == []
 
 
-def test_priority_is_cache_only_and_a_decision_does_not_imply_a_forced_choice() -> None:
+def test_metadata_priority_is_cache_only_for_wide_and_exact_choices() -> None:
     first = Choice("app", 1)
     second = Choice("app", 2)
     catalogue = ObservedCatalogue((first, second))
@@ -381,7 +531,7 @@ def test_priority_is_cache_only_and_a_decision_does_not_imply_a_forced_choice() 
     ordinary = provider.prioritize(
         MetadataProxy(first_token), Range[int].singleton(0), {}
     )
-    assert ordinary[0] > 0
+    assert ordinary < provider.prioritize("app", choices, {})
 
     assert (
         provider.choose_version("app", Range[int].singleton(first_token)) == first_token
@@ -389,7 +539,7 @@ def test_priority_is_cache_only_and_a_decision_does_not_imply_a_forced_choice() 
     forced = provider.prioritize(
         MetadataProxy(first_token), Range[int].singleton(0), {}
     )
-    assert forced < ordinary
+    assert forced == ordinary
 
     assert provider.choose_version("app", choices) == first_token
     assert (

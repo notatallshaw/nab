@@ -37,7 +37,11 @@ from nab_provider.target import Matrix, ResolveTarget
 from nab_provider.testing import make_sdist, pkg_override
 from nab_provider.vcs_admission import VcsConfig
 from nab_provider.yank_preference import IncompletePreferenceError
-from nab_provider.yanked_resolution import MetadataProxy, YankProxyProvider
+from nab_provider.yanked_resolution import (
+    MetadataProxy,
+    PermissionProxy,
+    YankProxyProvider,
+)
 from nab_provider.yanking import mark_yanked
 from nab_resolver import decide
 from nab_resolver.errors import (
@@ -49,7 +53,7 @@ from nab_resolver.errors import (
 )
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver
-from nab_resolver.types import Incompatibility, IncompatibilityCause
+from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 
 def run_graph(
@@ -825,6 +829,22 @@ def test_missing_extra_rejects_a_candidate_without_enabling_its_pin() -> None:
         search.resolve()
     assert caught.value.verbose_message is not None
     assert "does not provide extra" in caught.value.verbose_message
+
+
+def test_permission_failure_does_not_report_an_unrelated_metadata_rejection() -> None:
+    search = graph_search([("app", "1", False, [])], ["app[x]"])
+    candidate = search.catalogue.choices("app[x]")[0]
+    assert search.catalogue.prepare(candidate) is None
+    token = search.identify(candidate)
+    error = ResolutionError(
+        "no permission proof",
+        Incompatibility(
+            [Term(PermissionProxy(token), Range[int].full(), positive=True)],
+            cause=IncompatibilityCause.NO_VERSIONS,
+        ),
+    )
+
+    assert search._failure_diagnostics(error) == ()
 
 
 def test_proxy_conflicts_stop_independent_choice_permutations() -> None:

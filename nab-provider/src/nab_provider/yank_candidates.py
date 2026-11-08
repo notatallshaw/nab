@@ -58,7 +58,24 @@ __all__ = [
 class Candidate(VersionCandidate):
     """A package version restricted to its yanked or non-yanked files."""
 
-    __slots__ = ()
+    __slots__ = ("_identity",)
+
+    def __init__(self, package: str, version: Version, *, withdrawn: bool) -> None:
+        """Retain the fixed comparison fields for repeated catalogue lookups."""
+        super().__init__(package, version, withdrawn=withdrawn)
+        self._identity = (self.package, self.version, self.withdrawn, self.label)
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        """Compare native candidates by package, version text and withdrawal."""
+        if not isinstance(other, Candidate) or type(other) is not type(self):
+            return NotImplemented
+        return self._identity == other._identity
+
+    @override
+    def __hash__(self) -> int:
+        """Hash the identity using the current interpreter's hash seed."""
+        return hash(self._identity)
 
     @property
     @override

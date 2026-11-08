@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import copy
+import os
+import pickle
+import subprocess
+import sys
+
 import pytest
 
 from nab_provider._compat import override
@@ -9,6 +15,7 @@ from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.value import field_names, replace
 from nab_provider.version_candidates import (
     PreparedVersionCatalogue,
     VersionCandidate,
@@ -60,6 +67,54 @@ class Catalogue(PreparedVersionCatalogue[VersionCandidate, VersionCandidateData]
             self.unavailable.add(candidate)
             return None
         return None if candidate == self.rejected else self.data
+
+
+def test_native_candidate_identity_preserves_raw_labels_and_withdrawal() -> None:
+    original = Candidate("sample[feature]", Version("1.0"), withdrawn=False)
+    same = Candidate("sample[feature]", Version("1.0"), withdrawn=False)
+    different = [
+        Candidate("sample", Version("1.0"), withdrawn=False),
+        Candidate("sample[feature]", Version("1"), withdrawn=False),
+        Candidate("sample[feature]", Version("1.0"), withdrawn=True),
+        VersionCandidate("sample[feature]", Version("1.0"), withdrawn=False),
+    ]
+
+    assert {original: "metadata"}[same] == "metadata"
+    assert all(original != candidate for candidate in different)
+    assert original != object()
+    assert len({original, same, *different}) == 1 + len(different)
+
+    assert copy.copy(original) == original
+    assert pickle.loads(pickle.dumps(original)) == original  # noqa: S301 - locally created test data.
+    assert replace(original, withdrawn=True) == different[2]
+    assert field_names(original) == ("package", "version", "withdrawn", "label")
+
+
+def test_native_candidate_pickle_rehashes_under_another_seed() -> None:
+    setup = """import pickle, sys
+from nab_provider._vendor.packaging.version import Version
+from nab_provider.yank_candidates import Candidate
+candidate = Candidate('sample', Version('1.0'), withdrawn=False)
+"""
+    payload = subprocess.check_output(  # noqa: S603 - fixed interpreter and literal test program.
+        [
+            sys.executable,
+            "-c",
+            setup + "sys.stdout.buffer.write(pickle.dumps({candidate: 'metadata'}))",
+        ],
+        env={**os.environ, "PYTHONHASHSEED": "0"},
+    )
+    subprocess.run(  # noqa: S603 - fixed interpreter and literal test program.
+        [
+            sys.executable,
+            "-c",
+            setup
+            + "assert pickle.loads(sys.stdin.buffer.read())[candidate] == 'metadata'",
+        ],
+        input=payload,
+        env={**os.environ, "PYTHONHASHSEED": "1"},
+        check=True,
+    )
 
 
 def test_listing_cache_retains_distinct_version_text() -> None:

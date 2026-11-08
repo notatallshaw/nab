@@ -37,12 +37,13 @@ from .yank_preference import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
 
-    from nab_resolver.types import RootRequirement
+    from nab_resolver.types import RootRequirement, Term
 
     from ._vendor.packaging.version import Version
     from .diagnostics import Diagnostic
+    from .preference_provider import Package
     from .provider import Provider
 
 __all__ = ["MetadataProxy", "PermissionProxy", "YankProxyProvider"]
@@ -100,6 +101,16 @@ class YankProxyProvider(PreferenceProvider["Candidate", "VersionRange", Requirem
             else None
         )
 
+    def _rejection_candidates(self, term: Term[Package, int]) -> Iterator[Candidate]:
+        """Recover native identities from one metadata rejection term."""
+        package = term.package
+        if isinstance(package, MetadataProxy):
+            yield self.items[package.candidate]
+        elif isinstance(package, str) and term.is_positive():
+            for token in self.package_tokens.get(package, ()):
+                if token in term.constraint:
+                    yield self.items[token]
+
     def _failure_diagnostics(
         self, error: ResolutionError
     ) -> tuple[tuple[str, Diagnostic], ...]:
@@ -115,9 +126,7 @@ class YankProxyProvider(PreferenceProvider["Candidate", "VersionRange", Requirem
                 )
             if node.cause is IncompatibilityCause.NO_VERSIONS:
                 for term in node.terms:
-                    package = term.package
-                    if isinstance(package, MetadataProxy):
-                        candidate = self.items[package.candidate]
+                    for candidate in self._rejection_candidates(term):
                         block = self._native_catalogue.rejections.get(candidate)
                         if block is not None:
                             rejections.setdefault(candidate.package, {})[candidate] = (

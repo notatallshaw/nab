@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Hashable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, TypeVar
@@ -101,9 +102,11 @@ class PreferenceProvider(
         self.identities: dict[CandidateType, int] = {}
         self.package_tokens: dict[str, set[int]] = {}
         self.matching_counts: dict[tuple[str, RangeProtocol[int]], int] = {}
-        self.immediate_metadata: set[int] = set()
+        self._metadata_dependencies: dict[int, dict[Package, Range[int]]] = {}
         self.proofs: dict[PermissionProxy, dict[Support, int]] = {}
         self.supports: dict[int, Support] = {}
+        self._grounded_choices: dict[str, int] | None = None
+        self._grounded_revision: int | None = None
         self.decisions: Mapping[Package, int] = {}
         self.positive: Mapping[Package, RangeProtocol[int]] = {}
         self.pending: list[Incompatibility[Package, int]] = []
@@ -249,11 +252,11 @@ class PreferenceProvider(
         allowed = self.catalogue.intersect_ranges(
             allowed, self.constraints.get(package, self.catalogue.full_range())
         )
-        result = Range[int].empty()
-        for candidate in self.catalogue.ordered(package, allowed):
-            if self.eligible(candidate):
-                result |= Range.singleton(self.identify(candidate))
-        return result
+        return Range[int].from_versions(
+            self.identify(candidate)
+            for candidate in self.catalogue.ordered(package, allowed)
+            if self.eligible(candidate)
+        )
 
     def encode_candidate(
         self, candidate: CandidateType, allowed: RangeType
@@ -278,7 +281,21 @@ class PreferenceProvider(
         """Refresh permission and readiness after propagation or backtracking."""
         self.decisions = decisions
         self.positive = positive_ranges
-        self.supports = self.ground()
+        choices = {
+            name: token for name, token in decisions.items() if isinstance(name, str)
+        }
+        revision = len(self.catalogue.facts)
+        if choices == self._grounded_choices and revision == self._grounded_revision:
+            return
+        if any(
+            self.catalogue.candidate_withdrawn(self.items[token])
+            for token in choices.values()
+        ):
+            self.supports = self.ground()
+        else:
+            self.supports = self._ground_live()
+        self._grounded_choices = choices
+        self._grounded_revision = revision
         for token, support in self.supports.items():
             if self.catalogue.candidate_withdrawn(self.items[token]):
                 proofs = self.proofs.setdefault(PermissionProxy(token), {})
@@ -322,6 +339,27 @@ class PreferenceProvider(
 
             if not changed:
                 return admitted
+
+    def _ground_live(self) -> dict[int, Support]:
+        """Find rooted support when every selected candidate is live."""
+        demand: dict[str, Support] = {name: frozenset() for name in self.roots}
+        pending = deque(self.roots)
+        admitted: dict[int, Support] = {}
+        while pending:
+            package = pending.popleft()
+            token = self.decisions.get(package)
+            if token is None or token in admitted:
+                continue
+            admitted[token] = demand[package]
+            data = self.catalogue.facts.get(self.items[token])
+            if data is None:
+                continue
+            support = admitted[token] | {token}
+            for child in data.dependencies:
+                if child not in demand:
+                    demand[child] = support
+                    pending.append(child)
+        return admitted
 
     def admission_support(
         self,
@@ -377,18 +415,20 @@ class PreferenceProvider(
                 preferred_rank,
             )
         if isinstance(package, MetadataProxy):
-            if package.candidate in self.immediate_metadata:
-                return (-1, 0, 0, 0)
-            return (1, 0, 0, 0)
+            return (-1, 0, 0, 0)
         return (2, 0, 0, 0)
 
     def _matching_count(self, package: str, allowed: RangeProtocol[int]) -> int:
-        """Count registered eligible identities without reading another listing."""
+        """Count up to two identities; priority only distinguishes forced domains."""
         key = package, allowed
         if key not in self.matching_counts:
-            self.matching_counts[key] = sum(
-                token in allowed for token in self.package_tokens.get(package, ())
-            )
+            count = 0
+            for token in self.package_tokens.get(package, ()):
+                if token in allowed:
+                    count += 1
+                    if count > 1:
+                        break
+            self.matching_counts[key] = count
         return self.matching_counts[key]
 
     def _preferred_token(self, package: str) -> int | None:
@@ -443,22 +483,9 @@ class PreferenceProvider(
         if isinstance(package, str):
             # Cached dependencies need incompatibilities before excluding candidates.
             token = self.candidate_token(package, version_range)
-            if token is not None:
-                # Keep the offered domain before the decision narrows it to a singleton.
-                immediate = not self.catalogue.candidate_withdrawn(
-                    self.items[token]
-                ) and (
-                    self._matching_count(package, version_range) == 1
-                    or self._preferred_token(package) == token
-                )
-                if immediate:
-                    self.immediate_metadata.add(token)
-                else:
-                    self.immediate_metadata.discard(token)
-
-                # Choice probes can repeat before metadata is prepared.
-                if self.on_candidate_considered is not None:
-                    self.on_candidate_considered(self.items[token])
+            # Choice probes can repeat before metadata is prepared.
+            if token is not None and self.on_candidate_considered is not None:
+                self.on_candidate_considered(self.items[token])
             return token
         if isinstance(package, PermissionProxy):
             return next(
@@ -480,6 +507,12 @@ class PreferenceProvider(
             for token in self.package_tokens.get(package, ()):
                 if version_range == Range.singleton(token):
                     candidate = self.items[token]
+                    if (
+                        candidate in self.catalogue.facts
+                        and self.catalogue.facts[candidate] is None
+                    ):
+                        self._reject_candidates(package, [token])
+                        return None
                     return (
                         token
                         if self.eligible(candidate)
@@ -487,14 +520,33 @@ class PreferenceProvider(
                         else None
                     )
 
-        return next(
-            (
-                self.identify(candidate)
-                for candidate in self.catalogue.ordered(package, allowed)
-                if self.eligible(candidate)
-                and self.identify(candidate) in version_range
-            ),
-            None,
+        rejected: list[int] = []
+        chosen: int | None = None
+        for candidate in self.catalogue.ordered(package, allowed):
+            if not self.eligible(candidate):
+                continue
+            token = self.identify(candidate)
+            if token not in version_range:
+                continue
+            if (
+                candidate in self.catalogue.facts
+                and self.catalogue.facts[candidate] is None
+            ):
+                rejected.append(token)
+                continue
+            chosen = token
+            break
+        if rejected:
+            self._reject_candidates(package, rejected)
+        return chosen
+
+    def _reject_candidates(self, package: str, tokens: Sequence[int]) -> None:
+        """Publish final catalogue rejections before skipping their identities."""
+        self.pending.append(
+            Incompatibility(
+                [Term(package, Range[int].from_versions(tokens), positive=True)],
+                cause=IncompatibilityCause.NO_VERSIONS,
+            )
         )
 
     def prepare_candidate(
@@ -523,6 +575,14 @@ class PreferenceProvider(
         if data is None:
             if candidate in self.catalogue.unavailable:
                 self.incomplete = True
+            else:
+                rejected_versions = Range[int].full()
+                self.pending.append(
+                    Incompatibility(
+                        [Term(package, rejected_versions, positive=True)],
+                        cause=IncompatibilityCause.NO_VERSIONS,
+                    )
+                )
             return None
 
         if self._metadata_is_admitted is not None:
@@ -567,6 +627,9 @@ class PreferenceProvider(
                 for i in support
             }
         token = package.candidate
+        cached = self._metadata_dependencies.get(token)
+        if cached is not None:
+            return cached.copy()
         data = self.catalogue.facts[self.items[token]]
         assert data is not None
         dependencies = encode_dependencies(
@@ -577,7 +640,10 @@ class PreferenceProvider(
             self.encode_range,
             self.encode_candidate,
         )
-        return dict(dependencies.items())
+        # Metadata and registered identities keep their meaning within this query.
+        encoded: dict[Package, Range[int]] = dict(dependencies.items())
+        self._metadata_dependencies[token] = encoded
+        return encoded.copy()
 
     def widen_decision(self, package: Package, version: int) -> None:
         """Keep incompatibilities specific to a candidate or permission reason."""

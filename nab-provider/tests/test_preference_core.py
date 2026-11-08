@@ -994,3 +994,302 @@ def test_exact_extra_cannot_require_a_different_base_file() -> None:
     assert child not in catalogue.facts
     assert other not in catalogue.facts
     assert not {"child", extra.package}.intersection(catalogue.listed)
+
+
+def test_new_metadata_revises_permission_for_unchanged_choices() -> None:
+    app = Choice("app", 1)
+    dep = Choice("dep", 1, withdrawn=True)
+    catalogue = Catalogue((app, dep))
+    catalogue.metadata[app] = Data({"dep": Range.singleton(1)}, (Pin("dep", 1),))
+    provider = PreferenceProvider.from_catalogue(
+        catalogue, {"app": Range.full()}, (), {}
+    )
+    app_token, dep_token = provider.identify(app), provider.identify(dep)
+    decisions = {"app": app_token, "dep": dep_token}
+
+    provider.receive_decision_scan_hint({}, decisions)
+    assert not provider.is_ready(MetadataProxy(dep_token))
+
+    catalogue.prepare(app)
+    provider.receive_decision_scan_hint({}, decisions)
+    assert provider.is_ready(MetadataProxy(dep_token))
+
+
+def test_changed_parent_revokes_permission_with_unchanged_metadata() -> None:
+    old, new = Choice("app", 1), Choice("app", 2)
+    dep = Choice("dep", 1, withdrawn=True)
+    catalogue = Catalogue((new, old, dep))
+    catalogue.metadata[new] = Data({"dep": Range.singleton(1)}, (Pin("dep", 1),))
+    catalogue.metadata[old] = Data({"dep": Range.singleton(1)})
+    catalogue.prepare(new)
+    catalogue.prepare(old)
+    provider = PreferenceProvider.from_catalogue(
+        catalogue, {"app": Range.full()}, (), {}
+    )
+    old_token, new_token, dep_token = map(provider.identify, (old, new, dep))
+    decisions = {"app": new_token, "dep": dep_token}
+
+    provider.receive_decision_scan_hint({}, decisions)
+    assert provider.is_ready(MetadataProxy(dep_token))
+
+    decisions["app"] = old_token
+    provider.receive_decision_scan_hint({}, decisions)
+    assert not provider.is_ready(MetadataProxy(dep_token))
+
+
+def excludes_assignment(
+    clauses: list[Incompatibility[Package, int]], assignments: Mapping[Package, int]
+) -> bool:
+    return any(
+        all(
+            term.package in assignments
+            and term.satisfies(Range.singleton(assignments[term.package]))
+            for term in clause.terms
+        )
+        for clause in clauses
+    )
+
+
+def test_final_metadata_rejection_does_not_depend_on_unrelated_choices() -> None:
+    bad, old, new = Choice("bad", 1), Choice("other", 1), Choice("other", 2)
+    catalogue = Catalogue((bad, old, new))
+    catalogue.metadata[bad] = None
+    provider = PreferenceProvider.from_catalogue(
+        catalogue, {"bad": Range.full(), "other": Range.full()}, (), {}
+    )
+    bad_token, old_token, new_token = map(provider.identify, (bad, old, new))
+    provider.receive_decision_scan_hint({}, {"bad": bad_token, "other": old_token})
+    metadata = MetadataProxy(bad_token)
+    assert provider.choose_version(metadata, Range.full()) is None
+    clauses = provider.consume_pending_clauses()
+
+    for other in (old_token, new_token):
+        assert excludes_assignment(
+            clauses, {"bad": bad_token, "other": other, metadata: 0}
+        )
+
+
+def test_unavailable_metadata_has_no_permanent_rejection_proof() -> None:
+    bad = Choice("bad", 1)
+    catalogue = Catalogue((bad,))
+    catalogue.unavailable.add(bad)
+    provider = PreferenceProvider.from_catalogue(
+        catalogue, {"bad": Range.full()}, (), {}
+    )
+    token = provider.identify(bad)
+    provider.receive_decision_scan_hint({}, {"bad": token})
+    metadata = MetadataProxy(token)
+
+    assert provider.choose_version(metadata, Range.full()) is None
+    assert provider.incomplete
+    assert not excludes_assignment(
+        provider.consume_pending_clauses(), {"bad": token, metadata: 0}
+    )
+
+
+def test_contextual_metadata_refusal_keeps_its_selected_parent_guard() -> None:
+    bad, old, new = Choice("bad", 1), Choice("other", 1), Choice("other", 2)
+    catalogue = Catalogue((bad, old, new))
+    provider = PreferenceProvider.from_catalogue(
+        catalogue,
+        {"bad": Range.full(), "other": Range.full()},
+        (),
+        {},
+        metadata_is_admitted=lambda candidate, selected: selected["other"].version == 2,
+    )
+    bad_token, old_token, new_token = map(provider.identify, (bad, old, new))
+    provider.receive_decision_scan_hint({}, {"bad": bad_token, "other": old_token})
+    metadata = MetadataProxy(bad_token)
+    assert provider.choose_version(metadata, Range.full()) is None
+    clauses = provider.consume_pending_clauses()
+
+    assert excludes_assignment(
+        clauses, {"bad": bad_token, "other": old_token, metadata: 0}
+    )
+    assert not excludes_assignment(
+        clauses, {"bad": bad_token, "other": new_token, metadata: 0}
+    )
+
+
+def test_live_grounding_keeps_cycle_support_and_excludes_orphans() -> None:
+    app, middle, leaf, orphan = (
+        Choice(name, 1) for name in ("app", "middle", "leaf", "orphan")
+    )
+    catalogue = Catalogue((app, middle, leaf, orphan))
+    catalogue.metadata[app] = Data({"middle": Range.singleton(1)})
+    catalogue.metadata[middle] = Data(
+        {"leaf": Range.singleton(1), "app": Range.singleton(1)}
+    )
+    catalogue.metadata[orphan] = Data({"leaf": Range.singleton(1)})
+    for candidate in (app, middle, leaf, orphan):
+        catalogue.prepare(candidate)
+    provider = PreferenceProvider.from_catalogue(
+        catalogue, {"app": Range.full()}, (), {}
+    )
+    app_token, middle_token, leaf_token, orphan_token = map(
+        provider.identify, (app, middle, leaf, orphan)
+    )
+    provider.receive_decision_scan_hint(
+        {},
+        {
+            "app": app_token,
+            "middle": middle_token,
+            "leaf": leaf_token,
+            "orphan": orphan_token,
+        },
+    )
+
+    assert provider.supports == {
+        app_token: frozenset(),
+        middle_token: frozenset({app_token}),
+        leaf_token: frozenset({app_token, middle_token}),
+    }
+    assert not provider.is_ready(MetadataProxy(orphan_token))
+
+
+def test_cached_rejections_skip_choices_with_one_permanent_clause() -> None:
+    bad, older, good = (Choice("dep", version) for version in (3, 2, 1))
+    catalogue = Catalogue((bad, older, good))
+    catalogue.facts.update({bad: None, older: None})
+    provider = PreferenceProvider.from_catalogue(
+        catalogue, {"dep": Range.full()}, (), {}
+    )
+    domain = provider.encode_range("dep", Range.full())
+
+    assert provider.choose_version("dep", domain) == provider.identify(good)
+    clauses = provider.consume_pending_clauses()
+    assert len(clauses) == 1
+    for candidate in (bad, older):
+        assert excludes_assignment(clauses, {"dep": provider.identify(candidate)})
+    assert not excludes_assignment(clauses, {"dep": provider.identify(good)})
+
+
+def test_cached_exact_rejection_retains_its_permanent_cause() -> None:
+    bad = Choice("dep", 1)
+    catalogue = Catalogue((bad,))
+    catalogue.facts[bad] = None
+    provider = PreferenceProvider.from_catalogue(
+        catalogue,
+        {"dep": Range.full()},
+        (),
+        {},
+        exact_dependencies=lambda candidate: (),
+    )
+    token = provider.identify(bad)
+
+    assert provider.choose_version("dep", Range.singleton(token)) is None
+    assert excludes_assignment(provider.consume_pending_clauses(), {"dep": token})
+
+
+def test_unknown_metadata_keeps_its_candidate_available() -> None:
+    unknown, old = Choice("dep", 2), Choice("dep", 1)
+    catalogue = Catalogue((unknown, old))
+    catalogue.unavailable.add(unknown)
+    provider = PreferenceProvider.from_catalogue(
+        catalogue, {"dep": Range.full()}, (), {}
+    )
+    domain = provider.encode_range("dep", Range.full())
+
+    assert provider.choose_version("dep", domain) == provider.identify(unknown)
+    assert not provider.consume_pending_clauses()
+
+
+@pytest.mark.parametrize("versions", [(), (1,), (1, 2), (1, 2, 3)])
+def test_choice_priority_preserves_empty_forced_and_wide_domains(
+    versions: tuple[int, ...],
+) -> None:
+    choices = tuple(Choice("dep", version) for version in range(1, 5))
+    catalogue = Catalogue(choices)
+    provider = PreferenceProvider.from_catalogue(
+        catalogue, {"dep": Range.full()}, (), {}
+    )
+    tokens = {choice.version: provider.identify(choice) for choice in choices}
+    allowed = Range[int].from_versions(tokens[version] for version in versions)
+
+    assert provider.prioritize("dep", allowed, {})[2] == min(len(versions), 2)
+
+
+def test_choice_priority_stops_after_two_matching_identities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    choices = tuple(Choice("dep", version) for version in range(1, 49))
+    catalogue = Catalogue(choices)
+    provider = PreferenceProvider.from_catalogue(
+        catalogue, {"dep": Range.full()}, (), {}
+    )
+    for choice in choices:
+        provider.identify(choice)
+    allowed = Range[int].full()
+    contains = Range.__contains__
+    calls = 0
+
+    def counted(domain: Range[int], token: object) -> bool:
+        nonlocal calls
+        if domain is allowed:
+            calls += 1
+        return contains(domain, token)
+
+    monkeypatch.setattr(Range, "__contains__", counted)
+    assert provider.prioritize("dep", allowed, {})[2] == 2
+    assert calls == 2
+
+
+def test_metadata_dependency_cache_keeps_maps_independent_and_scopes_fresh() -> None:
+    app, live, withdrawn = (
+        Choice("app", 1),
+        Choice("dep", 1),
+        Choice("dep", 2, withdrawn=True),
+    )
+
+    class ObservedCatalogue(Catalogue):
+        def __init__(self) -> None:
+            super().__init__((app, live, withdrawn))
+            self.order_reads = 0
+
+        @override
+        def ordered(self, package: str, allowed: Range[int]) -> list[Choice]:
+            self.order_reads += 1
+            return super().ordered(package, allowed)
+
+    catalogue = ObservedCatalogue()
+    catalogue.metadata[app] = Data({"dep": Range.full()})
+    catalogue.prepare(app)
+    provider = PreferenceProvider.from_catalogue(
+        catalogue, {"app": Range.full()}, (), {}
+    )
+    metadata = MetadataProxy(provider.identify(app))
+    first = provider.get_dependencies(metadata, 0)
+    expected = dict(first)
+    first.clear()
+
+    assert provider.get_dependencies(metadata, 0) == expected
+    assert catalogue.order_reads == 1
+
+    scoped = provider.new_query(PreferenceScope(live=frozenset({"dep"})))
+    restricted = scoped.get_dependencies(metadata, 0)
+    assert provider.identify(live) in restricted["dep"]
+    assert provider.identify(withdrawn) not in restricted["dep"]
+    assert catalogue.order_reads == 2
+
+
+def test_empty_metadata_dependencies_are_cached_without_exposing_the_cache() -> None:
+    app = Choice("app", 1)
+    catalogue = Catalogue((app,))
+    catalogue.prepare(app)
+    calls = 0
+
+    def exact(candidate: Choice) -> tuple[Choice, ...]:
+        nonlocal calls
+        assert candidate == app
+        calls += 1
+        return ()
+
+    provider = PreferenceProvider.from_catalogue(
+        catalogue, {"app": Range.full()}, (), {}, exact_dependencies=exact
+    )
+    metadata = MetadataProxy(provider.identify(app))
+    first = provider.get_dependencies(metadata, 0)
+    first["injected"] = Range.full()
+
+    assert provider.get_dependencies(metadata, 0) == {}
+    assert calls == 1
