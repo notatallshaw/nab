@@ -779,6 +779,8 @@ class Provider:
         self.trust_unverified_sdist_deps = trust_unverified_sdist_deps
         self.assume_universal_deps = assume_universal_deps
         self.assume_consistent_metadata = assume_consistent_metadata
+
+        # Keep listing-context tracking off the default path.
         self.consistent_metadata_declared = (
             assume_consistent_metadata
             or any(
@@ -796,6 +798,7 @@ class Provider:
         self.consistent_metadata_contexts: dict[str, object | None] | None = (
             {} if self.consistent_metadata_declared else None
         )
+
         self.allow_zip_sdists = allow_zip_sdists
         self._resolution_strategy = resolution_strategy
         # The scan asks this once per package, so keep the answer.
@@ -1323,9 +1326,10 @@ class Provider:
         version: Version,
         index_name: str | None = None,
     ) -> bool:
-        """Whether one wheel's complete metadata may answer for this release."""
+        """Whether this release may reuse another wheel's complete metadata."""
         if not self._package_overrides and not self._index_overrides:
             return self.assume_consistent_metadata
+
         result = self._effective_field(
             canonical_name,
             version,
@@ -1335,6 +1339,7 @@ class Provider:
         )
         if result is _UNSET:
             return self.assume_consistent_metadata
+
         assert isinstance(result, bool)
         return result
 
@@ -1677,6 +1682,7 @@ class Provider:
         self, normalized: str, files: Sequence[WheelFile | SdistFile]
     ) -> list[tuple[Version, DistFile]]:
         """See :func:`nab_provider._provider.listing.filter_distributions`."""
+        # Capture the raw listing context before filtering can publish candidates.
         if (
             self.consistent_metadata_contexts is not None
             and normalized not in self.versions_cache
@@ -1684,6 +1690,7 @@ class Provider:
             self.consistent_metadata_contexts[normalized] = (
                 self.coordinator.index.consistent_metadata_context(normalized, files)
             )
+
         original_cache = self.listing_filter_cache
         self.prepared_listings.pop(normalized, None)
 
@@ -3145,15 +3152,18 @@ class Provider:
             self.prefetch_new_deps(self.deps_cache[cache_key])
             return self.deps_cache[cache_key]
 
+        # Preserve the ordinary path when no consistency policy was declared.
         read_metadata = (
             _metadata_resolver.resolve_consistent_metadata
             if self.consistent_metadata_declared
             else _metadata_resolver.resolve_metadata
         )
         metadata_text, from_sdist = read_metadata(self, versions, package, version)
+
         self._parse_and_cache_metadata_guarded(
             cache_key, metadata_text, from_sdist=from_sdist
         )
+
         if (
             not self.consistent_metadata_declared
             or not self.effective_assume_consistent_metadata(

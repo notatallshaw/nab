@@ -27,19 +27,19 @@ key containing a specifier.
 
 Package overrides accept these fields:
 
-| Field                        | Effect                                                                                           |
-| ---------------------------- | ------------------------------------------------------------------------------------------------ |
-| `dist-policy`                | Choose installation artifacts; also accepts the \`{ policy = "...", trust-unverified-deps = true |
-| `metadata-policy`            | Choose `match-artifact` or `prefer-wheel` metadata selection                                     |
-| `build-policy`               | Permit or forbid metadata builds                                                                 |
-| `assume-universal-deps`      | Allow dependency declarations to be reused across targets                                        |
-| `assume-consistent-metadata` | Reuse one wheel’s complete metadata across the release                                           |
-| `allow-zip-sdists`           | Admit or refuse [legacy ZIP sdists](distribution-policy.md#supported-source-archives)            |
-| `uploaded-prior-to`          | Set a timezone-aware datetime or `P<n>D` cooldown; `false` removes the cutoff                    |
-| `index`                      | Route the package to one declared index; no other index is consulted                             |
-| `dependencies`               | Replace runtime dependency declarations with a list of PEP 508 requirements                      |
-| `requires-python`            | Replace the Python requirement with a PEP 440 specifier                                          |
-| `provides-extra`             | Replace the list of declared extra names                                                         |
+| Field                        | Effect                                                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------- |
+| `dist-policy`                | Choose installation artifacts using a policy name or table.                           |
+| `metadata-policy`            | Choose `match-artifact` or `prefer-wheel` metadata selection                          |
+| `build-policy`               | Permit or forbid metadata builds                                                      |
+| `assume-universal-deps`      | Allow dependency declarations to be reused across targets                             |
+| `assume-consistent-metadata` | Reuse one wheel's complete metadata across the release.                               |
+| `allow-zip-sdists`           | Admit or refuse [legacy ZIP sdists](distribution-policy.md#supported-source-archives) |
+| `uploaded-prior-to`          | Set a timezone-aware datetime or `P<n>D` cooldown; `false` removes the cutoff         |
+| `index`                      | Route the package to one declared index; no other index is consulted                  |
+| `dependencies`               | Replace runtime dependency declarations with a list of PEP 508 requirements           |
+| `requires-python`            | Replace the Python requirement with a PEP 440 specifier                               |
+| `provides-extra`             | Replace the list of declared extra names                                              |
 
 See [Distribution policy](distribution-policy.md), [Build policy](build-policy.md) and
 [Metadata overrides](metadata-overrides.md) for the value formats. An explicit scoped `false`

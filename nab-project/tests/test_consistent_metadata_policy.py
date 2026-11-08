@@ -30,10 +30,12 @@ def test_input_policy_reaches_every_target_provider(
     windows = make_wheel(tag="py3-none-win_amd64")
     linuxdep = make_wheel(package="linuxdep")
     windep = make_wheel(package="windep")
+
     assert linux.metadata_url is not None
     assert windows.metadata_url is not None
     assert linuxdep.metadata_url is not None
     assert windep.metadata_url is not None
+
     fetch = make_coordinator(
         listings={"pkg": [linux, windows], "linuxdep": [linuxdep], "windep": [windep]},
         metadata_by_url={
@@ -64,12 +66,17 @@ def test_input_policy_reaches_every_target_provider(
             )
     finally:
         asyncio.run(transport.aclose())
+
     assert len(result.target_results) == len(targets)
     assert all(target.success for target in result.target_results)
+
     first, second = result.target_results
+
     assert set(first.pins) == {"pkg", "linuxdep"}
     assert set(second.pins) == ({"pkg", "linuxdep"} if assumed else {"pkg", "windep"})
     assert second.lock is not None
+
     selected = second.lock.pins["pkg"]
+
     assert isinstance(selected, IndexPin)
     assert windows.filename in {wheel.filename for wheel in selected.wheels}

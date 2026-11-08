@@ -354,10 +354,11 @@ class InMemoryIndex:
     def consistent_metadata_context(
         self, package: str, files: Sequence[WheelFile | SdistFile]
     ) -> object | None:
-        """Bind a provider's raw listing to its current serving-index context."""
+        """Return the sharing token for this raw listing and its serving index."""
         with self._lock:
             if self._listings.get(package) is not files:
                 return None
+
             context = self._consistent_metadata_contexts.get(package)
             if context is None:
                 context = object()
@@ -367,19 +368,23 @@ class InMemoryIndex:
     def get_consistent_wheel_metadata(
         self, package: str, version: str, *, context: object | None
     ) -> str | None:
-        """Read a release representative while its source slot remains unchanged."""
+        """Return shared release metadata while its source is unchanged."""
         with self._lock:
             if (
                 context is None
                 or self._consistent_metadata_contexts.get(package) is not context
             ):
                 return None
+
             sources = self._consistent_wheel_metadata.get(package)
             if sources is None:
                 return None
+
             representative = sources.get(version)
             if representative is None:
                 return None
+
+            # A replacement or fetch error invalidates the shared source.
             url, text = representative
             if self._metadata.get((package, version, url)) != text or (
                 (package, version, url) in self._metadata_errors
@@ -387,6 +392,7 @@ class InMemoryIndex:
             ):
                 sources.pop(version)
                 return None
+
             return text
 
     def store_consistent_wheel_metadata(
@@ -394,6 +400,7 @@ class InMemoryIndex:
     ) -> None:
         """Remember the first validated wheel source for an opted-in release."""
         with self._lock:
+            # Publish only to the context that admitted this wheel's metadata.
             if (
                 context is not None
                 and self._consistent_metadata_contexts.get(package) is context
