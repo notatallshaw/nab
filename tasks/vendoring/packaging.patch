@@ -498,3 +498,28 @@ index fbfca2e..bf535d4 100644
      @classmethod
      def _from_specifier_set(cls, specifier_set: SpecifierSet) -> VersionRange:
          """Build the range accepted by ``specifier_set``.
+diff --git a/nab-provider/src/nab_provider/_vendor/packaging/ranges.py b/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
+index bf535d48b..d2dd06277 100644
+--- a/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
++++ b/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
+@@ -1883,13 +1883,13 @@ class VersionRange:
+ 
+         def admit(item: Any) -> tuple[bool, Version | None, bool]:  # noqa: ANN401
+             raw: Version | str = item if key is None else key(item)
+-            raw_lower = str(raw).lower()
+-
+-            if reject_set and raw_lower in reject_set:
+-                return False, None, False
+-            if admit_set and raw_lower in admit_set:
+-                # An explicit ``===`` literal names this version outright.
+-                return True, coerce_version(raw), True
++            if reject_set or admit_set:
++                raw_lower = str(raw).lower()
++                if reject_set and raw_lower in reject_set:
++                    return False, None, False
++                if admit_set and raw_lower in admit_set:
++                    # An explicit ``===`` literal names this version outright.
++                    return True, coerce_version(raw), True
+ 
+             parsed = coerce_version(raw)
+             if parsed is None:
