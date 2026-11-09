@@ -26,6 +26,9 @@ def split_extra(package: str) -> tuple[str, str | None]:
 
     The extra name is normalized per PEP 685.
     """
+    if "[" not in package:
+        return (package, None)
+
     m = _EXTRA_RE.match(package)
     if m is None:
         return (package, None)
