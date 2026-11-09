@@ -70,6 +70,30 @@ class Candidate(HashableRecord):
         return split_extra(self.package)[0]
 
 
+def _prefer_version(candidates: list[Candidate], preferred: Version) -> None:
+    """Move the preferred version text, or the first equal candidate, to the front."""
+    matching = next(
+        (
+            index
+            for index, candidate in enumerate(candidates)
+            if candidate.version == preferred
+        ),
+        None,
+    )
+    if matching is None:
+        return
+    label = str(preferred)
+    picked = next(
+        (
+            index
+            for index, candidate in enumerate(candidates)
+            if candidate.label == label
+        ),
+        matching,
+    )
+    candidates.insert(0, candidates.pop(picked))
+
+
 class CandidateData(Record):
     """Dependencies and the provider selecting the candidate's files."""
 
@@ -369,33 +393,37 @@ class YankCandidates:
                 for candidate in available
                 if candidate.withdrawn == withdrawn
             }
-            versions = sorted(
-                (candidate.version for candidate in candidates.values()), reverse=True
+            remaining = sorted(
+                candidates.values(),
+                key=lambda candidate: candidate.version,
+                reverse=True,
             )
-            while versions:
-                accepted = list(version_range.filter(versions))
+            while remaining:
+                accepted = list(
+                    version_range.filter(
+                        remaining, key=lambda candidate: candidate.version
+                    )
+                )
                 if not accepted:
                     break
-                accepted.sort(key=lambda version: (len(version.release), str(version)))
-                accepted.sort(reverse=not lowest)
-                preferred = self.preferences.get(base)
-                if preferred is not None and preferred in accepted and not lowest:
-                    picked = next(
-                        (
-                            version
-                            for version in accepted
-                            if str(version) == str(preferred)
-                        ),
-                        accepted[accepted.index(preferred)],
+                accepted.sort(
+                    key=lambda candidate: (
+                        len(candidate.version.release),
+                        candidate.label,
                     )
-                    accepted = [
-                        version for version in accepted if str(version) != str(picked)
-                    ]
-                    accepted.insert(0, picked)
-                result.extend(candidates[str(version)] for version in accepted)
-                exhausted = {str(version) for version in accepted}
-                versions = [
-                    version for version in versions if str(version) not in exhausted
+                )
+                accepted.sort(
+                    key=lambda candidate: candidate.version, reverse=not lowest
+                )
+                preferred = self.preferences.get(base)
+                if preferred is not None and not lowest:
+                    _prefer_version(accepted, preferred)
+                result.extend(accepted)
+                exhausted = {candidate.label for candidate in accepted}
+                remaining = [
+                    candidate
+                    for candidate in remaining
+                    if candidate.label not in exhausted
                 ]
         return result
 
