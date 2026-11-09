@@ -43,11 +43,20 @@ def publish_wheel(
     )
 
 
-@pytest.mark.parametrize(("dependency", "status"), [("dep==1", 0), ("dep>=1", 1)])
-def test_cli_respects_transitive_pin_before_locking_a_withdrawn_wheel(
+@pytest.mark.parametrize(
+    ("dependency", "requested", "status"),
+    [
+        ("dep==1", "dep>=1", 1),
+        ("dep>=1", "dep>=1", 1),
+        ("dep==1", "dep==1", 0),
+        ("dep>=1", "dep==1", 0),
+    ],
+)
+def test_cli_may_require_an_input_pin_for_a_transitive_yank(
     hermetic_roots: Path,
     capsys: pytest.CaptureFixture[str],
     dependency: str,
+    requested: str,
     status: int,
 ) -> None:
     index = hermetic_roots / "index"
@@ -55,7 +64,7 @@ def test_cli_respects_transitive_pin_before_locking_a_withdrawn_wheel(
     publish_wheel(index, "dep", (), yanked=True)
     project = hermetic_roots / "pyproject.toml"
     project.write_text(
-        '[project]\nname="probe"\nversion="1"\ndependencies=["app", "dep>=1"]\n'
+        f'[project]\nname="probe"\nversion="1"\ndependencies=["app", "{requested}"]\n'
         f'[[tool.nab.indexes]]\nname="local"\nurl="{index.as_uri()}"\n',
         encoding="utf-8",
     )

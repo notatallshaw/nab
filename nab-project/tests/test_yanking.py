@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from cProfile import Profile
 from functools import partial
 from itertools import permutations
 from typing import TYPE_CHECKING, Any
@@ -80,16 +81,28 @@ def run_graph(
     return result.target_results, port
 
 
-@pytest.mark.parametrize("roots", [("app",), ("dep>=2", "app"), ("app", "dep>=2")])
-def test_transitive_pin(roots: Sequence[str]) -> None:
+@pytest.mark.parametrize(
+    ("roots", "succeeds"),
+    [
+        (("app",), True),
+        (("dep>=2", "app"), False),
+        (("app", "dep>=2"), False),
+        (("dep==2", "app"), True),
+        (("app", "dep==2"), True),
+    ],
+)
+def test_transitive_pin_may_need_an_explicit_input_pin(
+    roots: Sequence[str], succeeds: bool
+) -> None:
     results, _ = run_graph(
         [("app", "1", False, ["dep==2"]), ("dep", "2", True, [])], roots
     )
-    assert results[0].success, results[0].error
-    assert {name: str(version) for name, version in results[0].pins.items()} == {
-        "app": "1",
-        "dep": "2",
-    }
+    assert results[0].success is succeeds, results[0].error
+    if succeeds:
+        assert {name: str(version) for name, version in results[0].pins.items()} == {
+            "app": "1",
+            "dep": "2",
+        }
 
 
 def test_unpinned_yank_is_not_prepared() -> None:
@@ -202,30 +215,36 @@ def test_inactive_marker_does_not_admit_a_yank() -> None:
     assert not results[0].success
 
 
-@pytest.mark.parametrize(("root", "succeeds"), [("app", False), ("app[x]", True)])
-def test_extra_controls_the_enabling_pin(root: str, succeeds: bool) -> None:
+@pytest.mark.parametrize(
+    ("roots", "succeeds"),
+    [(("app",), False), (("app[x]",), False), (("app[x]", "dep==2"), True)],
+)
+def test_extra_pin_may_need_an_explicit_input_pin(
+    roots: Sequence[str], succeeds: bool
+) -> None:
     results, _ = run_graph(
         [
             ("app", "1", False, ['dep==2; extra == "x"', "dep>=2"]),
             ("dep", "2", True, []),
         ],
-        [root],
+        roots,
         provided_extras={("app", "1", False): ("x",)},
     )
     assert results[0].success is succeeds
 
 
-def test_late_extra_adds_a_pin() -> None:
+@pytest.mark.parametrize("pinned", [False, True])
+def test_late_extra_pin_may_need_an_explicit_input_pin(pinned: bool) -> None:
     results, _ = run_graph(
         [
             ("app", "1", False, ['dep==2; extra == "x"', "dep>=2"]),
             ("other", "1", False, ["app[x]"]),
             ("dep", "2", True, []),
         ],
-        ["app", "other"],
+        ["app", "other", *(["dep==2"] if pinned else [])],
         provided_extras={("app", "1", False): ("x",)},
     )
-    assert results[0].success, results[0].error
+    assert results[0].success is pinned, results[0].error
 
 
 def test_withdrawn_artifact_can_supply_the_required_extra() -> None:
@@ -765,6 +784,70 @@ def test_unpinned_yank_does_not_exhaust_unrelated_choice_products(
     assert not any(candidate.withdrawn for candidate in search.catalogue.facts)
 
 
+@pytest.mark.parametrize("roots", list(permutations(("leaf", "app", "plugin"))))
+@pytest.mark.parametrize("noise_versions", [3, 5, 7])
+def test_live_trial_avoids_unpermitted_yank_choice_products(
+    roots: Sequence[str], noise_versions: int
+) -> None:
+    releases: list[ReleaseRow] = [
+        ("leaf", "2", False, []),
+        ("leaf", "1", False, []),
+        ("app", "2", True, []),
+        ("app", "1", False, ["leaf<2"]),
+        ("plugin", "1", False, [f"noise{i}" for i in range(3)]),
+    ]
+    releases.extend(
+        (f"noise{i}", str(version), False, [])
+        for i in range(3)
+        for version in range(1, noise_versions + 1)
+    )
+    search = graph_search(releases, roots)
+    search.preference.remaining = 50
+
+    pins, _ = search.resolve()
+
+    assert pins == {
+        "leaf": Version("1"),
+        "app": Version("1"),
+        "plugin": Version("1"),
+        **{f"noise{i}": Version(str(noise_versions)) for i in range(3)},
+    }
+    assert not any(candidate.withdrawn for candidate in search.catalogue.facts)
+    assert search.preference.remaining == 50 - search.stats.rounds
+
+
+@pytest.mark.parametrize(
+    ("declaration", "expected"),
+    [
+        ("dep==2", "2"),
+        ("dep===2", "2"),
+        ("dep==2.*", "1"),
+        ("dep>=2,<=2", "1"),
+    ],
+)
+def test_trial_triggers_only_original_exact_declarations(
+    declaration: str, expected: str
+) -> None:
+    search = graph_search(
+        [
+            ("app", "2", False, [declaration]),
+            ("app", "1", False, ["dep==1"]),
+            ("dep", "2", True, []),
+            ("dep", "1", False, []),
+        ],
+        ["app"],
+    )
+    search.preference.remaining = 100
+
+    pins, _ = search.resolve()
+
+    assert pins == {"app": Version(expected), "dep": Version(expected)}
+    assert any(candidate.withdrawn for candidate in search.catalogue.facts) == (
+        expected == "2"
+    )
+    assert search.preference.remaining == 100 - search.stats.rounds
+
+
 @pytest.mark.parametrize("counter", ["conflict", "culprit"])
 def test_proxy_decision_scan_uses_shared_conflict_priorities(counter: str) -> None:
     search = graph_search(
@@ -918,6 +1001,70 @@ def mark_offline_metadata(
     url = f"https://example.test/{package}-{version}-False.whl.metadata"
     index.record_offline_metadata_miss(package, version, url)
     index.store_metadata(package, version, None, metadata_url=url)
+
+
+def test_live_trial_preserves_a_complete_alternative_after_an_offline_miss() -> None:
+    search = graph_search(
+        [
+            ("app", "2", False, ["dep"]),
+            ("app", "1", False, []),
+            ("dep", "1", False, []),
+        ],
+        ["app"],
+    )
+    mark_offline_metadata(search, "dep", "1")
+
+    with Profile() as profile:
+        pins, _ = search.resolve()
+
+    assert pins == {"app": Version("1")}
+    assert search.catalogue.unavailable
+    query_calls = sum(
+        entry.callcount
+        for entry in profile.getstats()
+        if entry.code is YankProxyProvider.run_query.__code__
+    )
+    assert query_calls == 1
+
+
+@pytest.mark.parametrize("offline", [False, True])
+def test_live_trial_failure_does_not_retry_admission(offline: bool) -> None:
+    search = graph_search(
+        [("app", "1", False, ["dep"]), ("dep", "1", True, [])],
+        ["app"],
+    )
+    if offline:
+        search.catalogue.provider.coordinator.index.store_listing(
+            "dep", [], offline_miss=True
+        )
+
+    with Profile() as profile, pytest.raises(ResolutionError) as caught:
+        search.resolve()
+
+    assert isinstance(caught.value, IncompletePreferenceError) is offline
+    if offline:
+        assert "missing offline" in str(caught.value)
+    query_calls = sum(
+        entry.callcount
+        for entry in profile.getstats()
+        if entry.code is YankProxyProvider.run_query.__code__
+    )
+    assert query_calls == 1
+    assert not any(candidate.withdrawn for candidate in search.catalogue.facts)
+
+
+@pytest.mark.parametrize("remaining", [0, 1])
+def test_live_trial_respects_the_shared_round_limit(remaining: int) -> None:
+    search = graph_search([("app", "1", False, [])], ["app"])
+    search.preference.remaining = remaining
+
+    with pytest.raises(ResolutionLimitError):
+        search.resolve()
+
+    assert search.stats.rounds == remaining
+    assert not search.catalogue.facts
+    if not remaining:
+        assert not search.catalogue.candidates
 
 
 def test_changing_parents_does_not_disprove_missing_live_metadata() -> None:
@@ -1095,8 +1242,9 @@ def test_cached_cyclic_metadata_cannot_supply_initial_permission() -> None:
 
 
 @pytest.mark.parametrize("roots", [("app", "dep>=2"), ("dep>=2", "app")])
-def test_closed_frontier_does_not_permanently_exclude_a_yank(
-    roots: Sequence[str],
+@pytest.mark.parametrize("pinned", [False, True])
+def test_closed_live_frontier_does_not_search_for_an_undiscovered_pin(
+    roots: Sequence[str], pinned: bool
 ) -> None:
     results, _ = run_graph(
         [
@@ -1105,9 +1253,11 @@ def test_closed_frontier_does_not_permanently_exclude_a_yank(
             ("dep", "2", True, []),
         ],
         roots,
+        constraints=["dep==2"] if pinned else [],
     )
-    assert results[0].success, results[0].error
-    assert results[0].pins == {"app": Version("1"), "dep": Version("2")}
+    assert results[0].success is pinned, results[0].error
+    if pinned:
+        assert results[0].pins == {"app": Version("2"), "dep": Version("2")}
 
 
 def test_rejected_witness_does_not_remove_an_independent_pin() -> None:

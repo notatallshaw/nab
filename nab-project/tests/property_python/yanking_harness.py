@@ -179,7 +179,7 @@ class Harness:
         self.clauses.extend((query.scope, clause) for clause in clauses)
         return clauses
 
-    def resolve(self) -> Solution | None:
+    def resolve(self, *, admission_only: bool = False) -> Solution | None:
         """Keep actual file identities and extras rather than comparing only versions."""
 
         def observe_clauses(query: YankProxyProvider) -> list[Incompatibility]:
@@ -191,7 +191,11 @@ class Harness:
             patch.object(YankProxyProvider, "consume_pending_clauses", observe_clauses),
         ):
             try:
-                pins, provider = self.search.resolve()
+                if admission_only:
+                    selected = self.search.preference.run(self.search.run_query)
+                    pins, provider = self.search.preference.adopt(selected)
+                else:
+                    pins, provider = self.search.resolve()
             except ResolutionError as exc:
                 self.error = exc
                 return None

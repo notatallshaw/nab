@@ -90,19 +90,21 @@ def test_benchmark_termination_does_not_start_yanked_fallback(
 
 @pytest.mark.parametrize("runner", ["scenarios", "canary"])
 @pytest.mark.parametrize(
-    ("dependency", "constraint", "success"),
+    ("dependency", "constraint", "requested", "success"),
     [
-        ("dep==1", None, True),
-        ("dep>=1", "dep==1", True),
-        ("dep>=1", None, False),
-        ("dep==1.*", None, False),
-        ("dep>=1,<=1", None, False),
+        ("dep==1", None, None, True),
+        ("dep==1", None, "dep>=1", False),
+        ("dep>=1", "dep==1", "dep>=1", True),
+        ("dep>=1", None, "dep>=1", False),
+        ("dep==1.*", None, "dep>=1", False),
+        ("dep>=1,<=1", None, "dep>=1", False),
     ],
 )
 def test_runners_admit_only_original_exact_pins(
     runner: str,
     dependency: str,
     constraint: str | None,
+    requested: str | None,
     success: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -151,7 +153,9 @@ def test_runners_admit_only_original_exact_pins(
     config = module.build_benchmark_config(
         indexes=[], trust_unverified_sdist_deps=False
     )
-    requirements = module.parse_requirements(["dep>=1", "app"])
+    requirements = module.parse_requirements(
+        [requested, "app"] if requested is not None else ["app"]
+    )
     constraints = module.parse_requirements([constraint]) if constraint else None
     execute = module.resolve_scenario if runner == "scenarios" else module.run_one
     result = execute(
