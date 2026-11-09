@@ -632,10 +632,9 @@ class _KnownFacts(
         ]
 
     def encode(self, package: str, allowed: RangeType) -> Range[int]:
-        result = Range[int].empty()
-        for candidate in self.choices(package, allowed):
-            result |= Range.singleton(self.identify(candidate))
-        return result
+        return Range[int].from_versions(
+            self.identify(candidate) for candidate in self.choices(package, allowed)
+        )
 
     def prioritize(
         self,
