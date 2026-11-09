@@ -54,6 +54,18 @@ class SlottedData(HashableRecord):
         self.value = value
 
 
+class NonComparingData(HashableData):
+    """An empty comparison override ignores inherited fields."""
+
+    __record_compare_fields__ = ()
+
+
+class FieldlessData(HashableData):
+    """An empty field list overrides inherited match arguments."""
+
+    __record_fields__ = ()
+
+
 class SelectedData(HashableRecord):
     """Only the key participates in equality, hashing and repr."""
 
@@ -129,6 +141,17 @@ def test_comparison_and_repr_can_exclude_non_key_payloads() -> None:
     assert left != SelectedData(2, [])
     assert repr(left) == "SelectedData(key=1)"
     assert field_names(left) == ("key", "payload")
+
+
+@pytest.mark.parametrize("constructor", [NonComparingData, FieldlessData])
+def test_empty_field_overrides_ignore_inherited_values(
+    constructor: type[NonComparingData | FieldlessData],
+) -> None:
+    left = constructor(1)
+    right = constructor(2)
+
+    assert left == right
+    assert hash(left) == hash(right)
 
 
 def test_slotted_values_support_copy_and_pickle() -> None:

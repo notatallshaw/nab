@@ -61,8 +61,11 @@ class Record:  # noqa: PLW1641 - Mutable records are intentionally unhashable.
         """Read the fields participating in equality and hashing."""
         names = self.__record_compare_fields__
         if names is None:
-            names = field_names(self)
-        return tuple(getattr(self, name) for name in names)
+            names = self.__record_fields__
+            if names is None:
+                names = self.__match_args__
+
+        return tuple([getattr(self, name) for name in names])
 
     @override
     def __eq__(self, other: object) -> bool:
