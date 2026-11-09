@@ -137,11 +137,11 @@ class YankProxyProvider(BaseProvider[Package, int]):
         if package in self.catalogue.missing_listings:
             self.incomplete = True
         allowed &= self.constraints.get(package, VersionRange.full())
-        result = Range[int].empty()
-        for candidate in self.catalogue.ordered(package, allowed):
-            if self.eligible(candidate):
-                result |= Range.singleton(self.identify(candidate))
-        return result
+        return Range[int].from_versions(
+            self.identify(candidate)
+            for candidate in self.catalogue.ordered(package, allowed)
+            if self.eligible(candidate)
+        )
 
     def receive_decision_scan_hint(
         self,
