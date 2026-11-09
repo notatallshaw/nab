@@ -27,7 +27,13 @@ dependencies = ["lib==1.2"]
 ```
 
 If `app==2` requires yanked `lib==2`, nab can keep that combination even when older `app==1` would
-use non-yanked `lib==1`. You do not need to repeat the dependency's pin yourself.
+use non-yanked `lib==1`. Resolution may fail before discovering a transitive pin, so you may need to
+repeat it yourself to use the yanked release:
+
+```toml
+[project]
+dependencies = ["app==2", "lib==2"]
+```
 
 For independently requested packages, nab prefers a working non-yanked file. For example, you
 request `lib==1` and `tools`. If the non-yanked `lib` file needs `tools==1`, nab prefers that over

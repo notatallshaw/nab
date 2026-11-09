@@ -53,7 +53,7 @@ _ROOT_SCOPE = PreferenceScope()
 
 
 class _AdmissionRequiredError(Exception):
-    """The trial must yield to the full admission search."""
+    """An encountered exact pin requires the admission search."""
 
 
 class PermissionProxy(HashableRecord):
@@ -422,8 +422,6 @@ class YankProxyProvider(BaseProvider[Package, int]):
         finally:
             self.preference.record_solver_stats(solver.stats)
             self.preference.spend(solver.stats.rounds)
-        if live_trial and query.incomplete:
-            raise _AdmissionRequiredError
         return {
             name: self.items[token]
             for name, token in selected.items()
@@ -503,9 +501,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
         if self.preference.remaining > 0:
             try:
                 return self.run_query(_ROOT_SCOPE, live_trial=True)
-            except ResolutionTerminatedError:
-                raise
-            except (_AdmissionRequiredError, ResolutionError):
+            except _AdmissionRequiredError:
                 pass
         return self.preference.run(self.run_query)
 

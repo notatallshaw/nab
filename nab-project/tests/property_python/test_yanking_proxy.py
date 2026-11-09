@@ -80,6 +80,7 @@ LATE_UNKNOWN = Case(
 )
 
 
+@pytest.mark.parametrize("admission_only", [False, True])
 @given(case=cases())
 @example(case=LATE_PIN)
 @example(case=MIXED_FILES)
@@ -88,16 +89,24 @@ LATE_UNKNOWN = Case(
 @example(case=LATE_EXTRA)
 @example(case=Case((Artifact("a", "1", withdrawn=True),), (Request("a", "==1.*"),)))
 @PROPERTY_SETTINGS
-def test_proxy_matches_exhaustive_preparation_oracle(case: Case) -> None:
+def test_proxy_matches_exhaustive_preparation_oracle(
+    case: Case, *, admission_only: bool
+) -> None:
     valid = solutions(case)
     harness = Harness(case)
-    actual = harness.resolve()
+    actual = harness.resolve(admission_only=admission_only)
     event(
         f"prepared withdrawn={any(o.artifact.withdrawn for o in harness.observations)}"
     )
     event(f"contextual conflict={bool(harness.clauses)}")
     event(f"backjump={bool(harness.search.stats.backjumps)}")
-    assert (actual is not None) == bool(valid), (case, valid, harness.error)
+    live_solutions = {
+        solution
+        for solution in valid
+        if not any(withdrawn for _, _, withdrawn in solution.files)
+    }
+    if admission_only or live_solutions:
+        assert (actual is not None) == bool(valid), (case, valid, harness.error)
     if actual is not None:
         assert actual in valid
         assert_preferred(case, actual, valid)
@@ -109,7 +118,7 @@ def test_proxy_matches_exhaustive_preparation_oracle(case: Case) -> None:
 @given(case=cases())
 @example(case=LATE_PIN)
 @PROPERTY_SETTINGS
-def test_input_permutations_preserve_satisfiability(case: Case) -> None:
+def test_admission_input_permutations_preserve_satisfiability(case: Case) -> None:
     valid = solutions(case)
     reordered = replace(
         case,
@@ -122,7 +131,7 @@ def test_input_permutations_preserve_satisfiability(case: Case) -> None:
     )
     for ordered in (case, reordered):
         harness = Harness(ordered)
-        actual = harness.resolve()
+        actual = harness.resolve(admission_only=True)
         assert (actual is not None) == bool(valid), (ordered, valid, harness.error)
         if actual is not None:
             assert actual in valid
@@ -149,7 +158,7 @@ def test_offline_data_does_not_authorize_a_yanked_fallback(
     )
     possible = valid | solutions(empty_completion)
     harness = Harness(case, unavailable=frozenset({missing.key}))
-    actual = harness.resolve()
+    actual = harness.resolve(admission_only=True)
     if actual is not None:
         assert actual in valid
         assert missing.key not in actual.files
@@ -199,7 +208,7 @@ def test_missing_metadata_completions_cannot_justify_fallback(
     valid = solutions(case)
     possible = valid | solutions(completed)
     harness = Harness(case, unavailable=unavailable)
-    actual = harness.resolve()
+    actual = harness.resolve(admission_only=True)
     if actual is not None:
         assert actual in valid
         assert not actual.files & unavailable

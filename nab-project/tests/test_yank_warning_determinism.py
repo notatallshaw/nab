@@ -41,7 +41,7 @@ targets = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)).exp
 result = resolve_with_coordinator(
     port,
     targets,
-    [Requirement(req) for req in ("alpha[x]", "alpha[y]", "zulu")],
+    [Requirement(req) for req in ("alpha[x]==1", "alpha[y]", "zulu")],
     inputs=inputs,
 )
 
@@ -87,7 +87,7 @@ def test_sibling_extra_yank_warnings_ignore_hash_seed() -> None:
     warnings = outputs[0]["warnings"].splitlines()
     assert warnings[0] == (
         "Selected yanked files for alpha==1: withdrawn "
-        "(admitted by zulu==1 requires alpha==1)"
+        "(admitted by input pin alpha[x]==1)"
     )
 
     grounded_bravo_warnings = {
