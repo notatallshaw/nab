@@ -227,6 +227,29 @@ def test_known_rejected_metadata_refutes_the_assignment() -> None:
     assert statuses == [PreparationStatus.IMPOSSIBLE]
 
 
+@pytest.mark.parametrize("live_only", [False, True])
+def test_known_fact_encoding_preserves_sparse_ids(live_only: bool) -> None:
+    one, two, three = (Choice("dep", version) for version in (1, 2, 3))
+    withdrawn = Choice("dep", 1, withdrawn=True)
+    catalogue = Catalogue((one, two, three, withdrawn))
+    catalogue.facts[two] = None
+    context = _Context(
+        PreferenceScope(live=frozenset({"dep"}) if live_only else frozenset()),
+        frozenset(),
+    )
+    facts = _KnownFacts(catalogue, {}, context)
+    candidates = (one, two, three, withdrawn)
+    assert [facts.identify(candidate) for candidate in candidates] == [1, 2, 3, 4]
+
+    encoded = facts.encode("dep", Range[int].full())
+
+    assert {token for token in range(6) if token in encoded} == (
+        {1, 3} if live_only else {1, 3, 4}
+    )
+    assert facts.encode("dep", Range[int].empty()).is_empty
+    assert catalogue.facts == {two: None}
+
+
 def test_context_limit_preserves_the_unproven_context() -> None:
     search = Search(Catalogue((Choice("dep", 1),)), max_steps=0)
     context = _Context(PreferenceScope(), frozenset())
