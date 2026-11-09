@@ -94,6 +94,25 @@ def _prefer_version(candidates: list[Candidate], preferred: Version) -> None:
     candidates.insert(0, candidates.pop(picked))
 
 
+class _CandidateOrder:
+    """The most recent preference-free query over one candidate snapshot."""
+
+    __slots__ = ("allowed", "available", "lowest", "result")
+
+    def __init__(
+        self,
+        available: Sequence[Candidate],
+        allowed: VersionRange,
+        result: tuple[Candidate, ...],
+        *,
+        lowest: bool,
+    ) -> None:
+        self.available = available
+        self.allowed = allowed
+        self.lowest = lowest
+        self.result = result
+
+
 class CandidateData(Record):
     """Dependencies and the provider selecting the candidate's files."""
 
@@ -204,6 +223,7 @@ class YankCandidates:
         self.factory = factory
         self.preferences = preferences
         self.candidates: dict[str, tuple[Candidate, ...]] = {}
+        self._default_orders: dict[str, _CandidateOrder] = {}
         self.facts: dict[Candidate, CandidateData | None] = {}
         self.unavailable: set[Candidate] = set()
         self.missing_listings: set[str] = set()
@@ -387,6 +407,16 @@ class YankCandidates:
         result: list[Candidate] = []
         base = split_extra(package)[0]
         lowest = self.provider.wants_lowest(base)
+        cacheable = choices is None and self.preferences.get(base) is None
+        if cacheable:
+            cached = self._default_orders.get(package)
+            if (
+                cached is not None
+                and cached.available is available
+                and cached.allowed == version_range
+                and cached.lowest == lowest
+            ):
+                return list(cached.result)
         for withdrawn in (False, True):
             candidates = {
                 candidate.label: candidate
@@ -425,6 +455,10 @@ class YankCandidates:
                     for candidate in remaining
                     if candidate.label not in exhausted
                 ]
+        if cacheable:
+            self._default_orders[package] = _CandidateOrder(
+                available, version_range, tuple(result), lowest=lowest
+            )
         return result
 
     def adopt(
