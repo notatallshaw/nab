@@ -52,6 +52,10 @@ _MAX_STEPS = 100_000
 _ROOT_SCOPE = PreferenceScope()
 
 
+class _AdmissionRequiredError(Exception):
+    """The trial must yield to the full admission search."""
+
+
 class PermissionProxy(HashableRecord):
     """Choose selected parents that permit a yanked candidate."""
 
@@ -120,6 +124,8 @@ class YankProxyProvider(BaseProvider[Package, int]):
         self.positive: Mapping[Package, RangeProtocol[int]] = {}
         self.pending: list[Incompatibility[Package, int]] = []
         self.incomplete = False
+        self.live_trial = False
+        self._trial_pins = self.input_pins
         self.stats: ResolverStats[Package] = preference.stats
 
     def identify(self, candidate: Candidate) -> int:
@@ -151,6 +157,8 @@ class YankProxyProvider(BaseProvider[Package, int]):
         """Refresh permission and readiness after propagation or backtracking."""
         self.decisions = decisions
         self.positive = positive_ranges
+        if self.live_trial:
+            return
         self.supports = self.ground()
         for token, support in self.supports.items():
             if self.items[token].withdrawn:
@@ -219,6 +227,8 @@ class YankProxyProvider(BaseProvider[Package, int]):
     @override
     def is_ready(self, package: Package) -> bool:
         """Wait for an exact-pin reason before preparing yanked metadata."""
+        if self.live_trial:
+            return True
         if isinstance(package, MetadataProxy):
             return package.candidate in self.supports
         if isinstance(package, PermissionProxy):
@@ -269,6 +279,12 @@ class YankProxyProvider(BaseProvider[Package, int]):
 
     def eligible(self, candidate: Candidate) -> bool:
         """Apply this check's parent versions and non-yanked restrictions."""
+        if self.live_trial and candidate.withdrawn:
+            if any(
+                self.catalogue.pin_allows(pin, candidate) for pin in self._trial_pins
+            ):
+                raise _AdmissionRequiredError
+            return False
         return (
             candidate.base not in self.scope.live or not candidate.withdrawn
         ) and self.fixed.get(candidate.package, candidate) == candidate
@@ -350,10 +366,14 @@ class YankProxyProvider(BaseProvider[Package, int]):
         token = package.candidate
         data = self.catalogue.facts[self.items[token]]
         assert data is not None
-        return {
-            name: self.encode_range(name, allowed)
-            for name, allowed in data.dependencies.items()
-        }
+        self._trial_pins = (*self.input_pins, *data.pins)
+        try:
+            return {
+                name: self.encode_range(name, allowed)
+                for name, allowed in data.dependencies.items()
+            }
+        finally:
+            self._trial_pins = self.input_pins
 
     def widen_decision(self, package: Package, version: int) -> None:
         """Keep incompatibilities specific to a candidate or permission reason."""
@@ -375,9 +395,12 @@ class YankProxyProvider(BaseProvider[Package, int]):
         query.identities = self.identities
         return query
 
-    def run_query(self, scope: PreferenceScope) -> dict[str, Candidate]:
+    def run_query(
+        self, scope: PreferenceScope, *, live_trial: bool = False
+    ) -> dict[str, Candidate]:
         """Resolve under one set of restrictions with the shared work budget."""
         query = self.new_query(scope)
+        query.live_trial = live_trial
         solver: Resolver[Package, int] = Resolver(
             query, max_iterations=self.preference.remaining
         )
@@ -399,6 +422,8 @@ class YankProxyProvider(BaseProvider[Package, int]):
         finally:
             self.preference.record_solver_stats(solver.stats)
             self.preference.spend(solver.stats.rounds)
+        if live_trial and query.incomplete:
+            raise _AdmissionRequiredError
         return {
             name: self.items[token]
             for name, token in selected.items()
@@ -473,10 +498,21 @@ class YankProxyProvider(BaseProvider[Package, int]):
         )
         return tuple(entries)
 
+    def _select(self) -> dict[str, Candidate]:
+        """Try live choices before entering scoped withdrawal proofs."""
+        if self.preference.remaining > 0:
+            try:
+                return self.run_query(_ROOT_SCOPE, live_trial=True)
+            except ResolutionTerminatedError:
+                raise
+            except (_AdmissionRequiredError, ResolutionError):
+                pass
+        return self.preference.run(self.run_query)
+
     def resolve(self) -> tuple[dict[str, Version], Provider]:
         """Check non-yanked alternatives before adopting the selected candidates."""
         try:
-            selected = self.preference.run(self.run_query)
+            selected = self._select()
         except (IncompletePreferenceError, ResolutionTerminatedError):
             raise
         except ResolutionError as exc:

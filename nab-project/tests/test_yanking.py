@@ -765,6 +765,70 @@ def test_unpinned_yank_does_not_exhaust_unrelated_choice_products(
     assert not any(candidate.withdrawn for candidate in search.catalogue.facts)
 
 
+@pytest.mark.parametrize("roots", list(permutations(("leaf", "app", "plugin"))))
+@pytest.mark.parametrize("noise_versions", [3, 5, 7])
+def test_live_trial_avoids_unpermitted_yank_choice_products(
+    roots: Sequence[str], noise_versions: int
+) -> None:
+    releases: list[ReleaseRow] = [
+        ("leaf", "2", False, []),
+        ("leaf", "1", False, []),
+        ("app", "2", True, []),
+        ("app", "1", False, ["leaf<2"]),
+        ("plugin", "1", False, [f"noise{i}" for i in range(3)]),
+    ]
+    releases.extend(
+        (f"noise{i}", str(version), False, [])
+        for i in range(3)
+        for version in range(1, noise_versions + 1)
+    )
+    search = graph_search(releases, roots)
+    search.preference.remaining = 50
+
+    pins, _ = search.resolve()
+
+    assert pins == {
+        "leaf": Version("1"),
+        "app": Version("1"),
+        "plugin": Version("1"),
+        **{f"noise{i}": Version(str(noise_versions)) for i in range(3)},
+    }
+    assert not any(candidate.withdrawn for candidate in search.catalogue.facts)
+    assert search.preference.remaining == 50 - search.stats.rounds
+
+
+@pytest.mark.parametrize(
+    ("declaration", "expected"),
+    [
+        ("dep==2", "2"),
+        ("dep===2", "2"),
+        ("dep==2.*", "1"),
+        ("dep>=2,<=2", "1"),
+    ],
+)
+def test_trial_triggers_only_original_exact_declarations(
+    declaration: str, expected: str
+) -> None:
+    search = graph_search(
+        [
+            ("app", "2", False, [declaration]),
+            ("app", "1", False, ["dep==1"]),
+            ("dep", "2", True, []),
+            ("dep", "1", False, []),
+        ],
+        ["app"],
+    )
+    search.preference.remaining = 100
+
+    pins, _ = search.resolve()
+
+    assert pins == {"app": Version(expected), "dep": Version(expected)}
+    assert any(candidate.withdrawn for candidate in search.catalogue.facts) == (
+        expected == "2"
+    )
+    assert search.preference.remaining == 100 - search.stats.rounds
+
+
 @pytest.mark.parametrize("counter", ["conflict", "culprit"])
 def test_proxy_decision_scan_uses_shared_conflict_priorities(counter: str) -> None:
     search = graph_search(
@@ -918,6 +982,37 @@ def mark_offline_metadata(
     url = f"https://example.test/{package}-{version}-False.whl.metadata"
     index.record_offline_metadata_miss(package, version, url)
     index.store_metadata(package, version, None, metadata_url=url)
+
+
+def test_live_trial_preserves_a_complete_alternative_after_an_offline_miss() -> None:
+    search = graph_search(
+        [
+            ("app", "2", False, ["dep"]),
+            ("app", "1", False, []),
+            ("dep", "1", False, []),
+        ],
+        ["app"],
+    )
+    mark_offline_metadata(search, "dep", "1")
+
+    pins, _ = search.resolve()
+
+    assert pins == {"app": Version("1")}
+    assert search.catalogue.unavailable
+
+
+@pytest.mark.parametrize("remaining", [0, 1])
+def test_live_trial_respects_the_shared_round_limit(remaining: int) -> None:
+    search = graph_search([("app", "1", False, [])], ["app"])
+    search.preference.remaining = remaining
+
+    with pytest.raises(ResolutionLimitError):
+        search.resolve()
+
+    assert search.stats.rounds == remaining
+    assert not search.catalogue.facts
+    if not remaining:
+        assert not search.catalogue.candidates
 
 
 def test_changing_parents_does_not_disprove_missing_live_metadata() -> None:
