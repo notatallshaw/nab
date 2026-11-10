@@ -951,7 +951,7 @@ class Provider:
         # never mutated; the extras one has ``extra`` written into it before
         # each evaluation.
         self.prepared_environment = prepare_environment(self.env_with_extra)
-        self.prepared_extra_environment = prepare_environment(self.env_with_extra)
+        self.prepared_extra_environment = self.prepared_environment.copy()
 
         # (base, extra, normalized_name) per input package string.
         self._package_parts: dict[str, tuple[str, str | None, str]] = {}
