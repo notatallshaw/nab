@@ -283,15 +283,19 @@ class YankProxyProvider(BaseProvider[Package, int]):
 
     def eligible(self, candidate: Candidate) -> bool:
         """Apply this check's parent versions and non-yanked restrictions."""
-        if self.live_trial and candidate.withdrawn:
-            if any(
-                self.catalogue.pin_allows(pin, candidate) for pin in self._trial_pins
-            ):
-                raise _AdmissionRequiredError
-            return False
-        return (
-            not candidate.withdrawn or candidate.base not in self.scope.live
-        ) and self.fixed.get(candidate.package, candidate) == candidate
+        if candidate.withdrawn:
+            if self.live_trial:
+                if any(
+                    self.catalogue.pin_allows(pin, candidate)
+                    for pin in self._trial_pins
+                ):
+                    raise _AdmissionRequiredError
+                return False
+            if candidate.base in self.scope.live:
+                return False
+
+        fixed = self.fixed.get(candidate.package)
+        return fixed is None or fixed == candidate
 
     def choose_version(
         self, package: Package, version_range: RangeProtocol[int]

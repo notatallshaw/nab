@@ -51,6 +51,10 @@ def test_eligibility_keeps_scope_and_fixed_choices(
         assert not any(
             entry.code is Candidate.base.fget.__code__ for entry in profile.getstats()
         )
+    if not fixed:
+        assert not any(
+            entry.code is Candidate.__eq__.__code__ for entry in profile.getstats()
+        )
 
 
 def test_encoded_defaults_do_not_narrow_after_an_intersection() -> None:
