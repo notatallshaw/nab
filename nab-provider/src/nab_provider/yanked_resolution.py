@@ -126,6 +126,8 @@ class YankProxyProvider(BaseProvider[Package, int]):
         self.incomplete = False
         self.live_trial = False
         self._trial_pins = self.input_pins
+        self._full_version_range = VersionRange.full()
+        self._full_integer_range: Range[int] = Range.full()
         self.stats: ResolverStats[Package] = preference.stats
 
     def identify(self, candidate: Candidate) -> int:
@@ -142,7 +144,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
         self.catalogue.choices(package)
         if package in self.catalogue.missing_listings:
             self.incomplete = True
-        allowed &= self.constraints.get(package, VersionRange.full())
+        allowed &= self.constraints.get(package, self._full_version_range)
         return Range[int].from_versions(
             self.identify(candidate)
             for candidate in self.catalogue.ordered(package, allowed)
@@ -232,7 +234,9 @@ class YankProxyProvider(BaseProvider[Package, int]):
         if isinstance(package, MetadataProxy):
             return package.candidate in self.supports
         if isinstance(package, PermissionProxy):
-            allowed: RangeProtocol[int] = self.positive.get(package, Range[int].full())
+            allowed: RangeProtocol[int] = self.positive.get(
+                package, self._full_integer_range
+            )
             return any(v in allowed for v in self.proofs.get(package, {}).values())
         return True
 
@@ -259,7 +263,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
     def block_context(self, package: Package) -> None:
         """Reject selected choices without excluding a candidate globally."""
         terms: list[Term[Package, int]] = [
-            Term(package, Range[int].full(), positive=True)
+            Term(package, self._full_integer_range, positive=True)
         ]
         terms.extend(
             Term(name, Range.singleton(value), positive=True)
@@ -279,15 +283,19 @@ class YankProxyProvider(BaseProvider[Package, int]):
 
     def eligible(self, candidate: Candidate) -> bool:
         """Apply this check's parent versions and non-yanked restrictions."""
-        if self.live_trial and candidate.withdrawn:
-            if any(
-                self.catalogue.pin_allows(pin, candidate) for pin in self._trial_pins
-            ):
-                raise _AdmissionRequiredError
-            return False
-        return (
-            candidate.base not in self.scope.live or not candidate.withdrawn
-        ) and self.fixed.get(candidate.package, candidate) == candidate
+        if candidate.withdrawn:
+            if self.live_trial:
+                if any(
+                    self.catalogue.pin_allows(pin, candidate)
+                    for pin in self._trial_pins
+                ):
+                    raise _AdmissionRequiredError
+                return False
+            if candidate.base in self.scope.live:
+                return False
+
+        fixed = self.fixed.get(candidate.package)
+        return fixed is None or fixed == candidate
 
     def choose_version(
         self, package: Package, version_range: RangeProtocol[int]
@@ -298,7 +306,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
             return None
         if isinstance(package, str):
             # Cached dependencies need incompatibilities before excluding candidates.
-            allowed = self.constraints.get(package, VersionRange.full())
+            allowed = self.constraints.get(package, self._full_version_range)
             return next(
                 (
                     self.identify(c)
@@ -352,7 +360,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
                 MetadataProxy(version): Range.singleton(0)
             }
             if candidate.withdrawn:
-                result[PermissionProxy(version)] = Range.full()
+                result[PermissionProxy(version)] = self._full_integer_range
             base, extra = split_extra(package)
             if extra is not None:
                 underlying = Candidate(
@@ -449,7 +457,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
                 allowed = self.roots[term.package]
             yield (
                 term.package,
-                allowed & self.constraints.get(term.package, VersionRange.full()),
+                allowed & self.constraints.get(term.package, self._full_version_range),
             )
 
     def _failure_diagnostics(
