@@ -125,6 +125,41 @@ def test_default_order_reuses_equal_ranges_and_returns_a_copy(
     assert second_calls == 0
 
 
+def test_unrestricted_order_survives_requirement_filtering(
+    catalogue: YankCandidates,
+) -> None:
+    unrestricted = VersionRange.full()
+    limited = SpecifierSet(">=2").to_range()
+    expected = catalogue.ordered("dep", unrestricted)
+    expected_limited = catalogue.ordered("dep", limited)
+
+    actual, calls = ordered_with_filter_count(catalogue, unrestricted)
+    actual_limited, limited_calls = ordered_with_filter_count(catalogue, limited)
+
+    assert actual == expected
+    assert actual_limited == expected_limited
+    assert calls == limited_calls == 0
+
+
+def test_only_the_latest_restricted_order_is_retained(
+    catalogue: YankCandidates,
+) -> None:
+    unrestricted = VersionRange.full()
+    first = SpecifierSet(">=2").to_range()
+    second = SpecifierSet("<2").to_range()
+    expected = catalogue.ordered("dep", unrestricted)
+    expected_first = catalogue.ordered("dep", first)
+    catalogue.ordered("dep", second)
+
+    actual, unrestricted_calls = ordered_with_filter_count(catalogue, unrestricted)
+    actual_first, first_calls = ordered_with_filter_count(catalogue, first)
+
+    assert actual == expected
+    assert actual_first == expected_first
+    assert unrestricted_calls == 0
+    assert first_calls > 0
+
+
 @pytest.mark.parametrize(
     ("first", "second"),
     [
