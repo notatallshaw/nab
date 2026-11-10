@@ -160,6 +160,46 @@ def test_only_the_latest_restricted_order_is_retained(
     assert first_calls > 0
 
 
+def ordered_with_sort_count(
+    catalogue: YankCandidates, allowed: VersionRange
+) -> tuple[list[Candidate], int]:
+    """Count initial sorting while exercising the production ordering method."""
+    with Profile() as profile:
+        result = catalogue.ordered("dep", allowed)
+    calls = sum(
+        entry.callcount
+        for entry in profile.getstats()
+        if entry.code == "<built-in method builtins.sorted>"
+    )
+    return result, calls
+
+
+def test_requirement_changes_reuse_sorted_candidates(catalogue: YankCandidates) -> None:
+    first = SpecifierSet(">=1").to_range()
+    second = SpecifierSet("<3").to_range()
+    expected = catalogue.ordered("dep", second, choices=catalogue.choices("dep"))
+
+    _, first_calls = ordered_with_sort_count(catalogue, first)
+    actual, second_calls = ordered_with_sort_count(catalogue, second)
+
+    assert actual == expected
+    assert first_calls > 0
+    assert second_calls == 0
+
+
+def test_listing_replacement_rebuilds_sorted_candidates(
+    catalogue: YankCandidates,
+) -> None:
+    catalogue.ordered("dep", SpecifierSet("<3").to_range())
+    replacement = Candidate("dep", Version("4"), withdrawn=False)
+    catalogue.candidates["dep"] = (*catalogue.choices("dep"), replacement)
+
+    actual, calls = ordered_with_sort_count(catalogue, SpecifierSet(">=2").to_range())
+
+    assert actual[0] is replacement
+    assert calls > 0
+
+
 @pytest.mark.parametrize(
     ("first", "second"),
     [
