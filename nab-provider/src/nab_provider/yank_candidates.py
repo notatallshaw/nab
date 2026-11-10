@@ -16,6 +16,7 @@ __lazy_modules__ = (
 
 from typing import TYPE_CHECKING, ClassVar, Final
 
+from ._compat import override
 from ._provider.extras import version_provides_extra
 from ._provider.listing_diagnosis import MetadataBlock
 from ._provider.metadata_resolver import classify_requirement, dists_at_version
@@ -66,6 +67,14 @@ class Candidate(HashableRecord):
         self.withdrawn = withdrawn
         self.label = str(version)
 
+    @override
+    def _comparison_values(self) -> tuple[object, ...]:
+        """Return fixed identity fields, honoring subclass comparison declarations."""
+        if type(self) is not Candidate:
+            return super()._comparison_values()
+
+        return self.package, self.version, self.withdrawn, self.label
+
     @property
     def base(self) -> str:
         """Return the package name without an extra proxy."""
@@ -94,6 +103,20 @@ def _prefer_version(candidates: list[Candidate], preferred: Version) -> None:
         matching,
     )
     candidates.insert(0, candidates.pop(picked))
+
+
+class _CandidateGroups:
+    """One listing's candidates grouped by withdrawal and sorted newest first."""
+
+    __slots__ = ("available", "groups")
+
+    def __init__(
+        self,
+        available: Sequence[Candidate],
+        groups: tuple[tuple[Candidate, ...], ...],
+    ) -> None:
+        self.available = available
+        self.groups = groups
 
 
 class _CandidateOrder:
@@ -226,6 +249,7 @@ class YankCandidates:
         self.preferences = preferences
         self.candidates: dict[str, tuple[Candidate, ...]] = {}
         self._default_orders: dict[tuple[str, bool], _CandidateOrder] = {}
+        self._candidate_groups: dict[str, _CandidateGroups] = {}
         self.facts: dict[Candidate, CandidateData | None] = {}
         self.unavailable: set[Candidate] = set()
         self.missing_listings: set[str] = set()
@@ -397,6 +421,34 @@ class YankCandidates:
                 pins.append(req)
         return CandidateData(provider, dict(dependencies), tuple(pins))
 
+    def _sorted_groups(
+        self,
+        package: str,
+        available: Sequence[Candidate],
+        *,
+        cacheable: bool,
+    ) -> tuple[tuple[Candidate, ...], ...]:
+        """Sort live and withdrawn groups; cache default listing snapshots."""
+        cached = self._candidate_groups.get(package) if cacheable else None
+        if cached is not None and cached.available is available:
+            return cached.groups
+
+        groups = []
+        for withdrawn in (False, True):
+            by_label = {
+                candidate.label: candidate
+                for candidate in available
+                if candidate.withdrawn == withdrawn
+            }
+            ordered = sorted(
+                by_label.values(), key=lambda candidate: candidate.version, reverse=True
+            )
+            groups.append(tuple(ordered))
+        result = tuple(groups)
+        if cacheable:
+            self._candidate_groups[package] = _CandidateGroups(available, result)
+        return result
+
     def ordered(
         self,
         package: str,
@@ -422,17 +474,8 @@ class YankCandidates:
             ):
                 return list(cached.result)
 
-        for withdrawn in (False, True):
-            candidates = {
-                candidate.label: candidate
-                for candidate in available
-                if candidate.withdrawn == withdrawn
-            }
-            remaining = sorted(
-                candidates.values(),
-                key=lambda candidate: candidate.version,
-                reverse=True,
-            )
+        for group in self._sorted_groups(package, available, cacheable=choices is None):
+            remaining = list(group)
             while remaining:
                 accepted = list(
                     version_range.filter(

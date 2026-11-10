@@ -71,6 +71,14 @@ class PermissionProxy(HashableRecord):
     def __init__(self, candidate: int) -> None:
         self.candidate = candidate
 
+    @override
+    def _comparison_values(self) -> tuple[object, ...]:
+        """Return fixed identity fields, honoring subclass comparison declarations."""
+        if type(self) is not PermissionProxy:
+            return super()._comparison_values()
+
+        return (self.candidate,)
+
 
 class MetadataProxy(HashableRecord):
     """Expose a candidate's dependencies after establishing permission."""
@@ -81,6 +89,14 @@ class MetadataProxy(HashableRecord):
 
     def __init__(self, candidate: int) -> None:
         self.candidate = candidate
+
+    @override
+    def _comparison_values(self) -> tuple[object, ...]:
+        """Return fixed identity fields, honoring subclass comparison declarations."""
+        if type(self) is not MetadataProxy:
+            return super()._comparison_values()
+
+        return (self.candidate,)
 
 
 Package = str | PermissionProxy | MetadataProxy
