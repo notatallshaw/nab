@@ -364,7 +364,7 @@ def test_inactive_constraint_does_not_admit() -> None:
 def test_search_limit_does_not_authorize_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(yanked_resolution, "_MAX_STEPS", 1)
+    monkeypatch.setattr(yanked_resolution, "_MAX_SOLVER_ROUNDS", 1)
     results, port = run_graph(
         [("dep", "2+z", True, []), ("dep", "2+a", False, [])], ["dep==2"]
     )
@@ -1289,7 +1289,7 @@ def test_offline_dependency_cycles_are_bounded(
     error_type: type[ResolutionError],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(yanked_resolution, "_MAX_STEPS", budget)
+    monkeypatch.setattr(yanked_resolution, "_MAX_SOLVER_ROUNDS", budget)
     search = graph_search(
         [
             ("a", "1", False, ["b", "c"]),

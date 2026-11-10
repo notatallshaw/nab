@@ -18,7 +18,12 @@ from typing import TYPE_CHECKING, Final
 
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 from nab_resolver.ranges import Range
-from nab_resolver.resolver import BaseProvider, Resolver, ResolverStats
+from nab_resolver.resolver import (
+    DEFAULT_MAX_ITERATIONS,
+    BaseProvider,
+    Resolver,
+    ResolverStats,
+)
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 from ._compat import override
@@ -48,7 +53,7 @@ if TYPE_CHECKING:
     from .provider import Provider
 
 __all__ = ["YankProxyProvider"]
-_MAX_STEPS = 100_000
+_MAX_SOLVER_ROUNDS = DEFAULT_MAX_ITERATIONS
 _ROOT_SCOPE = PreferenceScope()
 
 
@@ -107,7 +112,11 @@ class YankProxyProvider(BaseProvider[Package, int]):
                 add_range(root_ranges, root.package, root.constraint)
             pins = tuple(req for req in requirements if is_pin(req))
             preference = YankPreference(
-                catalogue, root_ranges, pins, constraint_ranges, max_steps=_MAX_STEPS
+                catalogue,
+                root_ranges,
+                pins,
+                constraint_ranges,
+                max_steps=_MAX_SOLVER_ROUNDS,
             )
         self.preference = preference
         self.catalogue = preference.catalogue
