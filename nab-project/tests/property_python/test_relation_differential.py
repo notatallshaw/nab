@@ -30,9 +30,9 @@ def test_relation_matches_the_separate_predicates(
     left: VersionRange, right: VersionRange
 ) -> None:
     """relation agrees with is_subset and is_disjoint asked separately."""
-    assert left.relation(right) is RangeRelation(
-        (left.is_subset(right), left.is_disjoint(right))
-    )
+    relation = left.relation(right)
+    assert relation.is_subset == left.is_subset(right)
+    assert relation.is_disjoint == left.is_disjoint(right)
 
 
 @given(left=_ranges(), right=_ranges())
@@ -41,9 +41,9 @@ def test_relation_matches_the_intersection_form(
     left: VersionRange, right: VersionRange
 ) -> None:
     """relation agrees with subset plus an empty intersection."""
-    assert left.relation(right) is RangeRelation(
-        (left.is_subset(right), (left & right).is_empty)
-    )
+    relation = left.relation(right)
+    assert relation.is_subset == left.is_subset(right)
+    assert relation.is_disjoint == (left & right).is_empty
 
 
 @given(left=_ranges(), right=_ranges())

@@ -1,4 +1,4 @@
-"""Tests for the vendored patch's ``VersionRange.relation``.
+"""Tests for the vendored ``VersionRange.relation``.
 
 ``relation`` answers subset and disjointness in one interval walk, so a spec
 grid checks it against both the separate predicates and the intersection
@@ -112,23 +112,27 @@ class TestRelation:
     def test_literal_range_defers_to_the_algebra(self) -> None:
         literal = _range("===1.5")
         outer = _range(">=1.0,<2.0")
-        assert literal.relation(outer) is RangeRelation(
-            (literal.is_subset(outer), literal.is_disjoint(outer))
-        )
+        relation = literal.relation(outer)
+        assert relation.is_subset == literal.is_subset(outer)
+        assert relation.is_disjoint == literal.is_disjoint(outer)
 
     def test_prerelease_excluding_policy_defers_to_the_algebra(self) -> None:
         strict = SpecifierSet(">=1.0", prereleases=False).to_range()
         other = SpecifierSet(">=1.0,<2.0", prereleases=False).to_range()
-        assert strict.relation(other) is RangeRelation(
-            (strict.is_subset(other), strict.is_disjoint(other))
-        )
+        relation = strict.relation(other)
+        assert relation.is_subset == strict.is_subset(other)
+        assert relation.is_disjoint == strict.is_disjoint(other)
 
     @pytest.mark.parametrize(("left", "right"), list(itertools.product(SPECS, SPECS)))
     def test_matches_the_intersection_form(self, left: str, right: str) -> None:
         a, b = _range(left), _range(right)
-        assert a.relation(b) is RangeRelation((a.is_subset(b), (a & b).is_empty))
+        relation = a.relation(b)
+        assert relation.is_subset == a.is_subset(b)
+        assert relation.is_disjoint == (a & b).is_empty
 
     @pytest.mark.parametrize(("left", "right"), list(itertools.product(SPECS, SPECS)))
     def test_matches_the_separate_predicates(self, left: str, right: str) -> None:
         a, b = _range(left), _range(right)
-        assert a.relation(b) is RangeRelation((a.is_subset(b), a.is_disjoint(b)))
+        relation = a.relation(b)
+        assert relation.is_subset == a.is_subset(b)
+        assert relation.is_disjoint == a.is_disjoint(b)
