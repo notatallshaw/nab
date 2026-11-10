@@ -16,6 +16,7 @@ __lazy_modules__ = (
 
 from typing import TYPE_CHECKING, ClassVar, Final
 
+from ._compat import override
 from ._provider.extras import version_provides_extra
 from ._provider.listing_diagnosis import MetadataBlock
 from ._provider.metadata_resolver import classify_requirement, dists_at_version
@@ -65,6 +66,14 @@ class Candidate(HashableRecord):
         self.version = version
         self.withdrawn = withdrawn
         self.label = str(version)
+
+    @override
+    def _comparison_values(self) -> tuple[object, ...]:
+        """Return fixed identity fields, honoring subclass comparison declarations."""
+        if type(self) is not Candidate:
+            return super()._comparison_values()
+
+        return self.package, self.version, self.withdrawn, self.label
 
     @property
     def base(self) -> str:
