@@ -55,14 +55,12 @@ class RangeProtocol(Protocol[VersionType_contra]):
     widest value carries membership that ``-`` drops does not:
     ``packaging.ranges.VersionRange.full()`` admits arbitrary ``===`` strings
     and loses them to any ``y`` that removes versions.  The resolver therefore
-    records ``~empty()`` in place of any supplied range equal to :meth:`full`,
-    which may be strictly narrower.
+    narrows ranges admitting all of :meth:`full` to ``~empty()``, preserving
+    their metadata through intersection. The result may be strictly narrower.
 
-    That substitution covers the value equal to :meth:`full` and nothing else.
-    A range that keeps membership ``-`` drops without equalling it, such as
-    :meth:`full` minus an ``===`` literal, is the caller's to keep out of a
-    term; conflict resolution's step budget reports one as an internal error
-    rather than spinning on it.
+    Partial ranges can still violate this identity, such as :meth:`full` minus
+    an ``===`` literal. Callers must keep those out of terms; conflict
+    resolution's step budget reports a violation as an internal error.
 
     Ranges must be immutable.  The resolver keeps the ones it is handed and
     reuses the results of range operations by operand identity, so mutating

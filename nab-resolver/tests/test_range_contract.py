@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 class FlaggedRange:
     """``Range[int]`` plus VersionRange's arbitrary-string admission flag.
 
+    A metadata marker changes equality without changing membership.
     ``full()`` sets the flag, ``empty()`` clears it, and the four operations
     below carry it by VersionRange's rules.  As there, the flag admits strings
     only at full bounds, so a full-bounded flagged range is a strict superset
@@ -42,14 +43,17 @@ class FlaggedRange:
     and pre-release regions are left out; the identity above turns on neither.
     """
 
-    __slots__ = ("arbitrary", "base")
+    __slots__ = ("arbitrary", "base", "metadata")
 
     # Counts every ``__eq__`` call, so a test can pin one that is skipped.
     eq_calls: ClassVar[int] = 0
 
-    def __init__(self, base: Range[int], *, arbitrary: bool = False) -> None:
+    def __init__(
+        self, base: Range[int], *, arbitrary: bool = False, metadata: bool = False
+    ) -> None:
         self.base = base
         self.arbitrary = arbitrary
+        self.metadata = metadata
 
     @classmethod
     def empty(cls) -> FlaggedRange:
@@ -81,6 +85,7 @@ class FlaggedRange:
         return FlaggedRange(
             new_base,
             arbitrary=self.arbitrary and other.arbitrary and not new_base.is_empty,
+            metadata=self.metadata or other.metadata,
         )
 
     def __or__(self, other: Any) -> FlaggedRange:
@@ -97,17 +102,23 @@ class FlaggedRange:
             arbitrary = (self.arbitrary and not self.base.is_empty) or (
                 other.arbitrary and not other.base.is_empty
             )
-        return FlaggedRange(new_base, arbitrary=arbitrary)
+        return FlaggedRange(
+            new_base, arbitrary=arbitrary, metadata=self.metadata or other.metadata
+        )
 
     def __invert__(self) -> FlaggedRange:
         """Complement, carrying the flag through."""
-        return FlaggedRange(~self.base, arbitrary=self.arbitrary)
+        return FlaggedRange(
+            ~self.base, arbitrary=self.arbitrary, metadata=self.metadata
+        )
 
     def __sub__(self, other: Any) -> FlaggedRange:
         """Difference, dropping the flag unless nothing was removed."""
         new_base = self.base - other.base
         return FlaggedRange(
-            new_base, arbitrary=self.arbitrary and new_base == self.base
+            new_base,
+            arbitrary=self.arbitrary and new_base == self.base,
+            metadata=self.metadata,
         )
 
     def is_subset(self, other: FlaggedRange) -> bool:
@@ -139,15 +150,18 @@ class FlaggedRange:
             isinstance(other, FlaggedRange)
             and self.base == other.base
             and self.arbitrary == other.arbitrary
+            and self.metadata == other.metadata
         )
 
     def __hash__(self) -> int:
-        """Hash the interval set together with the flag."""
-        return hash((self.base, self.arbitrary))
+        """Hash interval membership and metadata."""
+        return hash((self.base, self.arbitrary, self.metadata))
 
     def __repr__(self) -> str:
         """Render the interval set, naming the flag when it is set."""
         suffix = ", arbitrary" if self.arbitrary else ""
+        if self.metadata:
+            suffix += ", metadata"
         return f"FlaggedRange({self.base!r}{suffix})"
 
 
@@ -383,6 +397,24 @@ class TestTermTopSubstitution:
         )
         assert recorded
         assert all(constraint == resolver.term_top for constraint in recorded)
+
+    def test_refined_full_preserves_metadata_when_narrowed(self) -> None:
+        resolver = build_resolver(FlaggedProvider())
+        supplied = FlaggedRange(Range.full(), arbitrary=True, metadata=True)
+        normalized = resolver.as_term_range(supplied)
+        assert isinstance(normalized, FlaggedRange)
+        assert normalized.metadata
+        assert not normalized.arbitrary_active()
+        assert normalized.is_subset((normalized - DEPENDENCY) | DEPENDENCY)
+        assert resolver.as_term_range(supplied) is normalized
+        assert supplied.arbitrary_active()
+
+    @pytest.mark.timeout(STALL_TIMEOUT_SECONDS)
+    def test_refined_full_still_explains_the_conflict(self) -> None:
+        resolver = build_resolver(FlaggedProvider())
+        supplied = FlaggedRange(Range.full(), arbitrary=True, metadata=True)
+        with pytest.raises(ResolutionError, match="no versions of b"):
+            resolver.resolve({"a": supplied})
 
 
 class TestTermRangeMemo:

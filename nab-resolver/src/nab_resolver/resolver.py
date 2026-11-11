@@ -692,6 +692,7 @@ class Resolver(Generic[PackageType, VersionType]):
         # conflict resolution relies on ``x.is_subset((x - y) | y)``.
         self.fold_identity: RangeProtocol[Any] = range_type.full()
         self.term_top: RangeProtocol[Any] = ~range_type.empty()
+        self._term_top_differs = self.fold_identity != self.term_top
 
         # as_term_range's answer per supplied range object, keyed by id() with
         # term_range_keepalive holding the keys alive. Uncapped, unlike
@@ -765,17 +766,22 @@ class Resolver(Generic[PackageType, VersionType]):
     def as_term_range(self, range_: RangeProtocol[Any]) -> RangeProtocol[VersionType]:
         """Return the term constraint to record for a supplied range.
 
-        Only a range equal to ``full()`` is substituted.  A range that breaks
-        the identity :class:`~nab_resolver.types.RangeProtocol` documents
-        without equalling ``full()``, such as ``full()`` minus an ``===``
-        literal, passes through and reaches conflict resolution's step budget.
+        Ranges admitting all of ``full()`` are narrowed to the term top while
+        retaining metadata. Partial ranges that break the identity documented
+        by :class:`~nab_resolver.types.RangeProtocol` still pass through.
 
         Memoised per supplied range object.
         """
         key = id(range_)
         result = self.term_range_by_id.get(key)
         if result is None:
-            result = self.term_top if range_ == self.fold_identity else range_
+            if range_ == self.fold_identity:
+                result = self.term_top
+            elif self._term_top_differs and self.fold_identity.is_subset(range_):
+                # Intersection keeps metadata that structural equality distinguishes.
+                result = range_ & self.term_top
+            else:
+                result = range_
             self.term_range_by_id[key] = result
             self.term_range_keepalive.append(range_)
         return result
