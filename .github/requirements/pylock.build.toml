@@ -36,7 +36,7 @@ created-by = "nab"
 
 [[packages]]
 name = "hatchling"
-version = "1.32.4"
+version = "1.33.0"
 requires-python = ">=3.10"
 dependencies = [
     { name = "packaging" },
@@ -49,22 +49,22 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "hatchling-1.32.4.tar.gz"
-upload-time = 2026-09-20T22:48:45.398505+00:00
-url = "https://files.pythonhosted.org/packages/f6/97/b5312f01a8c6daf729a9d272dd442e0c546dbcc630495788786c4b567ed0/hatchling-1.32.4.tar.gz"
-size = 58065
+name = "hatchling-1.33.0.tar.gz"
+upload-time = 2026-10-28T02:27:30.694770+00:00
+url = "https://files.pythonhosted.org/packages/7a/f1/e47b937226ae3b093bbd0132eb0b7ee5bfad12c2b5324afd10ae49946b05/hatchling-1.33.0.tar.gz"
+size = 58079
 
 [packages.sdist.hashes]
-sha256 = "c4468f73144c054d2aab4ef0f0378c43b9878bf07f8ffd6b79690e970d375f07"
+sha256 = "4c422bd4d554fcff5de5b73e9596f85e41e9f97f7e553d8f7595ecb31a627bef"
 
 [[packages.wheels]]
-name = "hatchling-1.32.4-py3-none-any.whl"
-upload-time = 2026-09-20T22:48:44.190681+00:00
-url = "https://files.pythonhosted.org/packages/5f/80/91f51f439c05d4ec4623c22928ce16a938d6d793bf709477830823497859/hatchling-1.32.4-py3-none-any.whl"
-size = 78748
+name = "hatchling-1.33.0-py3-none-any.whl"
+upload-time = 2026-10-28T02:27:29.033037+00:00
+url = "https://files.pythonhosted.org/packages/32/64/4afe5dd77b2939a93e8c9513f8082dbd049ecba9c1484a379a0f6ae29d6b/hatchling-1.33.0-py3-none-any.whl"
+size = 78750
 
 [packages.wheels.hashes]
-sha256 = "08ecf7548fb48205e7f213d70c71e67b8271b7242093dc3f1da578b42c734a2c"
+sha256 = "415290b84f464d2884303fca8974d38e7b85579069fab02a15db0828fbb1446d"
 
 [[packages]]
 name = "packaging"
@@ -212,7 +212,7 @@ sha256 = "8b1ff4f9c191b1040b71c37f1e445ab99732911e3cd91de52838453a854d7a17"
 
 [tool.nab]
 nab-version = "0.0.29.dev0"
-created-at = 2026-11-03T02:06:19.779414+00:00
+created-at = 2026-11-12T02:27:02.318854+00:00
 command-line = [
     "nab",
     "lock",
@@ -234,6 +234,6 @@ platforms = [
 
 [tool.nab.validation]
 version = 1
-all-inputs-sha256 = "e59964b1223aee473bad61a417f1607e24d482666e4578ff708e6313ffaef1c9"
-selection-inputs-sha256 = "e9dae9b7ada212471bd90dfc32a3eb125d33cd8c1221f45165ea4ccabe8b016f"
-contents-sha256 = "1dc6fbdc9bc2e4db8ed6c574d17d0d8bb2bd08f95b6b2191cbf214311c9ae5f0"
+all-inputs-sha256 = "e4c4ba44b97c913f86161c6a908db5463d516a28ca281bc567eb6551f5b05725"
+selection-inputs-sha256 = "63c3377390c4f1238356dcdff2ed30432f1297384296092a55acd16eee2b9e75"
+contents-sha256 = "f40241d6df9fe373636721080a9a3c2729fa58547c040776baa10e1a2cbc54fd"

@@ -618,13 +618,13 @@ def _fail_config(exc: SourceConfigError) -> NoReturn:
     if isinstance(exc, CliTableError):
         _fail_cli(exc)
     printer().error(exc, prefix="config error: ")
-    sys.exit(1)
+    raise SystemExit(1)
 
 
 def _fail_cli(exc: SourceConfigError) -> NoReturn:
     """Exit 1 on a command-line value, with no ``config error:`` prefix."""
     printer().error(exc)
-    sys.exit(1)
+    raise SystemExit(1)
 
 
 def _is_pylock(path: Path) -> bool:

@@ -114,13 +114,13 @@ def _read_selection_table_or_exit(
         return reader(path)
     except OSError as e:
         printer().error(f"cannot read {path}: {e}")
-        sys.exit(1)
+        raise SystemExit(1) from None
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as e:
         printer().error(f"{path} is not valid TOML: {e}")
-        sys.exit(1)
+        raise SystemExit(1) from None
     except TypeError as e:
         printer().error(e, prefix=f"in {path}: ")
-        sys.exit(1)
+        raise SystemExit(1) from None
 
 
 def resolve_group_selection(
@@ -278,10 +278,10 @@ def _load_config(
         )
     except ConfigError as exc:
         printer().error(exc)
-        sys.exit(1)
+        raise SystemExit(1) from None
     except WorkspaceDiscoveryError as exc:
         printer().error(exc, prefix="workspace discovery error: ")
-        sys.exit(1)
+        raise SystemExit(1) from None
 
 
 def _check_targets_or_exit(config: NabProjectConfig) -> None:

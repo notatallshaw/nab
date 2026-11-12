@@ -45,7 +45,7 @@ Changelog = "https://github.com/notatallshaw/nab/releases"
 nab = "nab._entry:console_entry"
 
 [build-system]
-requires = ["hatchling>=1.32.4"]
+requires = ["hatchling>=1.33.0"]
 build-backend = "hatchling.build"
 
 # The umbrella sdist ships only the CLI package and its own tests. Without this
@@ -92,13 +92,12 @@ http-backends = [
 tests = [
     {include-group = "editable-build"},
     {include-group = "http-backends"},
-    "pytest>=9.1.1",
+    "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
     "coverage>=7.16.2",
-    "hypothesis>=6.168.5; python_version < '3.11'",
-    "hypothesis>=6.170.2; python_version >= '3.11'",
+    "hypothesis>=6.168.5",
     "respx>=0.23.1",
     "tomlkit>=0.15.2",
 ]
@@ -107,15 +106,15 @@ hatch-test = [
     "coverage-enable-subprocess==1.0",
     "coverage[toml]~=7.11",
     "pytest~=9.0",
-    "pytest-mock~=3.12",
-    "pytest-randomly~=3.15",
-    "pytest-rerunfailures~=14.0",
+    "pytest-mock>=3.17.0",
+    "pytest-randomly>=5.0.0",
+    "pytest-rerunfailures>=16.7",
     # xdist can use stdlib CPU detection without an extra native dependency.
     "pytest-xdist~=3.5",
 ]
 crosshair = [
     {include-group = "tests"},
-    "crosshair-tool>=0.0.111",
+    "crosshair-tool>=0.0.112",
     "hypothesis-crosshair>=0.0.31",
 ]
 type-common = [
@@ -125,7 +124,7 @@ type-common = [
 ]
 mypy = [
     {include-group = "type-common"},
-    "mypy>=2.4.0",
+    "mypy>=2.4.1",
 ]
 pyright = [
     {include-group = "tests"},
@@ -134,7 +133,7 @@ pyright = [
 ]
 ty = [
     {include-group = "type-common"},
-    "ty>=0.0.89",
+    "ty>=0.0.97",
 ]
 pyrefly = [
     {include-group = "type-common"},
@@ -142,7 +141,7 @@ pyrefly = [
 ]
 zuban = [
     {include-group = "type-common"},
-    "zuban>=0.10.1",
+    "zuban>=0.10.2",
 ]
 types = [
     {include-group = "mypy"},
@@ -152,23 +151,22 @@ types = [
     {include-group = "zuban"},
 ]
 lint = [
-    "ruff>=0.17.1",
+    "ruff>=0.17.3",
     "mdformat>=1.0.0",
     "mdformat-myst>=0.3.0",
     "mdformat-gfm-alerts>=2.1.0",
     "mdformat-deflist>=0.1.4",
 ]
 pre-commit = [
-    "pre-commit>=4.6.2; python_version < '3.11'",
-    "pre-commit>=4.7.0; python_version >= '3.11'",
+    "pre-commit>=4.6.2",
 ]
 # Nox selects each session's group from pylock.dev.toml.
 nox = [
-    "nox>=2026.8.17",
+    "nox>=2026.10.20",
 ]
 # Sphinx 9.1 requires Python 3.12; CI and Read the Docs build on 3.13.
 docs = [
-    "sphinx>=9.1.0; python_version >= '3.12'",
+    "sphinx>=9.1.1; python_version >= '3.12'",
     "furo>=2025.12.19; python_version >= '3.12'",
     "myst-parser>=5.1.0; python_version >= '3.12'",
     "linkify-it-py>=2.2.0; python_version >= '3.12'",
@@ -184,7 +182,7 @@ release = [
     "tomlkit>=0.15.2",
     "build>=1.6.1",
     "twine>=7.0.0",
-    "pypi-attestations>=0.0.30",
+    "pypi-attestations>=0.0.31",
 ]
 # The dists nox session builds every distribution and installs it. It needs the
 # build frontend; the backend comes from pylock.build.toml, locked from
