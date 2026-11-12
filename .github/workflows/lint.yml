@@ -18,6 +18,24 @@ env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 jobs:
+  lock-updater-action:
+    name: Unchanged dependency locks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: publish
+        uses: notatallshaw/nab/.github/actions/update-lock-pr@3ac908431b8213abff1d4a3dba97d96ff2f58882
+
+      - run: test "$CHANGED" = false
+        env:
+          CHANGED: ${{ steps.publish.outputs.changed }}
+
   pre-commit:
     name: pre-commit
     runs-on: ubuntu-latest

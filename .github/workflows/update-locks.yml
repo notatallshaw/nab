@@ -73,10 +73,7 @@ jobs:
 
       - name: Open or update the dependency PR
         id: pr
-        run: python3 tasks/update_lock_pr.py
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+        uses: notatallshaw/nab/.github/actions/update-lock-pr@3ac908431b8213abff1d4a3dba97d96ff2f58882
 
   checks:
     name: Start dependency checks
