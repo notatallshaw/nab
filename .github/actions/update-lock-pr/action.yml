@@ -1,0 +1,27 @@
+name: Publish dependency locks
+description: Open or update a signed draft PR for development and build locks.
+
+inputs:
+  token:
+    description: Token with contents and pull-requests write permissions.
+    default: ${{ github.token }}
+  working-directory:
+    description: Checked-out project containing the refreshed locks.
+    default: .
+
+outputs:
+  changed:
+    description: Whether a lock update was published.
+    value: ${{ steps.publish.outputs.changed }}
+
+runs:
+  using: composite
+  steps:
+    - id: publish
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: python3 "$GITHUB_ACTION_PATH/../../../tasks/update_lock_pr.py"
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        LOCK_PROJECT_ROOT: .

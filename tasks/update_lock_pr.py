@@ -197,7 +197,8 @@ def publish(root: Path, repository: str) -> bool:
 
 def main() -> None:
     """Tell the next workflow job whether an update needs CI."""
-    changed = publish(ROOT, os.environ["GH_REPO"])
+    root = Path(os.environ.get("LOCK_PROJECT_ROOT", ROOT)).resolve()
+    changed = publish(root, os.environ["GH_REPO"])
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         output.write(f"changed={str(changed).lower()}\n")
 

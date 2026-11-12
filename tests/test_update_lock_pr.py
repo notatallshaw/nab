@@ -158,3 +158,33 @@ def test_unchanged_locks_do_not_touch_github(
 
     monkeypatch.setattr(task.subprocess, "run", invoke)
     assert not task.publish(tmp_path, "owner/repo")
+
+
+@pytest.mark.parametrize(("override", "changed"), [(False, True), (True, False)])
+def test_job_output_uses_the_selected_checkout(
+    tmp_path: Path,
+    task: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    override: bool,
+    changed: bool,
+) -> None:
+    default = tmp_path / "default"
+    selected = tmp_path / "selected"
+    output = tmp_path / "output"
+    monkeypatch.setattr(task, "ROOT", default)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setenv("GH_REPO", "owner/repo")
+    if override:
+        monkeypatch.setenv("LOCK_PROJECT_ROOT", str(selected))
+    else:
+        monkeypatch.delenv("LOCK_PROJECT_ROOT", raising=False)
+    calls = []
+
+    def publish(root: Path, repository: str) -> bool:
+        calls.append((root, repository))
+        return changed
+
+    monkeypatch.setattr(task, "publish", publish)
+    task.main()
+    assert calls == [(selected if override else default, "owner/repo")]
+    assert output.read_text() == f"changed={str(changed).lower()}\n"
