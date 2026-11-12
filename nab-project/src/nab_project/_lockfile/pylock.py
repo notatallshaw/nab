@@ -2121,29 +2121,29 @@ def _finalize_parts(
         simplified = _finalize_cached(
             part.marker, universe, name, memo, store, prepared_sets=prepared_sets
         )
+
+        # Positive package selectors must stay attached to their conflict conditions.
         if part.condition is not None and not part.gate:
             conditions_by_environment[simplified].append(part.condition)
             continue
+
         if part.condition is not None:
             simplified = (
                 part.condition
                 if simplified is None
                 else _parsed_marker(f"({simplified}) and ({part.condition})")
             )
+
         if not part.gate:
             if simplified is None:
                 return None
             assembled.append(simplified)
             continue
+
         assembled.append(_gated_marker(simplified, part.gate))
 
     for environment, conditions in conditions_by_environment.items():
-        if len(conditions) == 1:
-            condition = conditions[0]
-        else:
-            # Keep the unfactored disjunction out of the parsed-marker cache.
-            text = " or ".join(f"({condition})" for condition in conditions)
-            condition = _parsed_marker(factor_membership_marker(text))
+        condition = _factored_condition(conditions)
         assembled.append(
             condition
             if environment is None
@@ -2156,6 +2156,16 @@ def _finalize_parts(
     return _finalize_cached(
         _or_markers(assembled), universe, name, memo, store, prepared_sets=prepared_sets
     )
+
+
+def _factored_condition(conditions: Sequence[Marker]) -> Marker:
+    """Factor complete conflict selectors before parsing their combined marker."""
+    if len(conditions) == 1:
+        return conditions[0]
+
+    # The formatter parses its input; avoid parsing and caching it twice.
+    text = " or ".join(f"({condition})" for condition in conditions)
+    return _parsed_marker(factor_membership_marker(text))
 
 
 def _gated_marker(marker: Marker | None, gate: Sequence[tuple[str, str]]) -> Marker:

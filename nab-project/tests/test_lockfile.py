@@ -6502,17 +6502,15 @@ class TestConflictForkNegatedEmission:
         if not only_linux:
             assert variables == frozenset({"dependency_groups"})
             if len(selected_groups) > 1:
-                raw = Marker(
-                    " or ".join(
-                        "("
-                        + " and ".join(
-                            f'"{name}" {"in" if name == chosen else "not in"} dependency_groups'
-                            for name in groups
-                        )
-                        + ")"
-                        for chosen in selected_groups
+                clauses = []
+                for chosen in selected_groups:
+                    predicates = (
+                        f'"{name}" {"in" if name == chosen else "not in"} dependency_groups'
+                        for name in groups
                     )
-                )
+                    clauses.append(f"({' and '.join(predicates)})")
+
+                raw = Marker(" or ".join(clauses))
                 assert len(str(package.marker).encode()) < len(str(raw).encode())
 
         for environment in environments:

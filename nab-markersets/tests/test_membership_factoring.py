@@ -44,7 +44,9 @@ def test_every_membership_selection_is_preserved(
     assert len(factored.encode()) < len(text.encode())
     rebuilt = MarkerSet.from_marker(factored)
     emitted = Marker(factored)
+    parsed = Marker(text)
     names = ("development", "documentation", "linting", "compatibility", "downstream")
+
     for flags in itertools.product((False, True), repeat=len(names)):
         selected = frozenset(
             name for name, active in zip(names, flags, strict=True) if active
@@ -52,15 +54,16 @@ def test_every_membership_selection_is_preserved(
         env = {variable: selected}
         assert rebuilt.evaluate(env) == original.evaluate(env)
         if variable != "extra":
-            assert emitted.evaluate(env, context="lock_file") == Marker(text).evaluate(
+            assert emitted.evaluate(env, context="lock_file") == parsed.evaluate(
                 env, context="lock_file"
             )
+
     if variable == "extra":
         for name in ("", *names):
             scalar_env = {variable: name}
-            assert emitted.evaluate(scalar_env, context="lock_file") == Marker(
-                text
-            ).evaluate(scalar_env, context="lock_file")
+            assert emitted.evaluate(scalar_env, context="lock_file") == parsed.evaluate(
+                scalar_env, context="lock_file"
+            )
 
 
 @pytest.mark.parametrize(

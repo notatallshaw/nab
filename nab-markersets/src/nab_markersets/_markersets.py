@@ -585,12 +585,11 @@ def _parsed_comparisons(node: Sequence[MarkerNode]) -> Iterator[MarkerComparison
     for item in node:
         if isinstance(item, str):
             continue
-        if not isinstance(item, tuple):
-            # Zuban retains comparison tuples in the narrowed recursive alias.
-            yield from _parsed_comparisons(item)  # zuban: ignore[arg-type]
+        if isinstance(item, list):
+            yield from _parsed_comparisons(item)
             continue
 
-        # parse_marker builds tuples only for comparisons, never nested sequences.
+        # Parser groups are lists, although its Sequence alias also admits tuples.
         yield cast("MarkerComparison", item)
 
 
@@ -2182,22 +2181,29 @@ def _to_clauses(
             if max_literal_references is not None:
                 references += sum(map(len, child_clauses))
                 _check_dnf_references(references, max_literal_references)
+
             clauses.extend(child_clauses)
         return clauses
+
     and_node = cast("AndNode", node)
     product: list[frozenset[Atom]] = [frozenset()]
     for child in and_node.children:
         child_clauses = _to_clauses(
             child, max_cells, max_literal_references=max_literal_references
         )
+
+        # Refuse the temporary product before unions can remove duplicate atoms.
         if len(product) * len(child_clauses) > max_cells:
             msg = f"DNF clause count exceeds max_cells={max_cells}"
             raise IntractableMarkerSet(msg)
         if max_literal_references is not None:
-            references = len(child_clauses) * sum(map(len, product)) + len(
-                product
-            ) * sum(map(len, child_clauses))
+            left_references = sum(map(len, product))
+            right_references = sum(map(len, child_clauses))
+            references = (
+                len(child_clauses) * left_references + len(product) * right_references
+            )
             _check_dnf_references(references, max_literal_references)
+
         product = [left | right for left in product for right in child_clauses]
     return product
 
@@ -2734,11 +2740,13 @@ def _membership_clauses(node: Formula) -> list[frozenset[Atom]] | None:
         for child in children:
             if not isinstance(child, AtomLeaf) or child.atom.kind != AXIS_SET:
                 return None
+
             atom = child.atom
             if variable is None:
                 variable = atom.origin
             elif variable != atom.origin:
                 return None
+
             atoms.append(_canonical_cover_atom(atom))
         clauses.append(frozenset(atoms))
     return clauses
@@ -2748,6 +2756,8 @@ def _factor_membership_clauses(clauses: Sequence[frozenset[Atom]]) -> Formula:
     """Factor repeated membership predicates without expanding the clause list."""
     if not clauses:
         return FALSE
+
+    # Price repeated scans and ordering before allocating recursive partitions.
     charge_work(
         sum(
             1 + len(atom.literal) + len(atom.origin)
@@ -2756,8 +2766,10 @@ def _factor_membership_clauses(clauses: Sequence[frozenset[Atom]]) -> Formula:
         )
         * max(1, len(clauses).bit_length())
     )
+
     common: frozenset[Atom] = frozenset.intersection(*clauses)
     residual = [clause - common for clause in clauses]
+    # An empty residual means the common clause covers this whole disjunction.
     if any(not clause for clause in residual):
         return _clause_formula(common)
 
@@ -2765,18 +2777,21 @@ def _factor_membership_clauses(clauses: Sequence[frozenset[Atom]]) -> Formula:
     for clause in residual:
         for atom in clause:
             counts[atom] = counts.get(atom, 0) + 1
-    atom = max(counts, key=lambda item: (counts[item], _atom_key(item)))
-    if counts[atom] == 1:
+
+    # A stable tiebreak keeps serialization independent of set iteration order.
+    pivot = max(counts, key=lambda atom: (counts[atom], _atom_key(atom)))
+    if counts[pivot] == 1:
         tail = _disjunction(sorted(residual, key=_clause_key))
     else:
-        inside = [clause - {atom} for clause in residual if atom in clause]
-        outside = [clause for clause in residual if atom not in clause]
+        with_pivot = [clause - {pivot} for clause in residual if pivot in clause]
+        without_pivot = [clause for clause in residual if pivot not in clause]
         tail = make_or(
             (
-                make_and((AtomLeaf(atom), _factor_membership_clauses(inside))),
-                _factor_membership_clauses(outside),
+                make_and((AtomLeaf(pivot), _factor_membership_clauses(with_pivot))),
+                _factor_membership_clauses(without_pivot),
             )
         )
+
     return make_and((_clause_formula(common), tail))
 
 
@@ -2790,10 +2805,13 @@ def _membership_syntax_supported(parsed: Sequence[MarkerNode]) -> bool:
             variable, swapped = right.value, True
         else:
             return False
+
         if observed_variable is None:
             observed_variable = variable
         elif observed_variable != variable:
             return False
+
+        # Equality is total for legacy extra; plural axes require literal membership.
         if variable == "extra":
             if op.serialize() not in {"==", "!="}:
                 return False
@@ -2806,42 +2824,54 @@ def _membership_syntax_supported(parsed: Sequence[MarkerNode]) -> bool:
     return observed_variable is not None
 
 
+def _membership_roundtrip_matches(
+    rendered: str, clauses: Sequence[frozenset[Atom]]
+) -> bool:
+    """Certify serialized clauses within the original allocation bounds."""
+    rebuilt = parse(rendered)
+    _charge_formula_work(rebuilt)
+
+    # A shorter serialized marker can still expand into a larger DNF.
+    expanded = _to_clauses(
+        rebuilt,
+        len(clauses),
+        max_literal_references=sum(map(len, clauses)),
+    )
+    roundtrip = _membership_clauses(_disjunction(expanded))
+    return roundtrip is not None and set(roundtrip) == set(clauses)
+
+
+def _factor_membership_text(text: str) -> str:
+    """Admit raw syntax, then accept only a shorter certified factorization."""
+    charge_work(len(text))
+    parsed = _parse_ast(text)
+    if parsed is None or not _membership_syntax_supported(parsed):
+        return text
+
+    # Normalization may discard unsupported predicates, so admission comes first.
+    source = _convert(parsed)
+    _charge_formula_work(source)
+    clauses = _membership_clauses(source)
+    if clauses is None:
+        return text
+
+    candidate = _factor_membership_clauses(clauses)
+    _charge_formula_work(candidate)
+    rendered = serialize(candidate)
+    if len(rendered.encode()) >= len(text.encode()):
+        return text
+
+    return rendered if _membership_roundtrip_matches(rendered, clauses) else text
+
+
 def factor_membership_marker(text: str, max_work: int) -> str:
-    """Factor a membership DNF and certify its serialized Boolean clauses."""
+    """Share the caller's work budget or restore a budget owned by this call."""
     previous_work = _work_meter.remaining
     if previous_work is None:
         _work_meter.remaining = max_work
-    try:
-        charge_work(len(text))
-        parsed = _parse_ast(text)
-        if parsed is None or not _membership_syntax_supported(parsed):
-            return text
-        source = _convert(parsed)
-        _charge_formula_work(source)
-        clauses = _membership_clauses(source)
-        if clauses is None:
-            return text
-        candidate = _factor_membership_clauses(clauses)
-        _charge_formula_work(candidate)
-        rendered = serialize(candidate)
-        if len(rendered.encode()) >= len(text.encode()):
-            return text
 
-        rebuilt = parse(rendered)
-        _charge_formula_work(rebuilt)
-        # Factoring must not grow the DNF during the independent round trip.
-        roundtrip = _membership_clauses(
-            _disjunction(
-                _to_clauses(
-                    rebuilt,
-                    len(clauses),
-                    max_literal_references=sum(map(len, clauses)),
-                )
-            )
-        )
-        if roundtrip is None or set(roundtrip) != set(clauses):
-            return text
-        return rendered
+    try:
+        return _factor_membership_text(text)
     finally:
         if previous_work is None:
             _work_meter.remaining = previous_work
