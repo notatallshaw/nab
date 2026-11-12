@@ -24,6 +24,7 @@ from typing import Any, cast
 import pytest
 
 from nab_resolver import decide
+from nab_resolver._compat import override
 from nab_resolver.partial_solution import PartialSolution
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import (
@@ -59,6 +60,7 @@ class RefiningRange(Range[int]):
     def flag(self) -> bool:
         return self._flag
 
+    @override
     def __and__(self, other: object) -> RefiningRange:
         """Intersect, keeping the flag if either side carries it."""
         base = super().__and__(other)
@@ -66,6 +68,7 @@ class RefiningRange(Range[int]):
             return NotImplemented
         return RefiningRange(base._intervals, flag=self._flag or _flag_of(other))
 
+    @override
     def __or__(self, other: object) -> RefiningRange:
         """Unite, keeping the flag if either side carries it."""
         base = super().__or__(other)
@@ -73,12 +76,14 @@ class RefiningRange(Range[int]):
             return NotImplemented
         return RefiningRange(base._intervals, flag=self._flag or _flag_of(other))
 
+    @override
     def __eq__(self, other: object) -> bool:
         """Equal when the version sets match and the flags agree."""
         if not isinstance(other, Range):
             return NotImplemented
         return self._intervals == other._intervals and self._flag == _flag_of(other)
 
+    @override
     def __hash__(self) -> int:
         """Hash the version set together with the flag."""
         return hash((self._intervals, self._flag))
@@ -99,6 +104,7 @@ class _RecordingObserver(ResolverObserver[Any, int]):
     def __init__(self) -> None:
         self.derived: list[Any] = []
 
+    @override
     def on_derivation(
         self, package: Any, *, positive: bool, cause: Incompatibility[Any, int]
     ) -> None:
@@ -170,6 +176,7 @@ class _CounterRecordingProvider(_InertProvider):
     def __init__(self) -> None:
         self.counters: list[tuple[dict[Any, int], dict[Any, int] | None]] = []
 
+    @override
     def prioritize(
         self,
         package: Any,
@@ -192,9 +199,11 @@ class _ScanOrderProvider(_InertProvider):
     def __init__(self) -> None:
         self.calls: list[str] = []
 
+    @override
     def begin_decision_scan(self) -> None:
         self.calls.append("begin")
 
+    @override
     def prioritize(
         self,
         package: Any,
@@ -205,6 +214,7 @@ class _ScanOrderProvider(_InertProvider):
         self.calls.append(f"prioritize {package}")
         return 0
 
+    @override
     def is_ready(self, package: Any) -> bool:
         self.calls.append(f"is_ready {package}")
         return True
@@ -473,10 +483,12 @@ class _SnapshotCountingSolution(PartialSolution[Any, Any]):
         super().__init__(range_type=range_type)
         self.snapshots_taken = 0
 
+    @override
     def positive_ranges(self) -> Mapping[Any, RangeProtocol[Any]]:
         self.snapshots_taken += 1
         return super().positive_ranges()
 
+    @override
     def decisions(self) -> Mapping[Any, Any]:
         self.snapshots_taken += 1
         return super().decisions()
@@ -488,6 +500,7 @@ class _HintRecordingProvider(_InertProvider):
     def __init__(self) -> None:
         self.hints: list[tuple[dict[Any, RangeProtocol[int]], dict[Any, int]]] = []
 
+    @override
     def receive_partial_solution_hint(
         self,
         positive_ranges: Mapping[Any, RangeProtocol[int]],
@@ -495,16 +508,19 @@ class _HintRecordingProvider(_InertProvider):
     ) -> None:
         self.hints.append((dict(positive_ranges), dict(decisions)))
 
+    @override
     def choose_version(
         self, package: Any, version_range: RangeProtocol[int]
     ) -> int | None:
         return 1 if 1 in version_range else None
 
+    @override
     def has_satisfying_version(
         self, package: Any, version_range: RangeProtocol[int]
     ) -> bool:
         return 1 in version_range
 
+    @override
     def get_dependencies(
         self, package: Any, version: int
     ) -> Mapping[Any, RangeProtocol[int]]:
@@ -548,6 +564,7 @@ class _OverridingHintProvider(_InheritedHintProvider):
     def __init__(self) -> None:
         self.hints: list[tuple[dict[Any, RangeProtocol[int]], dict[Any, int]]] = []
 
+    @override
     def receive_partial_solution_hint(
         self,
         positive_ranges: Mapping[Any, RangeProtocol[int]],
@@ -572,6 +589,7 @@ class _ProviderSwappingObserver(ResolverObserver[Any, int]):
         self.replacement = replacement
         self.resolver: Resolver[Any, int] | None = None
 
+    @override
     def on_decision(self, package: Any, version: int, level: int) -> None:
         assert self.resolver is not None
         self.resolver.provider = self.replacement

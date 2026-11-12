@@ -23,6 +23,7 @@ from collections.abc import Callable, Mapping
 from collections.abc import Set as AbstractSet
 from typing import Any
 
+from nab_resolver._compat import override
 from nab_resolver.decision_queue import DecisionQueue
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver
@@ -221,11 +222,13 @@ class ConflictSensitiveProvider(FuzzProvider):
         self._ready_scan = ready_scan
         self.scans = 0
 
+    @override
     def begin_decision_scan(self) -> Callable[[str], bool]:
         """Count the scan, then offer ``is_ready``: nothing else moves it here."""
         self.scans += 1
         return self.is_ready
 
+    @override
     def prioritize(
         self,
         package: str,
@@ -245,6 +248,7 @@ class ConflictSensitiveProvider(FuzzProvider):
         )
         return trailing * 4 + matching
 
+    @override
     def is_ready(self, package: str) -> bool:
         """Report every package ready but the held-back one, until its scan."""
         return package != self._unready_package or self.scans >= self._ready_scan
@@ -265,6 +269,7 @@ class RecheckingDecisionQueue(DecisionQueue[str]):
         self.unready_picks = 0
         self.held_keys = 0
 
+    @override
     def pick(
         self,
         undecided: AbstractSet[str],

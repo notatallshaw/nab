@@ -7,6 +7,7 @@ from typing import SupportsIndex
 
 import pytest
 
+from nab_resolver._compat import override
 from nab_resolver.partial_solution import Assignment, PartialSolution
 from nab_resolver.ranges import Range
 from nab_resolver.types import Incompatibility, IncompatibilityCause, RangeProtocol
@@ -19,6 +20,7 @@ class CountingTrails(UserDict[str, list[Assignment[str, int]]]):
         super().__init__(entries)
         self.visits: list[str] = []
 
+    @override
     def __getitem__(self, package: str) -> list[Assignment[str, int]]:
         """Record a visit before returning the requested trail."""
         self.visits.append(package)
@@ -94,6 +96,7 @@ class CountingCache(UserDict[str, RangeProtocol[int] | None]):
         super().__init__(entries)
         self.probes: list[str] = []
 
+    @override
     def __getitem__(self, package: str) -> RangeProtocol[int] | None:
         """Record a probe before returning the cached range."""
         self.probes.append(package)
@@ -170,6 +173,7 @@ class CountingEntries(list[Assignment[str, int]]):
         super().__init__(entries)
         self.pops = 0
 
+    @override
     def pop(self, index: SupportsIndex = -1, /) -> Assignment[str, int]:
         self.pops += 1
         return super().pop(index)

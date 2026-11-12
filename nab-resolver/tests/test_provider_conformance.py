@@ -7,6 +7,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from nab_resolver._compat import override
 from nab_resolver.errors import ResolutionError, ResolutionLimitError
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import BaseProvider
@@ -131,6 +132,7 @@ def test_oracle_budget_precedes_provider_work() -> None:
 
 def test_omitted_feasible_version_is_detected() -> None:
     class MissingVersion(FixtureProvider):
+        @override
         def choose_version(
             self, package: str, version_range: RangeProtocol[int]
         ) -> int | None:
@@ -142,6 +144,7 @@ def test_omitted_feasible_version_is_detected() -> None:
 
 def test_probe_disagreement_is_detected() -> None:
     class FalseProbe(FixtureProvider):
+        @override
         def has_satisfying_version(
             self, package: str, version_range: RangeProtocol[int]
         ) -> bool:
@@ -153,6 +156,7 @@ def test_probe_disagreement_is_detected() -> None:
 
 def test_unknown_candidate_is_detected() -> None:
     class Unknown(FixtureProvider):
+        @override
         def choose_version(
             self, package: str, version_range: RangeProtocol[int]
         ) -> int:
@@ -164,6 +168,7 @@ def test_unknown_candidate_is_detected() -> None:
 
 def test_wrong_dependencies_are_detected() -> None:
     class MissingDependency(FixtureProvider):
+        @override
         def get_dependencies(self, package: str, version: int) -> dict[str, Range[int]]:
             return {}
 
@@ -177,6 +182,7 @@ def test_repeated_metadata_change_is_detected() -> None:
     class Changing(FixtureProvider):
         reads = 0
 
+        @override
         def get_dependencies(
             self, package: str, version: int
         ) -> Mapping[str, RangeProtocol[int]]:
@@ -191,6 +197,7 @@ def test_returned_mapping_mutation_is_detected() -> None:
     class Mutating(FixtureProvider):
         retained_dependencies: dict[str, Range[int]] | None = None
 
+        @override
         def get_dependencies(
             self, package: str, version: int
         ) -> Mapping[str, RangeProtocol[int]]:
@@ -209,10 +216,12 @@ def test_returned_mapping_mutation_is_detected() -> None:
 
 def test_widening_contracts_are_checked() -> None:
     class Excluding(FixtureProvider):
+        @override
         def widen_decision(self, package: str, version: int) -> Range[int]:
             return Range.empty()
 
     class Unequal(FixtureProvider):
+        @override
         def widen_decision(self, package: str, version: int) -> Range[int]:
             return Range.full()
 
@@ -227,6 +236,7 @@ def test_widening_contracts_are_checked() -> None:
 
 def test_display_membership_is_checked() -> None:
     class Dropping(FixtureProvider):
+        @override
         def narrow_for_display(
             self, package: str, constraint: RangeProtocol[int]
         ) -> Range[int]:
@@ -251,6 +261,7 @@ def test_generated_backtracking_fixtures(bounds: list[tuple[int, int]]) -> None:
 
 def test_full_query_cannot_invent_an_unlisted_version() -> None:
     class Inventing(FixtureProvider):
+        @override
         def choose_version(
             self, package: str, version_range: RangeProtocol[int]
         ) -> int | None:
@@ -259,6 +270,7 @@ def test_full_query_cannot_invent_an_unlisted_version() -> None:
 
             return super().choose_version(package, version_range)
 
+        @override
         def get_dependencies(self, package: str, version: int) -> dict[str, Range[int]]:
             return self.graph.get(package, {}).get(version, {})
 
@@ -268,6 +280,7 @@ def test_full_query_cannot_invent_an_unlisted_version() -> None:
 
 def test_solver_limits_are_not_reported_as_unsatisfiability() -> None:
     class Limited(FixtureProvider):
+        @override
         def prioritize(
             self,
             package: str,
@@ -283,6 +296,7 @@ def test_solver_limits_are_not_reported_as_unsatisfiability() -> None:
 
 def test_valid_singleton_widening() -> None:
     class Widening(FixtureProvider):
+        @override
         def widen_decision(self, package: str, version: int) -> Range[int]:
             return Range.singleton(version)
 
@@ -293,6 +307,7 @@ def test_precheck_can_supply_a_sound_clause_instead_of_a_candidate() -> None:
     class Prechecking(FixtureProvider):
         pending: list[Incompatibility[str, int]]
 
+        @override
         def choose_version(
             self, package: str, version_range: RangeProtocol[int]
         ) -> None:
@@ -303,11 +318,13 @@ def test_precheck_can_supply_a_sound_clause_instead_of_a_candidate() -> None:
                 )
             ]
 
+        @override
         def has_satisfying_version(
             self, package: str, version_range: RangeProtocol[int]
         ) -> bool:
             return False
 
+        @override
         def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
             clauses = self.pending
             self.pending = []
@@ -321,9 +338,11 @@ def test_scan_precedes_direct_queries() -> None:
     class Initialized(FixtureProvider):
         scanned = False
 
+        @override
         def begin_decision_scan(self) -> None:
             self.scanned = True
 
+        @override
         def choose_version(
             self, package: str, version_range: RangeProtocol[int]
         ) -> int | None:
@@ -346,6 +365,7 @@ def test_structural_provider_is_supported() -> None:
 
 def test_proofless_provider_failure_is_not_an_unsatisfiability_result() -> None:
     class FailedOperation(FixtureProvider):
+        @override
         def prioritize(
             self,
             package: str,
@@ -370,6 +390,7 @@ def test_scan_only_context_hint_precedes_direct_query_scans() -> None:
         ) -> None:
             self.hinted = True
 
+        @override
         def begin_decision_scan(self) -> None:
             assert self.hinted
 
@@ -380,12 +401,14 @@ def test_candidate_hashes_remain_stable() -> None:
     class MutableVersion(int):
         salt = 0
 
+        @override
         def __hash__(self) -> int:
             return hash(int(self)) + self.salt
 
     version = MutableVersion(1)
 
     class HashChanging(FixtureProvider):
+        @override
         def narrow_for_display(
             self, package: str, constraint: RangeProtocol[int]
         ) -> RangeProtocol[int]:
@@ -401,6 +424,7 @@ def test_widening_is_checked_when_another_version_is_actually_chosen(
     widen_all: bool,
 ) -> None:
     class OldestWithBroadFacts(FixtureProvider):
+        @override
         def choose_version(
             self, package: str, version_range: RangeProtocol[int]
         ) -> int | None:
@@ -413,6 +437,7 @@ def test_widening_is_checked_when_another_version_is_actually_chosen(
                 None,
             )
 
+        @override
         def prioritize(
             self,
             package: str,
@@ -422,6 +447,7 @@ def test_widening_is_checked_when_another_version_is_actually_chosen(
         ) -> int:
             return {"app": 0, "lib": 1, "bridge": 2}[package]
 
+        @override
         def widen_decision(self, package: str, version: int) -> Range[int]:
             return Range.full() if widen_all else Range.singleton(version)
 
@@ -455,6 +481,7 @@ def test_widening_is_checked_when_another_version_is_actually_chosen(
 @pytest.mark.parametrize("return_input", [False, True])
 def test_display_callback_cannot_mutate_its_input(return_input: bool) -> None:
     class MutatingDisplay(FixtureProvider):
+        @override
         def narrow_for_display(
             self, package: str, constraint: RangeProtocol[int]
         ) -> Range[int]:
@@ -478,6 +505,7 @@ def test_provider_cannot_mutate_the_query_range(phase: str) -> None:
                 allowed._intervals = ((2, True, 2, True),)
                 allowed._hash = 0
 
+        @override
         def has_satisfying_version(
             self, package: str, version_range: RangeProtocol[int]
         ) -> bool:
@@ -487,6 +515,7 @@ def test_provider_cannot_mutate_the_query_range(phase: str) -> None:
                 version in version_range for version in self.graph.get(package, {})
             )
 
+        @override
         def choose_version(
             self, package: str, version_range: RangeProtocol[int]
         ) -> int | None:

@@ -73,7 +73,7 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
     __slots__ = ("__weakref__", "_live", "_shadow")
 
     def __init__(self, live: dict[PackageType, _ValueType]) -> None:
-        self._live = live
+        self._live: dict[PackageType, _ValueType] = live
         # A value or _ABSENT. Any rather than that union, which no checker
         # narrows the sentinel back out of.
         self._shadow: dict[PackageType, Any] = {}

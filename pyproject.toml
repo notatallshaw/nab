@@ -534,6 +534,8 @@ reportUntypedClassDecorator = "error"
 reportUntypedFunctionDecorator = "error"
 reportUntypedNamedTuple = "error"
 reportUnnecessaryContains = "error"
+reportUnnecessaryTypeIgnoreComment = "error"
+reportImplicitOverride = "error"
 # JSON/TOML validation and dynamic adapters intentionally carry unknown values.
 # Requiring casts for each narrowed container hides rather than checks that boundary.
 reportUnknownArgumentType = "none"
@@ -661,7 +663,6 @@ all = "error"
 # Repeating runtime checks or adding casts only to restate those contracts is noise.
 unsound-assignment = "ignore"
 unsound-return-statement = "ignore"
-unsound-yield = "ignore"
 # Empty values and None intentionally share these branches; keep input guards.
 truthiness-test-of-none-union = "ignore"
 redundant-condition-strict = "ignore"
@@ -673,6 +674,7 @@ exclude = ["**/_vendor"]
 [tool.mypy]
 python_version = "3.10"
 strict = true
+strict_equality_for_none = true
 disallow_any_unimported = true
 warn_unused_configs = true
 namespace_packages = true
@@ -698,6 +700,8 @@ enable_error_code = [
     "unused-awaitable",
     "unimported-reveal",
     "deprecated",
+    "truthy-iterable",
+    "exhaustive-match",
 ]
 
 [[tool.mypy.overrides]]

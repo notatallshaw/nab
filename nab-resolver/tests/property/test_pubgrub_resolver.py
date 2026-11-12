@@ -23,6 +23,7 @@ import pytest
 from hypothesis import example, given
 from hypothesis import strategies as st
 
+from nab_resolver._compat import override
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import ResolutionError, Resolver, ResolverObserver
 
@@ -67,6 +68,7 @@ class _MonotonicityObserver(ResolverObserver):
         self._resolver = resolver
         self.sizes: list[int] = []
 
+    @override
     def on_learned(self, incompatibility: Incompatibility) -> None:
         del incompatibility
         self.sizes.append(len(self._resolver.incompatibilities))
@@ -94,6 +96,7 @@ class _DenseLevelsObserver(ResolverObserver[str, int]):
         # virtual ROOT decision), updates on backjump.
         self._current_level: int = 1
 
+    @override
     def on_decision(self, package: str, version: int, level: int) -> None:
         expected = self._current_level + 1
         if level != expected:
@@ -103,6 +106,7 @@ class _DenseLevelsObserver(ResolverObserver[str, int]):
         self.decisions.append((package, version, level))
         self._current_level = level
 
+    @override
     def on_backjump(self, from_level: int, to_level: int) -> None:
         del from_level
         self._current_level = to_level
@@ -122,10 +126,12 @@ class _InvariantObserver(ResolverObserver):
         self.learned: int = 0
         self.violations: list[str] = []
 
+    @override
     def on_decision(self, package: object, version: object, level: int) -> None:
         del package, version
         self.decision_levels.append(level)
 
+    @override
     def on_backjump(self, from_level: int, to_level: int) -> None:
         self.backjumps.append((from_level, to_level))
         if to_level >= from_level:
@@ -133,10 +139,12 @@ class _InvariantObserver(ResolverObserver):
         if to_level < 1:
             self.violations.append(f"Backjump below root: {from_level} -> {to_level}")
 
+    @override
     def on_conflict(self, incompatibility: Incompatibility) -> None:
         del incompatibility
         self.conflicts += 1
 
+    @override
     def on_learned(self, incompatibility: Incompatibility) -> None:
         self.learned += 1
         if not incompatibility.terms:

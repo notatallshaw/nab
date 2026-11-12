@@ -397,10 +397,10 @@ class TestRangeIntersectionEdgeCases:
         assert c.is_empty
 
     def test_and_not_implemented(self) -> None:
-        assert Range.full().__and__(object()) is NotImplemented  # type: ignore[arg-type]
+        assert Range.full().__and__(object()) is NotImplemented
 
     def test_or_not_implemented(self) -> None:
-        assert Range.full().__or__(object()) is NotImplemented  # type: ignore[arg-type]
+        assert Range.full().__or__(object()) is NotImplemented
 
 
 class TestRangeDifference:
@@ -422,7 +422,7 @@ class TestRangeDifference:
         assert (a - Range.full()).is_empty
 
     def test_sub_not_implemented(self) -> None:
-        assert Range.full().__sub__(object()) is NotImplemented  # type: ignore[arg-type]
+        assert Range.full().__sub__(object()) is NotImplemented
 
 
 class TestRangeSetRelations:

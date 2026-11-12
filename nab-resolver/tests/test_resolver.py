@@ -11,6 +11,7 @@ from typing import Any, ClassVar
 import pytest
 
 from nab_resolver import incompat_index, propagate
+from nab_resolver._compat import override
 from nab_resolver.conflict import (
     apply_targeted_backtrack,
     conflict_resolution,
@@ -140,6 +141,7 @@ class PromotingProvider(DictProvider):
 
     _CONFLICT_THRESHOLD = 5
 
+    @override
     def prioritize(
         self,
         package: str,
@@ -167,6 +169,7 @@ class _PendingClauseProvider(DictProvider):
         self._queued = list(clauses)
         self._fired = False
 
+    @override
     def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
         """Return the queued clauses once, then nothing."""
         if self._fired:
@@ -193,6 +196,7 @@ class _NoCandidateProvider(DictProvider):
         self._queued = list(clauses)
         self._refused_target = False
 
+    @override
     def choose_version(
         self, package: str, version_range: RangeProtocol[int]
     ) -> int | None:
@@ -201,6 +205,7 @@ class _NoCandidateProvider(DictProvider):
             return None
         return super().choose_version(package, version_range)
 
+    @override
     def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
         # Only fire on the call right after we returned None for our target.
         if not self._refused_target:
@@ -428,6 +433,7 @@ class OrderedProvider(DictProvider):
         super().__init__(packages)
         self._order = order
 
+    @override
     def prioritize(
         self,
         package: str,
@@ -615,6 +621,7 @@ class CallLogProvider(DictProvider):
         super().__init__(packages)
         self._log = log
 
+    @override
     def choose_version(
         self, package: str, version_range: RangeProtocol[int]
     ) -> int | None:
@@ -622,6 +629,7 @@ class CallLogProvider(DictProvider):
         self._log.append(("choose_version", package, chosen))
         return chosen
 
+    @override
     def get_dependencies(self, package: str, version: int) -> dict[str, Range]:
         self._log.append(("get_dependencies", package, version))
         return super().get_dependencies(package, version)
@@ -633,6 +641,7 @@ class DecisionLogObserver(ResolverObserver[str, int]):
     def __init__(self, log: list[LogEntry]) -> None:
         self._log = log
 
+    @override
     def on_decision(self, package: str, version: int, level: int) -> None:
         self._log.append(("decide", package, version))
 
@@ -764,9 +773,11 @@ class ConflictStepObserver(ResolverObserver[str, int]):
     def __init__(self) -> None:
         self.steps_per_conflict: list[int] = []
 
+    @override
     def on_conflict(self, incompatibility: Incompatibility[str, int]) -> None:
         self.steps_per_conflict.append(0)
 
+    @override
     def on_conflict_step(
         self,
         incompatibility: Incompatibility[str, int],
@@ -868,9 +879,11 @@ class EventTrackingObserver(ResolverObserver):
     def __init__(self) -> None:
         self.events: list[str] = []
 
+    @override
     def on_decision(self, package: str, version: int, level: int) -> None:
         self.events.append(f"decide:{package}")
 
+    @override
     def on_derivation(
         self,
         package: str,
@@ -880,12 +893,15 @@ class EventTrackingObserver(ResolverObserver):
     ) -> None:
         self.events.append(f"derive:{package}")
 
+    @override
     def on_conflict(self, incompatibility: Incompatibility[str, int]) -> None:
         self.events.append("conflict")
 
+    @override
     def on_backjump(self, from_level: int, to_level: int) -> None:
         self.events.append(f"backjump:{from_level}->{to_level}")
 
+    @override
     def on_no_versions(self, package: str, version_range: RangeProtocol[int]) -> None:
         self.events.append(f"no_versions:{package}")
 
@@ -1846,12 +1862,14 @@ class _ForceBackTrackProvider(DictProvider):
         self._choose_count = 0
         self._fired = False
 
+    @override
     def choose_version(
         self, package: str, version_range: RangeProtocol[int]
     ) -> int | None:
         self._choose_count += 1
         return super().choose_version(package, version_range)
 
+    @override
     def consume_force_backtrack_targets(self) -> list[str]:
         if self._fired or self._choose_count <= self._fire_after:
             return []
@@ -2212,9 +2230,11 @@ class WideningProvider(DictProvider):
     would look the same.
     """
 
+    @override
     def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
         return Range.full()
 
+    @override
     def narrow_for_display(
         self, package: str, constraint: RangeProtocol[int]
     ) -> RangeProtocol[int]:
@@ -2963,9 +2983,11 @@ class _SeededPackage:
         self.name = name
         self.hash_value = hash_value
 
+    @override
     def __eq__(self, other: object) -> bool:
         return isinstance(other, _SeededPackage) and self.name == other.name
 
+    @override
     def __hash__(self) -> int:
         return self.hash_value
 
@@ -3272,6 +3294,7 @@ class TestRelationCache:
 class LowestVersionProvider(DictProvider):
     """Provider that picks the lowest matching version rather than the highest."""
 
+    @override
     def choose_version(
         self, package: str, version_range: RangeProtocol[int]
     ) -> int | None:
@@ -3308,6 +3331,7 @@ class StampAuditor(ResolverObserver[str, int]):
         self._resolver = resolver
         self.stale: list[Incompatibility[str, int]] = []
 
+    @override
     def on_derivation(
         self,
         package: str,
@@ -3617,6 +3641,7 @@ class TestRecordedDependencies:
                 super().__init__(packages)
                 self.asked: dict[tuple[str, int], int] = {}
 
+            @override
             def widen_decision(
                 self, package: str, version: int
             ) -> RangeProtocol[int] | None:
@@ -3655,6 +3680,7 @@ class TestRecordedDependencies:
         """Copying a provider mapping does not require another clause allocation."""
 
         class FreshDependencies(DictProvider):
+            @override
             def get_dependencies(self, package: str, version: int) -> dict[str, Range]:
                 return dict(super().get_dependencies(package, version))
 
@@ -3703,6 +3729,7 @@ class TestRecordedDependencies:
                 super().__init__({"e": Range.full()})
                 self.reads = 0
 
+            @override
             def items(self) -> ItemsView[str, Range]:
                 self.reads += 1
                 return super().items()
