@@ -1503,6 +1503,8 @@ def collect_atoms(node: Formula) -> list[Atom]:
 def reject_oversized_literals(node: Formula, env: Mapping[str, object]) -> None:
     """Raise the bounded guard for an oversized literal or env value in a tree."""
     for atom in collect_atoms(node):
+        if atom.kind == AXIS_SET:
+            continue
         value = _atom_env_value(atom, env)
         if value is not _MISSING:
             reject_oversized_version_literals(atom.variable, (atom.literal, str(value)))
