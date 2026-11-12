@@ -1181,10 +1181,10 @@ def _render_or_exit(render: Callable[[], str]) -> str:
         return render()
     except (MissingHashError, LockValidationError, IntractableMarkerError) as e:
         printer().error(e, prefix="cannot lock: ")
-        sys.exit(1)
+        raise SystemExit(1) from None
     except (DisjointnessError, DivergentBaseDependencyError) as e:
         printer().error(e)
-        sys.exit(1)
+        raise SystemExit(1) from None
 
 
 def _template_values(target: ResolveTarget) -> dict[str, str]:
@@ -1354,7 +1354,7 @@ def _refuse_untemplated(lock_input: LockInput, output: Path) -> NoReturn:
                 suggestions=(Suggestion("emit pylock output instead"),),
             )
         )
-        sys.exit(1)
+        raise SystemExit(1)
 
     placeholders = _and_list([f"{{{name}}}" for name in separating])
     example = "constraints" + "".join(f"-{{{name}}}" for name in separating) + ".txt"
@@ -1371,7 +1371,7 @@ def _refuse_untemplated(lock_input: LockInput, output: Path) -> NoReturn:
             ),
         )
     )
-    sys.exit(1)
+    raise SystemExit(1)
 
 
 def _refuse_collision(
@@ -1405,7 +1405,7 @@ def _refuse_collision(
                 suggestions=(Suggestion("emit pylock output instead"),),
             )
         )
-        sys.exit(1)
+        raise SystemExit(1)
     placeholders = _and_list([f"{{{name}}}" for name in missing])
     printer().error(
         DiagnosticMessage(
@@ -1416,7 +1416,7 @@ def _refuse_collision(
             suggestions=(Suggestion(f"add {placeholders} to the path."),),
         )
     )
-    sys.exit(1)
+    raise SystemExit(1)
 
 
 def _substituted_paths(

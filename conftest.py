@@ -38,7 +38,7 @@ import pytest
 from hypothesis import HealthCheck, settings
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator
     from contextlib import AbstractContextManager
     from types import TracebackType
 
@@ -100,7 +100,7 @@ class _CappedHandle:
 
 
 @contextmanager
-def _cap_writes(budget: int) -> Iterator[None]:
+def _cap_writes(budget: int) -> Generator[None, None, None]:
     real_open = io.open
 
     def capped_open(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
@@ -117,7 +117,7 @@ def _cap_writes(budget: int) -> Iterator[None]:
 
 
 @contextmanager
-def _refuse_over_nested(payload: bytes) -> Iterator[None]:
+def _refuse_over_nested(payload: bytes) -> Generator[None, None, None]:
     real_loads = json.loads
 
     def refusing_loads(raw: Any, *args: Any, **kwargs: Any) -> Any:
@@ -131,7 +131,7 @@ def _refuse_over_nested(payload: bytes) -> Iterator[None]:
 
 
 @contextmanager
-def _record_parses() -> Iterator[list[str]]:
+def _record_parses() -> Generator[list[str], None, None]:
     # nab-resolver and nab-provider run against this conftest without nab-project
     # installed, so the import cannot sit at module scope.
     from nab_project import toml_io  # noqa: PLC0415
@@ -148,7 +148,7 @@ def _record_parses() -> Iterator[list[str]]:
 
 
 @contextmanager
-def _deny_access(target: Path) -> Iterator[None]:
+def _deny_access(target: Path) -> Generator[None, None, None]:
     real_os_stat, real_path_stat, real_open = os.stat, Path.stat, Path.open
     denied = os.fspath(target)
 

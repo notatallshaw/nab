@@ -15,6 +15,7 @@ from collections.abc import Mapping
 
 import pytest
 
+from nab_resolver._compat import override
 from nab_resolver.conflict import conflict_credit_target
 from nab_resolver.partial_solution import Assignment
 from nab_resolver.ranges import Range
@@ -106,6 +107,7 @@ class _RecordingWidenProvider(_BaseProvider):
         super().__init__(packages)
         self.widen_calls: list[tuple[object, int]] = []
 
+    @override
     def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
         self.widen_calls.append((package, version))
         return None
@@ -114,6 +116,7 @@ class _RecordingWidenProvider(_BaseProvider):
 class _WideningProvider(_BaseProvider):
     """Widens a decided version to the open gap between its listed neighbors."""
 
+    @override
     def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
         universe = sorted(self._packages.get(package, {}).keys())
         if version not in universe:
@@ -130,6 +133,7 @@ class _WideningProvider(_BaseProvider):
 class _SnappingProvider(_WideningProvider):
     """Widens to the neighbor gap and snaps displayed constraints onto the listing."""
 
+    @override
     def narrow_for_display(
         self, package: str, constraint: RangeProtocol[int]
     ) -> RangeProtocol[int]:
@@ -147,6 +151,7 @@ class _SnappingProvider(_WideningProvider):
 class _SpanWideningProvider(_BaseProvider):
     """Widens a decided version across adjacent versions with equal deps."""
 
+    @override
     def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
         versions_map = self._packages.get(package, {})
         universe = sorted(versions_map.keys())
@@ -181,6 +186,7 @@ class _NarrowingProvider(_BaseProvider):
         self._narrowed = narrowed
         self.narrow_calls: list[object] = []
 
+    @override
     def narrow_for_display(
         self, package: str, constraint: RangeProtocol[int]
     ) -> RangeProtocol[int]:

@@ -14,14 +14,14 @@ repos:
         exclude: ^tasks/vendoring/
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: f368fb366ff7f2f808dd324b83a6d32267799e19  # frozen: v0.17.2
+    rev: 25bcf95026b96e2dd3c0aec3090c3d6ef6ca2e6c  # frozen: v0.17.3
     hooks:
       - id: ruff-check
         args: [--fix]
       - id: ruff-format
 
   - repo: https://github.com/crate-ci/typos
-    rev: 9023c1f779400877cafdd98052113fc777e2cfdc  # frozen: v1.51.1
+    rev: ef3265d70a75c507b4c110d855cdfab6ce90d4bf  # frozen: v1.52.0
     hooks:
       - id: typos
         # Benchmarks, CI lockfiles, captured lock data and vendored code are
@@ -30,7 +30,7 @@ repos:
         args: []
 
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
-    rev: c92afdf2c6ca336aaa8f39e2bd8d48f62dbd8e1f  # frozen: v1.31.1
+    rev: 06a39750ec31860bb44f2acf67182c40016cd1e7  # frozen: v1.32.0
     hooks:
       - id: zizmor
         files: "^\\.github"

@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from nab_resolver import partial_solution
+from nab_resolver._compat import override
 from nab_resolver.partial_solution import Assignment, PartialSolution
 from nab_resolver.ranges import Range
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
@@ -28,6 +29,7 @@ class CountingSnapshotMap(UserDict[str, Any]):
         super().__init__(entries)
         self.visits = 0
 
+    @override
     def __iter__(self) -> Iterator[str]:
         """Yield keys and count each visit."""
         for key in super().__iter__():

@@ -247,7 +247,7 @@ def test_constraints_cover_active_packages_and_micro_slices(
 
 def _replace_record(lock: Path, document: dict[str, Any]) -> None:
     """Write edited machine data to exercise standard field checks."""
-    lock.write_text(toml_writer.dumps(document))
+    lock.write_text(toml_writer.dumps(document), encoding="utf-8")
 
 
 @pytest.mark.parametrize(

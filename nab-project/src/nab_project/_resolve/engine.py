@@ -74,7 +74,7 @@ if TYPE_CHECKING:
     from nab_provider.resolver_inputs import MarkerHolds
     from nab_provider.target import ResolveTarget
     from nab_resolver.resolver import ResolverStats
-    from nab_resolver.types import Incompatibility, RangeProtocol, RootRequirement
+    from nab_resolver.types import Incompatibility, RangeProtocol
 
     from ..declarations import DependencyDeclaration
     from ..fetch import FetchCoordinator

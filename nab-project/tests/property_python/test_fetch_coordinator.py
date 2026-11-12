@@ -24,7 +24,7 @@ import asyncio
 import logging
 import threading
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import NoReturn
 
@@ -202,7 +202,7 @@ class _ErrorCollector(logging.Handler):
 
 
 @contextmanager
-def _fetcher_errors() -> Iterator[list[str]]:
+def _fetcher_errors() -> Generator[list[str], None, None]:
     """Collect the fetcher thread's ERROR logs for the block.
 
     A crash makes the next request raise, but nothing follows shutdown, so a

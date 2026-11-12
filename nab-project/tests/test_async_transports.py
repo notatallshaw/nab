@@ -11,7 +11,7 @@ import json
 import ssl
 import tarfile
 import threading
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -134,7 +134,7 @@ class _StubIndexHandler(BaseHTTPRequestHandler):
 @contextmanager
 def _stub_index(
     statuses: list[int], retry_after: str | None = None
-) -> Iterator[_StubIndex]:
+) -> Generator[_StubIndex, None, None]:
     server = _StubIndex(("127.0.0.1", 0), _StubIndexHandler)
     server.statuses = list(statuses)
     server.seen = []
@@ -180,7 +180,7 @@ class _GzipStubIndexHandler(BaseHTTPRequestHandler):
 @contextmanager
 def _gzip_stub_index(
     bodies: list[bytes], encoding: str = "gzip"
-) -> Iterator[_GzipStubIndex]:
+) -> Generator[_GzipStubIndex, None, None]:
     server = _GzipStubIndex(("127.0.0.1", 0), _GzipStubIndexHandler)
     server.bodies = list(bodies)
     server.encoding = encoding
@@ -229,7 +229,7 @@ class _ArtifactStubIndexHandler(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def _artifact_stub_index(body: bytes) -> Iterator[_ArtifactStubIndex]:
+def _artifact_stub_index(body: bytes) -> Generator[_ArtifactStubIndex, None, None]:
     server = _ArtifactStubIndex(("127.0.0.1", 0), _ArtifactStubIndexHandler)
     server.body = body
     server.accept_encoding = []
@@ -269,7 +269,7 @@ class _UserAgentStubIndexHandler(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def _user_agent_stub_index() -> Iterator[_UserAgentStubIndex]:
+def _user_agent_stub_index() -> Generator[_UserAgentStubIndex, None, None]:
     server = _UserAgentStubIndex(("127.0.0.1", 0), _UserAgentStubIndexHandler)
     server.user_agents = []
     thread = threading.Thread(
@@ -325,7 +325,9 @@ class _EarlyHintsIndexHandler(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def _early_hints_index(informational: list[int]) -> Iterator[_EarlyHintsIndex]:
+def _early_hints_index(
+    informational: list[int],
+) -> Generator[_EarlyHintsIndex, None, None]:
     server = _EarlyHintsIndex(("127.0.0.1", 0), _EarlyHintsIndexHandler)
     server.informational = list(informational)
     thread = threading.Thread(
@@ -387,7 +389,7 @@ class _MovedIndexHandler(BaseHTTPRequestHandler):
 @contextmanager
 def _moved_index(
     hops: dict[str, str], body: bytes, transient: Sequence[int] = ()
-) -> Iterator[_MovedIndex]:
+) -> Generator[_MovedIndex, None, None]:
     server = _MovedIndex(("127.0.0.1", 0), _MovedIndexHandler)
     server.hops = dict(hops)
     server.body = body

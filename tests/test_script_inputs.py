@@ -192,10 +192,10 @@ def test_script_configuration_has_its_own_origin(
 def test_script_python_bound_cannot_be_broadened_by_tool_settings(
     script_source: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    text = script_source.read_text().replace(
+    text = script_source.read_text(encoding="utf-8").replace(
         'requires-python=">=3.10"', 'requires-python=">=3.11"'
     )
-    script_source.write_text(text)
+    script_source.write_text(text, encoding="utf-8")
     assert (
         run(
             (
@@ -297,7 +297,7 @@ def test_script_lock_freshness(script_source: Path, change: str) -> None:
     assert run(("lock", "--script", str(script_source))) == 0
     path = _lock_path(script_source)
     original = path.read_bytes()
-    text = script_source.read_text()
+    text = script_source.read_text(encoding="utf-8")
     if change == "body":
         text += '\nprint("a body-only change")\n'
     elif change == "relaxed-bound":
@@ -308,7 +308,7 @@ def test_script_lock_freshness(script_source: Path, change: str) -> None:
         text = text.replace('["demo"]', '["child"]')
     else:
         text = text.replace('dist-policy="wheel-only"', 'dist-policy="sdist-if-needed"')
-    script_source.write_text(text)
+    script_source.write_text(text, encoding="utf-8")
     expected = 0 if change in ("body", "relaxed-bound") else 1
     assert (
         run(("lock", "--script", str(script_source), "--locked", "--offline"))
@@ -369,11 +369,12 @@ def test_script_and_explicit_default_project_are_mutually_exclusive(
 
 def test_script_matrix_locks_every_declared_target(script_source: Path) -> None:
     script_source.write_text(
-        script_source.read_text().replace(
+        script_source.read_text(encoding="utf-8").replace(
             "# ///\n",
             '# [tool.nab.matrix]\n# python=">=3.11,<3.13"\n'
             '# platforms=["linux_x86_64", "windows_amd64"]\n# ///\n',
-        )
+        ),
+        encoding="utf-8",
     )
     assert run(("lock", "--script", str(script_source))) == 0
     data = tomli.loads(_lock_path(script_source).read_text())
@@ -403,9 +404,10 @@ def test_relative_script_index_uses_the_script_directory(
     script_source: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     script_source.write_text(
-        script_source.read_text().replace(
+        script_source.read_text(encoding="utf-8").replace(
             (script_source.parent / "wheels").as_uri(), "file:wheels"
-        )
+        ),
+        encoding="utf-8",
     )
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
@@ -485,12 +487,13 @@ def test_local_script_source_metadata_is_checked_fresh(script_source: Path) -> N
     project.write_text(
         '[project]\nname="local"\nversion="1.0"\ndependencies=["child>=1"]\n'
     )
-    text = script_source.read_text().replace('["demo"]', '["local"]')
+    text = script_source.read_text(encoding="utf-8").replace('["demo"]', '["local"]')
     script_source.write_text(
         text.replace(
             "# ///\n",
             '# [[tool.nab.local-sources]]\n# name="local"\n# path="local"\n# ///\n',
-        )
+        ),
+        encoding="utf-8",
     )
     assert run(("lock", "--script", str(script_source))) == 0
     saved = _lock_path(script_source).read_bytes()
@@ -507,7 +510,7 @@ def test_script_input_changes_during_resolution_are_handled(
     change: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    original = script_source.read_text()
+    original = script_source.read_text(encoding="utf-8")
     if change == "body":
         altered = original + '\nprint("body change")\n'
     elif change == "dependencies":
@@ -539,7 +542,8 @@ def test_script_output_is_preserved_when_an_index_is_unavailable(
     output = _lock_path(script_source)
     before = output.read_bytes()
     script_source.write_text(
-        script_source.read_text().replace('["demo"]', '["missing"]')
+        script_source.read_text(encoding="utf-8").replace('["demo"]', '["missing"]'),
+        encoding="utf-8",
     )
     assert run(("lock", "--script", str(script_source), "--offline")) == 1
     assert output.read_bytes() == before
@@ -576,9 +580,10 @@ def test_script_refuses_inapplicable_inline_settings(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     script_source.write_text(
-        script_source.read_text().replace(
+        script_source.read_text(encoding="utf-8").replace(
             "# [tool.nab]\n", f"# [tool.nab]\n# {setting}\n"
-        )
+        ),
+        encoding="utf-8",
     )
     assert run(("lock", "--script", str(script_source))) == 1
     assert expected in capsys.readouterr().err
@@ -589,7 +594,10 @@ def test_script_without_python_requirement_locks_for_the_host(
     script_source: Path,
 ) -> None:
     script_source.write_text(
-        script_source.read_text().replace('# requires-python=">=3.10"\n', "")
+        script_source.read_text(encoding="utf-8").replace(
+            '# requires-python=">=3.10"\n', ""
+        ),
+        encoding="utf-8",
     )
     assert run(("lock", "--script", str(script_source))) == 0
     assert "requires-python" not in tomli.loads(_lock_path(script_source).read_text())
@@ -598,7 +606,9 @@ def test_script_without_python_requirement_locks_for_the_host(
 def test_malformed_script_is_a_clean_cli_error(
     script_source: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    script_source.write_text("# /// script\n# dependencies=[\n# ///\n")
+    script_source.write_text(
+        "# /// script\n# dependencies=[\n# ///\n", encoding="utf-8"
+    )
     assert run(("lock", "--script", str(script_source))) == 1
     captured = capsys.readouterr()
     assert "PEP 723" in captured.err
@@ -624,9 +634,10 @@ def test_invalid_relative_file_index_is_a_clean_error(
     script_source: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     script_source.write_text(
-        script_source.read_text().replace(
+        script_source.read_text(encoding="utf-8").replace(
             (script_source.parent / "wheels").as_uri(), "file:bad%00path"
-        )
+        ),
+        encoding="utf-8",
     )
     assert run(("lock", "--script", str(script_source))) == 1
     assert "invalid file-index URL" in capsys.readouterr().err
@@ -642,13 +653,13 @@ def test_matrix_diagnostic_can_be_repaired_in_the_script(
         '# [tool.nab.matrix]\n# python=">=3.11,<3.13"\n'
         '# platforms=["linux_x86_64", "windows_amd64"]\n'
     )
-    text = script_source.read_text()
+    text = script_source.read_text(encoding="utf-8")
     if mode == "inline-universal":
         text = text.replace("# [tool.nab]\n", '# [tool.nab]\n# mode="universal"\n')
     elif mode == "inline-specific":
         text = text.replace("# [tool.nab]\n", '# [tool.nab]\n# mode="specific"\n')
         text = text.replace("# ///\n", matrix + "# ///\n")
-    script_source.write_text(text)
+    script_source.write_text(text, encoding="utf-8")
     arguments = ("lock", "--script", str(script_source))
     if mode == "cli-universal":
         arguments += ("--project-mode", "universal")
@@ -661,7 +672,7 @@ def test_matrix_diagnostic_can_be_repaired_in_the_script(
         text = text.replace('mode="specific"', 'mode="universal"')
     else:
         text = text.replace("# ///\n", matrix + "# ///\n")
-    script_source.write_text(text)
+    script_source.write_text(text, encoding="utf-8")
     assert run(arguments) == 0
 
 
@@ -672,13 +683,14 @@ def test_vcs_policy_repair_updates_both_declaring_files(script_source: Path) -> 
         'allowed-repos=["https://example.org/demo.git"]\n'
     )
     script_source.write_text(
-        script_source.read_text().replace(
+        script_source.read_text(encoding="utf-8").replace(
             "# ///\n",
             "# [tool.nab.vcs]\n"
             + "".join("# " + line + "\n" for line in policy.splitlines())
             + '# [[tool.nab.vcs-sources]]\n# name="demo"\n'
             f'# url="git+https://example.org/demo.git@{"a" * 40}"\n# ///\n',
-        )
+        ),
+        encoding="utf-8",
     )
     directory_config = script_source.parent / "nab.toml"
     directory_config.write_text("[vcs]\n" + policy)
@@ -701,9 +713,10 @@ def test_vcs_policy_repair_updates_both_declaring_files(script_source: Path) -> 
 def test_environment_repair_updates_both_declaring_files(script_source: Path) -> None:
     """Use the named table and file locations to add the missing platform."""
     script_source.write_text(
-        script_source.read_text().replace(
+        script_source.read_text(encoding="utf-8").replace(
             "# ///\n", '# [tool.nab.environment]\n# implementation="pypy"\n# ///\n'
-        )
+        ),
+        encoding="utf-8",
     )
     (script_source.parent / "nab.toml").write_text(
         '[environment]\nimplementation="pypy"\n'
@@ -718,10 +731,11 @@ def test_environment_repair_updates_both_declaring_files(script_source: Path) ->
         target = Path(filename)
         prefix = "# " if target == script_source else ""
         target.write_text(
-            target.read_text().replace(
+            target.read_text(encoding="utf-8").replace(
                 f"{prefix}[{table}]\n",
                 f'{prefix}[{table}]\n{prefix}platform="linux_x86_64"\n',
-            )
+            ),
+            encoding="utf-8",
         )
 
     config = read_pyproject_config(script_source, input_format=InputFormat.SCRIPT)

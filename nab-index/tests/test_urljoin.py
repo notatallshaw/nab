@@ -14,7 +14,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-@pytest.mark.parametrize("join", [_urljoin.join_url, _urljoin._legacy_join_url])
+@pytest.mark.parametrize(
+    "join", [_urljoin.join_url, _urljoin._legacy_join_url], ids=["selected", "legacy"]
+)
 @pytest.mark.parametrize(
     ("reference", "expected"),
     [
@@ -36,7 +38,9 @@ def test_query_semantics(
     assert parse.urlsplit(actual).geturl() == expected
 
 
-@pytest.mark.parametrize("join", [_urljoin.join_url, _urljoin._legacy_join_url])
+@pytest.mark.parametrize(
+    "join", [_urljoin.join_url, _urljoin._legacy_join_url], ids=["selected", "legacy"]
+)
 def test_malformed_reference_keeps_authority_validation(
     join: Callable[[str, str], str],
 ) -> None:

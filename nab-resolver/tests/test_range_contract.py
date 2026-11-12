@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import pytest
 
+from nab_resolver._compat import override
 from nab_resolver.errors import ResolutionError
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver
@@ -143,6 +144,7 @@ class FlaggedRange:
             return RangeRelation.EMPTY if disjoint else RangeRelation.SUBSET
         return RangeRelation.DISJOINT if disjoint else RangeRelation.OVERLAPPING
 
+    @override
     def __eq__(self, other: object) -> bool:
         """Equal when the interval sets and the flags both match."""
         FlaggedRange.eq_calls += 1
@@ -153,10 +155,12 @@ class FlaggedRange:
             and self.metadata == other.metadata
         )
 
+    @override
     def __hash__(self) -> int:
         """Hash interval membership and metadata."""
         return hash((self.base, self.arbitrary, self.metadata))
 
+    @override
     def __repr__(self) -> str:
         """Render the interval set, naming the flag when it is set."""
         suffix = ", arbitrary" if self.arbitrary else ""
@@ -238,6 +242,7 @@ class FlaggedProvider:
 class WideningProvider(FlaggedProvider):
     """A provider that widens every decision to the admitting top."""
 
+    @override
     def widen_decision(self, package: str, version: int) -> FlaggedRange:
         """Widen the decision to ``full()``, whatever was chosen."""
         return FlaggedRange.full()
@@ -258,6 +263,7 @@ class PendingClauseProvider(FlaggedProvider):
         super().__init__(dependency)
         self.queued: list[Incompatibility[str, int]] = []
 
+    @override
     def choose_version(
         self, package: str, version_range: RangeProtocol[int]
     ) -> int | None:
@@ -275,10 +281,12 @@ class PendingClauseProvider(FlaggedProvider):
             )
         return chosen
 
+    @override
     def get_dependencies(self, package: str, version: int) -> dict[str, FlaggedRange]:
         """``c`` needs an ``a`` that does not exist; ``a``'s own edge is queued."""
         return {"a": DEPENDENCY} if package == "c" else {}
 
+    @override
     def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
         """Hand over whatever choosing a version queued."""
         queued, self.queued = self.queued, []

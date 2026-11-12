@@ -189,7 +189,6 @@ def conflict_resolution(
 
         # Can't backjump yet: resolve with the satisfier's cause.
         assert most_recent_satisfier.cause is not None
-        assert most_recent_satisfier_term is not None
         is_derived = True
 
         resolved_terms = prior_cause(

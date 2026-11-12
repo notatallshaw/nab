@@ -1333,7 +1333,7 @@ def write_standard_manifest(  # noqa: PLR0913 - explicit contract fields
         "file_execution_keys": state.file_execution_keys,
         "complete": complete,
     }
-    path.write_text(json.dumps(data, indent=2) + "\n")
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return complete
 
 

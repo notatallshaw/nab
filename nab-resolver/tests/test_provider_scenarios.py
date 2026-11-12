@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 
 import pytest
 
+from nab_resolver._compat import override
 from nab_resolver.errors import ResolutionError
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import BaseProvider, ResolverProvider
@@ -146,6 +147,7 @@ def test_mutating_input_ranges_cannot_rewrite_the_oracle(target: str) -> None:
     fixture = ProviderScenario("mutable", roots, graph, constraints=constraints)
 
     class MutatingProvider(ScenarioProvider[str, int]):
+        @override
         def get_dependencies(
             self, package: str, version: int
         ) -> Mapping[str, RangeProtocol[int]]:
@@ -227,6 +229,7 @@ class IntegerRange:
     def relation(self, other: Self) -> RelationProtocol:
         return self.values.relation(other.values)
 
+    @override
     def __eq__(self, other: object) -> bool:
         """Compare wrapped range values."""
         if not isinstance(other, IntegerRange):
@@ -234,6 +237,7 @@ class IntegerRange:
 
         return self.values == other.values
 
+    @override
     def __hash__(self) -> int:
         """Hash the wrapped range value."""
         return hash(self.values)
@@ -251,6 +255,7 @@ def test_scenarios_accept_another_range_backend() -> None:
 def test_invalid_singleton_backend_is_refused_before_provider_work() -> None:
     class DropsHigherSingleton(IntegerRange):
         @classmethod
+        @override
         def singleton(cls, version: int) -> Self:
             return cls.empty() if version == 2 else cls(Range.singleton(version))
 
@@ -269,6 +274,7 @@ def test_invalid_singleton_backend_is_refused_before_provider_work() -> None:
 class RootAwareProvider(ScenarioProvider[str, int]):
     """Bind candidate availability to the roots and constraints of one scope."""
 
+    @override
     def choose_version(
         self, package: str, version_range: RangeProtocol[int]
     ) -> int | None:
@@ -285,6 +291,7 @@ class RootAwareProvider(ScenarioProvider[str, int]):
             None,
         )
 
+    @override
     def widen_decision(self, package: str, version: int) -> Range[int]:
         return Range.full()
 
@@ -314,6 +321,7 @@ def test_provider_instances_need_only_support_one_resolution() -> None:
     class OneScopeProvider(ScenarioProvider[str, int]):
         used = False
 
+        @override
         def prioritize(
             self,
             package: str,
@@ -359,11 +367,13 @@ def test_invalid_keys_are_refused_before_provider_work(
 def test_invalid_range_boundaries_are_refused(bad_method: str) -> None:
     class BadEmpty(IntegerRange):
         @classmethod
+        @override
         def empty(cls) -> Self:
             return cls(Range.singleton(1))
 
     class BadFull(IntegerRange):
         @classmethod
+        @override
         def full(cls) -> Self:
             return cls(Range.singleton(1))
 
@@ -385,6 +395,7 @@ class ChangingChoice(ScenarioProvider[str, int]):
     choices = 0
     diagnostics = 0
 
+    @override
     def choose_version(
         self, package: str, version_range: RangeProtocol[int]
     ) -> int | None:
@@ -393,6 +404,7 @@ class ChangingChoice(ScenarioProvider[str, int]):
         ordered = versions if self.choices % 2 else tuple(reversed(versions))
         return next((version for version in ordered if version in version_range), None)
 
+    @override
     def has_satisfying_version(
         self, package: str, version_range: RangeProtocol[int]
     ) -> bool:
@@ -420,6 +432,7 @@ def test_choice_order_can_vary_and_probes_can_collect_diagnostics() -> None:
 
 def test_probe_state_hook_detects_permanent_choice_changes() -> None:
     class ProbeChangesChoice(ChangingChoice):
+        @override
         def has_satisfying_version(
             self, package: str, version_range: RangeProtocol[int]
         ) -> bool:
@@ -438,6 +451,7 @@ def test_probe_state_hook_detects_permanent_choice_changes() -> None:
 
 def test_suite_failure_names_the_scenario_and_preserves_conflict_context() -> None:
     class MissingCandidates(ScenarioProvider[str, int]):
+        @override
         def choose_version(
             self, package: str, version_range: RangeProtocol[int]
         ) -> None:
@@ -473,6 +487,7 @@ def test_suite_does_not_reinterpret_operational_errors() -> None:
 class RootHintProvider(ScenarioProvider[str, int]):
     """Require the same root context that the real resolver supplies."""
 
+    @override
     def receive_partial_solution_hint(
         self,
         positive_ranges: Mapping[str, RangeProtocol[int]],
@@ -500,6 +515,7 @@ def test_observations_preserve_real_root_and_virtual_root_context() -> None:
 
 def test_unselectable_advertised_versions_do_not_invalidate_widening() -> None:
     class PruningProvider(ScenarioProvider[str, int]):
+        @override
         def choose_version(
             self, package: str, version_range: RangeProtocol[int]
         ) -> int | None:
@@ -507,6 +523,7 @@ def test_unselectable_advertised_versions_do_not_invalidate_widening() -> None:
                 return 1 if 1 in version_range else None
             return super().choose_version(package, version_range)
 
+        @override
         def widen_decision(self, package: str, version: int) -> Range[int]:
             return Range.full()
 
@@ -528,6 +545,7 @@ def test_scenarios_detect_harmful_widening_in_both_choice_orders(
     prefer_first: bool,
 ) -> None:
     class AlwaysWiden(ScenarioProvider[str, int]):
+        @override
         def choose_version(
             self, package: str, version_range: RangeProtocol[int]
         ) -> int | None:
@@ -537,6 +555,7 @@ def test_scenarios_detect_harmful_widening_in_both_choice_orders(
                 (version for version in ordered if version in version_range), None
             )
 
+        @override
         def widen_decision(self, package: str, version: int) -> Range[int]:
             return Range.full()
 

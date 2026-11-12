@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from types import FrameType
 
@@ -25,7 +25,7 @@ def _files(values: tuple[str | None, ...]) -> list[WheelFile | SdistFile]:
 
 
 @contextmanager
-def _validation_calls() -> Iterator[list[str]]:
+def _validation_calls() -> Generator[list[str], None, None]:
     """Observe the real validator without replacing its implementation."""
     calls: list[str] = []
     code = builder.validate_specifier_versions.__code__

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -14,8 +15,6 @@ from nab_project import toml_io
 from nab_provider.testing import make_coordinator, make_metadata, make_wheel
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from nab_index.transport import AsyncHttpTransport
     from nab_provider.testing import FakeFetchPort
 
@@ -23,7 +22,7 @@ if TYPE_CHECKING:
 @contextmanager
 def _registry(
     transport: AsyncHttpTransport, **_settings: object
-) -> Iterator[FakeFetchPort]:
+) -> Generator[FakeFetchPort, None, None]:
     """Keep alpha resident while beta lands only when its request is awaited."""
     alpha = [
         make_wheel(str(version), package="alpha", hashes=(("sha256", "a" * 64),))

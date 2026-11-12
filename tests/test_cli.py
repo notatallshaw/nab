@@ -5308,6 +5308,7 @@ class TestDetermineLockAnchor:
     def _write_prior(self, target: Path) -> None:
         target.write_text(
             f"[tool.nab]\ncreated-at = {self._RECORDED.isoformat()}\n",
+            encoding="utf-8",
         )
 
     def test_upgrade_returns_fresh(self, tmp_path: Path) -> None:

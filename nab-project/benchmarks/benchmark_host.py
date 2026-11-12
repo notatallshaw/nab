@@ -18,7 +18,7 @@ from nab_provider.target import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Generator, Mapping
 
 
 HOST_TAG_MISMATCH_REASON = (
@@ -183,7 +183,7 @@ class BenchmarkHost:
         }
 
     @contextmanager
-    def wall_timeout(self) -> Iterator[None]:
+    def wall_timeout(self) -> Generator[None, None, None]:
         """Enforce the captured wall-time limit when this platform supports it."""
         if self.wall_timeout_seconds is None:
             yield

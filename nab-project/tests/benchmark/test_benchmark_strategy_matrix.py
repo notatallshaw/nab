@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -469,7 +469,7 @@ def _add_scanned_member(
     member = _FilesystemEntry(name, directory, kind)
 
     @contextmanager
-    def scandir(path: Path) -> Iterator[list[object]]:
+    def scandir(path: Path) -> Generator[list[object], None, None]:
         with real_scandir(path) as entries:
             listed: list[object] = list(entries)
         if Path(path) == directory:
@@ -503,7 +503,9 @@ def _resolve_dropped_extra(
     coordinator = _dropped_extra_coordinator()
 
     @contextmanager
-    def fake_coordinator(*_args: object, **_kwargs: object) -> Iterator[object]:
+    def fake_coordinator(
+        *_args: object, **_kwargs: object
+    ) -> Generator[object, None, None]:
         yield coordinator
 
     monkeypatch.setattr(module, "FetchCoordinator", fake_coordinator)
@@ -2788,7 +2790,9 @@ def test_resolve_scenario_coordinates_config_target_and_constraints(
     seen: dict[str, object] = {}
 
     @contextmanager
-    def fake_coordinator(*_args: object, **kwargs: object) -> Iterator[object]:
+    def fake_coordinator(
+        *_args: object, **kwargs: object
+    ) -> Generator[object, None, None]:
         seen["coordinator"] = kwargs
         yield coordinator
 
@@ -2813,7 +2817,7 @@ def test_resolve_scenario_coordinates_config_target_and_constraints(
             }
 
     @contextmanager
-    def wall_timeout(actual_host: object) -> Iterator[None]:
+    def wall_timeout(actual_host: object) -> Generator[None, None, None]:
         assert actual_host is host
         seen["timeout"] = actual_host
         yield
@@ -2893,7 +2897,9 @@ def test_resolve_scenario_records_no_pins_after_failure(
     assert admission.target is not None
 
     @contextmanager
-    def fake_coordinator(*_args: object, **_kwargs: object) -> Iterator[object]:
+    def fake_coordinator(
+        *_args: object, **_kwargs: object
+    ) -> Generator[object, None, None]:
         yield object()
 
     def fake_build_provider(*_args: object, **_kwargs: object) -> object:

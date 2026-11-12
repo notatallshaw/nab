@@ -45,7 +45,7 @@ Changelog = "https://github.com/notatallshaw/nab/releases"
 nab = "nab._entry:console_entry"
 
 [build-system]
-requires = ["hatchling>=1.32.4"]
+requires = ["hatchling>=1.33.0"]
 build-backend = "hatchling.build"
 
 # The umbrella sdist ships only the CLI package and its own tests. Without this
@@ -92,13 +92,12 @@ http-backends = [
 tests = [
     {include-group = "editable-build"},
     {include-group = "http-backends"},
-    "pytest>=9.1.1",
+    "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
     "coverage>=7.16.2",
-    "hypothesis>=6.168.5; python_version < '3.11'",
-    "hypothesis>=6.170.2; python_version >= '3.11'",
+    "hypothesis>=6.168.5",
     "respx>=0.23.1",
     "tomlkit>=0.15.2",
 ]
@@ -107,15 +106,15 @@ hatch-test = [
     "coverage-enable-subprocess==1.0",
     "coverage[toml]~=7.11",
     "pytest~=9.0",
-    "pytest-mock~=3.12",
-    "pytest-randomly~=3.15",
-    "pytest-rerunfailures~=14.0",
+    "pytest-mock>=3.17.0",
+    "pytest-randomly>=5.0.0",
+    "pytest-rerunfailures>=16.7",
     # xdist can use stdlib CPU detection without an extra native dependency.
     "pytest-xdist~=3.5",
 ]
 crosshair = [
     {include-group = "tests"},
-    "crosshair-tool>=0.0.111",
+    "crosshair-tool>=0.0.112",
     "hypothesis-crosshair>=0.0.31",
 ]
 type-common = [
@@ -125,7 +124,7 @@ type-common = [
 ]
 mypy = [
     {include-group = "type-common"},
-    "mypy>=2.4.0",
+    "mypy>=2.4.1",
 ]
 pyright = [
     {include-group = "tests"},
@@ -134,7 +133,7 @@ pyright = [
 ]
 ty = [
     {include-group = "type-common"},
-    "ty>=0.0.89",
+    "ty>=0.0.97",
 ]
 pyrefly = [
     {include-group = "type-common"},
@@ -142,7 +141,7 @@ pyrefly = [
 ]
 zuban = [
     {include-group = "type-common"},
-    "zuban>=0.10.1",
+    "zuban>=0.10.2",
 ]
 types = [
     {include-group = "mypy"},
@@ -152,23 +151,22 @@ types = [
     {include-group = "zuban"},
 ]
 lint = [
-    "ruff>=0.17.1",
+    "ruff>=0.17.3",
     "mdformat>=1.0.0",
     "mdformat-myst>=0.3.0",
     "mdformat-gfm-alerts>=2.1.0",
     "mdformat-deflist>=0.1.4",
 ]
 pre-commit = [
-    "pre-commit>=4.6.2; python_version < '3.11'",
-    "pre-commit>=4.7.0; python_version >= '3.11'",
+    "pre-commit>=4.6.2",
 ]
 # Nox selects each session's group from pylock.dev.toml.
 nox = [
-    "nox>=2026.8.17",
+    "nox>=2026.10.20",
 ]
 # Sphinx 9.1 requires Python 3.12; CI and Read the Docs build on 3.13.
 docs = [
-    "sphinx>=9.1.0; python_version >= '3.12'",
+    "sphinx>=9.1.1; python_version >= '3.12'",
     "furo>=2025.12.19; python_version >= '3.12'",
     "myst-parser>=5.1.0; python_version >= '3.12'",
     "linkify-it-py>=2.2.0; python_version >= '3.12'",
@@ -184,7 +182,7 @@ release = [
     "tomlkit>=0.15.2",
     "build>=1.6.1",
     "twine>=7.0.0",
-    "pypi-attestations>=0.0.30",
+    "pypi-attestations>=0.0.31",
 ]
 # The dists nox session builds every distribution and installs it. It needs the
 # build frontend; the backend comes from pylock.build.toml, locked from
@@ -243,8 +241,6 @@ uploaded-prior-to = false
 minversion = "9.0"
 addopts = [
     "-ra",
-    "--strict-markers",
-    "--strict-config",
     "--import-mode=importlib",
     "--showlocals",
     "-m",
@@ -261,7 +257,8 @@ testpaths = [
     "nab-index/tests",
     "tests",
 ]
-xfail_strict = true
+strict = true
+empty_parameter_set_mark = "fail_at_collect"
 filterwarnings = ["error"]
 markers = [
     "slow: scenarios that take more than a second",
@@ -375,7 +372,7 @@ extend-exclude = ["**/_vendor/**"]
 # and the scripts outside the packages have no printer to write through.
 "src/nab/cli.py" = ["TID251"]
 "src/nab/output.py" = ["TID251"]
-"**/tests/**" = ["TID251"]
+"**/tests/**" = ["TID251", "RUF029"]  # Async fakes need no suspension.
 
 # Benchmarks intentionally print, lack docstrings, run subprocesses, and
 # carry many scenario knobs.
@@ -436,6 +433,22 @@ extend-exclude = ["**/_vendor/**"]
 # https://docs.astral.sh/ruff/settings/#lint
 [tool.ruff.lint]
 select = ["ALL"]
+preview = true
+explicit-preview-rules = true
+extend-select = [
+    "ASYNC119",  # Async-generator cleanup must survive cancellation.
+    "B043", "B901", "B909",
+    "PT029",
+    "DOC102", "DOC202", "DOC403", "D420",
+    "PLE1141", "PLE4703", "PLR0202", "PLR0203",
+    "PLW0244", "PLW1514", "PLW3201",
+    "UP048", "UP051", "UP052",
+    "FURB101", "FURB103", "FURB131", "FURB145", "FURB148", "FURB152",
+    "FURB154", "FURB180",
+    "RUF027", "RUF029", "RUF038", "RUF039", "RUF045", "RUF047",
+    "RUF050", "RUF052", "RUF054", "RUF055", "RUF056", "RUF065",
+    "RUF066", "RUF070", "RUF072", "RUF073", "RUF074", "RUF075", "RUF077",
+]
 ignore = [
     # Frameworks we don't use.
     "AIR",     # Airflow
@@ -521,6 +534,8 @@ reportUntypedClassDecorator = "error"
 reportUntypedFunctionDecorator = "error"
 reportUntypedNamedTuple = "error"
 reportUnnecessaryContains = "error"
+reportUnnecessaryTypeIgnoreComment = "error"
+reportImplicitOverride = "error"
 # JSON/TOML validation and dynamic adapters intentionally carry unknown values.
 # Requiring casts for each narrowed container hides rather than checks that boundary.
 reportUnknownArgumentType = "none"
@@ -648,7 +663,6 @@ all = "error"
 # Repeating runtime checks or adding casts only to restate those contracts is noise.
 unsound-assignment = "ignore"
 unsound-return-statement = "ignore"
-unsound-yield = "ignore"
 # Empty values and None intentionally share these branches; keep input guards.
 truthiness-test-of-none-union = "ignore"
 redundant-condition-strict = "ignore"
@@ -660,6 +674,7 @@ exclude = ["**/_vendor"]
 [tool.mypy]
 python_version = "3.10"
 strict = true
+strict_equality_for_none = true
 disallow_any_unimported = true
 warn_unused_configs = true
 namespace_packages = true
@@ -685,6 +700,8 @@ enable_error_code = [
     "unused-awaitable",
     "unimported-reveal",
     "deprecated",
+    "truthy-iterable",
+    "exhaustive-match",
 ]
 
 [[tool.mypy.overrides]]

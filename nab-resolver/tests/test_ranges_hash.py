@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from nab_resolver._compat import override
 from nab_resolver.ranges import Interval, Range
 
 PROTOCOLS = tuple(range(pickle.HIGHEST_PROTOCOL + 1))
@@ -106,6 +107,7 @@ class TestHashMemo:
 
             __slots__ = ()
 
+            @override
             def __hash__(self) -> int:
                 return 0
 

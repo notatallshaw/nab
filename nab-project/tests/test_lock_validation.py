@@ -67,7 +67,9 @@ def _write_input(path: Path, input_format: InputFormat) -> None:
     if input_format is InputFormat.PROJECT:
         _project(path.parent)
     else:
-        path.write_text('# /// script\n# dependencies=["demo>=1"]\n# ///\n')
+        path.write_text(
+            '# /// script\n# dependencies=["demo>=1"]\n# ///\n', encoding="utf-8"
+        )
 
 
 @pytest.mark.parametrize("input_format", [InputFormat.PROJECT, InputFormat.SCRIPT])

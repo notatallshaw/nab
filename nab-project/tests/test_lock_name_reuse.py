@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from types import FrameType
 
@@ -60,7 +60,7 @@ def _provider() -> Provider:
 
 
 @contextmanager
-def _normalizations() -> Iterator[list[str]]:
+def _normalizations() -> Generator[list[str], None, None]:
     """Observe the builder's actual calls to the production normalizer."""
     calls: list[str] = []
     previous = sys.getprofile()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
 from functools import partial
 from typing import TYPE_CHECKING, TypeVar
@@ -27,7 +28,7 @@ from nab_resolver.types import Incompatibility, IncompatibilityCause
 from .test_benchmark_parse_requirements import _harness
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
 
     from nab_provider.provider import Provider
     from nab_provider.testing import FakeFetchPort
@@ -144,7 +145,7 @@ def test_runners_admit_only_original_exact_pins(
     @contextmanager
     def opened_coordinator(
         *_args: object, **_kwargs: object
-    ) -> Iterator[FakeFetchPort]:
+    ) -> Generator[FakeFetchPort, None, None]:
         yield coordinator
 
     monkeypatch.setattr(module, "FetchCoordinator", opened_coordinator)
@@ -216,7 +217,7 @@ def test_retry_counters_include_every_actual_solve(
     @contextmanager
     def opened_coordinator(
         *_args: object, **_kwargs: object
-    ) -> Iterator[FakeFetchPort]:
+    ) -> Generator[FakeFetchPort, None, None]:
         yield coordinator
 
     monkeypatch.setattr(module, "FetchCoordinator", opened_coordinator)
