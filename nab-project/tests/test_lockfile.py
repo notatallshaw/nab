@@ -6434,8 +6434,9 @@ class TestConflictForkNegatedEmission:
     _GPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "gpu"),)
 
     @pytest.mark.parametrize("only_linux", [False, True])
+    @pytest.mark.parametrize("selected_groups", [("test",), ("test", "docs", "lint")])
     def test_large_group_selector_factors_its_environment_support(
-        self, only_linux: bool
+        self, only_linux: bool, selected_groups: tuple[str, ...]
     ) -> None:
         groups = (
             "test",
@@ -6474,7 +6475,7 @@ class TestConflictForkNegatedEmission:
             supported = (
                 not only_linux or environment.marker_env["sys_platform"] == "linux"
             )
-            name = "selected" if group == "test" and supported else "unrelated"
+            name = "selected" if group in selected_groups and supported else "unrelated"
             targets[target.label] = TargetLock(
                 target=target,
                 pins={name: _selection_pin(name, "1")},
@@ -6500,6 +6501,19 @@ class TestConflictForkNegatedEmission:
         _, variables = MarkerSet.from_marker_with_variables(package.marker)
         if not only_linux:
             assert variables == frozenset({"dependency_groups"})
+            if len(selected_groups) > 1:
+                raw = Marker(
+                    " or ".join(
+                        "("
+                        + " and ".join(
+                            f'"{name}" {"in" if name == chosen else "not in"} dependency_groups'
+                            for name in groups
+                        )
+                        + ")"
+                        for chosen in selected_groups
+                    )
+                )
+                assert len(str(package.marker).encode()) < len(str(raw).encode())
 
         for environment in environments:
             for group in groups:
@@ -6515,7 +6529,9 @@ class TestConflictForkNegatedEmission:
                     not only_linux or environment.marker_env["sys_platform"] == "linux"
                 )
                 expected = (
-                    {"selected"} if group == "test" and supported else {"unrelated"}
+                    {"selected"}
+                    if group in selected_groups and supported
+                    else {"unrelated"}
                 )
                 assert selected == expected
             assert not list(

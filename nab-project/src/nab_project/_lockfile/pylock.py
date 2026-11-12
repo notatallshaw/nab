@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
 from nab_index.atomic import atomic_write_text
 from nab_markersets.conversions import PreparedMarkerSets
 from nab_markersets.errors import IntractableMarkerSet, UnserializableMarkerSet
-from nab_markersets.markersets import DecisionStore, MarkerSet
+from nab_markersets.markersets import DecisionStore, MarkerSet, factor_membership_marker
 from nab_provider._vendor.packaging.markers import (
     MARKERS_REQUIRING_VERSION,
     Marker,
@@ -2112,18 +2112,18 @@ def _finalize_parts(
     *,
     prepared_sets: PreparedMarkerSets | None = None,
 ) -> Marker | None:
-    """Simplify each condition's environments, then assemble the marker.
-
-    Simplifying the whole marker in one pass walks a cell space the
-    membership variables multiply. The condition environments carry no
-    membership variable, so they shrink first, and the marker they
-    assemble into is small by the time the second pass canonicalises it.
-    """
+    """Simplify scalar support, then factor selectors sharing that support."""
     assembled: list[Marker] = []
+    conditions_by_environment: defaultdict[Marker | None, list[Marker]] = defaultdict(
+        list
+    )
     for part in parts:
         simplified = _finalize_cached(
             part.marker, universe, name, memo, store, prepared_sets=prepared_sets
         )
+        if part.condition is not None and not part.gate:
+            conditions_by_environment[simplified].append(part.condition)
+            continue
         if part.condition is not None:
             simplified = (
                 part.condition
@@ -2136,6 +2136,19 @@ def _finalize_parts(
             assembled.append(simplified)
             continue
         assembled.append(_gated_marker(simplified, part.gate))
+
+    for environment, conditions in conditions_by_environment.items():
+        if len(conditions) == 1:
+            condition = conditions[0]
+        else:
+            # Keep the unfactored disjunction out of the parsed-marker cache.
+            text = " or ".join(f"({condition})" for condition in conditions)
+            condition = _parsed_marker(factor_membership_marker(text))
+        assembled.append(
+            condition
+            if environment is None
+            else _parsed_marker(f"({environment}) and ({condition})")
+        )
 
     # One ungated part is already what the second pass would return.
     if len(parts) == 1 and not parts[0].gate:

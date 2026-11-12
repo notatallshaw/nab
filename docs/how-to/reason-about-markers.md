@@ -220,13 +220,18 @@ marker, but `witness()` returning `None` does not prove emptiness.
 
 ## The supported API
 
+`factor_membership_marker` shortens a single set variable's disjunction of conjunctions without
+enumerating its truth table. It verifies the serialized clauses independently and returns the
+original text for other shapes or bounded refusals. Use `MarkerSet.simplify` for environment-aware
+simplification.
+
 The supported API is the module paths below. Everything else in the package is internal and may be
 renamed or relocated in any release.
 
 ```text
 nab_markersets.conversions  MarkerSetCache, PreparedMarkerSets
 nab_markersets.errors       IntractableMarkerSet, UnserializableMarkerSet
-nab_markersets.markersets   DecisionStore, MarkerSet, variable_names
+nab_markersets.markersets   DecisionStore, MarkerSet, factor_membership_marker, variable_names
 ```
 
 The package root binds no names, so importing `nab_markersets` pulls in no submodules.

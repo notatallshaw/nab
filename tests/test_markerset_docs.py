@@ -56,7 +56,15 @@ def test_the_docs_print_what_they_document() -> None:
     ("module", "names"),
     [
         (errors, {"IntractableMarkerSet", "UnserializableMarkerSet"}),
-        (markersets, {"DecisionStore", "MarkerSet", "variable_names"}),
+        (
+            markersets,
+            {
+                "DecisionStore",
+                "MarkerSet",
+                "factor_membership_marker",
+                "variable_names",
+            },
+        ),
     ],
 )
 def test_public_exports(module: ModuleType, names: set[str]) -> None:
