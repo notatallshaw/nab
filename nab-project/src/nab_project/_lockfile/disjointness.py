@@ -331,9 +331,16 @@ def _pair_collision(
     the first colliding selection is an opaque-``contains``
     over-approximation the algebra cannot reduce to a point.
     """
+    empty = MarkerSet.empty()
+    checked_pairs: set[tuple[MarkerSet, MarkerSet]] = set()
     for label, env in distinct_environments:
         left_here = left.restrict(env)
         right_here = right.restrict(env)
+        pair = left_here, right_here
+        # Equal residuals ask the same question under this pair's fixed selections.
+        if empty in pair or pair in checked_pairs:
+            continue
+
         for selection in selections:
             collision = left_here.restrict(selection) & right_here.restrict(selection)
             if collision.is_empty():
@@ -342,6 +349,8 @@ def _pair_collision(
             if witness is None:
                 return label, env, None
             return label, env, {**witness, **selection}
+
+        checked_pairs.add(pair)
     return None
 
 

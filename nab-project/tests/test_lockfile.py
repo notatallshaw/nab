@@ -8,6 +8,7 @@ import random
 import re
 import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from contextlib import AbstractContextManager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -2991,6 +2992,98 @@ class TestMarkerDisjointness:
             extras=("cpu",),
             groups=(),
         )
+
+    @pytest.mark.parametrize(
+        ("left_platform", "right_platform", "selection_restrictions"),
+        [("linux", "linux", 4), ("darwin", "linux", 0), ("linux", "darwin", 0)],
+    )
+    def test_equivalent_environment_residuals_are_checked_once(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        left_platform: str,
+        right_platform: str,
+        selection_restrictions: int,
+    ) -> None:
+        restrict = MarkerSet.restrict
+        calls = []
+
+        def recorded_restrict(
+            marker: MarkerSet, env: Mapping[str, str | AbstractSet[str]]
+        ) -> MarkerSet:
+            """Count concrete selections while running the real marker algebra."""
+            if "extras" in env:
+                calls.append(env)
+            return restrict(marker, env)
+
+        monkeypatch.setattr(MarkerSet, "restrict", recorded_restrict)
+        environments = {
+            python: {**self._LINUX["linux"], "python_version": python}
+            for python in ("3.10", "3.11", "3.12")
+        }
+        validate_marker_disjointness(
+            [
+                self._pkg(
+                    "foo", "1", f"sys_platform == '{left_platform}' and 'cpu' in extras"
+                ),
+                self._pkg(
+                    "foo",
+                    "2",
+                    f"sys_platform == '{right_platform}' and 'cpu' not in extras",
+                ),
+            ],
+            environments=environments,
+            extras=("cpu",),
+            groups=(),
+        )
+        assert len(calls) == selection_restrictions
+
+    @pytest.mark.parametrize("changing_left", [False, True])
+    def test_residual_reuse_keeps_both_markers_in_the_key(
+        self, changing_left: bool
+    ) -> None:
+        markers = [
+            "'cpu' in extras",
+            (
+                "(sys_platform == 'linux' and 'cpu' not in extras)"
+                " or (sys_platform == 'darwin' and 'cpu' in extras)"
+            ),
+        ]
+        if changing_left:
+            markers.reverse()
+        environments = {
+            "linux": dict(self._LINUX["linux"]),
+            "darwin": {**self._LINUX["linux"], "sys_platform": "darwin"},
+        }
+        with pytest.raises(DisjointnessError, match="darwin"):
+            validate_marker_disjointness(
+                [
+                    self._pkg("foo", str(index), marker)
+                    for index, marker in enumerate(markers, 1)
+                ],
+                environments=environments,
+                extras=("cpu",),
+                groups=(),
+            )
+
+    def test_residual_reuse_is_scoped_to_one_selection_universe(self) -> None:
+        packages = [
+            self._pkg("foo", "1", "'cpu' in extras"),
+            self._pkg("foo", "2", "'gpu' in extras"),
+        ]
+        validate_marker_disjointness(
+            packages,
+            environments=self._LINUX,
+            extras=("cpu", "gpu"),
+            groups=(),
+            exclusive_groups=[frozenset({("extra", "cpu"), ("extra", "gpu")})],
+        )
+        with pytest.raises(DisjointnessError, match="foo"):
+            validate_marker_disjointness(
+                packages,
+                environments=self._LINUX,
+                extras=("cpu", "gpu"),
+                groups=(),
+            )
 
     def test_distinct_environments_kept_when_collision_only_in_second(
         self,
@@ -6340,6 +6433,99 @@ class TestConflictForkNegatedEmission:
     _CPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "cpu"),)
     _GPU: ClassVar[tuple[tuple[str, str], ...]] = (("extra", "gpu"),)
 
+    @pytest.mark.parametrize("only_linux", [False, True])
+    def test_large_group_selector_factors_its_environment_support(
+        self, only_linux: bool
+    ) -> None:
+        groups = (
+            "test",
+            "docs",
+            "lint",
+            "nox",
+            "benchmark",
+            "locks",
+            "licenses",
+            "packaging-legacy",
+            "build",
+            "setuptools",
+            "pyproject-metadata",
+            "pip",
+            "dependency-groups",
+            "dep-logic",
+            "twine",
+            "cibuildwheel",
+            "hatchling",
+            "tox",
+            "virtualenv",
+            "pdm",
+            "poetry-core",
+            "pipenv",
+        )
+        environments = [
+            _target(python_version=python, platform=platform)
+            for python, platform in itertools.product(
+                ("3.11", "3.12"),
+                ("linux_x86_64", "macos_arm64", "windows_amd64"),
+            )
+        ]
+        targets = {}
+        for environment, group in itertools.product(environments, groups):
+            target = environment.with_selection((("group", group),))
+            supported = (
+                not only_linux or environment.marker_env["sys_platform"] == "linux"
+            )
+            name = "selected" if group == "test" and supported else "unrelated"
+            targets[target.label] = TargetLock(
+                target=target,
+                pins={name: _selection_pin(name, "1")},
+            )
+        lock_input = LockInput(
+            targets=targets,
+            env_base_names={_env_signature(env): frozenset() for env in environments},
+            environments=[
+                Marker(env.environment_marker_string) for env in environments
+            ],
+            dependency_groups=groups,
+            conflicts=(
+                ConflictSet(
+                    members=tuple(
+                        ConflictMember(ConflictKind.GROUP, group) for group in groups
+                    )
+                ),
+            ),
+        )
+        pylock = Pylock.from_dict(tomllib.loads(write_lock(lock_input)))
+        package = next(pkg for pkg in pylock.packages if str(pkg.name) == "selected")
+        assert package.marker is not None
+        _, variables = MarkerSet.from_marker_with_variables(package.marker)
+        if not only_linux:
+            assert variables == frozenset({"dependency_groups"})
+
+        for environment in environments:
+            for group in groups:
+                selected = {
+                    str(pkg.name)
+                    for pkg, _ in pylock.select(
+                        environment=dict(environment.marker_env),  # type: ignore[arg-type]
+                        dependency_groups=[group],
+                        extras=(),
+                    )
+                }
+                supported = (
+                    not only_linux or environment.marker_env["sys_platform"] == "linux"
+                )
+                expected = (
+                    {"selected"} if group == "test" and supported else {"unrelated"}
+                )
+                assert selected == expected
+            assert not list(
+                pylock.select(
+                    environment=dict(environment.marker_env),  # type: ignore[arg-type]
+                    dependency_groups=["test", "docs"],
+                    extras=(),
+                )
+            )
+
     def _lock(self) -> Pylock:
         cpu = self._BASE.with_selection(self._CPU)
         gpu = self._BASE.with_selection(self._GPU)
@@ -6593,27 +6779,23 @@ class TestConflictForkNegatedEmission:
         }
         assert set(torch_markers) == {f"2.{5 + i}.0" for i in range(len(drawn))}
 
-        # simplify overruns the cell budget on this fork, so the emitter
-        # passes the raw marker through unchanged: base env, the fork's three
-        # drawn members, then the 12 negated co-members by set in declaration
-        # order.
-        base = (
-            'python_version == "3.12" and sys_platform == "linux"'
-            ' and platform_machine == "x86_64"'
-        )
-
-        def raw_marker(names: tuple[str, ...]) -> str:
-            positives = " and ".join(f'"{name}" in extras' for name in names)
-            negatives = " and ".join(
-                f'"{name}" not in extras'
-                for members in sets
-                for name in members
-                if name not in names
-            )
-            return f"{base} and {positives} and {negatives}"
-
-        for i, names in enumerate(drawn):
-            assert torch_markers[f"2.{5 + i}.0"] == raw_marker(names)
+        # Exercise every allowed selection even when algebraic simplification refuses.
+        for choices in itertools.product(*((None, *members) for members in sets)):
+            selected = [name for name in choices if name is not None]
+            expected = {
+                f"2.{5 + index}.0"
+                for index, names in enumerate(drawn)
+                if set(selected) == set(names)
+            }
+            actual = {
+                str(package.version)
+                for package, _ in pylock.select(
+                    environment=self._ENV,  # type: ignore[arg-type]
+                    extras=selected,
+                    dependency_groups=(),
+                )
+            }
+            assert actual == expected
 
 
 def _projection_work(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
