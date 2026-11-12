@@ -2756,7 +2756,7 @@ def _factor_membership_clauses(clauses: Sequence[frozenset[Atom]]) -> Formula:
         )
         * max(1, len(clauses).bit_length())
     )
-    common = frozenset.intersection(*clauses)
+    common: frozenset[Atom] = frozenset.intersection(*clauses)
     residual = [clause - common for clause in clauses]
     if any(not clause for clause in residual):
         return _clause_formula(common)
