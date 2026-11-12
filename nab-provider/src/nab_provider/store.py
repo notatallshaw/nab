@@ -155,7 +155,7 @@ class InMemoryIndex:
         the shared set event rather than one of its own.
         """
         with self._lock:
-            yield
+            yield  # noqa: RUF075 - a failed write must not publish or wake waiters
             pending = self._pending.get(key)
             if pending is not None:
                 self._pending[key] = _PUBLISHED

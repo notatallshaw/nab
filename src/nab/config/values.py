@@ -1206,7 +1206,7 @@ def check_package_override_overlap(
     full range, so it overlaps every range for that package; in
     particular two routing entries for one package always conflict.
     """
-    for _field, attr in _PACKAGE_POLICY_FIELDS:
+    for field, attr in _PACKAGE_POLICY_FIELDS:
         by_name: defaultdict[str, list[PackageOverride]] = defaultdict(list)
         for entry in overrides:
             if _override_sets(entry, attr):
@@ -1216,7 +1216,7 @@ def check_package_override_overlap(
                 if not (left.version_range & right.version_range).is_empty:
                     msg = (
                         f"two per-package overrides for {name!r} both set"
-                        f" {_field!r} for overlapping versions:"
+                        f" {field!r} for overlapping versions:"
                         f" {str(left.requirement)!r} and"
                         f" {str(right.requirement)!r}.  Per-package overrides for"
                         " one field must cover disjoint version ranges."

@@ -9,6 +9,7 @@ from __future__ import annotations
 import gc
 import os
 import stat
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -95,7 +96,7 @@ def hermetic_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @contextmanager
-def _as_fifo(target: Path) -> Iterator[None]:
+def _as_fifo(target: Path) -> Generator[None, None, None]:
     real_os_stat, real_path_stat = os.stat, Path.stat
     piped = os.fspath(target)
     fifo = os.stat_result((stat.S_IFIFO | 0o644, *([0] * 9)))

@@ -171,9 +171,9 @@ def _write_run(
 
 
 def _rewrite_json(path: Path, mutate: Callable[[dict], None]) -> None:
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     mutate(data)
-    path.write_text(json.dumps(data))
+    path.write_text(json.dumps(data), encoding="utf-8")
 
 
 def _remove_completed_result(run_dir: Path) -> None:

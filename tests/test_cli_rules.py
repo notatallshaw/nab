@@ -1595,7 +1595,7 @@ def test_output_that_cannot_be_written_exits_120_without_a_traceback(
     unbuffered, so the usage error is the case whose write raises.
     """
     kept = tmp_path / "kept.txt"
-    with _FULL.open("w") as full, kept.open("w") as elsewhere:
+    with _FULL.open("w", encoding="utf-8") as full, kept.open("w") as elsewhere:
         finished = subprocess.run(  # noqa: S603 - the probe is this file's own source
             [sys.executable, "-c", _CONSOLE, *line],
             stdout=full if stream == "stdout" else elsewhere,

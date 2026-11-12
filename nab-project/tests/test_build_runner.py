@@ -22,7 +22,7 @@ import tarfile
 import tempfile
 import threading
 import zipfile
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from datetime import datetime, timezone
 from functools import partial
@@ -5310,7 +5310,7 @@ class _BuildIndexHandler(SimpleHTTPRequestHandler):
 
 
 @contextmanager
-def _serve_build_index(root: Path) -> Iterator[str]:
+def _serve_build_index(root: Path) -> Generator[str, None, None]:
     """Yield the base URL of a local HTTP index."""
     root.mkdir(exist_ok=True)
     server = ThreadingHTTPServer(

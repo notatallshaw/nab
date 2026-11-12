@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterable, Mapping
 from contextlib import contextmanager
 from types import FrameType
 
@@ -59,7 +59,7 @@ def _provider() -> Provider:
 
 
 @contextmanager
-def _membership_calls() -> Iterator[list[str]]:
+def _membership_calls() -> Generator[list[str], None, None]:
     """Count real membership construction without replacing the builder."""
     calls: list[str] = []
     previous = sys.getprofile()

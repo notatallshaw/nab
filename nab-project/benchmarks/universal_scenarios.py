@@ -29,14 +29,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-
 if sys.version_info >= (3, 11):
     import tomllib
 else:
     # nab pins py>=3.10 but the import fallback matches scenarios.py
     import tomli as tomllib  # type: ignore[no-redef] # pragma: no cover
+
 
 from benchmark_datetime import parse_datetime
 from universal_result import (
@@ -62,6 +60,9 @@ from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.provider import ResolutionStrategy
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 BENCHMARKS_DIR = Path(__file__).parent
 SCENARIOS_DIR = BENCHMARKS_DIR / "scenarios"
@@ -101,7 +102,7 @@ def _alarm_handler(_signum: int, _frame: object) -> None:
 
 
 @contextmanager
-def _scenario_wall_timeout() -> Iterator[None]:
+def _scenario_wall_timeout() -> Generator[None, None, None]:
     """Install the POSIX wall timer when the platform provides one."""
     sigalrm = getattr(signal, "SIGALRM", None)
     alarm = getattr(signal, "alarm", None)
@@ -331,7 +332,7 @@ def write_manifest(
         "completed_scenarios": sorted(completed_scenarios),
         "complete": complete,
     }
-    path.write_text(json.dumps(data, indent=2) + "\n")
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
 def process_scenario(

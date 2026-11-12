@@ -130,7 +130,7 @@ _UNIVERSAL_TOOL_NAB = (
 
 def _write(path: Path, body: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body)
+    path.write_text(body, encoding="utf-8")
     return path
 
 

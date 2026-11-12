@@ -372,7 +372,7 @@ extend-exclude = ["**/_vendor/**"]
 # and the scripts outside the packages have no printer to write through.
 "src/nab/cli.py" = ["TID251"]
 "src/nab/output.py" = ["TID251"]
-"**/tests/**" = ["TID251"]
+"**/tests/**" = ["TID251", "RUF029"]  # Async fakes need no suspension.
 
 # Benchmarks intentionally print, lack docstrings, run subprocesses, and
 # carry many scenario knobs.
@@ -433,6 +433,22 @@ extend-exclude = ["**/_vendor/**"]
 # https://docs.astral.sh/ruff/settings/#lint
 [tool.ruff.lint]
 select = ["ALL"]
+preview = true
+explicit-preview-rules = true
+extend-select = [
+    "ASYNC119",  # Async-generator cleanup must survive cancellation.
+    "B043", "B901", "B909",
+    "PT029",
+    "DOC102", "DOC202", "DOC403", "D420",
+    "PLE1141", "PLE4703", "PLR0202", "PLR0203",
+    "PLW0244", "PLW1514", "PLW3201",
+    "UP048", "UP051", "UP052",
+    "FURB101", "FURB103", "FURB131", "FURB145", "FURB148", "FURB152",
+    "FURB154", "FURB180",
+    "RUF027", "RUF029", "RUF038", "RUF039", "RUF045", "RUF047",
+    "RUF050", "RUF052", "RUF054", "RUF055", "RUF056", "RUF065",
+    "RUF066", "RUF070", "RUF072", "RUF073", "RUF074", "RUF075", "RUF077",
+]
 ignore = [
     # Frameworks we don't use.
     "AIR",     # Airflow
