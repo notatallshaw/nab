@@ -458,7 +458,12 @@ def test_an_atom_leaves_the_table_with_the_last_tree_holding_it() -> None:
 def test_all_and_dir_pin_the_public_surface() -> None:
     # Spelled out, so adding a name is a decision taken here, in the package
     # docstring's table and in the README, not a leak through __all__.
-    assert markersets.__all__ == ["DecisionStore", "MarkerSet", "variable_names"]
+    assert markersets.__all__ == [
+        "DecisionStore",
+        "MarkerSet",
+        "factor_membership_marker",
+        "variable_names",
+    ]
     assert errors.__all__ == ["IntractableMarkerSet", "UnserializableMarkerSet"]
 
     # __dir__ hides the budget constants and the engine submodule, so a

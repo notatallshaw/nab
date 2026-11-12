@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 _MAX_CELLS = 100_000
 _MAX_WORK = 100_000_000
 
-__all__ = ["DecisionStore", "MarkerSet", "variable_names"]
+__all__ = ["DecisionStore", "MarkerSet", "factor_membership_marker", "variable_names"]
 
 # Promised here rather than where it is written, so help() and a traceback name
 # the path the table gives it.
@@ -85,6 +85,23 @@ class DecisionStore(_markersets.Memo):
     """
 
     __slots__ = ()
+
+
+def factor_membership_marker(marker: str | MarkerLike) -> str:
+    """Return equivalent text with certified membership factoring.
+
+    Other shapes and bounded refusals keep the original text.
+    """
+    text = str(marker)
+    try:
+        return _markersets.factor_membership_marker(text, _MAX_WORK)
+    except (
+        IntractableMarkerSet,
+        UnserializableMarkerSet,
+        RecursionError,
+        UnicodeEncodeError,
+    ):
+        return text
 
 
 class MarkerSet:

@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
 from nab_index.atomic import atomic_write_text
 from nab_markersets.conversions import PreparedMarkerSets
 from nab_markersets.errors import IntractableMarkerSet, UnserializableMarkerSet
-from nab_markersets.markersets import DecisionStore, MarkerSet
+from nab_markersets.markersets import DecisionStore, MarkerSet, factor_membership_marker
 from nab_provider._vendor.packaging.markers import (
     MARKERS_REQUIRING_VERSION,
     Marker,
@@ -2112,30 +2112,43 @@ def _finalize_parts(
     *,
     prepared_sets: PreparedMarkerSets | None = None,
 ) -> Marker | None:
-    """Simplify each condition's environments, then assemble the marker.
-
-    Simplifying the whole marker in one pass walks a cell space the
-    membership variables multiply. The condition environments carry no
-    membership variable, so they shrink first, and the marker they
-    assemble into is small by the time the second pass canonicalises it.
-    """
+    """Simplify scalar support, then factor selectors sharing that support."""
     assembled: list[Marker] = []
+    conditions_by_environment: defaultdict[Marker | None, list[Marker]] = defaultdict(
+        list
+    )
     for part in parts:
         simplified = _finalize_cached(
             part.marker, universe, name, memo, store, prepared_sets=prepared_sets
         )
+
+        # Positive package selectors must stay attached to their conflict conditions.
+        if part.condition is not None and not part.gate:
+            conditions_by_environment[simplified].append(part.condition)
+            continue
+
         if part.condition is not None:
             simplified = (
                 part.condition
                 if simplified is None
                 else _parsed_marker(f"({simplified}) and ({part.condition})")
             )
+
         if not part.gate:
             if simplified is None:
                 return None
             assembled.append(simplified)
             continue
+
         assembled.append(_gated_marker(simplified, part.gate))
+
+    for environment, conditions in conditions_by_environment.items():
+        condition = _factored_condition(conditions)
+        assembled.append(
+            condition
+            if environment is None
+            else _parsed_marker(f"({environment}) and ({condition})")
+        )
 
     # One ungated part is already what the second pass would return.
     if len(parts) == 1 and not parts[0].gate:
@@ -2143,6 +2156,16 @@ def _finalize_parts(
     return _finalize_cached(
         _or_markers(assembled), universe, name, memo, store, prepared_sets=prepared_sets
     )
+
+
+def _factored_condition(conditions: Sequence[Marker]) -> Marker:
+    """Factor complete conflict selectors before parsing their combined marker."""
+    if len(conditions) == 1:
+        return conditions[0]
+
+    # The formatter parses its input; avoid parsing and caching it twice.
+    text = " or ".join(f"({condition})" for condition in conditions)
+    return _parsed_marker(factor_membership_marker(text))
 
 
 def _gated_marker(marker: Marker | None, gate: Sequence[tuple[str, str]]) -> Marker:

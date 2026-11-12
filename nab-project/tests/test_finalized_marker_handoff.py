@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import itertools
+
 import pytest
 from packaging.markers import Marker as ExternalMarker
 
@@ -73,6 +75,36 @@ def test_final_assembly_hands_off_the_complete_gated_marker(
     assert converted.evaluate({"sys_platform": "win32", "extras": frozenset({"b"})})
     assert not converted.evaluate({"sys_platform": "win32", "extras": frozenset({"a"})})
     assert len(conversions) == before
+
+
+@pytest.mark.parametrize("environment", [None, 'sys_platform == "linux"'])
+def test_package_selector_and_conflict_condition_both_apply(
+    environment: str | None,
+) -> None:
+    parts = [
+        pylock._GatedMarker(
+            Marker(environment) if environment is not None else None,
+            ((KIND_EXTRA, "cli"),),
+            Marker('"cpu" in extras and "gpu" not in extras'),
+        )
+    ]
+    marker = pylock._finalize_parts(
+        parts, MarkerSet.full(), "demo", {}, DecisionStore()
+    )
+    assert marker is not None
+    emitted = MarkerSet.from_marker(marker)
+    names = ("cli", "cpu", "gpu")
+    for system, flags in itertools.product(
+        ("linux", "win32"), itertools.product((False, True), repeat=len(names))
+    ):
+        selected = frozenset(
+            name for name, present in zip(names, flags, strict=True) if present
+        )
+        expected = {"cli", "cpu"} <= selected and "gpu" not in selected
+        expected = expected and (environment is None or system == "linux")
+        assert (
+            emitted.evaluate({"sys_platform": system, "extras": selected}) == expected
+        )
 
 
 def test_absent_marker_is_full_for_disjointness_with_a_handoff() -> None:
