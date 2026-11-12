@@ -8,6 +8,7 @@ import random
 import re
 import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from contextlib import AbstractContextManager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -2991,6 +2992,98 @@ class TestMarkerDisjointness:
             extras=("cpu",),
             groups=(),
         )
+
+    @pytest.mark.parametrize(
+        ("left_platform", "right_platform", "selection_restrictions"),
+        [("linux", "linux", 4), ("darwin", "linux", 0), ("linux", "darwin", 0)],
+    )
+    def test_equivalent_environment_residuals_are_checked_once(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        left_platform: str,
+        right_platform: str,
+        selection_restrictions: int,
+    ) -> None:
+        restrict = MarkerSet.restrict
+        calls = []
+
+        def recorded_restrict(
+            marker: MarkerSet, env: Mapping[str, str | AbstractSet[str]]
+        ) -> MarkerSet:
+            """Count concrete selections while running the real marker algebra."""
+            if "extras" in env:
+                calls.append(env)
+            return restrict(marker, env)
+
+        monkeypatch.setattr(MarkerSet, "restrict", recorded_restrict)
+        environments = {
+            python: {**self._LINUX["linux"], "python_version": python}
+            for python in ("3.10", "3.11", "3.12")
+        }
+        validate_marker_disjointness(
+            [
+                self._pkg(
+                    "foo", "1", f"sys_platform == '{left_platform}' and 'cpu' in extras"
+                ),
+                self._pkg(
+                    "foo",
+                    "2",
+                    f"sys_platform == '{right_platform}' and 'cpu' not in extras",
+                ),
+            ],
+            environments=environments,
+            extras=("cpu",),
+            groups=(),
+        )
+        assert len(calls) == selection_restrictions
+
+    @pytest.mark.parametrize("changing_left", [False, True])
+    def test_residual_reuse_keeps_both_markers_in_the_key(
+        self, changing_left: bool
+    ) -> None:
+        markers = [
+            "'cpu' in extras",
+            (
+                "(sys_platform == 'linux' and 'cpu' not in extras)"
+                " or (sys_platform == 'darwin' and 'cpu' in extras)"
+            ),
+        ]
+        if changing_left:
+            markers.reverse()
+        environments = {
+            "linux": dict(self._LINUX["linux"]),
+            "darwin": {**self._LINUX["linux"], "sys_platform": "darwin"},
+        }
+        with pytest.raises(DisjointnessError, match="darwin"):
+            validate_marker_disjointness(
+                [
+                    self._pkg("foo", str(index), marker)
+                    for index, marker in enumerate(markers, 1)
+                ],
+                environments=environments,
+                extras=("cpu",),
+                groups=(),
+            )
+
+    def test_residual_reuse_is_scoped_to_one_selection_universe(self) -> None:
+        packages = [
+            self._pkg("foo", "1", "'cpu' in extras"),
+            self._pkg("foo", "2", "'gpu' in extras"),
+        ]
+        validate_marker_disjointness(
+            packages,
+            environments=self._LINUX,
+            extras=("cpu", "gpu"),
+            groups=(),
+            exclusive_groups=[frozenset({("extra", "cpu"), ("extra", "gpu")})],
+        )
+        with pytest.raises(DisjointnessError, match="foo"):
+            validate_marker_disjointness(
+                packages,
+                environments=self._LINUX,
+                extras=("cpu", "gpu"),
+                groups=(),
+            )
 
     def test_distinct_environments_kept_when_collision_only_in_second(
         self,
