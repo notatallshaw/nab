@@ -56,11 +56,9 @@ jobs:
     needs: refresh
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    environment: dependency-updates
     permissions:
-      contents: write # Push the managed lock-update branch and sign its commit.
-      pull-requests: write # Open or update its draft PR.
-    outputs:
-      changed: ${{ steps.pr.outputs.changed }}
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -71,25 +69,17 @@ jobs:
         with:
           name: refreshed-locks
 
+      - name: Create publishing token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Open or update the dependency PR
-        id: pr
         run: python3 tasks/update_lock_pr.py
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
-
-  checks:
-    name: Start dependency checks
-    needs: pull-request
-    if: needs.pull-request.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: write # Dispatch CI for the managed update branch.
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-    steps:
-      # GITHUB_TOKEN-created PRs otherwise need approval before their CI starts.
-      - run: gh workflow run test.yml --ref ci/update-locks
-      - run: gh workflow run lint.yml --ref ci/update-locks
