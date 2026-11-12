@@ -145,7 +145,7 @@ sha256 = "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0"
 [[packages]]
 name = "anyio"
 version = "4.16.0"
-marker = "((python_version == \"3.10\" or python_version == \"3.11\") and (\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or ((python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups))) or (python_version == \"3.12\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups))"
+marker = "((python_version == \"3.10\" or python_version == \"3.11\") and (\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or ((python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\") and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.12\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups))"
 requires-python = ">=3.10"
 dependencies = [
     { name = "exceptiongroup" },
@@ -516,7 +516,7 @@ sha256 = "a12aaa3453dc8f633a815293179f08b7421ed18d2575c459c3c736f840beac24"
 [[packages]]
 name = "certifi"
 version = "2026.10.23"
-marker = "((python_version == \"3.10\" or python_version == \"3.11\") and (\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or ((python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups))) or (python_version == \"3.12\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups))"
+marker = "((python_version == \"3.10\" or python_version == \"3.11\") and (\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or ((python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\") and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.12\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups))"
 requires-python = ">=3.7"
 index = "https://pypi.org/simple/"
 
@@ -1786,7 +1786,7 @@ sha256 = "27982522339ec77662965e0d859da5662162962c874d54d2250426506818cbdc"
 
 [[packages]]
 name = "crosshair-tool"
-version = "0.0.112"
+version = "0.0.113"
 marker = "\"crosshair\" in dependency_groups"
 requires-python = ">=3.9"
 dependencies = [
@@ -1800,283 +1800,283 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "crosshair_tool-0.0.112.tar.gz"
-upload-time = 2026-10-23T03:36:12.036032+00:00
-url = "https://files.pythonhosted.org/packages/29/9c/8d74a4511e352e098397e42d77b312eff3dfe9cbb683eea47363d32cf3d7/crosshair_tool-0.0.112.tar.gz"
-size = 566825
+name = "crosshair_tool-0.0.113.tar.gz"
+upload-time = 2026-11-05T15:27:22.759268+00:00
+url = "https://files.pythonhosted.org/packages/2c/ca/bf4dad3461aed5046501f67cd8bd636e7a4af2ef3ae5135cbb15cd0aea0a/crosshair_tool-0.0.113.tar.gz"
+size = 572289
 
 [packages.sdist.hashes]
-sha256 = "050ec13a4012cff58124e2265c3746d19839bd33116b3eda15d968b46e5475eb"
+sha256 = "cb47634f37b80270850e6799a1159b2cc46fb9cee3842626285a8d42d2d9f3ba"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp310-cp310-macosx_10_9_universal2.whl"
-upload-time = 2026-10-23T03:35:08.588493+00:00
-url = "https://files.pythonhosted.org/packages/c4/ad/bdf9334503841f11207eb17f65bf3cdf4b49ed9336a4bda67248dcc867d9/crosshair_tool-0.0.112-cp310-cp310-macosx_10_9_universal2.whl"
-size = 666407
+name = "crosshair_tool-0.0.113-cp310-cp310-macosx_10_9_universal2.whl"
+upload-time = 2026-11-05T15:26:19.081022+00:00
+url = "https://files.pythonhosted.org/packages/fa/ce/d050f73caec5420ba3e7b5ec503ef9e21ccfa23dd908f6c38105002211f7/crosshair_tool-0.0.113-cp310-cp310-macosx_10_9_universal2.whl"
+size = 671365
 
 [packages.wheels.hashes]
-sha256 = "8f0c2586b0507ffd6644870921598721538855bec1d49c512f909ebb71210178"
+sha256 = "a762ea737f8917cd711eb082a204fc07f0e2deed28f0d15000f465ab03d9e47c"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp310-cp310-macosx_10_9_x86_64.whl"
-upload-time = 2026-10-23T03:35:10.441398+00:00
-url = "https://files.pythonhosted.org/packages/e4/6c/28cc80ea9420867aba2f57b3f09c0e00b4a739aa74a6244e903ec36068e1/crosshair_tool-0.0.112-cp310-cp310-macosx_10_9_x86_64.whl"
-size = 655053
+name = "crosshair_tool-0.0.113-cp310-cp310-macosx_10_9_x86_64.whl"
+upload-time = 2026-11-05T15:26:20.931992+00:00
+url = "https://files.pythonhosted.org/packages/20/97/4f55571d882c07fa943f95a4794a02173869177c9d2c7ee2f19d914e54ae/crosshair_tool-0.0.113-cp310-cp310-macosx_10_9_x86_64.whl"
+size = 660056
 
 [packages.wheels.hashes]
-sha256 = "3211855af86b2c3b351ffeb512fc1d77621b9dae437075e33fe9479176b0cb49"
+sha256 = "b6a0791a59dbbc190562aedfeff116a53da220d786a14829ad3a5a757f3daf2f"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp310-cp310-macosx_11_0_arm64.whl"
-upload-time = 2026-10-23T03:35:11.927141+00:00
-url = "https://files.pythonhosted.org/packages/6c/55/e552d1220d75c27bf1052f650643a89d61d9a032736148a25481f5578a7b/crosshair_tool-0.0.112-cp310-cp310-macosx_11_0_arm64.whl"
-size = 655723
+name = "crosshair_tool-0.0.113-cp310-cp310-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T15:26:22.039128+00:00
+url = "https://files.pythonhosted.org/packages/ff/40/b7b9d8ebaacefa59c4caf9e2df556492b039cc6305d15c0d7947509bed3f/crosshair_tool-0.0.113-cp310-cp310-macosx_11_0_arm64.whl"
+size = 660629
 
 [packages.wheels.hashes]
-sha256 = "33313295c8a9e0b46221c1e407a00ca90c244b9c0b39a29e43044f6a34efbc13"
+sha256 = "18bc1f696c675f328684ef79a271ec956921f531220475dad22bcd3c70156513"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp310-cp310-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
-upload-time = 2026-10-23T03:35:13.626965+00:00
-url = "https://files.pythonhosted.org/packages/d5/02/534e71044a2f4899a1664b737162ae6a0a94d24bfe1e43b86eb571def1bd/crosshair_tool-0.0.112-cp310-cp310-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
-size = 698353
+name = "crosshair_tool-0.0.113-cp310-cp310-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+upload-time = 2026-11-05T15:26:23.329272+00:00
+url = "https://files.pythonhosted.org/packages/af/d8/799a7ce49de3eb5315b26c56a9cfbeb6c49fa66e7c2ec11cb9e2620efd1f/crosshair_tool-0.0.113-cp310-cp310-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+size = 703328
 
 [packages.wheels.hashes]
-sha256 = "a05468cecfe3ba536448926f6deeaf4b02dbf7922ca6cae50fbf9c8892c9f76e"
+sha256 = "f9d3c7a1b5c2d3d0b154d3c8e347ab70bef3c906db19a77ee78cacf9da9733a4"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp310-cp310-win_amd64.whl"
-upload-time = 2026-10-23T03:35:17.573847+00:00
-url = "https://files.pythonhosted.org/packages/dc/e7/7d3f1c62e1503e92b24156b25045121bbcb22b046e021061c3f0214727a4/crosshair_tool-0.0.112-cp310-cp310-win_amd64.whl"
-size = 654139
+name = "crosshair_tool-0.0.113-cp310-cp310-win_amd64.whl"
+upload-time = 2026-11-05T15:26:26.791344+00:00
+url = "https://files.pythonhosted.org/packages/94/a6/cab89cc0902bf96f28a7ed1236c05613813038efe43ab3b7ae826917879b/crosshair_tool-0.0.113-cp310-cp310-win_amd64.whl"
+size = 659117
 
 [packages.wheels.hashes]
-sha256 = "0c16c43ca42f5c8ba6ed8340582187b98429b7a70c446a7aa61a3d055701f2e3"
+sha256 = "691f941aa976eca0624fdfde7d4246bccf29901534e0fe960e23047c25b27685"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp311-cp311-macosx_10_9_universal2.whl"
-upload-time = 2026-10-23T03:35:18.786868+00:00
-url = "https://files.pythonhosted.org/packages/68/23/122180f75ea85eaa7093e0f62f243b7b2ccaebfc579f9cf71e3c171e83ff/crosshair_tool-0.0.112-cp311-cp311-macosx_10_9_universal2.whl"
-size = 666372
+name = "crosshair_tool-0.0.113-cp311-cp311-macosx_10_9_universal2.whl"
+upload-time = 2026-11-05T15:26:27.860877+00:00
+url = "https://files.pythonhosted.org/packages/c9/e0/8c01f6256c9e2fc6648ea055c75e630fe932a31048fd6d1789cdd7c8d664/crosshair_tool-0.0.113-cp311-cp311-macosx_10_9_universal2.whl"
+size = 670943
 
 [packages.wheels.hashes]
-sha256 = "25f8089f2efd834cf01dc4dd2d1a134666381bf9da50b5f1a2a191b19034acaf"
+sha256 = "61157f777d5a11c55cb8ef4c060965ef19016f5482c26f5d66e9281cbf6f641b"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp311-cp311-macosx_10_9_x86_64.whl"
-upload-time = 2026-10-23T03:35:19.896172+00:00
-url = "https://files.pythonhosted.org/packages/91/06/de4140fac219b6d4ebbc09d4785425e75265cc126ce4919c7623b582d185/crosshair_tool-0.0.112-cp311-cp311-macosx_10_9_x86_64.whl"
-size = 655035
+name = "crosshair_tool-0.0.113-cp311-cp311-macosx_10_9_x86_64.whl"
+upload-time = 2026-11-05T15:26:29.099949+00:00
+url = "https://files.pythonhosted.org/packages/7c/2c/dffb6d19c95e0cc0824c67e0e7f008cba4a3c04ba305e852ec1e579706a7/crosshair_tool-0.0.113-cp311-cp311-macosx_10_9_x86_64.whl"
+size = 659832
 
 [packages.wheels.hashes]
-sha256 = "55ab1eb01f3c9e0a764e3142e40c449b850dee7dd8f9abb9216152a56e23ec6f"
+sha256 = "a0f70f37a60bce85801c63d6f25c97ca769c462dca88adf71b04f4cdc05ac607"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp311-cp311-macosx_11_0_arm64.whl"
-upload-time = 2026-10-23T03:35:21.162404+00:00
-url = "https://files.pythonhosted.org/packages/37/1d/2f2cd6a8f39c6e4dde4282af74e18dbe0f9fe8204ebd24816104fb945d5b/crosshair_tool-0.0.112-cp311-cp311-macosx_11_0_arm64.whl"
-size = 655702
+name = "crosshair_tool-0.0.113-cp311-cp311-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T15:26:30.290338+00:00
+url = "https://files.pythonhosted.org/packages/c1/be/9607a995aaa9aaecf23bb442180d1477287339ec6d3569bc12a25ffecb3a/crosshair_tool-0.0.113-cp311-cp311-macosx_11_0_arm64.whl"
+size = 660441
 
 [packages.wheels.hashes]
-sha256 = "197cd002c0b6d52ebcc3b3601573fc9096743acb331e5a97d77174f1f702ae78"
+sha256 = "843c55b2ff4079f55b9f8bf9e0d87b880a23d45bd004bf25ad43ef9dc3ba0851"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
-upload-time = 2026-10-23T03:35:22.578367+00:00
-url = "https://files.pythonhosted.org/packages/9a/70/a1e52129c53bffd6742b756592d2c77db7e96da2f749b98888050cb45080/crosshair_tool-0.0.112-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
-size = 696215
+name = "crosshair_tool-0.0.113-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+upload-time = 2026-11-05T15:26:31.643908+00:00
+url = "https://files.pythonhosted.org/packages/a2/05/929e7778e11db930ca0510ed19f15f45d2a86e2d4140d024bd8fbd874a76/crosshair_tool-0.0.113-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+size = 701191
 
 [packages.wheels.hashes]
-sha256 = "2b0e788387a5b98f9d5a54687b3169a52a1f32e6a78c28c1e3aa1139acc7e626"
+sha256 = "cd8817140d65481e946ccf24ec61636be9ad95b26d8f538143495a4c4b347364"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp311-cp311-win_amd64.whl"
-upload-time = 2026-10-23T03:35:25.983667+00:00
-url = "https://files.pythonhosted.org/packages/8e/96/2fba3b87f8b4574e2330fd00b180f48d8c3dff9f9240db31b3120438c710/crosshair_tool-0.0.112-cp311-cp311-win_amd64.whl"
-size = 654076
+name = "crosshair_tool-0.0.113-cp311-cp311-win_amd64.whl"
+upload-time = 2026-11-05T15:26:35.525755+00:00
+url = "https://files.pythonhosted.org/packages/21/ef/39ac185c6fc51253c6b967cc7e99f4b3d28fed687aa9f50bf497908a062a/crosshair_tool-0.0.113-cp311-cp311-win_amd64.whl"
+size = 659053
 
 [packages.wheels.hashes]
-sha256 = "e07728d9f9dd33c660430faa58c421c6f95017cb0fafd97016a02f0b3375b41d"
+sha256 = "00c65e87a206522664d59354f132675432337e78f1c16261e4e05d532394778c"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp312-cp312-macosx_10_13_universal2.whl"
-upload-time = 2026-10-23T03:35:27.448376+00:00
-url = "https://files.pythonhosted.org/packages/bf/51/2a4a208a4f39d81e0852c88ddc31d6ff41d8e7352b14d55ff47ac1e043dd/crosshair_tool-0.0.112-cp312-cp312-macosx_10_13_universal2.whl"
-size = 673346
+name = "crosshair_tool-0.0.113-cp312-cp312-macosx_10_13_universal2.whl"
+upload-time = 2026-11-05T15:26:36.639963+00:00
+url = "https://files.pythonhosted.org/packages/55/91/133d3601fe211fd4ea6c599c06a62a4f876f6a7ed3a5601e06807a592c85/crosshair_tool-0.0.113-cp312-cp312-macosx_10_13_universal2.whl"
+size = 678322
 
 [packages.wheels.hashes]
-sha256 = "7e32d8ee81bfbe67accbb6247edb5161ba9e89cfe42caafc1fc03850fdc6fd6c"
+sha256 = "c505fb338851a4b8f71365559387def3e9a3b92cadc0c933acdd8c39c7c57fba"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp312-cp312-macosx_10_13_x86_64.whl"
-upload-time = 2026-10-23T03:35:28.542822+00:00
-url = "https://files.pythonhosted.org/packages/5d/28/bb36f0e10d9de350d75364f9301bed930b01af057f75cd3a8ae1f0891bd8/crosshair_tool-0.0.112-cp312-cp312-macosx_10_13_x86_64.whl"
-size = 658591
+name = "crosshair_tool-0.0.113-cp312-cp312-macosx_10_13_x86_64.whl"
+upload-time = 2026-11-05T15:26:37.877858+00:00
+url = "https://files.pythonhosted.org/packages/ce/eb/1f5b4e77d4dea2218b2e154f7123c883ba10b3fc578dd6b0b1ef24965523/crosshair_tool-0.0.113-cp312-cp312-macosx_10_13_x86_64.whl"
+size = 663618
 
 [packages.wheels.hashes]
-sha256 = "ab83d39b9d782496a49f7fae2bae3c92408d0459b6ad846f976ffa6175b90c6c"
+sha256 = "9c775ff75f43646a65617d2dc7ddc674c19ddce7c0e2161a1791a68a958effa6"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp312-cp312-macosx_11_0_arm64.whl"
-upload-time = 2026-10-23T03:35:29.702878+00:00
-url = "https://files.pythonhosted.org/packages/6b/e9/6ed0e72586bd6bac532f39e64026fb34e4695c22a8158387fb6b8bde9fa8/crosshair_tool-0.0.112-cp312-cp312-macosx_11_0_arm64.whl"
-size = 659094
+name = "crosshair_tool-0.0.113-cp312-cp312-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T15:26:38.983532+00:00
+url = "https://files.pythonhosted.org/packages/4b/17/7eebc6db3a752823f3e5957614e6f35f19cc3532b25b05e6ad45e2b95fde/crosshair_tool-0.0.113-cp312-cp312-macosx_11_0_arm64.whl"
+size = 664153
 
 [packages.wheels.hashes]
-sha256 = "9d924b915ca21237ebdc48998adeda191f8218e1899cff9d73e36189fd8a4f23"
+sha256 = "7f9b1ead7e76d95ac08ab50ebe842dd8d544cdee31ac316a7c5a8a2bdd33b0fb"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
-upload-time = 2026-10-23T03:35:30.724784+00:00
-url = "https://files.pythonhosted.org/packages/7b/32/163013f6a85b6802dd7e91b30ca0ddbabccc3fd706cc8beeb5105ca2d1fe/crosshair_tool-0.0.112-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
-size = 712602
+name = "crosshair_tool-0.0.113-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+upload-time = 2026-11-05T15:26:40.300192+00:00
+url = "https://files.pythonhosted.org/packages/30/0f/259bccbae8f83776fad3df38f1f552710dd0776cc9eeeb29c39d8fa49f48/crosshair_tool-0.0.113-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+size = 717574
 
 [packages.wheels.hashes]
-sha256 = "461bb91884a8319e2f54d085d5a7b76c5a39058ae60512b0144bc3ed4edac67d"
+sha256 = "cb1b8fd1005ccca0c94c2146cecf882d5803e44cff9e7946b7e8119c9099be12"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp312-cp312-win_amd64.whl"
-upload-time = 2026-10-23T03:35:34.327152+00:00
-url = "https://files.pythonhosted.org/packages/b4/8c/c69fcf8a20fba89c4f3dc147891d22bb42f3025aa31bc4ae84817ad2718c/crosshair_tool-0.0.112-cp312-cp312-win_amd64.whl"
-size = 657343
+name = "crosshair_tool-0.0.113-cp312-cp312-win_amd64.whl"
+upload-time = 2026-11-05T15:26:43.815411+00:00
+url = "https://files.pythonhosted.org/packages/f0/90/abeb6ca081613728f4325f4180d378b9e02fb3c017b3180c11d6e42bdeaa/crosshair_tool-0.0.113-cp312-cp312-win_amd64.whl"
+size = 662320
 
 [packages.wheels.hashes]
-sha256 = "457f5aa665426eeff0c477e1624619ddf3cb6583d30e2687f589905ec753270a"
+sha256 = "cd3768cb8ed69a3b62498cc364b0672fc67cdde632648703a4873750a5f1998c"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp313-cp313-macosx_10_13_universal2.whl"
-upload-time = 2026-10-23T03:35:35.880040+00:00
-url = "https://files.pythonhosted.org/packages/67/a2/9ab90e98d6ee1f331cac7de47a7fcce6fdc412af1cd8152a77b1c0e5b08a/crosshair_tool-0.0.112-cp313-cp313-macosx_10_13_universal2.whl"
-size = 681074
+name = "crosshair_tool-0.0.113-cp313-cp313-macosx_10_13_universal2.whl"
+upload-time = 2026-11-05T15:26:45.018542+00:00
+url = "https://files.pythonhosted.org/packages/1b/92/3bb8cfc1b07d7ca4aad684357a36bcdf98a133299694d45bf396cc52d0c3/crosshair_tool-0.0.113-cp313-cp313-macosx_10_13_universal2.whl"
+size = 686305
 
 [packages.wheels.hashes]
-sha256 = "8a2c1d0d8e3d3e1bb9d7374b748f840399f3a4a8b77bb7a8e97ba7888e3a92fb"
+sha256 = "c88fc2e6542d5d3488b0db56a3331aab722a16f8b50621257539b7031876b908"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp313-cp313-macosx_10_13_x86_64.whl"
-upload-time = 2026-10-23T03:35:37.264682+00:00
-url = "https://files.pythonhosted.org/packages/b8/46/4dbc88ed803fd00c7ac10629b4348f4d24ea269c0194467eef142ab1490e/crosshair_tool-0.0.112-cp313-cp313-macosx_10_13_x86_64.whl"
-size = 662384
+name = "crosshair_tool-0.0.113-cp313-cp313-macosx_10_13_x86_64.whl"
+upload-time = 2026-11-05T15:26:46.255287+00:00
+url = "https://files.pythonhosted.org/packages/96/d8/bfe5e4b61a0707d7bc4663744eaab2ab068d02e6298b692dbe38a802b7de/crosshair_tool-0.0.113-cp313-cp313-macosx_10_13_x86_64.whl"
+size = 667449
 
 [packages.wheels.hashes]
-sha256 = "0ab5e745b5eb01d732d96243024e9513c412f5680902c305697beb998cf13cdd"
+sha256 = "f58e215136a64f1315edbf1af8703bca4dd59785627f57316feb23232d99f6a6"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp313-cp313-macosx_11_0_arm64.whl"
-upload-time = 2026-10-23T03:35:38.745225+00:00
-url = "https://files.pythonhosted.org/packages/ab/34/0e041839b0b3be2bd4354c92c0fa15f3e533c1aec7803c70bb7fcd86b443/crosshair_tool-0.0.112-cp313-cp313-macosx_11_0_arm64.whl"
-size = 662927
+name = "crosshair_tool-0.0.113-cp313-cp313-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T15:26:47.567947+00:00
+url = "https://files.pythonhosted.org/packages/fb/9c/2279233893a1cf55a7aecb6854b2ff2f1982b6ef2f632dceb0b539b86701/crosshair_tool-0.0.113-cp313-cp313-macosx_11_0_arm64.whl"
+size = 668056
 
 [packages.wheels.hashes]
-sha256 = "b20653fc05411ba25ec150321acac34036dc7d0d3446ac70c2b2c211b7cd86b0"
+sha256 = "8a6a81f3ba4fc791971346f68054bafa2a73d0ca85b3e24c3056c30fd53e7e8b"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
-upload-time = 2026-10-23T03:35:40.119911+00:00
-url = "https://files.pythonhosted.org/packages/07/fe/5613ac8b76a6def9e76b5d27b87b0368e89cc68ad8af657fe22f6623341d/crosshair_tool-0.0.112-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
-size = 719180
+name = "crosshair_tool-0.0.113-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+upload-time = 2026-11-05T15:26:48.864693+00:00
+url = "https://files.pythonhosted.org/packages/68/ca/bb94000ef4a5167de0d12b39d88705e599e93fa475e2cc3a1ba366d39f1e/crosshair_tool-0.0.113-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+size = 724153
 
 [packages.wheels.hashes]
-sha256 = "a65182f730b253aa02424b2810a52b7220c112293ade8772bfb94c5dad68411b"
+sha256 = "09b6edbb4ca45bc98147cd3b92c05eae501dd90e0fb48c0e77b0e665cb9678fe"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp313-cp313-win_amd64.whl"
-upload-time = 2026-10-23T03:35:43.628229+00:00
-url = "https://files.pythonhosted.org/packages/90/11/1b9e8952fef794a73d27be3583f243d6faa9ba01178fae5307c8f44b91b8/crosshair_tool-0.0.112-cp313-cp313-win_amd64.whl"
-size = 657323
+name = "crosshair_tool-0.0.113-cp313-cp313-win_amd64.whl"
+upload-time = 2026-11-05T15:26:52.940340+00:00
+url = "https://files.pythonhosted.org/packages/60/49/7535cfbde0a3071162d0faf207e8bbf4400eba4ae0bc2ba33078680441a7/crosshair_tool-0.0.113-cp313-cp313-win_amd64.whl"
+size = 662303
 
 [packages.wheels.hashes]
-sha256 = "ed5517d42425c95ba5568f9fcdd40105fb5fb788c669ccdb9fcdcc7a33fe7953"
+sha256 = "f8c91abadcd02536f0b9fe77425d872b2051fbc70d46b6136a571ab22d40dcd5"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp314-cp314-macosx_10_15_universal2.whl"
-upload-time = 2026-10-23T03:35:44.718567+00:00
-url = "https://files.pythonhosted.org/packages/eb/27/516bfcd57e49dabd372c8dc63fc44186a1af83eb53acecaee8b47e6863bd/crosshair_tool-0.0.112-cp314-cp314-macosx_10_15_universal2.whl"
-size = 678878
+name = "crosshair_tool-0.0.113-cp314-cp314-macosx_10_15_universal2.whl"
+upload-time = 2026-11-05T15:26:54.409622+00:00
+url = "https://files.pythonhosted.org/packages/d6/34/1b067ab3c88d7086ac504f0a883789557ea6d49bdaf33ebb6e7ebc5f1544/crosshair_tool-0.0.113-cp314-cp314-macosx_10_15_universal2.whl"
+size = 683810
 
 [packages.wheels.hashes]
-sha256 = "8b2b7821bbcdf52ea6d66a50fe1258640164f40241e9465e340580d8e27c5ace"
+sha256 = "296411fa72c783099bbd063c30811cf60c1e9656b4671a7498347a605243d92d"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp314-cp314-macosx_10_15_x86_64.whl"
-upload-time = 2026-10-23T03:35:45.774961+00:00
-url = "https://files.pythonhosted.org/packages/26/fd/35d706b404eb825534629125fe74174d9b2490f28fb96fc1df2600dc0a3d/crosshair_tool-0.0.112-cp314-cp314-macosx_10_15_x86_64.whl"
-size = 661322
+name = "crosshair_tool-0.0.113-cp314-cp314-macosx_10_15_x86_64.whl"
+upload-time = 2026-11-05T15:26:56.189728+00:00
+url = "https://files.pythonhosted.org/packages/29/01/a127059bea9dc91c74b25dd223b17665d2a6b16225b7e69eff5dd5f6040a/crosshair_tool-0.0.113-cp314-cp314-macosx_10_15_x86_64.whl"
+size = 666277
 
 [packages.wheels.hashes]
-sha256 = "9881fc0b770824adceed08a602edbd27a21e71ef437d6119106bd92616c9f1f6"
+sha256 = "f2fc304b2e999a6bfc8d9a3bd504622a2811bfae10c39128ea74ff0d7020a6c1"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp314-cp314-macosx_11_0_arm64.whl"
-upload-time = 2026-10-23T03:35:46.933146+00:00
-url = "https://files.pythonhosted.org/packages/7c/a8/a809742716471c964eaacc3eb5dc9f093f25e64c1f90c4289476013b075b/crosshair_tool-0.0.112-cp314-cp314-macosx_11_0_arm64.whl"
-size = 661918
+name = "crosshair_tool-0.0.113-cp314-cp314-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T15:26:58.047682+00:00
+url = "https://files.pythonhosted.org/packages/1f/51/3343bcdd19de4a2d57c5208d153f3e6b156b597b88d1d997f789317e879b/crosshair_tool-0.0.113-cp314-cp314-macosx_11_0_arm64.whl"
+size = 666877
 
 [packages.wheels.hashes]
-sha256 = "da3d4e35cc64c88397ad355dae87fa8aee3c3876a9653130b064ef7e3e73a9fc"
+sha256 = "0e38d304a707628e04d718966beee0df2c8bc9db7584a98abe26d8d80d746f68"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp314-cp314-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
-upload-time = 2026-10-23T03:35:48.073238+00:00
-url = "https://files.pythonhosted.org/packages/ab/55/7e46c9e9e8238f6bc56168bdfcd12d32c0348af2343f84226580b7599073/crosshair_tool-0.0.112-cp314-cp314-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
-size = 757865
+name = "crosshair_tool-0.0.113-cp314-cp314-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+upload-time = 2026-11-05T15:26:59.099153+00:00
+url = "https://files.pythonhosted.org/packages/15/05/e104c09cccb5ced3feab9dd3e59962e574d0c3f10e8f7ebfea3bb9ed89e1/crosshair_tool-0.0.113-cp314-cp314-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+size = 762840
 
 [packages.wheels.hashes]
-sha256 = "2f21d3f5653ed74c558ed02996828f8af3ee28cba9787578352c049cd8cbb525"
+sha256 = "28da06ef4302480ab08ecfc44dfe840604fc36ca2e27cad5e614a1a25bc563ac"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp314-cp314-win_amd64.whl"
-upload-time = 2026-10-23T03:35:53.368482+00:00
-url = "https://files.pythonhosted.org/packages/76/a1/a14cd9c830a22785edb8a4918785d9f440550b35e134c44cd7030320fbe5/crosshair_tool-0.0.112-cp314-cp314-win_amd64.whl"
-size = 656783
+name = "crosshair_tool-0.0.113-cp314-cp314-win_amd64.whl"
+upload-time = 2026-11-05T15:27:04.305530+00:00
+url = "https://files.pythonhosted.org/packages/db/f4/ce73b90fc4f97c32d1879338188faac1e4ced14976581a4bd63afbd4926d/crosshair_tool-0.0.113-cp314-cp314-win_amd64.whl"
+size = 661778
 
 [packages.wheels.hashes]
-sha256 = "5a38715b9c1e184c2b7d4568cd5d2e99ef7fefdfd467de7cf52078d8d9644a66"
+sha256 = "fc3b6cf233a714a3d52150e25254c97fea13a60623b91b3b61afcd19e444306c"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp315-cp315-macosx_10_15_universal2.whl"
-upload-time = 2026-10-23T03:35:55.110458+00:00
-url = "https://files.pythonhosted.org/packages/6f/eb/5b6b05649ce84b9ead25699dd1cfa722f85eea6a52e98348bd77c0a14793/crosshair_tool-0.0.112-cp315-cp315-macosx_10_15_universal2.whl"
-size = 680074
+name = "crosshair_tool-0.0.113-cp315-cp315-macosx_10_15_universal2.whl"
+upload-time = 2026-11-05T15:27:05.502628+00:00
+url = "https://files.pythonhosted.org/packages/70/2f/a69b38567b431cdd834a6e6b4c1f8ee7107d8aa6e46a4645bcf2fb2bb918/crosshair_tool-0.0.113-cp315-cp315-macosx_10_15_universal2.whl"
+size = 685035
 
 [packages.wheels.hashes]
-sha256 = "7346a61d7711eb9e51d82a2a1da6c6dc8d7c873c3f71be9380e5ebc8b902007a"
+sha256 = "80b6025518fa52a6073041c788cdd0d26c8e5a0dc97c1c5ecbae7afa15d841fb"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp315-cp315-macosx_10_15_x86_64.whl"
-upload-time = 2026-10-23T03:35:56.537230+00:00
-url = "https://files.pythonhosted.org/packages/05/cf/40b4e4064bd870c582c9bfe215bcd8cdc31c2667f65342a9e3011ca0ea72/crosshair_tool-0.0.112-cp315-cp315-macosx_10_15_x86_64.whl"
-size = 661844
+name = "crosshair_tool-0.0.113-cp315-cp315-macosx_10_15_x86_64.whl"
+upload-time = 2026-11-05T15:27:06.652052+00:00
+url = "https://files.pythonhosted.org/packages/ee/c6/5d40cc8c1486df5b25a12f5832a3f0e68f10015df18dc394d62cd25adbec/crosshair_tool-0.0.113-cp315-cp315-macosx_10_15_x86_64.whl"
+size = 666818
 
 [packages.wheels.hashes]
-sha256 = "23bdf0a275096d3449ea434dfdec3ec973cf5221d81c3d0aa6478a6cf1f3a0eb"
+sha256 = "f68ee369dd0efee8e6f99ab625b42cb7117c4008978177aa3eb4176e62e0835b"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp315-cp315-macosx_11_0_arm64.whl"
-upload-time = 2026-10-23T03:35:57.834608+00:00
-url = "https://files.pythonhosted.org/packages/b9/18/a0c5430b8c6b2297df86b774e38fabbae606f788ce62fe9113c9450caed4/crosshair_tool-0.0.112-cp315-cp315-macosx_11_0_arm64.whl"
-size = 662496
+name = "crosshair_tool-0.0.113-cp315-cp315-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T15:27:07.815919+00:00
+url = "https://files.pythonhosted.org/packages/6b/5e/bf7b017863feee186a5b2a40fc23db572c01725156513f9a3d3ca9c8dbfd/crosshair_tool-0.0.113-cp315-cp315-macosx_11_0_arm64.whl"
+size = 667472
 
 [packages.wheels.hashes]
-sha256 = "6065eea226a583887a2f2a1411f1d19fef8eb9ea4367ab86a417418cbbb680ba"
+sha256 = "96a88eb1bddb036d3031074a07399ec641a96dd0004cf13ce1e6611ab649f53b"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp315-cp315-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
-upload-time = 2026-10-23T03:35:59.108338+00:00
-url = "https://files.pythonhosted.org/packages/eb/be/491ba181b0c43310fca99e3206d312074d4e69fb1cdd949c84575b06bfa8/crosshair_tool-0.0.112-cp315-cp315-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
-size = 762802
+name = "crosshair_tool-0.0.113-cp315-cp315-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+upload-time = 2026-11-05T15:27:09.100666+00:00
+url = "https://files.pythonhosted.org/packages/e0/7a/22cf9c5d6c90696e29cbc4629c496926e24f3ff15c5e5a608a2337293210/crosshair_tool-0.0.113-cp315-cp315-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+size = 767773
 
 [packages.wheels.hashes]
-sha256 = "4ad357713706e0997d36fbd2a9baffaf7911e5c6c3dacc5f10e8df46f3082e70"
+sha256 = "4400420a48a9e303230b86abb3cae7fd964552ddea9bdc66bf685ee734845c2a"
 
 [[packages.wheels]]
-name = "crosshair_tool-0.0.112-cp315-cp315-win_amd64.whl"
-upload-time = 2026-10-23T03:36:02.697415+00:00
-url = "https://files.pythonhosted.org/packages/a4/b5/79d1b41e2efb781bafa5cef7d762ae99813ff51cf57acf0b0bc344fa5f66/crosshair_tool-0.0.112-cp315-cp315-win_amd64.whl"
-size = 660426
+name = "crosshair_tool-0.0.113-cp315-cp315-win_amd64.whl"
+upload-time = 2026-11-05T15:27:12.632014+00:00
+url = "https://files.pythonhosted.org/packages/43/98/3abac46dc7cd850850753c100d900ebc9df80f3de40613b352476d6b7738/crosshair_tool-0.0.113-cp315-cp315-win_amd64.whl"
+size = 665421
 
 [packages.wheels.hashes]
-sha256 = "b93297479e5cb4a7604efbc189522827aaca6a24c0be545cc8f46869e75ac28a"
+sha256 = "56b4778f4fb9f5c472e4b5b25878be786c362a1f37c7565967171077cc95e1b3"
 
 [[packages]]
 name = "cryptography"
@@ -2681,7 +2681,7 @@ sha256 = "bb0ead5309f9500130665a26bee87693c41ce4dbdff864dbfb6b0dae4673d24f"
 [[packages]]
 name = "h11"
 version = "0.16.0"
-marker = "((python_version == \"3.10\" or python_version == \"3.11\") and (\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or ((python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups))) or (python_version == \"3.12\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups))"
+marker = "((python_version == \"3.10\" or python_version == \"3.11\") and (\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or ((python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\") and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.12\" and (\"crosshair\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups))"
 requires-python = ">=3.8"
 index = "https://pypi.org/simple/"
 
@@ -3395,7 +3395,7 @@ sha256 = "6a16b69b93187244e0548cbfd25b3e4a6f9a7a2ad784625c3bec2b8d27b81aaa"
 [[packages]]
 name = "idna"
 version = "3.20"
-marker = "((python_version == \"3.10\" or python_version == \"3.11\") and (\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or ((python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.13\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.14\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.15\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups))) or (python_version == \"3.12\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups))"
+marker = "((python_version == \"3.10\" or python_version == \"3.11\") and (\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or ((python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\") and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups)) or (python_version == \"3.12\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"http-backends\" in dependency_groups or \"mypy\" in dependency_groups or \"pyrefly\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"ty\" in dependency_groups or \"type-common\" in dependency_groups or \"types\" in dependency_groups or \"zuban\" in dependency_groups))"
 requires-python = ">=3.9"
 index = "https://pypi.org/simple/"
 
@@ -5426,7 +5426,7 @@ sha256 = "51d5a8ba2be0bbe440b99d2112604c95bbbc3c2748a64260186c541e1729cd80"
 
 [[packages]]
 name = "pydantic"
-version = "2.14.2"
+version = "2.14.3"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.10"
 dependencies = [
@@ -5439,26 +5439,26 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "pydantic-2.14.2.tar.gz"
-upload-time = 2026-10-29T16:37:12.476407+00:00
-url = "https://files.pythonhosted.org/packages/9f/d5/b4867fa7c7f04c34997d7d8aad744f64d210bb99d67cf18bf3fb1eea1aed/pydantic-2.14.2.tar.gz"
-size = 911596
+name = "pydantic-2.14.3.tar.gz"
+upload-time = 2026-11-05T09:17:04.686082+00:00
+url = "https://files.pythonhosted.org/packages/b4/fc/1203d011145c98ddce3cd2f505bb54375ef8d43223053df6bfcf3c746f46/pydantic-2.14.3.tar.gz"
+size = 925636
 
 [packages.sdist.hashes]
-sha256 = "fb7b2db6cefe8414dd612edeede49c4c433acb0432b0f92b95024e45f66c505d"
+sha256 = "1054f237f4d4733e5a30e1e2333bd33a2004ab9ab1510bd053a9a31bb48e232d"
 
 [[packages.wheels]]
-name = "pydantic-2.14.2-py3-none-any.whl"
-upload-time = 2026-10-29T16:37:10.181777+00:00
-url = "https://files.pythonhosted.org/packages/97/01/c71a71258b58659c72504e5fd65b451f6e36e34dc931d0b237ded213c814/pydantic-2.14.2-py3-none-any.whl"
-size = 490403
+name = "pydantic-2.14.3-py3-none-any.whl"
+upload-time = 2026-11-05T09:17:02.426672+00:00
+url = "https://files.pythonhosted.org/packages/72/b8/b864503789ef5c58597d2a7b4adbee62c26440ab1e682581fc6838df8947/pydantic-2.14.3-py3-none-any.whl"
+size = 494071
 
 [packages.wheels.hashes]
-sha256 = "7efbf7507b937931cd32a5755acb00ea1cf5ccb1d4e8067a5850d5069e382118"
+sha256 = "3f7b347782ab7e4cf4c798496ae3a82787d9f21ec12676a9c564355eeef8daa8"
 
 [[packages]]
 name = "pydantic-core"
-version = "2.50.2"
+version = "2.50.4"
 marker = "\"release\" in dependency_groups"
 requires-python = ">=3.10"
 dependencies = [
@@ -5467,373 +5467,373 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "pydantic_core-2.50.2.tar.gz"
-upload-time = 2026-10-29T16:34:57.465908+00:00
-url = "https://files.pythonhosted.org/packages/af/8e/23ec1021834e35041fbb2f10946141e6acdfd39379c45cc4d65a4e8a1d98/pydantic_core-2.50.2.tar.gz"
-size = 518711
+name = "pydantic_core-2.50.4.tar.gz"
+upload-time = 2026-11-05T09:15:26.774428+00:00
+url = "https://files.pythonhosted.org/packages/9c/0f/34f9ce4ba701dd0b815033ef94d99b56f66200e578ee6052aa3ac26f064e/pydantic_core-2.50.4.tar.gz"
+size = 522249
 
 [packages.sdist.hashes]
-sha256 = "1b0e8dc3932cf4e9ed5727570325cacc716b9409ffc794a221c0ccc72e8eb775"
+sha256 = "aead3b74b68396bf0feab5d57e050b730ded7df55853c1e048a87e00aaf033c6"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp310-cp310-macosx_10_12_x86_64.whl"
-upload-time = 2026-10-29T16:31:28.258642+00:00
-url = "https://files.pythonhosted.org/packages/00/46/5fabd45007e53349fa9ff22c95968cb451acbc7d912dd8a9980ffa2325c1/pydantic_core-2.50.2-cp310-cp310-macosx_10_12_x86_64.whl"
-size = 2163662
+name = "pydantic_core-2.50.4-cp310-cp310-macosx_10_12_x86_64.whl"
+upload-time = 2026-11-05T09:11:15.221694+00:00
+url = "https://files.pythonhosted.org/packages/06/82/047d1c7dc4ec15130bbb3299d9e3cb85be945bb14db54e5ad5f1c91b5e75/pydantic_core-2.50.4-cp310-cp310-macosx_10_12_x86_64.whl"
+size = 2172546
 
 [packages.wheels.hashes]
-sha256 = "6258754c473b3045a7aa30b833a8a331a1ab36c6147cb230789861d80bb26f83"
+sha256 = "83d2beac85b757bfc404c5c0612df51c4ef33bbb7be65cf4a96b4da7cbc4ff4f"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp310-cp310-macosx_11_0_arm64.whl"
-upload-time = 2026-10-29T16:31:29.959077+00:00
-url = "https://files.pythonhosted.org/packages/a4/d5/6ec0fb1ccf75a8d6b42164f8e9440012416546f9badb683850c58167a5a8/pydantic_core-2.50.2-cp310-cp310-macosx_11_0_arm64.whl"
-size = 2119060
+name = "pydantic_core-2.50.4-cp310-cp310-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T09:11:18.084187+00:00
+url = "https://files.pythonhosted.org/packages/95/ad/36732c76b5ad87647725681c8259376dddae8db9c3558e7cd99c25c7a9e1/pydantic_core-2.50.4-cp310-cp310-macosx_11_0_arm64.whl"
+size = 2131205
 
 [packages.wheels.hashes]
-sha256 = "a786cf782ebb2e45a43c7118d75d452aac982b79577dfe804d8dbf2878f0b589"
+sha256 = "76e0065998159244ff4c097a6c05ff08019c6fbb6e597a85846e73044f0215b3"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
-upload-time = 2026-10-29T16:31:32.577176+00:00
-url = "https://files.pythonhosted.org/packages/b9/9d/99fcf55e44eab0436cf0e49e34eee7393a9f737ab830018d67cdda7a02bc/pydantic_core-2.50.2-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
-size = 2119441
+name = "pydantic_core-2.50.4-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+upload-time = 2026-11-05T09:11:21.561808+00:00
+url = "https://files.pythonhosted.org/packages/f2/d6/1a14b5da27def1db17274c215d4ab62c380b600689c4e54c4dc02c1b0cba/pydantic_core-2.50.4-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+size = 2131058
 
 [packages.wheels.hashes]
-sha256 = "71615edeaf1ae70f5f3f558426072eede0168b7e5190fd9633878e29a0b85732"
+sha256 = "c4c5a1770ecfe8bdb6c6f09f8d81ea4de04f7efb012fac1efa4ad315dccc1fd1"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-upload-time = 2026-10-29T16:31:37.999287+00:00
-url = "https://files.pythonhosted.org/packages/30/b0/5aae06bbe58fac7cf5c6aac6dc11b04a9beeb5e50bd74f6e4f724ac91c4e/pydantic_core-2.50.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-size = 2238710
+name = "pydantic_core-2.50.4-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+upload-time = 2026-11-05T09:11:28.805557+00:00
+url = "https://files.pythonhosted.org/packages/e3/df/cddc0729c366460763831e6087e88fc0197c78f34fc79ac993a41b5d0242/pydantic_core-2.50.4-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+size = 2257210
 
 [packages.wheels.hashes]
-sha256 = "5c12a5a080570a91bbcbf6d10db008b80e3f5dea015ef2f0137bbec70f24f3f3"
+sha256 = "ed9c0b6f236648dbf30d57e9f57e1f74878caafa04833a19f529b5ba5164b7a8"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp310-cp310-win_amd64.whl"
-upload-time = 2026-10-29T16:31:46.664010+00:00
-url = "https://files.pythonhosted.org/packages/b1/3d/77d3eca0db83968efe5142dce85fdf050cf4b3a3b1e92ea3eb7525cbe143/pydantic_core-2.50.2-cp310-cp310-win_amd64.whl"
-size = 2242044
+name = "pydantic_core-2.50.4-cp310-cp310-win_amd64.whl"
+upload-time = 2026-11-05T09:11:39.567139+00:00
+url = "https://files.pythonhosted.org/packages/ee/d4/d1da421fe867903d5ddffb4d4b4928fd08af99de3e6ec21e758f9990337b/pydantic_core-2.50.4-cp310-cp310-win_amd64.whl"
+size = 2259729
 
 [packages.wheels.hashes]
-sha256 = "3939538e640c94ab779a05f2d45dafedd01d65d93e1290797f3ac5b59fcb6455"
+sha256 = "e512c75ec5cf4475c1aa50ad975ecdf253f4963b06e152e1a11edd6de4010753"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp311-cp311-macosx_10_12_x86_64.whl"
-upload-time = 2026-10-29T16:31:48.009527+00:00
-url = "https://files.pythonhosted.org/packages/8d/0f/1043d3840b7859cc19abede795e058a785ebc1fa011b022b0a69514dd5c5/pydantic_core-2.50.2-cp311-cp311-macosx_10_12_x86_64.whl"
-size = 2160886
+name = "pydantic_core-2.50.4-cp311-cp311-macosx_10_12_x86_64.whl"
+upload-time = 2026-11-05T09:11:41.139956+00:00
+url = "https://files.pythonhosted.org/packages/df/00/85e80811834d7cbd9bc228f9b5cdf8ec0edd69b55351ad720aac8c412d8c/pydantic_core-2.50.4-cp311-cp311-macosx_10_12_x86_64.whl"
+size = 2170584
 
 [packages.wheels.hashes]
-sha256 = "2115d7ca6d58554af8a14da3dd32d361a4fe999fae52f115a6155679b5b00e72"
+sha256 = "3e547ceec1da7382f01f9e13963023e53367a71802c88778b21b9645a077cbdf"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp311-cp311-macosx_11_0_arm64.whl"
-upload-time = 2026-10-29T16:31:49.449964+00:00
-url = "https://files.pythonhosted.org/packages/d8/95/6211dfe1794bde5ce14f3de2212551196784c67411ac5249d8aa627e3e23/pydantic_core-2.50.2-cp311-cp311-macosx_11_0_arm64.whl"
-size = 2115730
+name = "pydantic_core-2.50.4-cp311-cp311-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T09:11:42.650760+00:00
+url = "https://files.pythonhosted.org/packages/a3/f1/438de1fb99d717dcc6521922478dc16ef7b757302d4fc1f7faba3aaeac09/pydantic_core-2.50.4-cp311-cp311-macosx_11_0_arm64.whl"
+size = 2128471
 
 [packages.wheels.hashes]
-sha256 = "b2dd65864aad38dbcc57c3d0e2c978d4286e063378137d8fc0c9fcd558943285"
+sha256 = "c813ada7a651193acda85b6bc1cf12abd4b37cd25c7c6a75d7183512cc374969"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
-upload-time = 2026-10-29T16:31:51.887488+00:00
-url = "https://files.pythonhosted.org/packages/69/0b/22349c3114a3b3c400333ba6ec1d2e127fc9a4e4682440d8e23d954df0d1/pydantic_core-2.50.2-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
-size = 2116001
+name = "pydantic_core-2.50.4-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+upload-time = 2026-11-05T09:11:46.010327+00:00
+url = "https://files.pythonhosted.org/packages/a1/42/24ed3ea8e2fb6463c9ba5b8b1f089e69040905c7fd81dcfa6f52fcc692d5/pydantic_core-2.50.4-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+size = 2128064
 
 [packages.wheels.hashes]
-sha256 = "e80c47314c7233e7105a7efcfffd89d56e479e558189d1959eeeaf2639a27680"
+sha256 = "30d4dc35bc0eea52202a90b3820445ee0072c820241bfa710a623a078c9b267b"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-upload-time = 2026-10-29T16:31:57.837155+00:00
-url = "https://files.pythonhosted.org/packages/70/7d/22bd04c22adae266ae5e99e4c34bd882daf6c93c35bda2f9674421c1e7c3/pydantic_core-2.50.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-size = 2236349
+name = "pydantic_core-2.50.4-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+upload-time = 2026-11-05T09:11:52.997208+00:00
+url = "https://files.pythonhosted.org/packages/56/51/cbb7a1bc0196ff94d3478d265eed7449f811759988eb760d41f4edd0893b/pydantic_core-2.50.4-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+size = 2253434
 
 [packages.wheels.hashes]
-sha256 = "86e7abd24a67f61a4bfe8df059b67a2bdd8bf33705178e98463195d140bd3780"
+sha256 = "0574866e05f6adeecc520d87e87dd06210c0a51706341f6ef8421572f5a64444"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp311-cp311-win_amd64.whl"
-upload-time = 2026-10-29T16:32:06.811631+00:00
-url = "https://files.pythonhosted.org/packages/1f/9b/d21478003682505aad9619ff9e086bd29aced2615b23d5315cb37de14cad/pydantic_core-2.50.2-cp311-cp311-win_amd64.whl"
-size = 2238388
+name = "pydantic_core-2.50.4-cp311-cp311-win_amd64.whl"
+upload-time = 2026-11-05T09:12:03.888410+00:00
+url = "https://files.pythonhosted.org/packages/c6/06/cebeeb7a8e87b42a3d8bc189d0d400e47df5d1736cb326764bae8a74c433/pydantic_core-2.50.4-cp311-cp311-win_amd64.whl"
+size = 2255970
 
 [packages.wheels.hashes]
-sha256 = "b958c217c6e56bef261f516e4caf5d490b079ad6a428752afada5a764cca6c71"
+sha256 = "15bece43a02ad543c621c8305e67dedb5f27d378c5ba741e5a2c36523f8ef37f"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp312-cp312-macosx_10_12_x86_64.whl"
-upload-time = 2026-10-29T16:32:10.193079+00:00
-url = "https://files.pythonhosted.org/packages/d6/65/6609a66cda909d414c58438f9bd70b1e947fe12c25f6bd40c93121afd7ef/pydantic_core-2.50.2-cp312-cp312-macosx_10_12_x86_64.whl"
-size = 2220341
+name = "pydantic_core-2.50.4-cp312-cp312-macosx_10_12_x86_64.whl"
+upload-time = 2026-11-05T09:12:06.969395+00:00
+url = "https://files.pythonhosted.org/packages/10/bf/d1f6b81709538f831ebe1c42f50fb89db3dfda06f9e9b1ea24e90fc69209/pydantic_core-2.50.4-cp312-cp312-macosx_10_12_x86_64.whl"
+size = 2231444
 
 [packages.wheels.hashes]
-sha256 = "e3d824b6152e1c0fd58dc6266f2de470eb7b2286135294f5f7cd26a0f0693738"
+sha256 = "32a991aebd165f227b7c7c60bb9d66c2c7de9c24308552da264c9938fde0f8d6"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp312-cp312-macosx_11_0_arm64.whl"
-upload-time = 2026-10-29T16:32:11.502659+00:00
-url = "https://files.pythonhosted.org/packages/f9/0b/92463ae7be78d73885487f72c4599902c2cc190378bccaad5718b7495250/pydantic_core-2.50.2-cp312-cp312-macosx_11_0_arm64.whl"
-size = 2093701
+name = "pydantic_core-2.50.4-cp312-cp312-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T09:12:08.850422+00:00
+url = "https://files.pythonhosted.org/packages/c1/39/6618e541658d5a687a8d4962fc304350073a8f322bc4c62e8ed4c2d514d6/pydantic_core-2.50.4-cp312-cp312-macosx_11_0_arm64.whl"
+size = 2108048
 
 [packages.wheels.hashes]
-sha256 = "596921489390a002d6a5e303384a0f1f98384f8bb550fbf38a1aafa6093da0f9"
+sha256 = "1e20cbde2b6deb33a51d08cd168454dd9044ec7d4474056f4d98d63f51578783"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
-upload-time = 2026-10-29T16:32:14.702320+00:00
-url = "https://files.pythonhosted.org/packages/f6/50/2628ca3c83a0d9a6fda3305fe59b1b28e40c0221e8f234cd1ef86fb64745/pydantic_core-2.50.2-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
-size = 2114101
+name = "pydantic_core-2.50.4-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+upload-time = 2026-11-05T09:12:12.278692+00:00
+url = "https://files.pythonhosted.org/packages/61/a0/8028ef3e014be522ce43060aeac82a5be2288215e660866f5e6260acc123/pydantic_core-2.50.4-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+size = 2125682
 
 [packages.wheels.hashes]
-sha256 = "43a8fd56f3c681f3cda2d5c842ad28e88241df742dfcbe8fd1dd437a3056e1f6"
+sha256 = "16902a147b3da4840612164a5e67947104d63e978f7a57c395877a5e26690b9c"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-upload-time = 2026-10-29T16:32:20.381714+00:00
-url = "https://files.pythonhosted.org/packages/08/93/2a6556bbdb8e918175af9d849a5d0b367b5644e41939d040f3a7215b1339/pydantic_core-2.50.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-size = 2242782
+name = "pydantic_core-2.50.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+upload-time = 2026-11-05T09:12:19.097539+00:00
+url = "https://files.pythonhosted.org/packages/91/23/e0c6e3cd09a0ac809953fea698c816b9f03bf0b35b6820c9553e4f5d85a8/pydantic_core-2.50.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+size = 2261727
 
 [packages.wheels.hashes]
-sha256 = "9667637665acba166a7dbbc786f14c50512d3a01f7199e0e1a13b929e92d7c7a"
+sha256 = "c81d98e27d9d9261909dcccab1ba5d6ea1c98b0bb9470e368604614fd1d36ddd"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp312-cp312-win_amd64.whl"
-upload-time = 2026-10-29T16:32:29.572763+00:00
-url = "https://files.pythonhosted.org/packages/b4/fb/679144362d7e5162519d9f6631ec982521417de3196351c6c56485f5b29f/pydantic_core-2.50.2-cp312-cp312-win_amd64.whl"
-size = 2252238
+name = "pydantic_core-2.50.4-cp312-cp312-win_amd64.whl"
+upload-time = 2026-11-05T09:12:29.538850+00:00
+url = "https://files.pythonhosted.org/packages/82/88/d438a8fcf3738e9ff2670f724047ca3893ec899bcd5cdfc077a2aab133c6/pydantic_core-2.50.4-cp312-cp312-win_amd64.whl"
+size = 2264064
 
 [packages.wheels.hashes]
-sha256 = "b381574614245f18fdb2d6d1aa8f149e225869c47b5ee7f81812de8977817314"
+sha256 = "ea2f61b0bc12f3592288503961b764579dea0658852d96a0b3d823614d808821"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp313-cp313-macosx_10_12_x86_64.whl"
-upload-time = 2026-10-29T16:32:32.125105+00:00
-url = "https://files.pythonhosted.org/packages/c2/fc/ac3ae9d934932ce3c380e7fe53e01372b49ef5dcb49db56f1a1f005b4d8c/pydantic_core-2.50.2-cp313-cp313-macosx_10_12_x86_64.whl"
-size = 2222463
+name = "pydantic_core-2.50.4-cp313-cp313-macosx_10_12_x86_64.whl"
+upload-time = 2026-11-05T09:12:32.617753+00:00
+url = "https://files.pythonhosted.org/packages/1b/21/39f8d97e7ea8e3083606ee9bb1d7f3ec70ded780bb6a872aad76c7eb08b2/pydantic_core-2.50.4-cp313-cp313-macosx_10_12_x86_64.whl"
+size = 2232841
 
 [packages.wheels.hashes]
-sha256 = "93eb41d626d9a2749a678823c70bba8c25033cef474ae8001fd7621adbbd8437"
+sha256 = "0f87ae9db5ba8d8de40dcb93982cf8dd544e6552a80d3345af51941cc2146b80"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp313-cp313-macosx_11_0_arm64.whl"
-upload-time = 2026-10-29T16:32:33.496459+00:00
-url = "https://files.pythonhosted.org/packages/f7/0b/7605223654ed4e777d05668e914d32b476b1fa2bb756bff9820fe270456b/pydantic_core-2.50.2-cp313-cp313-macosx_11_0_arm64.whl"
-size = 2093995
+name = "pydantic_core-2.50.4-cp313-cp313-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T09:12:34.419293+00:00
+url = "https://files.pythonhosted.org/packages/90/a9/fc89a632331882c4cb91b949003418e6f5085ddcf2c9b875d499682bca91/pydantic_core-2.50.4-cp313-cp313-macosx_11_0_arm64.whl"
+size = 2108326
 
 [packages.wheels.hashes]
-sha256 = "7c539d452cba22f250103c7d1c00cbe9038eb705e657476e701c43374efd9f2e"
+sha256 = "1239daaf063e62213ca1f34d96663900bd7510c42a786e843fd328af70e46445"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
-upload-time = 2026-10-29T16:32:39.241916+00:00
-url = "https://files.pythonhosted.org/packages/6c/f5/03ce5ed01c98b60272cdee8ac1abb819b64ef347717c11d96215e32d9952/pydantic_core-2.50.2-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
-size = 2113894
+name = "pydantic_core-2.50.4-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+upload-time = 2026-11-05T09:12:37.913700+00:00
+url = "https://files.pythonhosted.org/packages/b3/b8/936cb0d85a4082e902c7397db0f05c4372eac08372c8bd2d0b43088fcf17/pydantic_core-2.50.4-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+size = 2125469
 
 [packages.wheels.hashes]
-sha256 = "f142cd663d1148ed32993ed9a58e5c67ea312f446a01a6c13a956945aafc9f23"
+sha256 = "a9ee990bf2cfbd81574c5d4f9f6c9d480a14b5b43d2c4f2ca13f4c6f48089394"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-upload-time = 2026-10-29T16:32:46.382817+00:00
-url = "https://files.pythonhosted.org/packages/79/be/b559a1ceaff8b1d4581733d47d2ffa785635ac05716eae4c964466aac6e8/pydantic_core-2.50.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-size = 2241760
+name = "pydantic_core-2.50.4-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+upload-time = 2026-11-05T09:12:44.185649+00:00
+url = "https://files.pythonhosted.org/packages/2b/c0/1c8f2c8f1b03d3fe2fdd7962df8f5a744fe48c90b4c49615e4eb77d04141/pydantic_core-2.50.4-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+size = 2260946
 
 [packages.wheels.hashes]
-sha256 = "31a1fb3ffbd1195b24490f671d12623dd4c9bfa56d6af0a299fa43b516134f5b"
+sha256 = "fb2bb5b557080da398b866408117d98fe9731a12334afd0cdff221b458cdc5dc"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp313-cp313-win_amd64.whl"
-upload-time = 2026-10-29T16:32:55.396659+00:00
-url = "https://files.pythonhosted.org/packages/6f/dd/14eeec394ec1422f9c4e9743cd746f4502232a7c65eb235d1a03729d94ab/pydantic_core-2.50.2-cp313-cp313-win_amd64.whl"
-size = 2250556
+name = "pydantic_core-2.50.4-cp313-cp313-win_amd64.whl"
+upload-time = 2026-11-05T09:12:53.282925+00:00
+url = "https://files.pythonhosted.org/packages/e7/e0/95b651213e79ffe0cbee855590bf5cfdf8e3a0d90a7fc73a080e63f7cc38/pydantic_core-2.50.4-cp313-cp313-win_amd64.whl"
+size = 2262887
 
 [packages.wheels.hashes]
-sha256 = "e5c801bdf3cc92274b8fc2c7023c8751e5ae81260c009ac558ff55ce712a2d45"
+sha256 = "4c29b8f2d6417069bb1f257e6b9113f5d64dc2f554cc200ea90b4fe2c5cdb733"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp314-cp314-macosx_10_12_x86_64.whl"
-upload-time = 2026-10-29T16:32:58.559502+00:00
-url = "https://files.pythonhosted.org/packages/f2/64/fc525bb981a9f287cfa34346e7ed1d5ef7c043c2b9b517f54c6136032d10/pydantic_core-2.50.2-cp314-cp314-macosx_10_12_x86_64.whl"
-size = 2226414
+name = "pydantic_core-2.50.4-cp314-cp314-macosx_10_12_x86_64.whl"
+upload-time = 2026-11-05T09:12:56.111903+00:00
+url = "https://files.pythonhosted.org/packages/ee/ed/c9a4982ac3bbc78f27498d9efb85b3dabd739a1724db53c35cc4c018e1de/pydantic_core-2.50.4-cp314-cp314-macosx_10_12_x86_64.whl"
+size = 2236841
 
 [packages.wheels.hashes]
-sha256 = "efad0bdc67d3b119c3bab6b94d341a27333c2bb89ed75dfa182a4a06cd0ea329"
+sha256 = "5c074454dc6d4f6f4ba6561a56bf33a14db7651d882a5a5321ba3ae8868e082d"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp314-cp314-macosx_11_0_arm64.whl"
-upload-time = 2026-10-29T16:32:59.873202+00:00
-url = "https://files.pythonhosted.org/packages/db/68/315701095f25687938ab79d263a6d939337456c2840fe69038fd38000338/pydantic_core-2.50.2-cp314-cp314-macosx_11_0_arm64.whl"
-size = 2095041
+name = "pydantic_core-2.50.4-cp314-cp314-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T09:12:57.638821+00:00
+url = "https://files.pythonhosted.org/packages/56/32/92c174c17bfc5fc52d0c064e6a7969a727731e25829ede752fba8bacce0f/pydantic_core-2.50.4-cp314-cp314-macosx_11_0_arm64.whl"
+size = 2108348
 
 [packages.wheels.hashes]
-sha256 = "6ffb4dce3ecb2cd563aa30f9eb5088a1cf1f4f688b90cbb374fa96e49fc50b02"
+sha256 = "a4bb174bd65f795c39ad6642d9d5bdc43351b306b7d0a654ab0d0abb38be245f"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
-upload-time = 2026-10-29T16:33:02.692006+00:00
-url = "https://files.pythonhosted.org/packages/2d/6c/146b36eed4de8115a0fda76840703e75f5f8b36aeb3af86976bf094d1a17/pydantic_core-2.50.2-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
-size = 2116807
+name = "pydantic_core-2.50.4-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+upload-time = 2026-11-05T09:13:00.614337+00:00
+url = "https://files.pythonhosted.org/packages/91/ff/1117a3cccabb67305bd98d992a84eaf275939a9a043b4f14126ed7252e4f/pydantic_core-2.50.4-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+size = 2128667
 
 [packages.wheels.hashes]
-sha256 = "1db9cab6197e797824f0479dd2ae5fd2e272aa61c61b7faa5a6e450ca7a0d3b7"
+sha256 = "70dbc9f83c41f37a4faa62dae5203853847223a891da446f48ef2efcfd5df806"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-upload-time = 2026-10-29T16:33:08.824890+00:00
-url = "https://files.pythonhosted.org/packages/9d/a2/8eeabaf1d394f0d3b9a27129ac21556eabee6f2ddcb418069ef4037e00b0/pydantic_core-2.50.2-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-size = 2245505
+name = "pydantic_core-2.50.4-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+upload-time = 2026-11-05T09:13:07.808555+00:00
+url = "https://files.pythonhosted.org/packages/56/9c/621ad8f88590a92a086b1168dce09369d9c5e079e2e635e6646d248af55b/pydantic_core-2.50.4-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+size = 2265388
 
 [packages.wheels.hashes]
-sha256 = "b29b7c5adf4b2be7c941f7f76432aa3269cd5052ff8610376b8ece24d7b02c51"
+sha256 = "f1d62fb172db35c6478c9323da34ff37d1f3d37d7d44337a9d94ba8c583e5730"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp314-cp314-win_amd64.whl"
-upload-time = 2026-10-29T16:33:18.470995+00:00
-url = "https://files.pythonhosted.org/packages/a3/5f/dcd3df20ab2a7279d42a8415fc184e8e77bcf9aa3c9ac3e938c1300a242c/pydantic_core-2.50.2-cp314-cp314-win_amd64.whl"
-size = 2253407
+name = "pydantic_core-2.50.4-cp314-cp314-win_amd64.whl"
+upload-time = 2026-11-05T09:13:18.702653+00:00
+url = "https://files.pythonhosted.org/packages/3a/9f/3554f0148b01ddaa5e678bf5fbce4679873534e5c0985cdf6c59c41dc9a9/pydantic_core-2.50.4-cp314-cp314-win_amd64.whl"
+size = 2265109
 
 [packages.wheels.hashes]
-sha256 = "b62c89545d21d930c333208fd548e7b4f262228ba3a322fd75c987a75ab11f31"
+sha256 = "b0cdb655fbd1562c2dfc9986f9103a106f7058cd0915afc6e656d4b1d73f3387"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp314-cp314t-macosx_10_12_x86_64.whl"
-upload-time = 2026-10-29T16:33:21.323104+00:00
-url = "https://files.pythonhosted.org/packages/84/2f/4c8f67efe62837a508b74cf910904f73029cb211371351c5ceb36d56e85e/pydantic_core-2.50.2-cp314-cp314t-macosx_10_12_x86_64.whl"
-size = 2217558
+name = "pydantic_core-2.50.4-cp314-cp314t-macosx_10_12_x86_64.whl"
+upload-time = 2026-11-05T09:13:21.623211+00:00
+url = "https://files.pythonhosted.org/packages/36/12/0ee82a41a3995f0b531cf14e0b823dc2365ba4a22330670fccaa72753f12/pydantic_core-2.50.4-cp314-cp314t-macosx_10_12_x86_64.whl"
+size = 2223917
 
 [packages.wheels.hashes]
-sha256 = "33c6800ab9563adaa0d7893e9cd8f5b972ef1e6a23df70498e05c24f3fcec5e1"
+sha256 = "edbca8789fd10f0de534b660a6b4c71f1fd18039679c918dad392ab044bb37e4"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp314-cp314t-macosx_11_0_arm64.whl"
-upload-time = 2026-10-29T16:33:22.658569+00:00
-url = "https://files.pythonhosted.org/packages/ce/73/e0ef88cfbcca5409f57751289bc20be63a58af596a36e94b8cd795e59747/pydantic_core-2.50.2-cp314-cp314t-macosx_11_0_arm64.whl"
-size = 2074335
+name = "pydantic_core-2.50.4-cp314-cp314t-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T09:13:23.160944+00:00
+url = "https://files.pythonhosted.org/packages/90/2c/592f8404abbcc65a70e6a802d1dc8f11412af44913e5146cf5c345370074/pydantic_core-2.50.4-cp314-cp314t-macosx_11_0_arm64.whl"
+size = 2087372
 
 [packages.wheels.hashes]
-sha256 = "f81df206b937d0dca5efb38c25fc99037d82dbcd3740e34c3f81997d2322ac1c"
+sha256 = "33b21f69540a12c2053cd1d95766d8bd9667a3897f7c712a642de8aa37eb0865"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
-upload-time = 2026-10-29T16:33:26.739376+00:00
-url = "https://files.pythonhosted.org/packages/bc/d1/30e9d3c86d81884ee3199560ddfa2c1a66a8dc0736441748eae43064abbc/pydantic_core-2.50.2-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
-size = 2094353
+name = "pydantic_core-2.50.4-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+upload-time = 2026-11-05T09:13:26.168162+00:00
+url = "https://files.pythonhosted.org/packages/3d/ae/6c49cc9b8e66e61adee782d1763894bf64a357cddae82f725059b85bdc98/pydantic_core-2.50.4-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+size = 2110343
 
 [packages.wheels.hashes]
-sha256 = "9eff570402175c7d5fff8497d5a9c05580664a79bb66c07b8f205d17f69e580b"
+sha256 = "6c5687b59b6ba0f663c4f2f15470f68507d6b45ccd3a19ee6d224f95cbee70d8"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-upload-time = 2026-10-29T16:33:32.040856+00:00
-url = "https://files.pythonhosted.org/packages/7b/9e/f1fe9384bb37e4e728c51c79151808deacf7b2502e245f50b57c85eeb199/pydantic_core-2.50.2-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-size = 2241568
+name = "pydantic_core-2.50.4-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+upload-time = 2026-11-05T09:13:33.806954+00:00
+url = "https://files.pythonhosted.org/packages/e6/76/f2b04d7c53edfd8136053c812ea49914fbf4091196cb7baf9ea326fa2ff8/pydantic_core-2.50.4-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+size = 2262062
 
 [packages.wheels.hashes]
-sha256 = "713d7c33c0e231e3786eb0ec95885814dd65d5f3a09754399b6acbf5e9365f11"
+sha256 = "c856e439a9d54d514e81a7131229ba151cdf81df7c408e0f6c89340e5003dfe2"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp314-cp314t-win_amd64.whl"
-upload-time = 2026-10-29T16:33:39.929866+00:00
-url = "https://files.pythonhosted.org/packages/d2/ea/79d9ee60648463804145d44b08f1e7e2474427d9704e3331d814483908b3/pydantic_core-2.50.2-cp314-cp314t-win_amd64.whl"
-size = 2220575
+name = "pydantic_core-2.50.4-cp314-cp314t-win_amd64.whl"
+upload-time = 2026-11-05T09:13:48.380943+00:00
+url = "https://files.pythonhosted.org/packages/6b/28/193bc0994f7fe15f2874c1dfe2f3bc7872aed8283ffda2cf05fb9a5a06b4/pydantic_core-2.50.4-cp314-cp314t-win_amd64.whl"
+size = 2240461
 
 [packages.wheels.hashes]
-sha256 = "9b01a092955c1c7530196ad526755cff4f2d11f37ca9a6fc9ebe37ca49a48977"
+sha256 = "22e874666bdbd96d6bf629d32cd8ab376fedf1fd62585b52a42b9fa9fa6c20b6"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp315-cp315-macosx_10_12_x86_64.whl"
-upload-time = 2026-10-29T16:33:43.656146+00:00
-url = "https://files.pythonhosted.org/packages/4b/7f/ec2974015b4be5e50266ce732b8942d3d0b3bff751ace8900999c6577bce/pydantic_core-2.50.2-cp315-cp315-macosx_10_12_x86_64.whl"
-size = 2230936
+name = "pydantic_core-2.50.4-cp315-cp315-macosx_10_12_x86_64.whl"
+upload-time = 2026-11-05T09:13:53.055279+00:00
+url = "https://files.pythonhosted.org/packages/6d/9f/e6673535165d965a11c1d5339f53995f90234019827eaecb41a57e6e463d/pydantic_core-2.50.4-cp315-cp315-macosx_10_12_x86_64.whl"
+size = 2241950
 
 [packages.wheels.hashes]
-sha256 = "a3317630e2791f56071b82f89bb71624146125e4311e6643f708c6ba744b5ac5"
+sha256 = "7ac2769a7ddd661e07e26c12220adc31b17014c48234b2a5a88993b8d4109e09"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp315-cp315-macosx_11_0_arm64.whl"
-upload-time = 2026-10-29T16:33:44.946711+00:00
-url = "https://files.pythonhosted.org/packages/ae/ff/af99a09eddc348c1d0744c0df28dfcd4839ca497067f0fa2168208b41b1b/pydantic_core-2.50.2-cp315-cp315-macosx_11_0_arm64.whl"
-size = 2100409
+name = "pydantic_core-2.50.4-cp315-cp315-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T09:13:55.309660+00:00
+url = "https://files.pythonhosted.org/packages/6f/02/65951efadbf7826e6a270843f97e3da2ef726de2b6d9cd7c5dfa4c48807e/pydantic_core-2.50.4-cp315-cp315-macosx_11_0_arm64.whl"
+size = 2112412
 
 [packages.wheels.hashes]
-sha256 = "f73930dacad5e611fe019e18df6f53c30629b1843d038d303b8dec86a32493bd"
+sha256 = "930ad463d3fb7a340d323bcc496ec32dae469ec9974c29ff569f19806b6b03b4"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
-upload-time = 2026-10-29T16:33:47.952280+00:00
-url = "https://files.pythonhosted.org/packages/ee/9d/98c8d524921ca24e5c8a81a4b8f12209ac6ab05d0dd58b374e357da0ffc5/pydantic_core-2.50.2-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
-size = 2121771
+name = "pydantic_core-2.50.4-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+upload-time = 2026-11-05T09:13:59.413659+00:00
+url = "https://files.pythonhosted.org/packages/63/83/42e70436c523357b49393b73f161f2741acf36003c8efd2f941d2be56bae/pydantic_core-2.50.4-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+size = 2134716
 
 [packages.wheels.hashes]
-sha256 = "1fdf5b52ed22f1404c2433d0b46df2d86d9befb742d0b9b4042a2325c43cdb97"
+sha256 = "49eb1241a969a5994db6880c18c012b6cbe2340343d8f529721571806583e500"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp315-cp315-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-upload-time = 2026-10-29T16:33:53.333286+00:00
-url = "https://files.pythonhosted.org/packages/e6/d0/dd0e355694094f0045922f4da60ac9bc7a314babc494e46089fb00640fd3/pydantic_core-2.50.2-cp315-cp315-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-size = 2249999
+name = "pydantic_core-2.50.4-cp315-cp315-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+upload-time = 2026-11-05T09:14:06.587300+00:00
+url = "https://files.pythonhosted.org/packages/ac/5e/145a02bf2b9f66981108caf6cc9e78917e31e4caca14d1e3ccd3ff2c7293/pydantic_core-2.50.4-cp315-cp315-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+size = 2272957
 
 [packages.wheels.hashes]
-sha256 = "5299296ff5cafcb69851fd652de8f9268a0bb036bcbedbfcaa94cf743baf3986"
+sha256 = "26cb012c4b8ca9f847bd0ac15978bd3d0f55b050bfbe6c47355edfc7e945029b"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp315-cp315-win_amd64.whl"
-upload-time = 2026-10-29T16:34:01.773818+00:00
-url = "https://files.pythonhosted.org/packages/24/6b/702adc91486fb96ba55675d58ee15ddc38fb48553fb35e26fd005e303206/pydantic_core-2.50.2-cp315-cp315-win_amd64.whl"
-size = 2261064
+name = "pydantic_core-2.50.4-cp315-cp315-win_amd64.whl"
+upload-time = 2026-11-05T09:14:20.955239+00:00
+url = "https://files.pythonhosted.org/packages/c0/3c/0582532b90a12492471977bdbca1317eca5144f6342ea581d2cee73ccd35/pydantic_core-2.50.4-cp315-cp315-win_amd64.whl"
+size = 2270596
 
 [packages.wheels.hashes]
-sha256 = "04cf672960b8c4fc28bb159c8cdd101fbd311c520237a5c0360448b851adfb41"
+sha256 = "e5bd109d095aaae989a0463d5ef0fcc43e9ddd5de125e656d3c119a79e466380"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp315-cp315t-macosx_10_12_x86_64.whl"
-upload-time = 2026-10-29T16:34:04.214857+00:00
-url = "https://files.pythonhosted.org/packages/45/1c/2ba7a34fe8da4c83ec200fb9f85ab4d54b961be08367922743623f987849/pydantic_core-2.50.2-cp315-cp315t-macosx_10_12_x86_64.whl"
-size = 2223184
+name = "pydantic_core-2.50.4-cp315-cp315t-macosx_10_12_x86_64.whl"
+upload-time = 2026-11-05T09:14:27.942433+00:00
+url = "https://files.pythonhosted.org/packages/9e/71/3ec5bd8a82f792482f16d79fdbe8ce85aa71bf7147e556c5fc5f8546818d/pydantic_core-2.50.4-cp315-cp315t-macosx_10_12_x86_64.whl"
+size = 2233053
 
 [packages.wheels.hashes]
-sha256 = "bd1fe69056a19c377a6c6de2c1240fb8676ba0512a969965efb486510c5e0f1f"
+sha256 = "d8201c9f9035520cdcc7dcad383b039ec8123969b87e01cf27c3dd883c02313b"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp315-cp315t-macosx_11_0_arm64.whl"
-upload-time = 2026-10-29T16:34:05.426207+00:00
-url = "https://files.pythonhosted.org/packages/47/01/f71a8da1f53a5be1787d2a97ba6fd9adba115305c7f15ea0bf733ed8336c/pydantic_core-2.50.2-cp315-cp315t-macosx_11_0_arm64.whl"
-size = 2078174
+name = "pydantic_core-2.50.4-cp315-cp315t-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T09:14:30.281524+00:00
+url = "https://files.pythonhosted.org/packages/6e/2e/614dc37aedf8e9f811c1f2eedaf8eb09a7c196e2d137fe82bcc9d5662ca2/pydantic_core-2.50.4-cp315-cp315t-macosx_11_0_arm64.whl"
+size = 2090776
 
 [packages.wheels.hashes]
-sha256 = "9b2383933b1dd7a8c93e02f99ebfd305f1286057172483b8e6898bed3fef69d3"
+sha256 = "1de7be9a66fc8536770481ab64a05aae5067c725f2b29a09543af00e6a417b97"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp315-cp315t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
-upload-time = 2026-10-29T16:34:08.690779+00:00
-url = "https://files.pythonhosted.org/packages/f5/bb/12966dc82b5e9c347981658b52e24349b6242902b644725c00ee7bdf4267/pydantic_core-2.50.2-cp315-cp315t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
-size = 2098331
+name = "pydantic_core-2.50.4-cp315-cp315t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+upload-time = 2026-11-05T09:14:34.690220+00:00
+url = "https://files.pythonhosted.org/packages/13/c9/d56999aa7236dc9303091db2b1ef7303f0b022baf25ebf33cd200c0cb933/pydantic_core-2.50.4-cp315-cp315t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+size = 2113069
 
 [packages.wheels.hashes]
-sha256 = "93bedc68c4138088ea3c042189c01d2945f530f0dcc36e1ea02df8418bd4f1cd"
+sha256 = "6348ad12fa741bcc9c2f173e99fbf27cbc038826d8c31a4a7d836eca27878ba2"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp315-cp315t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-upload-time = 2026-10-29T16:34:14.065248+00:00
-url = "https://files.pythonhosted.org/packages/6e/ac/d7e6bfc6a95573647d1a699e19228dd99914ae6aab79a2bec293a038e980/pydantic_core-2.50.2-cp315-cp315t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-size = 2246293
+name = "pydantic_core-2.50.4-cp315-cp315t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+upload-time = 2026-11-05T09:14:42.379681+00:00
+url = "https://files.pythonhosted.org/packages/6e/63/65cf0e1f1fd8cfaafee3c005712b8020e063b0f3e3571493ea68db5ec44f/pydantic_core-2.50.4-cp315-cp315t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+size = 2265718
 
 [packages.wheels.hashes]
-sha256 = "95838be125133fa314753f8cc5168f7c41e3a9dd5eef5383dbbbeed511bd4853"
+sha256 = "faa4e96385c820ce9d7f7a623486e23d4134ae3c9ba2071e44e0ab5a5a5002c4"
 
 [[packages.wheels]]
-name = "pydantic_core-2.50.2-cp315-cp315t-win_amd64.whl"
-upload-time = 2026-10-29T16:34:23.177327+00:00
-url = "https://files.pythonhosted.org/packages/7a/df/154baf8413b08d6daf2f5dec211c303ec6bed50c032717f354f8dd85c994/pydantic_core-2.50.2-cp315-cp315t-win_amd64.whl"
-size = 2226659
+name = "pydantic_core-2.50.4-cp315-cp315t-win_amd64.whl"
+upload-time = 2026-11-05T09:14:53.056388+00:00
+url = "https://files.pythonhosted.org/packages/18/32/43d5db1824ec2314f737ff8d9962ff59954a74616d8656a8cc78790e45f1/pydantic_core-2.50.4-cp315-cp315t-win_amd64.whl"
+size = 2244906
 
 [packages.wheels.hashes]
-sha256 = "cc488daac19e6f5292180fac5e0ef7efffabeef4e096af9a17a75a7d3d6781f6"
+sha256 = "f08ee8248aad2d054e5bc4c73554d4505464698f6d754f16198dbc5764e9821d"
 
 [[packages]]
 name = "pygls"
@@ -5978,64 +5978,64 @@ sha256 = "5fc53fdac9f7bd63fbcdc868fb5f90b4784d78a53a3d3388cd738b807441a20b"
 
 [[packages]]
 name = "pyrefly"
-version = "1.4.0"
+version = "1.4.1"
 marker = "\"pyrefly\" in dependency_groups or \"types\" in dependency_groups"
 requires-python = ">=3.8"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "pyrefly-1.4.0.tar.gz"
-upload-time = 2026-10-15T16:54:11.819474+00:00
-url = "https://files.pythonhosted.org/packages/b3/3e/ea6893be167fa14307d7f9a924bed9ecbbbd91b01953890b9b3c58ed5359/pyrefly-1.4.0.tar.gz"
-size = 6962062
+name = "pyrefly-1.4.1.tar.gz"
+upload-time = 2026-11-05T02:44:12.316568+00:00
+url = "https://files.pythonhosted.org/packages/ac/30/e9fb605e82022f941c556076088467ddad59800a7ae7b510d4317088ddab/pyrefly-1.4.1.tar.gz"
+size = 6970842
 
 [packages.sdist.hashes]
-sha256 = "bb57c004a4842cfe93f93aebb5203ca6209a5f0c8bda47e8bc289e70940fd910"
+sha256 = "1ef91afbaca15336482dd21292974f64a735268ce4990d59e87162d5a097106d"
 
 [[packages.wheels]]
-name = "pyrefly-1.4.0-py3-none-macosx_10_12_x86_64.whl"
-upload-time = 2026-10-15T16:53:43.412855+00:00
-url = "https://files.pythonhosted.org/packages/6a/17/dfce6611acc00cb26667e5e1011438cc510f3067f961e0f07f7a0c68f416/pyrefly-1.4.0-py3-none-macosx_10_12_x86_64.whl"
-size = 15705624
+name = "pyrefly-1.4.1-py3-none-macosx_10_12_x86_64.whl"
+upload-time = 2026-11-05T02:43:40.304174+00:00
+url = "https://files.pythonhosted.org/packages/c5/a1/736ef07aa3c87e7db31d246024a98cb6fbf6d48e52784025758f19cca02d/pyrefly-1.4.1-py3-none-macosx_10_12_x86_64.whl"
+size = 15720162
 
 [packages.wheels.hashes]
-sha256 = "460cec39bc8743915e9c2c8c10ba926ad0b29b099d89c1859fb97e0059f42fa7"
+sha256 = "9c5a4a3f0ec00ae66a13f5741c355980685111b7008289c0b850e9be931aa3fa"
 
 [[packages.wheels]]
-name = "pyrefly-1.4.0-py3-none-macosx_11_0_arm64.whl"
-upload-time = 2026-10-15T16:53:46.546009+00:00
-url = "https://files.pythonhosted.org/packages/a6/78/a7b96442123fa6ed733de0d1ea933e35d6fc6b7c9cf16e05279abb493493/pyrefly-1.4.0-py3-none-macosx_11_0_arm64.whl"
-size = 14978669
+name = "pyrefly-1.4.1-py3-none-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T02:43:42.998565+00:00
+url = "https://files.pythonhosted.org/packages/0f/9a/0cc181ebbde26f63e96a61fcb4d6262342017cb83fa34f494a13134de6c5/pyrefly-1.4.1-py3-none-macosx_11_0_arm64.whl"
+size = 14994348
 
 [packages.wheels.hashes]
-sha256 = "5a6370d686b6cbbac8869832f09a52012888371956fbc68d446a349bc85ccd43"
+sha256 = "eaba21336993765373e7e888de90f4d58214ce38994804eef902a6c8148df21f"
 
 [[packages.wheels]]
-name = "pyrefly-1.4.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
-upload-time = 2026-10-15T16:53:48.904138+00:00
-url = "https://files.pythonhosted.org/packages/23/97/dfcfec6a9d8948ab4b2746f7e87558a82bffabb7a54c22e7d3ce4bdc1932/pyrefly-1.4.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
-size = 15438858
+name = "pyrefly-1.4.1-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+upload-time = 2026-11-05T02:43:45.291265+00:00
+url = "https://files.pythonhosted.org/packages/ad/7c/bba5e480eb1620b864e45f7551f7e5014351eb42be4e6b5f0dd036b15071/pyrefly-1.4.1-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+size = 15454572
 
 [packages.wheels.hashes]
-sha256 = "8f1b16923a6583a6764e8aec07787e2ef4df644c7030294cba71339783a9451c"
+sha256 = "8363f888f19b53d4b40e54d89e65b127ea68cd1cf8604de2824dffdc9d7900e9"
 
 [[packages.wheels]]
-name = "pyrefly-1.4.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-upload-time = 2026-10-15T16:53:57.436069+00:00
-url = "https://files.pythonhosted.org/packages/2c/65/b44a1cb23667bcbcdc88558cbef79fa9e07a1152c2a1da148036b1a2e0d1/pyrefly-1.4.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-size = 16066345
+name = "pyrefly-1.4.1-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+upload-time = 2026-11-05T02:43:52.714317+00:00
+url = "https://files.pythonhosted.org/packages/2f/c5/0f1a9d1ad13a74e4efcbb8a94a89381e56dfff0d4dceeba8a9f633901c75/pyrefly-1.4.1-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+size = 16079223
 
 [packages.wheels.hashes]
-sha256 = "b6951f51687304caebfedf13dd1a943aeafdbc95abcc4e24a683b97467a77007"
+sha256 = "19c35e7e63a02076fc555bdb0800302b89bb419e3de2814ab8274c0c6ac00158"
 
 [[packages.wheels]]
-name = "pyrefly-1.4.0-py3-none-win_amd64.whl"
-upload-time = 2026-10-15T16:54:07.452920+00:00
-url = "https://files.pythonhosted.org/packages/03/02/18f075d4de0e255f184f42fc28c1f0ecc9f49dd528678479fc90cf12246c/pyrefly-1.4.0-py3-none-win_amd64.whl"
-size = 15726220
+name = "pyrefly-1.4.1-py3-none-win_amd64.whl"
+upload-time = 2026-11-05T02:44:07.193266+00:00
+url = "https://files.pythonhosted.org/packages/5a/d2/5b855b69afc9401f2434abe3e2ded05f3c78905d478beecad05117b2329a/pyrefly-1.4.1-py3-none-win_amd64.whl"
+size = 15741940
 
 [packages.wheels.hashes]
-sha256 = "7aff37c2b711c8240ed650da0c6148237b327bf7e5dfacee65884f1adea22305"
+sha256 = "49d2ac460fffbe5b8e0c20e991bf87978805d7aba3bb7f04d9b53a1a0e1d6430"
 
 [[packages]]
 name = "pyright"
@@ -6924,64 +6924,64 @@ sha256 = "27592957fedf6e0b62f281e96effd28043345e0e66001f97683aa9a40c667c93"
 
 [[packages]]
 name = "ruff"
-version = "0.17.3"
+version = "0.17.4"
 marker = "\"lint\" in dependency_groups"
 requires-python = ">=3.7"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "ruff-0.17.3.tar.gz"
-upload-time = 2026-10-27T00:34:05.914554+00:00
-url = "https://files.pythonhosted.org/packages/59/73/81f140c4edd9cc323de5478e6bbd3bbcfae9a82692df1a258de8cec6a6d2/ruff-0.17.3.tar.gz"
-size = 5339444
+name = "ruff-0.17.4.tar.gz"
+upload-time = 2026-11-05T18:52:17.638366+00:00
+url = "https://files.pythonhosted.org/packages/84/0e/3d154514b5bad104f7e1c13169c2d09aa9959fccdc06eb47610ccdfa83ed/ruff-0.17.4.tar.gz"
+size = 5357750
 
 [packages.sdist.hashes]
-sha256 = "a57049c8addb3662073859bb55a7ad35aa54f8a7c9ed268911d1333c5aadaaa9"
+sha256 = "f32d178b50e826e00f6c6c1be3f56333068acb9b67fe167143527fa9b81e890d"
 
 [[packages.wheels]]
-name = "ruff-0.17.3-py3-none-macosx_10_12_x86_64.whl"
-upload-time = 2026-10-27T00:33:33.949887+00:00
-url = "https://files.pythonhosted.org/packages/72/26/4b2edf31cfebe9605d8f6ed8f1d6f376d3a53d4c9a123e62661c64c440f0/ruff-0.17.3-py3-none-macosx_10_12_x86_64.whl"
-size = 10217786
+name = "ruff-0.17.4-py3-none-macosx_10_12_x86_64.whl"
+upload-time = 2026-11-05T18:51:39.502528+00:00
+url = "https://files.pythonhosted.org/packages/0a/12/dd158708378866e8b53e145a465dbc51a7cccb9fa197a74d67eaedde7234/ruff-0.17.4-py3-none-macosx_10_12_x86_64.whl"
+size = 10266044
 
 [packages.wheels.hashes]
-sha256 = "e407b4a6852853a9a2cdce96963e94ad9775578bb44e7561a0f2829f3cc04b11"
+sha256 = "13e781c3c5f663e7fba737eaaeb70dd943dd55171daf316afb25cd5268cfe0c7"
 
 [[packages.wheels]]
-name = "ruff-0.17.3-py3-none-macosx_11_0_arm64.whl"
-upload-time = 2026-10-27T00:33:35.784259+00:00
-url = "https://files.pythonhosted.org/packages/a2/7e/537aba4b7f54397a374d2f6a6fc93e9c8015e18553f31a4a7b7dbced48b5/ruff-0.17.3-py3-none-macosx_11_0_arm64.whl"
-size = 9440362
+name = "ruff-0.17.4-py3-none-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T18:51:41.968586+00:00
+url = "https://files.pythonhosted.org/packages/28/32/89a94a8eb11fd505a381ae6f04e190d038d9958695209dc1786ce5cfcda3/ruff-0.17.4-py3-none-macosx_11_0_arm64.whl"
+size = 9432227
 
 [packages.wheels.hashes]
-sha256 = "b75cc113b3aca388933d8296b667b1ac401a80317ea3074c9b0a66541199da29"
+sha256 = "7ed2f416349944f908f9574215994602242b0836844eba48eec61473033afca0"
 
 [[packages.wheels]]
-name = "ruff-0.17.3-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
-upload-time = 2026-10-27T00:33:38.216641+00:00
-url = "https://files.pythonhosted.org/packages/3d/66/283e39734f66c8a5ebaa93c22eb7b7515779a0b1d5a5c0ad20e05c0edb41/ruff-0.17.3-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
-size = 10094281
+name = "ruff-0.17.4-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+upload-time = 2026-11-05T18:51:44.562560+00:00
+url = "https://files.pythonhosted.org/packages/58/de/a392dc38b215798ae72e639d228b7f6c02d826a95d1c0ad7c4c0ee49ef5b/ruff-0.17.4-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+size = 10136900
 
 [packages.wheels.hashes]
-sha256 = "ab5fa7ed5ce18554ea69d850ad162cbaa0c85fc47c08d83a569f806681c9a6ad"
+sha256 = "8ea6e0017c785f7282092b11e46338e4ebed1b9e575ebf2e55a8a1eda968241a"
 
 [[packages.wheels]]
-name = "ruff-0.17.3-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-upload-time = 2026-10-27T00:33:48.233694+00:00
-url = "https://files.pythonhosted.org/packages/f0/20/fecedea2209f574ab92033b344e01a7f0c2dc76c6d6d19a14c9f8141173f/ruff-0.17.3-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-size = 10577491
+name = "ruff-0.17.4-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+upload-time = 2026-11-05T18:51:56.129056+00:00
+url = "https://files.pythonhosted.org/packages/af/1b/62874f14c7873f27c7887d2b1ea41de990e14ba9518801ffe8eacb5d51a6/ruff-0.17.4-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+size = 10572829
 
 [packages.wheels.hashes]
-sha256 = "7fa4b0f931cdbcb8a52044f370a3eb429fb42eb88807b0e800fcaa98dd42b24e"
+sha256 = "2cd025509b2e15721b426fc70fd946d71f43b3db3b08e946dfec2d696d911690"
 
 [[packages.wheels]]
-name = "ruff-0.17.3-py3-none-win_amd64.whl"
-upload-time = 2026-10-27T00:34:02.099291+00:00
-url = "https://files.pythonhosted.org/packages/d0/a0/f08c1631bfd81faa6a90eaf70c37c786c11bed2046302b56bb506c25e1a0/ruff-0.17.3-py3-none-win_amd64.whl"
-size = 10341333
+name = "ruff-0.17.4-py3-none-win_amd64.whl"
+upload-time = 2026-11-05T18:52:13.436805+00:00
+url = "https://files.pythonhosted.org/packages/bd/15/42af8a72d8946e3c9efd2bbf6641e462b6832783b0d043d63ef5b280ba7f/ruff-0.17.4-py3-none-win_amd64.whl"
+size = 10292922
 
 [packages.wheels.hashes]
-sha256 = "56b8ffb3f3b3cbccb8b76b71b38261b7ed982ef5d20f5b447b1b61a7f4949b24"
+sha256 = "67c5a894fc054cf41f75f7afa24815de5a74329d97634126c2a1015740ff4e8c"
 
 [[packages]]
 name = "secretstorage"
@@ -8028,68 +8028,68 @@ sha256 = "b854164df26db268af05f49aa5c0344b10e27a494343ff05b1e0bad3b135f5a7"
 
 [[packages]]
 name = "ty"
-version = "0.0.97"
+version = "0.0.98"
 marker = "\"ty\" in dependency_groups or \"types\" in dependency_groups"
 requires-python = ">=3.8"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "ty-0.0.97.tar.gz"
-upload-time = 2026-11-04T09:15:44.470087+00:00
-url = "https://files.pythonhosted.org/packages/cf/57/d0cabbc33e6e04c0406b9771ef3a05b13f34c3c22e69c3696ab5431dc28b/ty-0.0.97.tar.gz"
-size = 8152797
+name = "ty-0.0.98.tar.gz"
+upload-time = 2026-11-05T17:39:44.730426+00:00
+url = "https://files.pythonhosted.org/packages/a9/bc/a17167c26defcb6ce004b3668624deb47ed98955f5ef14d8aee6d533d6c8/ty-0.0.98.tar.gz"
+size = 8169824
 
 [packages.sdist.hashes]
-sha256 = "5346478c114ca9aece58b4df94e41cc17f373177f0795d15db8e95a8d1edae0f"
+sha256 = "91778c8201da22ba553fb51c5b01c346b7ab37bbf0267536c86e5be4f09467ad"
 
 [[packages.wheels]]
-name = "ty-0.0.97-py3-none-macosx_10_12_x86_64.whl"
-upload-time = 2026-11-04T09:14:52.944800+00:00
-url = "https://files.pythonhosted.org/packages/54/4f/40ca071c4ac093cf2e124612bd4adba97af85de89fe6c1599710a23d63a1/ty-0.0.97-py3-none-macosx_10_12_x86_64.whl"
-size = 14219229
+name = "ty-0.0.98-py3-none-macosx_10_12_x86_64.whl"
+upload-time = 2026-11-05T17:39:09.855775+00:00
+url = "https://files.pythonhosted.org/packages/2b/51/1a9a2648c63e04bef27e2ab27e3e419f7e80d1ef567d41111e2b133065fb/ty-0.0.98-py3-none-macosx_10_12_x86_64.whl"
+size = 14290511
 
 [packages.wheels.hashes]
-sha256 = "76a094299aef30130570d3c01f0ea7a13e2036a15db9a35be2cbc050f2a73d02"
+sha256 = "9207be78d93bf5640caad7a6c93f8c4b5ba262e997774f288a0350220c7a7053"
 
 [[packages.wheels]]
-name = "ty-0.0.97-py3-none-macosx_11_0_arm64.whl"
-upload-time = 2026-11-04T09:14:55.963923+00:00
-url = "https://files.pythonhosted.org/packages/18/57/8c0d346fe872ee2813b3afa34b93d5e5e8a2f9c39db9f8be32351d2d08c5/ty-0.0.97-py3-none-macosx_11_0_arm64.whl"
-size = 13274833
+name = "ty-0.0.98-py3-none-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T17:39:11.956156+00:00
+url = "https://files.pythonhosted.org/packages/77/5d/dd82abd70653d48b0e7a5f05582c38149a585e49dfde7f473b0a52064c54/ty-0.0.98-py3-none-macosx_11_0_arm64.whl"
+size = 13285566
 
 [packages.wheels.hashes]
-sha256 = "6a5c9414303fe3bb461c174c59a70881c48934c1983a36e109aa2b18b5f3bea5"
+sha256 = "f1f411590d81edcc75013d220ee522ee083b07f9eb2f085c1eb63767b22d3022"
 
 [[packages.wheels]]
-name = "ty-0.0.97-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
-upload-time = 2026-11-04T09:14:59.274568+00:00
-url = "https://files.pythonhosted.org/packages/e7/74/76c3d6236acef0ca7f1a57fb8923bac098eba629e9f93bd34427a510e191/ty-0.0.97-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
-size = 14120577
+name = "ty-0.0.98-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+upload-time = 2026-11-05T17:39:14.199820+00:00
+url = "https://files.pythonhosted.org/packages/3c/da/6ef71f418084487c22f66de651a7db24595f44256ee239e4a78aa2e7047f/ty-0.0.98-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+size = 14230025
 
 [packages.wheels.hashes]
-sha256 = "65ac762c4ad4abffe085b91795488b9780befea14d9c4ceaa18a02d0bd5fde11"
+sha256 = "01133c80ae420cd1c23e25299b10f852a6ae84ea4618b83db7c00d244d10a0cb"
 
 [[packages.wheels]]
-name = "ty-0.0.97-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-upload-time = 2026-11-04T09:15:15.426072+00:00
-url = "https://files.pythonhosted.org/packages/db/6d/b432bebff5dba0883c40e66a19f3ac40ac268defb87f4b641b371c989624/ty-0.0.97-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-size = 16589366
+name = "ty-0.0.98-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+upload-time = 2026-11-05T17:39:25.267413+00:00
+url = "https://files.pythonhosted.org/packages/a8/a5/efaeb737756db133975085754f1bf0f1d720b322130b0f310ad26457ec59/ty-0.0.98-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+size = 16544942
 
 [packages.wheels.hashes]
-sha256 = "4750e490b285d9083cc49588bbbecd1b5e02476dca882e127586cd289b4d92df"
+sha256 = "1f08c4f7a7f368a0f8a5f8020a660f4cb325fec7ab48d1d073496cb17edd9796"
 
 [[packages.wheels]]
-name = "ty-0.0.97-py3-none-win_amd64.whl"
-upload-time = 2026-11-04T09:15:38.335409+00:00
-url = "https://files.pythonhosted.org/packages/b6/47/5d9b908dbc4a2addb984c3d58f008db75dd9c7cd04f0a7d92530779c1bd5/ty-0.0.97-py3-none-win_amd64.whl"
-size = 14184823
+name = "ty-0.0.98-py3-none-win_amd64.whl"
+upload-time = 2026-11-05T17:39:40.460753+00:00
+url = "https://files.pythonhosted.org/packages/42/94/dc9ba9966ce387f66a296c7b6dfe4e8754695cfa6946f16e8fbfd3beffeb/ty-0.0.98-py3-none-win_amd64.whl"
+size = 14258971
 
 [packages.wheels.hashes]
-sha256 = "69deddd2d1c4fbb2cae902a8c0d7c7ed67113659edcfd59ab5b6e4a2a02081ee"
+sha256 = "c2c41c6923b149b520577fd0424cdbddad12760ddaaa5eda429266aab2d315b9"
 
 [[packages]]
 name = "typeshed-client"
-version = "2.14.0"
+version = "2.15.0"
 marker = "\"crosshair\" in dependency_groups"
 requires-python = ">=3.9"
 dependencies = [
@@ -8098,22 +8098,22 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "typeshed_client-2.14.0.tar.gz"
-upload-time = 2026-10-12T23:12:48.319385+00:00
-url = "https://files.pythonhosted.org/packages/1b/51/42f516f1e67dd3e291d8e80d9217704af16241cbd2b6c2c4c1f3eba8bfe1/typeshed_client-2.14.0.tar.gz"
-size = 536464
+name = "typeshed_client-2.15.0.tar.gz"
+upload-time = 2026-11-05T06:03:07.099938+00:00
+url = "https://files.pythonhosted.org/packages/2f/4e/dbbc3e07f2d09b1ffb3aab5bbd6635ca77bfcf54617362f6b63044c520ec/typeshed_client-2.15.0.tar.gz"
+size = 539854
 
 [packages.sdist.hashes]
-sha256 = "b7438c6f1d843e87e734102ca875d45a4c55b8abd15c4e16ce4af9345ad4085d"
+sha256 = "c1546a777054bee2128e27bb50b455400a18f80962a503d53507daece5c3eb45"
 
 [[packages.wheels]]
-name = "typeshed_client-2.14.0-py3-none-any.whl"
-upload-time = 2026-10-12T23:12:46.461542+00:00
-url = "https://files.pythonhosted.org/packages/b2/81/3eee24796e76355265fbcd5fd424bab0f16cb05c87107473c999525dc0ef/typeshed_client-2.14.0-py3-none-any.whl"
-size = 803863
+name = "typeshed_client-2.15.0-py3-none-any.whl"
+upload-time = 2026-11-05T06:03:04.838240+00:00
+url = "https://files.pythonhosted.org/packages/46/71/62aca964e42a35cc1755e0df9e6affa81fa42ea7e8a62f1037af62d1efea/typeshed_client-2.15.0-py3-none-any.whl"
+size = 808045
 
 [packages.wheels.hashes]
-sha256 = "9784bdb4bcb6235d015375b1225847d324d351a6a309cf30c869b08489a7f9d3"
+sha256 = "04982c298c9e133977f0a9ec3e66d4ec424a09ec7d4fad63f814eb69dfbbc7fc"
 
 [[packages]]
 name = "typing-extensions"
@@ -9037,8 +9037,8 @@ size = 11017736
 sha256 = "48483b9ec019da045b7f826c496f2ab1639c3f036fcab6e9e74b42d4e2fa3d34"
 
 [tool.nab]
-nab-version = "0.0.29.dev0"
-created-at = 2026-11-12T02:26:18.829050+00:00
+nab-version = "0.0.29"
+created-at = 2026-11-12T21:16:01.287444+00:00
 command-line = [
     "nab",
     "lock",
@@ -9046,6 +9046,7 @@ command-line = [
     "--no-emit-workspace",
     "--output",
     "pylock.dev.toml",
+    "--upgrade",
 ]
 input-path = "pyproject.toml"
 mode = "universal"
@@ -9060,6 +9061,6 @@ platforms = [
 
 [tool.nab.validation]
 version = 1
-all-inputs-sha256 = "4d6383a5315f0936ed72af8d741d42f12bdc833d46f529bbe8edc7111ae4d224"
-selection-inputs-sha256 = "7cd68c8463614713dac8060bdd647ee0224161cddd853a687978832cd26301a1"
-contents-sha256 = "7712809ff10e63ded08878c53ded08dddfdd666e752c1f1678c579abfa7d9480"
+all-inputs-sha256 = "bcca5fc5a9860e3ec5fac6fa45be67abeb45e5bb5ee8b76503badf6bb417a467"
+selection-inputs-sha256 = "bc1b869dabe3ae33b0e430ae2fd46dc89a7c7fc0e54d0f3e5053ca84cc8828b9"
+contents-sha256 = "3f4bd1a79981fdb574731800d32dc2775d0ba9ef46914e9496c80a01b7961d93"
