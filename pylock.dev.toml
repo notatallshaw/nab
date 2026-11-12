@@ -9037,7 +9037,7 @@ size = 11017736
 sha256 = "48483b9ec019da045b7f826c496f2ab1639c3f036fcab6e9e74b42d4e2fa3d34"
 
 [tool.nab]
-nab-version = "0.0.29"
+nab-version = "0.0.30.dev0"
 created-at = 2026-11-12T21:16:01.287444+00:00
 command-line = [
     "nab",
@@ -9046,7 +9046,6 @@ command-line = [
     "--no-emit-workspace",
     "--output",
     "pylock.dev.toml",
-    "--upgrade",
 ]
 input-path = "pyproject.toml"
 mode = "universal"
@@ -9061,6 +9060,6 @@ platforms = [
 
 [tool.nab.validation]
 version = 1
-all-inputs-sha256 = "bcca5fc5a9860e3ec5fac6fa45be67abeb45e5bb5ee8b76503badf6bb417a467"
+all-inputs-sha256 = "7a2c9d88d668bbdaba84604a013db1a1230607972102bfbec056341bb1815c14"
 selection-inputs-sha256 = "bc1b869dabe3ae33b0e430ae2fd46dc89a7c7fc0e54d0f3e5053ca84cc8828b9"
 contents-sha256 = "3f4bd1a79981fdb574731800d32dc2775d0ba9ef46914e9496c80a01b7961d93"
