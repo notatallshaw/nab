@@ -5978,64 +5978,64 @@ sha256 = "5fc53fdac9f7bd63fbcdc868fb5f90b4784d78a53a3d3388cd738b807441a20b"
 
 [[packages]]
 name = "pyrefly"
-version = "1.4.0"
+version = "1.4.1"
 marker = "\"pyrefly\" in dependency_groups or \"types\" in dependency_groups"
 requires-python = ">=3.8"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "pyrefly-1.4.0.tar.gz"
-upload-time = 2026-10-15T16:54:11.819474+00:00
-url = "https://files.pythonhosted.org/packages/b3/3e/ea6893be167fa14307d7f9a924bed9ecbbbd91b01953890b9b3c58ed5359/pyrefly-1.4.0.tar.gz"
-size = 6962062
+name = "pyrefly-1.4.1.tar.gz"
+upload-time = 2026-11-05T02:44:12.316568+00:00
+url = "https://files.pythonhosted.org/packages/ac/30/e9fb605e82022f941c556076088467ddad59800a7ae7b510d4317088ddab/pyrefly-1.4.1.tar.gz"
+size = 6970842
 
 [packages.sdist.hashes]
-sha256 = "bb57c004a4842cfe93f93aebb5203ca6209a5f0c8bda47e8bc289e70940fd910"
+sha256 = "1ef91afbaca15336482dd21292974f64a735268ce4990d59e87162d5a097106d"
 
 [[packages.wheels]]
-name = "pyrefly-1.4.0-py3-none-macosx_10_12_x86_64.whl"
-upload-time = 2026-10-15T16:53:43.412855+00:00
-url = "https://files.pythonhosted.org/packages/6a/17/dfce6611acc00cb26667e5e1011438cc510f3067f961e0f07f7a0c68f416/pyrefly-1.4.0-py3-none-macosx_10_12_x86_64.whl"
-size = 15705624
+name = "pyrefly-1.4.1-py3-none-macosx_10_12_x86_64.whl"
+upload-time = 2026-11-05T02:43:40.304174+00:00
+url = "https://files.pythonhosted.org/packages/c5/a1/736ef07aa3c87e7db31d246024a98cb6fbf6d48e52784025758f19cca02d/pyrefly-1.4.1-py3-none-macosx_10_12_x86_64.whl"
+size = 15720162
 
 [packages.wheels.hashes]
-sha256 = "460cec39bc8743915e9c2c8c10ba926ad0b29b099d89c1859fb97e0059f42fa7"
+sha256 = "9c5a4a3f0ec00ae66a13f5741c355980685111b7008289c0b850e9be931aa3fa"
 
 [[packages.wheels]]
-name = "pyrefly-1.4.0-py3-none-macosx_11_0_arm64.whl"
-upload-time = 2026-10-15T16:53:46.546009+00:00
-url = "https://files.pythonhosted.org/packages/a6/78/a7b96442123fa6ed733de0d1ea933e35d6fc6b7c9cf16e05279abb493493/pyrefly-1.4.0-py3-none-macosx_11_0_arm64.whl"
-size = 14978669
+name = "pyrefly-1.4.1-py3-none-macosx_11_0_arm64.whl"
+upload-time = 2026-11-05T02:43:42.998565+00:00
+url = "https://files.pythonhosted.org/packages/0f/9a/0cc181ebbde26f63e96a61fcb4d6262342017cb83fa34f494a13134de6c5/pyrefly-1.4.1-py3-none-macosx_11_0_arm64.whl"
+size = 14994348
 
 [packages.wheels.hashes]
-sha256 = "5a6370d686b6cbbac8869832f09a52012888371956fbc68d446a349bc85ccd43"
+sha256 = "eaba21336993765373e7e888de90f4d58214ce38994804eef902a6c8148df21f"
 
 [[packages.wheels]]
-name = "pyrefly-1.4.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
-upload-time = 2026-10-15T16:53:48.904138+00:00
-url = "https://files.pythonhosted.org/packages/23/97/dfcfec6a9d8948ab4b2746f7e87558a82bffabb7a54c22e7d3ce4bdc1932/pyrefly-1.4.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
-size = 15438858
+name = "pyrefly-1.4.1-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+upload-time = 2026-11-05T02:43:45.291265+00:00
+url = "https://files.pythonhosted.org/packages/ad/7c/bba5e480eb1620b864e45f7551f7e5014351eb42be4e6b5f0dd036b15071/pyrefly-1.4.1-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl"
+size = 15454572
 
 [packages.wheels.hashes]
-sha256 = "8f1b16923a6583a6764e8aec07787e2ef4df644c7030294cba71339783a9451c"
+sha256 = "8363f888f19b53d4b40e54d89e65b127ea68cd1cf8604de2824dffdc9d7900e9"
 
 [[packages.wheels]]
-name = "pyrefly-1.4.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-upload-time = 2026-10-15T16:53:57.436069+00:00
-url = "https://files.pythonhosted.org/packages/2c/65/b44a1cb23667bcbcdc88558cbef79fa9e07a1152c2a1da148036b1a2e0d1/pyrefly-1.4.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-size = 16066345
+name = "pyrefly-1.4.1-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+upload-time = 2026-11-05T02:43:52.714317+00:00
+url = "https://files.pythonhosted.org/packages/2f/c5/0f1a9d1ad13a74e4efcbb8a94a89381e56dfff0d4dceeba8a9f633901c75/pyrefly-1.4.1-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+size = 16079223
 
 [packages.wheels.hashes]
-sha256 = "b6951f51687304caebfedf13dd1a943aeafdbc95abcc4e24a683b97467a77007"
+sha256 = "19c35e7e63a02076fc555bdb0800302b89bb419e3de2814ab8274c0c6ac00158"
 
 [[packages.wheels]]
-name = "pyrefly-1.4.0-py3-none-win_amd64.whl"
-upload-time = 2026-10-15T16:54:07.452920+00:00
-url = "https://files.pythonhosted.org/packages/03/02/18f075d4de0e255f184f42fc28c1f0ecc9f49dd528678479fc90cf12246c/pyrefly-1.4.0-py3-none-win_amd64.whl"
-size = 15726220
+name = "pyrefly-1.4.1-py3-none-win_amd64.whl"
+upload-time = 2026-11-05T02:44:07.193266+00:00
+url = "https://files.pythonhosted.org/packages/5a/d2/5b855b69afc9401f2434abe3e2ded05f3c78905d478beecad05117b2329a/pyrefly-1.4.1-py3-none-win_amd64.whl"
+size = 15741940
 
 [packages.wheels.hashes]
-sha256 = "7aff37c2b711c8240ed650da0c6148237b327bf7e5dfacee65884f1adea22305"
+sha256 = "49d2ac460fffbe5b8e0c20e991bf87978805d7aba3bb7f04d9b53a1a0e1d6430"
 
 [[packages]]
 name = "pyright"
@@ -8089,7 +8089,7 @@ sha256 = "69deddd2d1c4fbb2cae902a8c0d7c7ed67113659edcfd59ab5b6e4a2a02081ee"
 
 [[packages]]
 name = "typeshed-client"
-version = "2.14.0"
+version = "2.15.0"
 marker = "\"crosshair\" in dependency_groups"
 requires-python = ">=3.9"
 dependencies = [
@@ -8098,22 +8098,22 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "typeshed_client-2.14.0.tar.gz"
-upload-time = 2026-10-12T23:12:48.319385+00:00
-url = "https://files.pythonhosted.org/packages/1b/51/42f516f1e67dd3e291d8e80d9217704af16241cbd2b6c2c4c1f3eba8bfe1/typeshed_client-2.14.0.tar.gz"
-size = 536464
+name = "typeshed_client-2.15.0.tar.gz"
+upload-time = 2026-11-05T06:03:07.099938+00:00
+url = "https://files.pythonhosted.org/packages/2f/4e/dbbc3e07f2d09b1ffb3aab5bbd6635ca77bfcf54617362f6b63044c520ec/typeshed_client-2.15.0.tar.gz"
+size = 539854
 
 [packages.sdist.hashes]
-sha256 = "b7438c6f1d843e87e734102ca875d45a4c55b8abd15c4e16ce4af9345ad4085d"
+sha256 = "c1546a777054bee2128e27bb50b455400a18f80962a503d53507daece5c3eb45"
 
 [[packages.wheels]]
-name = "typeshed_client-2.14.0-py3-none-any.whl"
-upload-time = 2026-10-12T23:12:46.461542+00:00
-url = "https://files.pythonhosted.org/packages/b2/81/3eee24796e76355265fbcd5fd424bab0f16cb05c87107473c999525dc0ef/typeshed_client-2.14.0-py3-none-any.whl"
-size = 803863
+name = "typeshed_client-2.15.0-py3-none-any.whl"
+upload-time = 2026-11-05T06:03:04.838240+00:00
+url = "https://files.pythonhosted.org/packages/46/71/62aca964e42a35cc1755e0df9e6affa81fa42ea7e8a62f1037af62d1efea/typeshed_client-2.15.0-py3-none-any.whl"
+size = 808045
 
 [packages.wheels.hashes]
-sha256 = "9784bdb4bcb6235d015375b1225847d324d351a6a309cf30c869b08489a7f9d3"
+sha256 = "04982c298c9e133977f0a9ec3e66d4ec424a09ec7d4fad63f814eb69dfbbc7fc"
 
 [[packages]]
 name = "typing-extensions"
@@ -9038,7 +9038,7 @@ sha256 = "48483b9ec019da045b7f826c496f2ab1639c3f036fcab6e9e74b42d4e2fa3d34"
 
 [tool.nab]
 nab-version = "0.0.29.dev0"
-created-at = 2026-11-12T02:26:18.829050+00:00
+created-at = 2026-11-12T06:30:33.160955+00:00
 command-line = [
     "nab",
     "lock",
@@ -9046,6 +9046,9 @@ command-line = [
     "--no-emit-workspace",
     "--output",
     "pylock.dev.toml",
+    "--lock-policy",
+    "resolve",
+    "--upgrade",
 ]
 input-path = "pyproject.toml"
 mode = "universal"
@@ -9060,6 +9063,6 @@ platforms = [
 
 [tool.nab.validation]
 version = 1
-all-inputs-sha256 = "4d6383a5315f0936ed72af8d741d42f12bdc833d46f529bbe8edc7111ae4d224"
-selection-inputs-sha256 = "7cd68c8463614713dac8060bdd647ee0224161cddd853a687978832cd26301a1"
-contents-sha256 = "7712809ff10e63ded08878c53ded08dddfdd666e752c1f1678c579abfa7d9480"
+all-inputs-sha256 = "286e670f207d0c32b598f9ca4d9dfaf4a0b8e2137d56586cbb5976b98dce4056"
+selection-inputs-sha256 = "d4c776d9b9dff0c180f81b39445b2753bca44ba19f1b05ce98233c049981cfc8"
+contents-sha256 = "62e6db116782c888ea47d146f69e62751467a6489358f6cb05545eadb3aac475"
