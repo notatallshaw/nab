@@ -241,8 +241,6 @@ uploaded-prior-to = false
 minversion = "9.0"
 addopts = [
     "-ra",
-    "--strict-markers",
-    "--strict-config",
     "--import-mode=importlib",
     "--showlocals",
     "-m",
@@ -259,7 +257,8 @@ testpaths = [
     "nab-index/tests",
     "tests",
 ]
-xfail_strict = true
+strict = true
+empty_parameter_set_mark = "fail_at_collect"
 filterwarnings = ["error"]
 markers = [
     "slow: scenarios that take more than a second",
