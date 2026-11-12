@@ -2931,13 +2931,13 @@ class TestResolvePyprojectLockShape:
     def test_default_indexes_pypi_when_no_indexes(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text('[project]\ndependencies = ["foo"]\n')
-        with (
-            patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_project._resolve.engine.Provider"),
-            patch("nab_project._resolve.engine.build_target_lock"),
-        ):
-            mock_coord_cls.return_value.__enter__ = lambda s: s
-            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+        coordinator = make_coordinator(
+            _index_wheels("foo", "1.0"), package="foo", auto_metadata=True
+        )
+        with patch(
+            "nab_project.resolve.FetchCoordinator",
+            return_value=nullcontext(coordinator),
+        ) as mock_coord_cls:
             _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
         passed = mock_coord_cls.call_args.kwargs["indexes"]
         assert tuple(ix.url for ix in passed) == ("https://pypi.org/simple/",)
@@ -2950,13 +2950,13 @@ class TestResolvePyprojectLockShape:
             'name = "private"\n'
             'url = "https://custom.index/simple/"\n',
         )
-        with (
-            patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_project._resolve.engine.Provider"),
-            patch("nab_project._resolve.engine.build_target_lock"),
-        ):
-            mock_coord_cls.return_value.__enter__ = lambda s: s
-            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+        coordinator = make_coordinator(
+            _index_wheels("foo", "1.0"), package="foo", auto_metadata=True
+        )
+        with patch(
+            "nab_project.resolve.FetchCoordinator",
+            return_value=nullcontext(coordinator),
+        ) as mock_coord_cls:
             _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,

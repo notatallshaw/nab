@@ -21,6 +21,33 @@ from nab_resolver.types import Term
 V = Version
 
 
+class TestRefinedTermTop:
+    """Full membership can carry a separate prerelease preference."""
+
+    def test_normalization_preserves_prerelease_admission(self) -> None:
+        supplied = VersionRange.full() | SpecifierSet(">=2.0a1").to_range()
+        resolver = Resolver(
+            PackagingProvider({}), range_type=VersionRange, root_version="0"
+        )
+        normalized = resolver.as_term_range(supplied)
+        assert isinstance(normalized, VersionRange)
+        assert "not-a-version" not in normalized
+        assert list(normalized.filter([V("2.0a1"), V("1.6")])) == [V("2.0a1"), V("1.6")]
+
+    def test_refined_root_reports_unsatisfiable_requirements(self) -> None:
+        provider = PackagingProvider(
+            {
+                "a": {V(str(value)): {"b": SpecifierSet(">=9")} for value in [1, 2, 3]},
+                "b": {},
+            }
+        )
+        supplied = VersionRange.full() | SpecifierSet(">=2.0a1").to_range()
+        with pytest.raises(ResolutionError, match="no versions of b"):
+            Resolver(provider, range_type=VersionRange, root_version="0").resolve(
+                {"a": supplied}
+            )
+
+
 class TestSpecifierToRange:
     """Verify conversion from SpecifierSet to Range[Version]."""
 
