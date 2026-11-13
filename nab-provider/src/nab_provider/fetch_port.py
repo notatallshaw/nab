@@ -26,13 +26,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from .policy import SourceRequest
     from .store import InMemoryIndex
 
 __all__ = [
     "FetchPort",
+    "MetadataPrefetchHints",
     "PrefetchSettings",
     "Waitable",
 ]
@@ -58,6 +59,17 @@ class PrefetchSettings:
             raise ValueError(msg)
         self.metadata_versions = metadata_versions
         self.lookahead_versions = lookahead_versions
+
+
+@runtime_checkable
+class MetadataPrefetchHints(Protocol):
+    """Optional version filters for listing-arrival metadata guesses."""
+
+    def set_metadata_prefetch_filters(
+        self, filters: Mapping[str, Callable[[str], bool]]
+    ) -> None:
+        """Replace the speculative filters without restricting required fetches."""
+        ...
 
 
 @runtime_checkable

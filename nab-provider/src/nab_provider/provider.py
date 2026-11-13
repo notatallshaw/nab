@@ -22,6 +22,7 @@ __lazy_modules__ = (
     "nab_provider.environment",
     "nab_provider.errors",
     "nab_provider.extra_keys",
+    "nab_provider.fetch_port",
     "nab_provider.metadata",
     "nab_provider.records",
     "nab_provider.vcs_admission",
@@ -73,6 +74,7 @@ from .errors import (
     YankAdmissionRequiredError,
 )
 from .extra_keys import join_extra, split_extra
+from .fetch_port import MetadataPrefetchHints
 from .metadata import WheelMetadata
 from .policy import (
     ArchiveSource,
@@ -1063,15 +1065,38 @@ class Provider:
         self.stats = ProviderStats()
 
         if self.root_requirements:
-            for pkg in self.root_requirements:
-                _, _, normalized = self.split_and_normalize(pkg)
-                if (
-                    normalized in self.local_sources
-                    or normalized in self.vcs_sources
-                    or normalized in self.archive_sources
-                ):
-                    continue
-                self.coordinator.request_listing(normalized)
+            self._prefetch_root_listings()
+
+    def _prefetch_root_listings(self) -> None:
+        """Request remote roots after publishing their speculative version filters."""
+        remote_roots = []
+        for package, version_range in self.root_requirements.items():
+            _, _, normalized = self.split_and_normalize(package)
+            if (
+                normalized in self.local_sources
+                or normalized in self.vcs_sources
+                or normalized in self.archive_sources
+            ):
+                continue
+            remote_roots.append((normalized, version_range))
+
+        if isinstance(self.coordinator, MetadataPrefetchHints):
+            ranges: dict[str, VersionRange] = {}
+            for normalized, version_range in remote_roots:
+                previous = ranges.get(normalized)
+                ranges[normalized] = (
+                    version_range if previous is None else previous & version_range
+                )
+            # Keep callback lifetimes independent of provider caches.
+            self.coordinator.set_metadata_prefetch_filters(
+                {
+                    name: version_range.__contains__
+                    for name, version_range in ranges.items()
+                }
+            )
+
+        for normalized, _ in remote_roots:
+            self.coordinator.request_listing(normalized)
 
     @property
     def extra_deps_map(self) -> _metadata_resolver.ExtraDepsMap:
