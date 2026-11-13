@@ -83,7 +83,10 @@ def _lock(project: Path, *flags: str) -> int:
     )
 
 
-def test_lock_reconciles_a_build_specific_transitive_dependency(tmp_path: Path) -> None:
+@pytest.mark.parametrize("flags", [(), ("-q",), ("-qq",)])
+def test_lock_reconciles_a_build_specific_transitive_dependency(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], flags: tuple[str, ...]
+) -> None:
     project = _project(tmp_path)
     _publish(tmp_path, "1", "cp314")
     _publish(tmp_path, "1", "cp314t")
@@ -99,7 +102,17 @@ def test_lock_reconciles_a_build_specific_transitive_dependency(tmp_path: Path) 
         },
     )
 
-    assert _lock(project) == 0
+    assert _lock(project, *flags) == 0
+    captured = capsys.readouterr()
+    assert not captured.out
+    assert ("warning:" in captured.err) == (flags != ("-qq",))
+    if flags != ("-qq",):
+        assert captured.err.count("Changed dependency selections") == 1
+        assert "demo: 2 -> 1" in captured.err
+        assert "helper: 1 -> absent" in captured.err
+        assert "py314-linux_x86_64-ft" in captured.err
+        assert "constraints" in captured.err
+
     lock = Pylock.from_dict(loads(project.with_name("pylock.toml").read_text()))
     for free_threaded in (False, True):
         target = ResolveTarget.for_declared(
@@ -244,17 +257,26 @@ def test_cli_can_replace_the_base_feature_flag(
     assert [wheel["name"] for wheel in document["packages"][0]["wheels"]] == [regular]
 
 
+@pytest.mark.parametrize("flags", [(), ("-q",), ("-qq",)])
 def test_incompatible_abi_pins_leave_the_existing_lock_intact(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], flags: tuple[str, ...]
 ) -> None:
     _publish(tmp_path, "2.0", "cp314")
     _publish(tmp_path, "1.0", "cp314t")
     project = _project(tmp_path)
     output = project.with_name("pylock.toml")
     output.write_text("existing lock\n", encoding="utf-8")
-    assert _lock(project) == 1
+    assert _lock(project, *flags) == 1
     assert output.read_text(encoding="utf-8") == "existing lock\n"
-    error = capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert not captured.out
+    error = captured.err
+    assert ("limited retries" in error) == (flags != ("-qq",))
+    if flags != ("-qq",):
+        assert "may still exist" in error
+        assert "constraints" in error
+        assert "separately" in error
+
     assert "demo" in error
     assert "2.0" in error
     assert "1.0" in error
