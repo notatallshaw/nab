@@ -888,6 +888,46 @@ def _reconcile_build_results(
         if not all(item.success for item in repaired):
             return
 
+        _report_build_reconciliation(group, repaired)
+
+
+def _report_build_reconciliation(
+    original: Sequence[TargetResult], repaired: Sequence[TargetResult]
+) -> None:
+    """Explain the shared-build search outcome without claiming a lock was written."""
+    labels = ", ".join(item.target.label for item in original)
+    if not all(_same_build_selection(repaired[0], item) for item in repaired[1:]):
+        _logger.warning(
+            "Could not find shared dependency selections for %s within the limited"
+            " retries. A compatible selection may still exist. Try constraints"
+            " selecting versions supported by every build, or lock each build"
+            " separately.",
+            labels,
+        )
+        return
+
+    changes = []
+    for before, after in zip(original, repaired, strict=True):
+        if _same_build_selection(before, after):
+            continue
+
+        versions = [
+            f"{name}: {before.pins.get(name, 'absent')}"
+            f" -> {after.pins.get(name, 'absent')}"
+            for name in sorted(before.pins.keys() | after.pins.keys())
+            if before.pins.get(name) != after.pins.get(name)
+        ]
+        detail = ", ".join(versions) or "dependency-group reachability changed"
+        changes.append(f"{before.target.label} ({detail})")
+
+    _logger.warning(
+        "Changed dependency selections to share a lock across %s because PEP 508"
+        " markers cannot distinguish these builds: %s. Add constraints if you"
+        " need different versions, or lock each build separately.",
+        labels,
+        "; ".join(changes),
+    )
+
 
 def _retry_build_group(
     group: list[TargetResult],

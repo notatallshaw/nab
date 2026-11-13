@@ -73,7 +73,9 @@ def targets() -> tuple[ResolveTarget, ...]:
 
 
 @pytest.mark.parametrize("reconcile", [False, True])
-def test_reconcile_shared_transitive_version(reconcile: bool) -> None:
+def test_reconcile_shared_transitive_version(
+    reconcile: bool, caplog: pytest.LogCaptureFixture
+) -> None:
     result = resolve_with_coordinator(
         registry(), targets(), [Requirement("asv")], reconcile_build_variants=reconcile
     )
@@ -83,10 +85,20 @@ def test_reconcile_shared_transitive_version(reconcile: bool) -> None:
     assert threaded.pins["pympler"] == Version("1")
 
     if not reconcile:
+        assert not caplog.records
         assert regular.pins["pympler"] == Version("2")
         with pytest.raises(LockValidationError, match="package selections"):
             build_pylock(build_lock_input(result))
         return
+
+    assert len(caplog.records) == 1
+    warning = caplog.records[0].getMessage()
+    assert regular.target.label in warning
+    assert threaded.target.label in warning
+    assert "pympler: 2 -> 1" in warning
+    assert "pywin32: 1 -> absent" in warning
+    assert "constraints" in warning
+    assert "separately" in warning
 
     assert regular.pins == threaded.pins
     assert "pywin32" not in regular.pins
@@ -101,7 +113,9 @@ def test_reconcile_shared_transitive_version(reconcile: bool) -> None:
         } == target_result.pins
 
 
-def test_reconciliation_retains_no_common_solution_refusal() -> None:
+def test_reconciliation_retains_no_common_solution_refusal(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     result = resolve_with_coordinator(
         registry(shared_older=False),
         targets(),
@@ -109,6 +123,15 @@ def test_reconciliation_retains_no_common_solution_refusal() -> None:
         reconcile_build_variants=True,
     )
     assert result.success
+    assert len(caplog.records) == 1
+    warning = caplog.records[0].getMessage()
+    assert result.target_results[1].target.label in warning
+    assert result.target_results[2].target.label in warning
+    assert "limited retries" in warning
+    assert "may still exist" in warning
+    assert "constraints" in warning
+    assert "separately" in warning
+
     assert result.target_results[1].pins["pympler"] == Version("2")
     assert result.target_results[2].pins["pympler"] == Version("1")
     with pytest.raises(LockValidationError, match="package selections"):
@@ -326,7 +349,9 @@ def test_reconciliation_can_change_prior_lock_preferences() -> None:
     build_pylock(build_lock_input(result))
 
 
-def test_shared_build_choices_and_host_target_remain_installable() -> None:
+def test_shared_build_choices_and_host_target_remain_installable(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     selected_targets = (*targets()[1:], ResolveTarget.for_host())
     result = resolve_with_coordinator(
         registry(),
@@ -339,6 +364,7 @@ def test_shared_build_choices_and_host_target_remain_installable() -> None:
         {"helper": Version("1")}
     ] * len(selected_targets)
 
+    assert not caplog.records
     lock = build_pylock(build_lock_input(result))
     for target in selected_targets:
         selected = list(

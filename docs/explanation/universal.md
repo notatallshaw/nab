@@ -212,9 +212,13 @@ libc marker. Such targets must agree on package selections and pins to share a l
 When builds with identical markers choose different versions, `nab lock` retries them with shared
 version preferences. It tries the models already resolved and a combination of their oldest selected
 versions, keeping each build's artifact and dependency checks. For example, a dependency without
-free-threaded wheels can make both builds use an older parent release. These retries may still miss
-a common solution; Nab refuses the lock if the remaining selections cannot be distinguished by
-standard markers.
+free-threaded wheels can make both builds use an older parent release.
+
+Nab warns when this changes a build's dependency selections, naming the builds and changes. Use
+constraints to control the shared versions, or lock the builds separately.
+
+These retries may still miss a common solution. If they fail, Nab warns that the search was limited
+and refuses the lock if the remaining selections cannot be distinguished by standard markers.
 
 Each axis sets related marker variables together:
 
