@@ -337,6 +337,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     input_format: InputFormat = InputFormat.PROJECT,
     resolution_strategy: ResolutionStrategy | None = None,
     lock_preferences: LockPreferences | None = None,
+    reconcile_build_variants: bool = False,
     progress: ProgressReporter | None = None,
     max_concurrency: int,
 ) -> ResolveResult:
@@ -360,6 +361,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
                     targets=targets,
                     inputs=config.resolve_inputs(),
                     lock_preferences=lock_preferences,
+                    reconcile_build_variants=reconcile_build_variants,
                     include_dependency_requirements=printer().verbosity
                     >= Verbosity.DEBUG,
                     build_transport_factory=partial(_make_transport, http_backend),

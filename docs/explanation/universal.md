@@ -209,6 +209,13 @@ This evaluates markers for Linux x86-64 and accepts musllinux wheels compatible 
 Changing `libc` changes wheels without changing the PEP 508 environment: that specification has no
 libc marker. Such targets must agree on package selections and pins to share a lock.
 
+When builds with identical markers choose different versions, `nab lock` retries them with shared
+version preferences. It tries the models already resolved and a combination of their oldest selected
+versions, keeping each build's artifact and dependency checks. For example, a dependency without
+free-threaded wheels can make both builds use an older parent release. These retries may still miss
+a common solution; Nab refuses the lock if the remaining selections cannot be distinguished by
+standard markers.
+
 Each axis sets related marker variables together:
 
 | Matrix setting                         | Marker variables                                                  | Default                                                           |

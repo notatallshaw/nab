@@ -445,6 +445,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         input_format=input_format,
         resolution_strategy=settings.resolution,
         lock_preferences=previous_lock,
+        reconcile_build_variants=settings.format == "pylock",
         progress=ProgressReporter(printer()),
         max_concurrency=settings.max_concurrency,
     )

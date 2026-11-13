@@ -83,6 +83,42 @@ def _lock(project: Path, *flags: str) -> int:
     )
 
 
+def test_lock_reconciles_a_build_specific_transitive_dependency(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    _publish(tmp_path, "1", "cp314")
+    _publish(tmp_path, "1", "cp314t")
+    _publish(tmp_path, "2", "cp314", "helper")
+    tag = "cp314-cp314-manylinux_2_17_x86_64"
+    publish_artifacts(
+        tmp_path / "index",
+        "helper",
+        {
+            f"helper-1-{tag}.whl": make_wheel_archive(
+                "helper", "1", "Metadata-Version: 2.1\nName: helper\nVersion: 1\n", tag
+            )
+        },
+    )
+
+    assert _lock(project) == 0
+    lock = Pylock.from_dict(loads(project.with_name("pylock.toml").read_text()))
+    for free_threaded in (False, True):
+        target = ResolveTarget.for_declared(
+            python_version="3.14",
+            spec=PlatformSpec("linux_x86_64", free_threaded=free_threaded),
+        )
+        selected = lock.select(
+            environment=target.marker_env,
+            tags=target.tags.ordered,
+            dependency_groups=("dev",),
+        )
+        assert [
+            (str(package.name), str(package.version)) for package, _ in selected
+        ] == [("demo", "1")]
+
+    assert _lock(project, "--locked") == 0
+    assert _lock(project, "--reproduce") == 0
+
+
 def test_locked_keeps_a_valid_snapshot_when_new_versions_appear(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
