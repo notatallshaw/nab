@@ -5582,7 +5582,7 @@ class TestPolicyWriteScheduling:
 
         assert len(probe.threads) == 5
         assert probe.threads.count(caller) == 1
-        assert not client._policy_writes
+        assert not client._cache_writes
 
     def test_custom_cache_keeps_caller_thread(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -5618,7 +5618,7 @@ class TestPolicyWriteScheduling:
                 read.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await read
-                assert client._policy_writes
+                assert client._cache_writes
                 assert cache.get_simple_policy("pkg") == before
 
                 close = asyncio.create_task(client.aclose())
@@ -5636,7 +5636,7 @@ class TestPolicyWriteScheduling:
         assert after is not None
         assert before is not None
         assert after.fetched_at > before.fetched_at
-        assert not client._policy_writes
+        assert not client._cache_writes
 
     def test_unexpected_write_failure_reaches_caller(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -5657,19 +5657,19 @@ class TestPolicyWriteScheduling:
                 await client.aclose()
 
         asyncio.run(go())
-        assert not client._policy_writes
+        assert not client._cache_writes
 
     def test_cancelled_write_task_releases_capacity(self, tmp_path: Path) -> None:
         client = _revalidation_client(_make_cache(tmp_path))
 
         async def go() -> None:
             task = asyncio.create_task(asyncio.sleep(0))
-            client._policy_writes.add(task)
+            client._cache_writes.add(task)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
-            client._policy_write_done(task)
+            client._cache_write_done(task)
             await client.aclose()
 
         asyncio.run(go())
-        assert not client._policy_writes
+        assert not client._cache_writes

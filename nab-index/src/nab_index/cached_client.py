@@ -29,9 +29,10 @@ import asyncio
 import hashlib
 import logging
 import re
+import threading
 import time
 from datetime import timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ParamSpec
 
 from packaging.utils import canonicalize_name
 
@@ -84,6 +85,8 @@ from .parsed_listing import (
 from .transport import IDENTITY_HEADERS, raise_unless_ok
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from packaging.utils import NormalizedName
     from typing_extensions import Self
 
@@ -99,6 +102,7 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 _MAX_POLICY_WRITES = 4
+_CacheWriteArgs = ParamSpec("_CacheWriteArgs")
 
 
 class ParsedCacheStats(Record):
@@ -447,8 +451,9 @@ class CachedAsyncSimpleClient:
             parsed_stats if parsed_stats is not None else ParsedCacheStats()
         )
         self._parsed_store_failed = False
+        self._parsed_store_lock = threading.Lock()
         self._sdist_archive_hold = sdist_archive_hold
-        self._policy_writes: set[asyncio.Task[None]] = set()
+        self._cache_writes: set[asyncio.Task[None]] = set()
 
         # Replace old versions so backtracking cannot accumulate sidecar histories.
         self._verified_sidecars: dict[str, _VersionSidecars] = {}
@@ -458,10 +463,10 @@ class CachedAsyncSimpleClient:
         self._closed = False
 
     async def aclose(self) -> None:
-        """Wait for policy writes, then close the underlying transport."""
+        """Wait for cache writes, then close the underlying transport."""
         self._closed = True
-        if self._policy_writes:
-            await asyncio.gather(*self._policy_writes, return_exceptions=True)
+        if self._cache_writes:
+            await asyncio.gather(*self._cache_writes, return_exceptions=True)
 
         for pending in self._metadata_pending.values():
             pending.cancel()
@@ -601,7 +606,12 @@ class CachedAsyncSimpleClient:
         return None
 
     def _store_parsed(
-        self, package: str, digest: str | None, files: list[WheelFile | SdistFile]
+        self,
+        package: str,
+        digest: str | None,
+        files: list[WheelFile | SdistFile],
+        *,
+        zip_sdists: frozenset[str] | None = None,
     ) -> None:
         """Write the parsed blob for ``files``, when there is one worth writing.
 
@@ -620,16 +630,19 @@ class CachedAsyncSimpleClient:
         if digest is None or not files:
             return
 
-        zip_sdists = self._zip_sdists.get(package, frozenset())
+        if zip_sdists is None:
+            zip_sdists = self._zip_sdists.get(package, frozenset())
         blob = _encode_parsed(files, digest, zip_sdists)
         try:
             self._cache.put_simple_parsed(package, blob)
         except OSError as exc:
-            if not self._parsed_store_failed:
-                self._parsed_store_failed = True
-                logger.warning(
-                    "cannot store parsed listings for %s: %s", self._index_url, exc
-                )
+            # Concurrent disk writers share the one-time failure report.
+            with self._parsed_store_lock:
+                if not self._parsed_store_failed:
+                    self._parsed_store_failed = True
+                    logger.warning(
+                        "cannot store parsed listings for %s: %s", self._index_url, exc
+                    )
 
     def _rebuild_parsed(
         self,
@@ -838,24 +851,32 @@ class CachedAsyncSimpleClient:
 
     async def _refresh_simple_policy(self, package: str, policy: CachePolicy) -> None:
         """Persist a revalidation policy with at most four background writes."""
-        # Custom backends need not support writes from another thread.
-        if (
-            type(self._cache) is not OnDiskCache
-            or len(self._policy_writes) >= _MAX_POLICY_WRITES
-        ):
+        if len(self._cache_writes) >= _MAX_POLICY_WRITES:
             self._cache.refresh_simple_policy(package, policy)
             return
 
-        task = asyncio.create_task(
-            asyncio.to_thread(self._cache.refresh_simple_policy, package, policy)
-        )
-        self._policy_writes.add(task)
-        task.add_done_callback(self._policy_write_done)
+        await self._write_cache(self._cache.refresh_simple_policy, package, policy)
+
+    async def _write_cache(
+        self,
+        operation: Callable[_CacheWriteArgs, None],
+        *args: _CacheWriteArgs.args,
+        **kwargs: _CacheWriteArgs.kwargs,
+    ) -> None:
+        """Own a disk write until completion, including after caller cancellation."""
+        # Custom backends keep their thread contract; close admits no new workers.
+        if type(self._cache) is not OnDiskCache or self._closed:
+            operation(*args, **kwargs)
+            return
+
+        task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+        self._cache_writes.add(task)
+        task.add_done_callback(self._cache_write_done)
         await asyncio.shield(task)
 
-    def _policy_write_done(self, task: asyncio.Task[None]) -> None:
+    def _cache_write_done(self, task: asyncio.Task[None]) -> None:
         """Release the task and observe failures after a cancelled wait."""
-        self._policy_writes.discard(task)
+        self._cache_writes.discard(task)
         if not task.cancelled():
             task.exception()
 
@@ -878,10 +899,36 @@ class CachedAsyncSimpleClient:
             etag=_header(response, "etag"),
             page_url=response.url,
         )
-        digest = self._cache.put_simple(package, body, policy)
-        self._store_parsed(package, digest, files)
-        self._cache.drop_negative(package)
+        await self._persist_listing(package, body, policy, files)
         return files
+
+    async def _persist_listing(
+        self,
+        package: str,
+        body: bytes,
+        policy: CachePolicy,
+        files: list[WheelFile | SdistFile],
+    ) -> None:
+        """Persist disk listings without blocking unrelated network completions."""
+        # A later response may replace this report while the worker is running.
+        zip_sdists = self._zip_sdists.get(package, frozenset())
+
+        await self._write_cache(
+            self._store_listing, package, body, policy, files, zip_sdists
+        )
+
+    def _store_listing(
+        self,
+        package: str,
+        body: bytes,
+        policy: CachePolicy,
+        files: list[WheelFile | SdistFile],
+        zip_sdists: frozenset[str],
+    ) -> None:
+        """Store the body before its parsed records and negative-entry removal."""
+        digest = self._cache.put_simple(package, body, policy)
+        self._store_parsed(package, digest, files, zip_sdists=zip_sdists)
+        self._cache.drop_negative(package)
 
     async def get_metadata_text(
         self,
@@ -924,7 +971,9 @@ class CachedAsyncSimpleClient:
             if shared is not None and shared.version == version:
                 text = shared.texts.get(reusable_hash)
                 if text is not None:
-                    self._cache.put_metadata(package, metadata_url, text)
+                    await self._write_cache(
+                        self._cache.put_metadata, package, metadata_url, text
+                    )
                     return text
 
             return await self._shared_metadata_text(
@@ -949,7 +998,9 @@ class CachedAsyncSimpleClient:
             # Cancelling one waiter must leave the other readers' work intact.
             text = await asyncio.shield(pending)
             if text is not None:
-                self._cache.put_metadata(package, metadata_url, text)
+                await self._write_cache(
+                    self._cache.put_metadata, package, metadata_url, text
+                )
                 return text
             return await self._fetch_metadata_text(
                 package, version, metadata_url, metadata_hash
@@ -994,7 +1045,7 @@ class CachedAsyncSimpleClient:
             )
             raise MalformedSimpleResponseError(msg) from exc
 
-        self._cache.put_metadata(package, metadata_url, text)
+        await self._write_cache(self._cache.put_metadata, package, metadata_url, text)
 
         reusable_hash = _reusable_metadata_hash(metadata_hash)
         if reusable_hash is not None and not self._closed:
@@ -1046,7 +1097,9 @@ class CachedAsyncSimpleClient:
             wheel_hash=select_artifact_hash(wheel_hashes),
         )
         if result.text is not None:
-            self._cache.put_metadata(package, wheel_url, result.text)
+            await self._write_cache(
+                self._cache.put_metadata, package, wheel_url, result.text
+            )
         return result
 
     async def get_sdist_files(
