@@ -324,3 +324,26 @@ def test_reconciliation_can_change_prior_lock_preferences() -> None:
     assert result.target_results[1].pins["pympler"] == Version("1")
     assert result.target_results[1].pins == result.target_results[2].pins
     build_pylock(build_lock_input(result))
+
+
+def test_shared_build_choices_and_host_target_remain_installable() -> None:
+    selected_targets = (*targets()[1:], ResolveTarget.for_host())
+    result = resolve_with_coordinator(
+        registry(),
+        selected_targets,
+        [Requirement("helper")],
+        reconcile_build_variants=True,
+    )
+    assert result.success
+    assert [item.pins for item in result.target_results] == [
+        {"helper": Version("1")}
+    ] * len(selected_targets)
+
+    lock = build_pylock(build_lock_input(result))
+    for target in selected_targets:
+        selected = list(
+            lock.select(environment=target.marker_env, tags=target.tags.ordered)
+        )
+        assert [
+            (str(package.name), str(package.version)) for package, _ in selected
+        ] == [("helper", "1")]
