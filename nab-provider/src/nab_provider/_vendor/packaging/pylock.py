@@ -6,6 +6,17 @@ attributes correspond to fields in the pylock file specification.
 
 from __future__ import annotations
 
+__lazy_modules__ = {
+    "collections.abc",
+    "datetime",
+    "urllib.parse",
+    f"{__spec__.parent}.markers",
+    f"{__spec__.parent}.specifiers",
+    f"{__spec__.parent}.tags",
+    f"{__spec__.parent}.utils",
+    f"{__spec__.parent}.version",
+}
+
 import dataclasses
 import logging
 import re
@@ -280,7 +291,7 @@ def _validate_hashes(hashes: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 class PylockValidationError(Exception):
-    """Raised when when input data is not spec-compliant."""
+    """Raised when input data is not spec-compliant."""
 
     context: str | None = None
     message: str
@@ -596,7 +607,8 @@ class Pylock:
             packages=_get_required_sequence_of_objects(d, Package, "packages"),
             tool=_get(d, Mapping, "tool"),  # type: ignore[type-abstract]
         )
-        if not Version("1") <= pylock.lock_version < Version("2"):
+        # Prereleases of the next major version are unsupported too.
+        if not Version("1") <= pylock.lock_version < Version("2.dev0"):
             raise PylockUnsupportedVersionError(
                 f"pylock version {pylock.lock_version} is not supported"
             )

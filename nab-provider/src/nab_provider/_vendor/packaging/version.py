@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = {"functools"}
+
 import builtins
 import re
 import sys
@@ -267,12 +269,13 @@ def _validate_epoch(value: object, /) -> int:
 
 def _validate_release(value: object, /) -> tuple[int, ...]:
     release = (0,) if value is None else value
-    if (
-        isinstance(release, tuple)
-        and len(release) > 0
-        and all(isinstance(i, int) and i >= 0 for i in release)
-    ):
-        return release
+    # A loop is faster than iteration based alternatives.
+    if isinstance(release, tuple) and release:
+        for i in release:
+            if not isinstance(i, int) or i < 0:
+                break
+        else:
+            return release
     msg = f"release must be a non-empty tuple of non-negative integers, got {release}"
     raise InvalidVersion(msg)
 
@@ -869,28 +872,27 @@ class Version(_BaseVersion):
         >>> str(Version("1.0a5"))
         '1.0a5'
         """
-        # This is a hot function, so not calling self.base_version
-        version = ".".join(map(str, self.release))
+        version = ".".join(map(str, self._release))
 
         # Epoch
-        if self.epoch:
-            version = f"{self.epoch}!{version}"
+        if self._epoch:
+            version = f"{self._epoch}!{version}"
 
         # Pre-release
-        if self.pre is not None:
-            version += "".join(map(str, self.pre))
+        if self._pre is not None:
+            version += "".join(map(str, self._pre))
 
         # Post-release
-        if self.post is not None:
-            version += f".post{self.post}"
+        if self._post:
+            version += f".post{self._post[1]}"
 
         # Development release
-        if self.dev is not None:
-            version += f".dev{self.dev}"
+        if self._dev:
+            version += f".dev{self._dev[1]}"
 
         # Local version segment
-        if self.local is not None:
-            version += f"+{self.local}"
+        if self._local:
+            version += "+" + ".".join(map(str, self._local))
 
         return version
 
@@ -1011,8 +1013,8 @@ class Version(_BaseVersion):
         The "base version" is the public version of the project without any pre or post
         release markers.
         """
-        release_segment = ".".join(map(str, self.release))
-        return f"{self.epoch}!{release_segment}" if self.epoch else release_segment
+        release_segment = ".".join(map(str, self._release))
+        return f"{self._epoch}!{release_segment}" if self._epoch else release_segment
 
     @property
     def is_prerelease(self) -> bool:
@@ -1090,40 +1092,33 @@ class Version(_BaseVersion):
         """
         return self.release[2] if len(self.release) >= 3 else 0
 
-
-class _TrimmedRelease(Version):
-    __slots__ = ()
-
-    def __init__(self, version: str | Version) -> None:
-        if isinstance(version, Version):
-            self._epoch = version._epoch
-            self._release = version._release
-            self._dev = version._dev
-            self._pre = version._pre
-            self._post = version._post
-            self._local = version._local
-            self._key_cache = version._key_cache
-            self._hash_cache = version._hash_cache
-            return
-        super().__init__(version)  # pragma: no cover
-
-    @property
-    def release(self) -> tuple[int, ...]:
+    def _trim_release(self) -> Version:
         """
-        Release segment without any trailing zeros.
+        Return the version with trailing zeros removed from the release segment.
 
-        >>> _TrimmedRelease('1.0.0').release
-        (1,)
-        >>> _TrimmedRelease('0.0').release
-        (0,)
+        >>> Version('1.0.0')._trim_release()
+        <Version('1')>
+        >>> Version('0.0')._trim_release()
+        <Version('0')>
         """
         # This leaves one 0.
-        rel = super().release
-        len_release = len(rel)
-        i = len_release
-        while i > 1 and rel[i - 1] == 0:
+        release = self._release
+        i = len(release)
+        while i > 1 and release[i - 1] == 0:
             i -= 1
-        return rel if i == len_release else rel[:i]
+        if i == len(release):
+            return self
+
+        new_version = Version.__new__(Version)
+        new_version._epoch = self._epoch
+        new_version._release = release[:i]
+        new_version._dev = self._dev
+        new_version._pre = self._pre
+        new_version._post = self._post
+        new_version._local = self._local
+        new_version._key_cache = self._key_cache
+        new_version._hash_cache = self._hash_cache
+        return new_version
 
 
 def _parse_letter_version(
