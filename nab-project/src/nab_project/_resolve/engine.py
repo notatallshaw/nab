@@ -34,7 +34,7 @@ import logging
 import time
 from collections import defaultdict
 from functools import partial
-from typing import TYPE_CHECKING, Any, Protocol, TypedDict
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypedDict
 
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
 from nab_provider._vendor.packaging.ranges import VersionRange
@@ -89,6 +89,9 @@ _logger = logging.getLogger(__name__)
 # One environment, as a hashable key: two targets that differ only by
 # their conflict-fork selection share it.
 EnvSignature = tuple[tuple[str, str], ...]
+_BuildContext: TypeAlias = tuple[
+    EnvSignature, tuple[str, ...], tuple[tuple[str, str], ...]
+]
 
 
 class ProgressSink(Protocol):
@@ -393,6 +396,9 @@ def _resolve_with_micro_narrowing(
     result = _resolve_passes(
         targets, fork_list, constraints, settings, preferences, base_requirements
     )
+    _reconcile_resolved_builds(
+        result, fork_list, constraints, settings, base_requirements
+    )
     points: list[list[Version]] = [[] for _ in targets]
     combined = result
     for _ in range(_MAX_MICRO_SPLIT_PASSES):
@@ -416,6 +422,9 @@ def _resolve_with_micro_narrowing(
             result,
         )
         combined = _merge_micro_results(targets, result, slice_result, split_sigs)
+        _reconcile_resolved_builds(
+            combined, fork_list, constraints, settings, base_requirements
+        )
     msg = (
         "environment micro-boundary splitting did not converge in"
         f" {_MAX_MICRO_SPLIT_PASSES} passes"
@@ -636,6 +645,7 @@ class _EngineSettings(Record):
         "inputs",
         "source_root",
         "align",
+        "reconcile_build_variants",
         "resolution",
         "marker_holds",
         "progress",
@@ -657,6 +667,7 @@ class _EngineSettings(Record):
     source_root: Path | None
 
     align: bool
+    reconcile_build_variants: bool
     resolution: ResolutionStrategy
 
     progress: ProgressSink | None
@@ -687,6 +698,7 @@ class _EngineSettings(Record):
         inputs: ResolveInputs,
         source_root: Path | None,
         align: bool,
+        reconcile_build_variants: bool = False,
         resolution: ResolutionStrategy,
         marker_holds: MarkerHolds,
         progress: ProgressSink | None = None,
@@ -703,6 +715,7 @@ class _EngineSettings(Record):
         self.inputs = inputs
         self.source_root = source_root
         self.align = align
+        self.reconcile_build_variants = reconcile_build_variants
         self.resolution = resolution
         self.marker_holds: MarkerHolds = marker_holds
         self.progress = progress
@@ -754,6 +767,170 @@ def _run_pass(
         results.append(tr)
         accumulated = _threaded_preferences(accumulated, [tr], align=settings.align)
     return results
+
+
+def _reconcile_resolved_builds(
+    result: ResolveResult,
+    forks: Sequence[ResolveFork],
+    constraints: Sequence[Requirement],
+    settings: _EngineSettings,
+    base_requirements: Sequence[Requirement] | None,
+) -> None:
+    """Repair each install context after resolution and after patch refinement."""
+    if not settings.reconcile_build_variants or not result.success:
+        return
+
+    for fork in forks:
+        indexes = [
+            index
+            for index, item in enumerate(result.target_results)
+            if item.target.selection == fork.selection
+        ]
+        group = [result.target_results[index] for index in indexes]
+        _reconcile_build_results(
+            group, fork.requirements, constraints, settings, fork.contexts
+        )
+        for index, item in zip(indexes, group, strict=True):
+            result.target_results[index] = item
+        if not all(item.success for item in group):
+            return
+
+    if base_requirements is not None:
+        _reconcile_build_results(
+            result.base_results, base_requirements, constraints, settings, None
+        )
+        result.env_base_names = {
+            env_signature(item.target): frozenset(
+                canonicalize_name(name) for name in item.pins
+            )
+            for item in result.base_results
+            if item.success
+        }
+
+
+def _same_build_selection(left: TargetResult, right: TargetResult) -> bool:
+    """Compare selected versions and reachability, leaving artifacts to the writer."""
+    if left.pins != right.pins:
+        return False
+
+    assert left.lock is not None
+    assert right.lock is not None
+
+    return all(
+        frozenset(left.lock.package_gates.get(name, ()))
+        == frozenset(right.lock.package_gates.get(name, ()))
+        for name in left.pins
+    )
+
+
+def _shared_preferences(results: Sequence[TargetResult]) -> list[dict[str, Version]]:
+    """Try resolved models, then a combination of their oldest selected versions."""
+    choices: list[dict[str, Version]] = []
+    for result in reversed(results):
+        if result.pins not in choices:
+            choices.append(result.pins)
+
+    combined: dict[str, Version] = {}
+    for result in results:
+        for name, version in result.pins.items():
+            combined[name] = min(combined.get(name, version), version)
+
+    if combined not in choices:
+        choices.append(combined)
+    return choices
+
+
+def _with_trial_cost(result: TargetResult, trial: TargetResult) -> TargetResult:
+    """Keep the chosen model while accounting for every attempted resolve."""
+    return replace(
+        result,
+        consulted=result.consulted | trial.consulted,
+        decisions=result.decisions + trial.decisions,
+        rounds=result.rounds + trial.rounds,
+        conflicts=result.conflicts + trial.conflicts,
+        backjumps=result.backjumps + trial.backjumps,
+        metadata_fetched=result.metadata_fetched + trial.metadata_fetched,
+        distributions_seen=result.distributions_seen + trial.distributions_seen,
+        wall_time=result.wall_time + trial.wall_time,
+    )
+
+
+def _reconcile_build_results(
+    results: list[TargetResult],
+    requirements: Sequence[Requirement],
+    constraints: Sequence[Requirement],
+    settings: _EngineSettings,
+    contexts: InstallContexts | None,
+) -> None:
+    """Retry differing selections only where standard markers cannot separate builds."""
+    buckets: dict[_BuildContext, list[int]] = defaultdict(list)
+    for index, result in enumerate(results):
+        if result.success and result.target.platform_spec is not None:
+            key = (
+                env_signature(result.target),
+                result.target.micro_clauses,
+                result.target.selection,
+            )
+            buckets[key].append(index)
+
+    for indexes in buckets.values():
+        if len(indexes) == 1:
+            continue
+        group = [results[index] for index in indexes]
+        if all(_same_build_selection(group[0], item) for item in group[1:]):
+            continue
+
+        repaired = _retry_build_group(
+            group, requirements, constraints, settings, contexts
+        )
+        for index, item in zip(indexes, repaired, strict=True):
+            results[index] = item
+        if not all(item.success for item in repaired):
+            return
+
+
+def _retry_build_group(
+    group: list[TargetResult],
+    requirements: Sequence[Requirement],
+    constraints: Sequence[Requirement],
+    settings: _EngineSettings,
+    contexts: InstallContexts | None,
+) -> list[TargetResult]:
+    """Try observed version choices while retaining only compatible selections."""
+    # Prior locks propose versions; they must not override this repair's choices.
+    trial_settings = replace(settings, lock_preferences=None)
+    accumulated = list(group)
+
+    # Try each observed model once, plus their oldest-version combination.
+    for preferences in _shared_preferences(group):
+        trials: list[TargetResult] = []
+        for index, item in enumerate(group):
+            trial = _resolve_one_target(
+                item.target,
+                requirements,
+                constraints,
+                trial_settings,
+                preferences,
+                contexts,
+            )
+            accumulated[index] = _with_trial_cost(accumulated[index], trial)
+            if isinstance(trial.error, ResolutionTerminatedError):
+                accumulated[index] = replace(
+                    accumulated[index], success=False, error=trial.error, lock=None
+                )
+                return accumulated
+
+            trials.append(trial)
+
+        if all(item.success for item in trials) and all(
+            _same_build_selection(trials[0], item) for item in trials[1:]
+        ):
+            return [
+                replace(previous, pins=trial.pins, lock=trial.lock)
+                for previous, trial in zip(accumulated, trials, strict=True)
+            ]
+
+    return accumulated
 
 
 def _make_target_provider(

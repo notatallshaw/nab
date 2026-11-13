@@ -186,6 +186,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     include_dependency_requirements: bool = False,
     resolution_strategy: ResolutionStrategy | None = None,
     lock_preferences: LockPreferences | None = None,
+    reconcile_build_variants: bool = False,
     progress: ProgressSink | None = None,
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     prefetch_settings: PrefetchSettings | None = None,
@@ -207,6 +208,9 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
 
     ``include_dependency_requirements`` retains active declarations on each
     successful target's lock. Roots and constraints remain separate.
+
+    ``reconcile_build_variants`` tries shared version preferences for builds
+    with identical markers before a pylock writer checks their selections.
 
     ``build_requirements`` resolves ``[build-system].requires`` instead of
     the project's dependencies; neither ``groups`` nor ``extras`` mean
@@ -263,6 +267,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
             base_requirements=base_requirements,
             resolution_strategy=resolution_strategy,
             lock_preferences=lock_preferences,
+            reconcile_build_variants=reconcile_build_variants,
             progress=progress,
             release_refused_wheels=True,
             include_dependency_requirements=include_dependency_requirements,
@@ -327,6 +332,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     resolution_strategy: ResolutionStrategy | None = None,
     lock_preferences: LockPreferences | None = None,
     align_across_targets: bool = True,
+    reconcile_build_variants: bool = False,
     preferences: Mapping[str, Version] | None = None,
     progress: ProgressSink | None = None,
     marker_holds: MarkerHolds | None = None,
@@ -349,6 +355,11 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     preferences for the next, so a package the matrix does not force
     apart keeps one version across targets.  ``preferences`` seeds that,
     e.g. from a previous lock.
+
+    ``reconcile_build_variants`` also revisits indistinguishable builds with
+    the versions already selected and their componentwise oldest combination.
+    It does not exhaustively search for a common solution. Each trial uses
+    the target's normal provider checks; the lock writer still validates it.
 
     ``lock_preferences`` selects an explicit checked-model policy: try applicable
     prior versions unchanged, then fall back to ordinary version preferences.
@@ -383,6 +394,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
             inputs=inputs,
             source_root=source_root,
             align=align_across_targets,
+            reconcile_build_variants=reconcile_build_variants,
             resolution=(
                 resolution_strategy
                 if resolution_strategy is not None
