@@ -457,19 +457,19 @@ def test_digest_algorithm_is_part_of_the_pending_identity() -> None:
 def test_cancelled_metadata_write_finishes_before_close(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A blocked metadata sync leaves the loop responsive and remains owned on close."""
+    """A blocked metadata replacement leaves the loop responsive and remains owned on close."""
     entered = threading.Event()
     release = threading.Event()
     loop_thread = threading.get_ident()
-    actual_fsync = os.fsync
+    actual_replace = os.replace
 
-    def blocked_fsync(descriptor: int) -> None:
+    def blocked_replace(source: Path, destination: Path) -> None:
         assert threading.get_ident() != loop_thread
         entered.set()
         assert release.wait(timeout=5)
-        actual_fsync(descriptor)
+        actual_replace(source, destination)
 
-    monkeypatch.setattr(os, "fsync", blocked_fsync)
+    monkeypatch.setattr(os, "replace", blocked_replace)
     cache = OnDiskCache(tmp_path, _INDEX)
     transport = HeldSidecarTransport({_FIRST: _BODY})
 

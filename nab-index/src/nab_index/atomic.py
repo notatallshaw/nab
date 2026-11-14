@@ -24,12 +24,13 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Iterable
     from pathlib import Path
 
 
 __all__ = [
     "atomic_write",
+    "atomic_write_chunks",
     "atomic_write_text",
 ]
 
@@ -115,13 +116,22 @@ def _staged(path: Path) -> Generator[int, None, None]:
 
 def atomic_write(path: Path, data: bytes) -> None:
     """Replace ``path`` with ``data``."""
+    atomic_write_chunks(path, (data,))
+
+
+def atomic_write_chunks(
+    path: Path, chunks: Iterable[bytes], *, sync: bool = True
+) -> None:
+    """Replace a file from chunks, synchronizing its data by default."""
     with _staged(path) as fd, os.fdopen(fd, "wb") as f:
-        f.write(data)
+        for chunk in chunks:
+            f.write(chunk)
 
         # close() only reaches the page cache, where a full disk can still
         # surface at writeback, after the rename has replaced the file.
         f.flush()
-        os.fsync(f.fileno())
+        if sync:
+            os.fsync(f.fileno())
 
 
 def atomic_write_text(path: Path, text: str) -> None:

@@ -169,7 +169,7 @@ def test_lone_surrogate_in_field_round_trips() -> None:
 def test_blob_is_portable_json() -> None:
     """The wire form carries no interpreter tag, so any reader can decode it."""
     header, rows = json.loads(encode(SAMPLE, DIGEST))
-    assert header == [FORMAT_VERSION, CODEC, KEY_SCHEME, DIGEST, [], {}]
+    assert header == [FORMAT_VERSION, CODEC, KEY_SCHEME, DIGEST, [], {}, None]
     assert [row[0] for row in rows] == [_TAG_WHEEL, _TAG_SDIST, _TAG_WHEEL, _TAG_SDIST]
 
 
@@ -574,3 +574,23 @@ def test_compact_raw_sha256_preserves_integrity_semantics(digest: str) -> None:
     assert record.hashes == wheel.hashes
     assert record.metadata_hash == wheel.metadata_hash
     assert encode(restored.files, DIGEST) == blob
+
+
+def test_page_context_is_part_of_the_parsed_binding() -> None:
+    old = CachePolicy(
+        1, 600, None, page_url="https://old.example/pkg/", body_digest=DIGEST
+    )
+    new = CachePolicy(
+        2, 600, None, page_url="https://new.example/pkg/", body_digest=DIGEST
+    )
+    blob = encode(SAMPLE, DIGEST, page_url=old.page_url)
+    assert decode(blob, old) is not None
+    assert decode(blob, new) is None
+    assert corruption_reason(blob) is None
+
+
+@pytest.mark.parametrize("page_url", [1, False, [], {}])
+def test_non_text_page_context_is_corruption(page_url: object) -> None:
+    blob = _tamper_header(6, page_url)
+    assert decode(blob, _policy()) is None
+    assert corruption_reason(blob) is not None

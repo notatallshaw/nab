@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from nab_index.atomic import atomic_write, atomic_write_text
+from nab_index.atomic import atomic_write_text
 from nab_index.cache import (
     ARCHIVE_BUCKET,
     CACHE_VERSION_METADATA,
@@ -30,9 +30,10 @@ from nab_index.cache import (
     OfflineError,
     OnDiskCache,
     _add_owner_mode,
-    _atomic_write,
+    _atomic_write_record,
     _encode_policy,
     _index_dirname,
+    _read_cache_record,
     _require_single_segment,
 )
 from nab_index.vcs import VcsRequest, prepare_clone
@@ -121,21 +122,21 @@ class TestOfflineError:
             raise OfflineError("boom")
 
 
-class TestAtomicWrite:
+class TestCacheRecordWrite:
     def test_creates_parent_dirs(self, tmp_path: Path) -> None:
         target = tmp_path / "a" / "b" / "c.txt"
-        _atomic_write(target, b"hello")
-        assert target.read_bytes() == b"hello"
+        _atomic_write_record(target, b"hello")
+        assert _read_cache_record(target) == b"hello"
 
     def test_overwrites_existing(self, tmp_path: Path) -> None:
         target = tmp_path / "x.txt"
         target.write_bytes(b"old")
-        _atomic_write(target, b"new")
-        assert target.read_bytes() == b"new"
+        _atomic_write_record(target, b"new")
+        assert _read_cache_record(target) == b"new"
 
     def test_no_temp_left_after_success(self, tmp_path: Path) -> None:
         target = tmp_path / "x.txt"
-        _atomic_write(target, b"data")
+        _atomic_write_record(target, b"data")
         leftovers = [p for p in tmp_path.iterdir() if p.name != "x.txt"]
         assert leftovers == []
 
@@ -150,7 +151,7 @@ class TestAtomicWrite:
 
         monkeypatch.setattr("nab_index.atomic.os.replace", fail_replace)
         with pytest.raises(OSError, match="boom"):
-            _atomic_write(target, b"data")
+            _atomic_write_record(target, b"data")
         assert not target.exists()
         assert list(tmp_path.iterdir()) == []
 
@@ -169,7 +170,7 @@ class TestAtomicWrite:
 
         monkeypatch.setattr("nab_index.atomic.os.unlink", fail_unlink)
         with pytest.raises(RuntimeError, match="rep"):
-            _atomic_write(target, b"data")
+            _atomic_write_record(target, b"data")
 
     def test_new_file_gets_the_mode_open_would_have_given_it(
         self, tmp_path: Path
@@ -177,7 +178,7 @@ class TestAtomicWrite:
         reference = tmp_path / "reference.txt"
         reference.write_bytes(b"x")
         target = tmp_path / "x.txt"
-        _atomic_write(target, b"data")
+        _atomic_write_record(target, b"data")
         assert target.stat().st_mode == reference.stat().st_mode
 
     def test_mode_of_the_replaced_file_is_kept(self, tmp_path: Path) -> None:
@@ -185,7 +186,7 @@ class TestAtomicWrite:
         target.write_bytes(b"old")
         target.chmod(0o640)
         mode = target.stat().st_mode
-        _atomic_write(target, b"new")
+        _atomic_write_record(target, b"new")
         assert target.stat().st_mode == mode
 
     def test_content_is_synced_before_the_rename(
@@ -283,38 +284,40 @@ class TestOnDiskCache:
         cache = self._make(tmp_path)
         body_path, _ = cache._simple_paths("foo")
         body_path.parent.mkdir(parents=True, exist_ok=True)
-        body_path.write_bytes(b"{}")
+        _atomic_write_record(body_path, b"{}")
         assert cache.get_simple("foo") is None
 
     def test_simple_miss_when_only_policy(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
         _, policy_path = cache._simple_paths("foo")
         policy_path.parent.mkdir(parents=True, exist_ok=True)
-        policy_path.write_bytes(b'{"fetched_at":1,"max_age":1,"etag":null}')
+        _atomic_write_record(policy_path, b'{"fetched_at":1,"max_age":1,"etag":null}')
         assert cache.get_simple("foo") is None
 
     def test_simple_miss_on_corrupt_policy_json(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
         body_path, policy_path = cache._simple_paths("foo")
         body_path.parent.mkdir(parents=True, exist_ok=True)
-        body_path.write_bytes(b"{}")
-        policy_path.write_bytes(b"not-json")
+        _atomic_write_record(body_path, b"{}")
+        _atomic_write_record(policy_path, b"not-json")
         assert cache.get_simple("foo") is None
 
     def test_simple_miss_on_policy_missing_keys(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
         body_path, policy_path = cache._simple_paths("foo")
         body_path.parent.mkdir(parents=True, exist_ok=True)
-        body_path.write_bytes(b"{}")
-        policy_path.write_bytes(b'{"fetched_at":1}')
+        _atomic_write_record(body_path, b"{}")
+        _atomic_write_record(policy_path, b'{"fetched_at":1}')
         assert cache.get_simple("foo") is None
 
     def test_simple_miss_on_policy_wrong_types(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
         body_path, policy_path = cache._simple_paths("foo")
         body_path.parent.mkdir(parents=True, exist_ok=True)
-        body_path.write_bytes(b"{}")
-        policy_path.write_bytes(b'{"fetched_at":"x","max_age":"y","etag":null}')
+        _atomic_write_record(body_path, b"{}")
+        _atomic_write_record(
+            policy_path, b'{"fetched_at":"x","max_age":"y","etag":null}'
+        )
         assert cache.get_simple("foo") is None
 
     def test_refresh_policy_keeps_body(self, tmp_path: Path) -> None:
@@ -327,7 +330,7 @@ class TestOnDiskCache:
         assert result is not None
         body, got = result
         assert body == b"BODY"
-        assert got == new
+        assert got == replace(new, body_digest=hashlib.sha256(b"BODY").hexdigest())
 
     def test_metadata_round_trip(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
@@ -350,7 +353,7 @@ class TestOnDiskCache:
         cache.put_metadata("foo", win_url, "win")
         assert cache.get_metadata("foo", linux_url) == "linux"
         assert cache.get_metadata("foo", win_url) == "win"
-        assert len(list((tmp_path / "metadata-v1" / "pypi" / "foo").iterdir())) == 2
+        assert len(list((tmp_path / METADATA_BUCKET / "pypi" / "foo").iterdir())) == 2
 
     def test_sdist_round_trip(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
@@ -412,7 +415,7 @@ class TestOnDiskCache:
         cache = self._make(tmp_path)
         path = cache._sdist_path("foo", "1.0")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(raw)
+        _atomic_write_record(path, raw)
         assert cache.get_sdist_files("foo", "1.0") is None
 
     def test_sdist_record_without_magic_is_a_miss(self, tmp_path: Path) -> None:
@@ -420,7 +423,7 @@ class TestOnDiskCache:
         cache = self._make(tmp_path)
         path = cache._sdist_path("foo", "1.0")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"otherfmt1 5 -1\nhello")
+        _atomic_write_record(path, b"otherfmt1 5 -1\nhello")
         assert cache.get_sdist_files("foo", "1.0") is None
 
     def test_sdist_json_record_not_json_is_a_miss(self, tmp_path: Path) -> None:
@@ -471,7 +474,7 @@ class TestOnDiskCache:
         cache.put_metadata("foo", "https://f.example/../../../etc/passwd.metadata", "T")
         written = list(tmp_path.rglob("*.metadata"))
         assert [p.parent for p in written] == [
-            tmp_path / "metadata-v1" / "pypi" / "foo"
+            tmp_path / METADATA_BUCKET / "pypi" / "foo"
         ]
 
     def test_negative_round_trip(self, tmp_path: Path) -> None:
@@ -483,7 +486,7 @@ class TestOnDiskCache:
     def test_negative_layout_uses_neg_bucket(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
         cache.put_negative("foo", CachePolicy(fetched_at=1, max_age=1, etag=None))
-        assert (tmp_path / "simple-neg-v0" / "pypi" / "foo.neg").exists()
+        assert (tmp_path / NEG_BUCKET / "pypi" / "foo.neg").exists()
 
     def test_negative_miss_when_absent(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
@@ -504,7 +507,7 @@ class TestOnDiskCache:
         cache = self._make(tmp_path)
         path = cache._neg_path("foo")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"not-json")
+        _atomic_write_record(path, b"not-json")
         assert cache.get_negative("foo") is None
 
     def test_put_negative_rejects_multi_segment_package(self, tmp_path: Path) -> None:
@@ -554,7 +557,7 @@ class TestUnwritableRoot:
         def denied(_path: Path, _data: bytes) -> None:
             raise PermissionError(13, "Permission denied")
 
-        monkeypatch.setattr("nab_index.cache.atomic_write", denied)
+        monkeypatch.setattr("nab_index.cache._atomic_write_record", denied)
         cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
         cache.put_metadata("foo", METADATA_URLS[0], "Name: foo\n")
         assert cache.get_metadata("foo", METADATA_URLS[0]) is None
@@ -598,9 +601,9 @@ class TestUnwritableRoot:
         def fail_body(path: Path, data: bytes) -> None:
             if path.suffix == ".json":
                 raise OSError(28, "No space left on device")
-            atomic_write(path, data)
+            _atomic_write_record(path, data)
 
-        monkeypatch.setattr("nab_index.cache.atomic_write", fail_body)
+        monkeypatch.setattr("nab_index.cache._atomic_write_record", fail_body)
         cache.put_simple(
             "foo",
             b"NEW-LISTING",
@@ -623,9 +626,9 @@ class TestUnwritableRoot:
         def fail_policy(path: Path, data: bytes) -> None:
             if path.suffix == ".policy":
                 raise OSError(28, "No space left on device")
-            atomic_write(path, data)
+            _atomic_write_record(path, data)
 
-        monkeypatch.setattr("nab_index.cache.atomic_write", fail_policy)
+        monkeypatch.setattr("nab_index.cache._atomic_write_record", fail_policy)
         digest = cache.put_simple(
             "foo",
             b"LISTING",
@@ -685,8 +688,8 @@ class TestCorruptEntryLogging:
         cache = self._make(tmp_path)
         body_path, policy_path = cache._simple_paths("foo")
         body_path.parent.mkdir(parents=True, exist_ok=True)
-        body_path.write_bytes(b"{}")
-        policy_path.write_bytes(b"not-json")
+        _atomic_write_record(body_path, b"{}")
+        _atomic_write_record(policy_path, b"not-json")
         with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
             assert cache.get_simple("foo") is None
         warnings = _warnings(caplog)
@@ -699,7 +702,7 @@ class TestCorruptEntryLogging:
         cache = self._make(tmp_path)
         path = cache._neg_path("foo")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"not-json")
+        _atomic_write_record(path, b"not-json")
         with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
             assert cache.get_negative("foo") is None
         warnings = _warnings(caplog)
@@ -712,7 +715,7 @@ class TestCorruptEntryLogging:
         cache = self._make(tmp_path)
         path = cache._sdist_path("foo", "1.0")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"not a record")
+        _atomic_write_record(path, b"not a record")
         with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
             assert cache.get_sdist_files("foo", "1.0") is None
         warnings = _warnings(caplog)
@@ -741,8 +744,8 @@ class TestCorruptEntryLogging:
         cache = self._make(tmp_path)
         body_path, policy_path = cache._simple_paths("foo")
         body_path.parent.mkdir(parents=True, exist_ok=True)
-        body_path.write_bytes(b"{}")
-        policy_path.write_bytes(OVER_NESTED)
+        _atomic_write_record(body_path, b"{}")
+        _atomic_write_record(policy_path, OVER_NESTED)
         with (
             refuse_over_nested(OVER_NESTED),
             caplog.at_level(logging.WARNING, logger="nab_index.cache"),
@@ -777,7 +780,7 @@ class TestCorruptEntryLogging:
         cache = self._make(tmp_path)
         path = cache._sdist_path("foo", "1.0")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"nabsdist1 1 -1\n\xff")
+        _atomic_write_record(path, b"nabsdist1 1 -1\n\xff")
         with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
             assert cache.get_sdist_files("foo", "1.0") is None
         warnings = _warnings(caplog)
@@ -790,7 +793,7 @@ class TestCorruptEntryLogging:
         cache = self._make(tmp_path)
         path = cache._metadata_path("foo", METADATA_URLS[0])
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"\xff\xfe not utf-8")
+        _atomic_write_record(path, b"\xff\xfe not utf-8")
         with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
             assert cache.get_metadata("foo", METADATA_URLS[0]) is None
         warnings = _warnings(caplog)
@@ -857,7 +860,17 @@ class TestEncodePolicy:
         cache = OnDiskCache(tmp_path, "https://pypi.org/simple")
         cache.put_simple("foo", b"{}", _FRESH)
         path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy"
-        path.write_bytes(b'{"fetched_at":1,"max_age":600,"etag":"x"}')
+        _atomic_write_record(
+            path,
+            json.dumps(
+                {
+                    "fetched_at": 1,
+                    "max_age": 600,
+                    "etag": "x",
+                    "body_digest": hashlib.sha256(b"{}").hexdigest(),
+                }
+            ).encode(),
+        )
 
         entry = cache.get_simple("foo")
 
@@ -871,10 +884,17 @@ class TestEncodePolicy:
         cache = OnDiskCache(tmp_path, "https://pypi.org/simple")
         cache.put_simple("foo", b"{}", _FRESH)
         path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy"
-        path.write_bytes(
+        _atomic_write_record(
+            path,
             json.dumps(
-                {"fetched_at": 1, "max_age": 600, "etag": "x", "page_url": page_url}
-            ).encode()
+                {
+                    "fetched_at": 1,
+                    "max_age": 600,
+                    "etag": "x",
+                    "page_url": page_url,
+                    "body_digest": hashlib.sha256(b"{}").hexdigest(),
+                }
+            ).encode(),
         )
 
         entry = cache.get_simple("foo")
@@ -891,8 +911,16 @@ class TestEncodePolicy:
         cache = OnDiskCache(tmp_path, "https://pypi.org/simple")
         cache.put_simple("foo", b"{}", _FRESH)
         path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy"
-        path.write_bytes(
-            json.dumps({"fetched_at": 1, "max_age": 600, "etag": etag}).encode()
+        _atomic_write_record(
+            path,
+            json.dumps(
+                {
+                    "fetched_at": 1,
+                    "max_age": 600,
+                    "etag": etag,
+                    "body_digest": hashlib.sha256(b"{}").hexdigest(),
+                }
+            ).encode(),
         )
 
         entry = cache.get_simple("foo")
@@ -909,7 +937,7 @@ class TestReadCacheEntry:
         cache = self._cache(tmp_path)
         path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy"
         path.parent.mkdir(parents=True)
-        path.write_bytes(b"not json")
+        _atomic_write_record(path, b"not json")
         assert cache.read_cache_entry(path) is not None
 
     @pytest.mark.parametrize(
@@ -924,7 +952,7 @@ class TestReadCacheEntry:
         cache = self._cache(tmp_path)
         path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy"
         path.parent.mkdir(parents=True)
-        path.write_bytes(raw)
+        _atomic_write_record(path, raw)
         assert cache.read_cache_entry(path) == "policy not decodable"
 
     def test_valid_policy(self, tmp_path: Path) -> None:
@@ -935,29 +963,29 @@ class TestReadCacheEntry:
 
     def test_corrupt_negative(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
-        path = tmp_path / "simple-neg-v0" / "pypi" / "bar.neg"
+        path = tmp_path / NEG_BUCKET / "pypi" / "bar.neg"
         path.parent.mkdir(parents=True)
-        path.write_bytes(b"nope")
+        _atomic_write_record(path, b"nope")
         assert cache.read_cache_entry(path) is not None
 
     def test_non_utf8_metadata(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
-        path = tmp_path / "metadata-v1" / "pypi" / "foo" / "abc.metadata"
+        path = tmp_path / METADATA_BUCKET / "pypi" / "foo" / "abc.metadata"
         path.parent.mkdir(parents=True)
-        path.write_bytes(b"\xff\xfe")
+        _atomic_write_record(path, b"\xff\xfe")
         assert cache.read_cache_entry(path) == "not valid UTF-8"
 
     def test_valid_metadata(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
         cache.put_metadata("foo", "https://example.com/f.whl", "ok")
-        path = next((tmp_path / "metadata-v1").rglob("*.metadata"))
+        path = next((tmp_path / METADATA_BUCKET).rglob("*.metadata"))
         assert cache.read_cache_entry(path) is None
 
     def test_invalid_simple_json(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
         path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.json"
         path.parent.mkdir(parents=True)
-        path.write_bytes(b"{not json")
+        _atomic_write_record(path, b"{not json")
         assert cache.read_cache_entry(path) == "not valid JSON"
 
     def test_over_nested_simple_json(
@@ -968,7 +996,7 @@ class TestReadCacheEntry:
         cache = self._cache(tmp_path)
         path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.json"
         path.parent.mkdir(parents=True)
-        path.write_bytes(OVER_NESTED)
+        _atomic_write_record(path, OVER_NESTED)
         with refuse_over_nested(OVER_NESTED):
             assert cache.read_cache_entry(path) == "nested too deeply to decode"
 
@@ -980,7 +1008,7 @@ class TestReadCacheEntry:
         cache = self._cache(tmp_path)
         path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy"
         path.parent.mkdir(parents=True)
-        path.write_bytes(OVER_NESTED)
+        _atomic_write_record(path, OVER_NESTED)
         with refuse_over_nested(OVER_NESTED):
             assert cache.read_cache_entry(path) == "policy not decodable"
 
@@ -992,7 +1020,7 @@ class TestReadCacheEntry:
         cache = self._cache(tmp_path)
         path = tmp_path / PARSED_BUCKET / "pypi" / "foo.parsed"
         path.parent.mkdir(parents=True)
-        path.write_bytes(OVER_NESTED)
+        _atomic_write_record(path, OVER_NESTED)
         with refuse_over_nested(OVER_NESTED):
             assert cache.read_cache_entry(path) == "nested too deeply to decode"
 
@@ -1019,7 +1047,7 @@ class TestReadCacheEntry:
         cache = self._cache(tmp_path)
         path = tmp_path / SDIST_BUCKET / "pypi" / "foo" / "1.0.record"
         path.parent.mkdir(parents=True)
-        path.write_bytes(b"nabsdist1 4 -1\nab")
+        _atomic_write_record(path, b"nabsdist1 4 -1\nab")
         assert cache.read_cache_entry(path) == "sdist record not decodable"
 
     def test_unknown_suffix_is_clean(self, tmp_path: Path) -> None:
@@ -1082,8 +1110,8 @@ class TestClearCache:
         removed = cache.clear_cache()
         assert set(removed) == {
             SIMPLE_BUCKET,
-            "simple-neg-v0",
-            "metadata-v1",
+            NEG_BUCKET,
+            METADATA_BUCKET,
             SDIST_BUCKET,
         }
         assert not (tmp_path / SIMPLE_BUCKET).exists()

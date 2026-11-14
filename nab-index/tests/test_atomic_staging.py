@@ -173,3 +173,19 @@ def test_staging_fits_the_existing_filename_budget(tmp_path: Path) -> None:
 
     assert target.read_bytes() == b"new"
     assert list(tmp_path.iterdir()) == [target]
+
+
+def test_default_binary_sync_failure_keeps_the_previous_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "artifact"
+    target.write_bytes(b"old")
+
+    def fail_sync(_fd: int) -> None:
+        raise OSError("storage sync failed")
+
+    monkeypatch.setattr(atomic.os, "fsync", fail_sync)
+    with pytest.raises(OSError, match="storage sync failed"):
+        atomic.atomic_write(target, b"new")
+    assert target.read_bytes() == b"old"
+    assert list(tmp_path.iterdir()) == [target]

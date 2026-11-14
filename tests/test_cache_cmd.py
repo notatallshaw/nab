@@ -17,6 +17,7 @@ from nab_index.cache import (
     CACHE_VERSION_SIMPLE_PARSED,
     CachePolicy,
     OnDiskCache,
+    _atomic_write_record,
 )
 from nab_index.parsed_listing import encode as _encode_parsed
 
@@ -293,7 +294,7 @@ class TestCacheVerify:
         root = tmp_path / "cache"
         _populate(root)
         policy_path = root / SIMPLE_BUCKET / "pypi" / "foo.policy"
-        policy_path.write_bytes(b"not json")
+        _atomic_write_record(policy_path, b"not json")
         _run_cache(["verify", "--cache-dir", str(root)], status=1)
         captured = capsys.readouterr()
 
@@ -334,7 +335,7 @@ class TestCacheVerify:
         root = tmp_path / "cache"
         _populate(root)
         parsed_path = root / PARSED_BUCKET / "pypi" / "foo.parsed"
-        parsed_path.write_bytes(b"not json data")
+        _atomic_write_record(parsed_path, b"not json data")
         _run_cache(["verify", "--cache-dir", str(root)], status=1)
         out = capsys.readouterr().out
 
@@ -350,7 +351,7 @@ class TestCacheVerify:
         root = tmp_path / "cache"
         _populate(root)
         parsed_path = root / PARSED_BUCKET / "pypi" / "foo.parsed"
-        parsed_path.write_bytes(_OVER_NESTED)
+        _atomic_write_record(parsed_path, _OVER_NESTED)
         with refuse_over_nested(_OVER_NESTED):
             _run_cache(["verify", "--cache-dir", str(root)], status=1)
         out = capsys.readouterr().out

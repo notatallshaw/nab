@@ -3960,7 +3960,7 @@ class TestGetSdistFiles:
         )
         transport = _FakeTransport([_FakeResponse(body), _FakeResponse(body)])
 
-        real_atomic_write = cache_mod._atomic_write
+        real_atomic_write = cache_mod._atomic_write_record
         fail = {"active": True}
 
         def flaky_atomic_write(path: Path, data: bytes) -> None:
@@ -3969,7 +3969,7 @@ class TestGetSdistFiles:
                 raise OSError(msg)
             real_atomic_write(path, data)
 
-        monkeypatch.setattr(cache_mod, "_atomic_write", flaky_atomic_write)
+        monkeypatch.setattr(cache_mod, "_atomic_write_record", flaky_atomic_write)
 
         async def fetch() -> tuple[str | None, str | None]:
             client = CachedAsyncSimpleClient(transport, cache)
@@ -5565,8 +5565,8 @@ class TestPolicyWriteScheduling:
     ) -> None:
         cache = _make_cache(tmp_path)
         client = _revalidation_client(cache, requests=5)
-        probe = _PolicyWriteProbe(cache_mod.atomic_write)
-        monkeypatch.setattr(cache_mod, "atomic_write", probe)
+        probe = _PolicyWriteProbe(cache_mod._atomic_write_record)
+        monkeypatch.setattr(cache_mod, "_atomic_write_record", probe)
         caller = threading.get_ident()
 
         async def go() -> None:
@@ -5589,8 +5589,8 @@ class TestPolicyWriteScheduling:
     ) -> None:
         cache = _ThreadBoundCache(tmp_path, "https://pypi.org/simple/")
         client = _revalidation_client(cache)
-        probe = _PolicyWriteProbe(cache_mod.atomic_write)
-        monkeypatch.setattr(cache_mod, "atomic_write", probe)
+        probe = _PolicyWriteProbe(cache_mod._atomic_write_record)
+        monkeypatch.setattr(cache_mod, "_atomic_write_record", probe)
 
         async def go() -> None:
             try:
@@ -5607,8 +5607,8 @@ class TestPolicyWriteScheduling:
         cache = _make_cache(tmp_path)
         client = _revalidation_client(cache)
         before = cache.get_simple_policy("pkg")
-        probe = _PolicyWriteProbe(cache_mod.atomic_write, blocked=True)
-        monkeypatch.setattr(cache_mod, "atomic_write", probe)
+        probe = _PolicyWriteProbe(cache_mod._atomic_write_record, blocked=True)
+        monkeypatch.setattr(cache_mod, "_atomic_write_record", probe)
 
         async def go() -> None:
             read = asyncio.create_task(client.get_files("pkg"))
@@ -5647,7 +5647,7 @@ class TestPolicyWriteScheduling:
         def fail(_path: Path, _data: bytes) -> None:
             raise RuntimeError("policy write failed")
 
-        monkeypatch.setattr(cache_mod, "atomic_write", fail)
+        monkeypatch.setattr(cache_mod, "_atomic_write_record", fail)
 
         async def go() -> None:
             try:

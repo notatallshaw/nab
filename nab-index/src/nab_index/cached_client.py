@@ -278,18 +278,6 @@ def _freshness_lifetime(response: HttpResponse) -> int:
     return _expires_lifetime(expires, _header(response, "date"))
 
 
-def _carried_digest(policy: CachePolicy, page_url: str) -> str | None:
-    """Return the body digest a 304 may carry forward, or ``None`` to retire it.
-
-    A 304 leaves the body alone, so the parsed blob bound to it still describes
-    that body, but only while the page it was parsed from is the same one: a
-    relative entry resolves against the page URL, so a move re-resolves every
-    file URL. Dropping the digest retires the blob, and the next read rebuilds
-    it against the new base.
-    """
-    return policy.body_digest if page_url == policy.page_url else None
-
-
 def read_fresh_parsed_listing(
     cache: CacheBackend, package: str, *, offline: bool
 ) -> ParsedListing | None:
@@ -612,6 +600,7 @@ class CachedAsyncSimpleClient:
         files: list[WheelFile | SdistFile],
         *,
         zip_sdists: frozenset[str] | None = None,
+        page_url: str | None = None,
     ) -> None:
         """Write the parsed blob for ``files``, when there is one worth writing.
 
@@ -632,7 +621,7 @@ class CachedAsyncSimpleClient:
 
         if zip_sdists is None:
             zip_sdists = self._zip_sdists.get(package, frozenset())
-        blob = _encode_parsed(files, digest, zip_sdists)
+        blob = _encode_parsed(files, digest, zip_sdists, page_url=page_url)
         try:
             self._cache.put_simple_parsed(package, blob)
         except OSError as exc:
@@ -670,7 +659,7 @@ class CachedAsyncSimpleClient:
             self._cache.refresh_simple_policy(
                 package, replace(policy, body_digest=digest)
             )
-        self._store_parsed(package, digest, files)
+        self._store_parsed(package, digest, files, page_url=policy.page_url)
 
     def _negative_policy(self, response: HttpResponse) -> CachePolicy:
         """Freshness policy for a name-level 404, clamped to the 600s cap."""
@@ -817,7 +806,7 @@ class CachedAsyncSimpleClient:
                 ),
                 etag=_header(response, "etag") or policy.etag,
                 page_url=response.url,
-                body_digest=_carried_digest(policy, response.url),
+                body_digest=policy.body_digest,
             )
 
             # Find the records before refreshing the policy, so a body that
@@ -848,7 +837,7 @@ class CachedAsyncSimpleClient:
             page_url=response.url,
         )
         digest = self._cache.put_simple(package, new_body, new_policy)
-        self._store_parsed(package, digest, files)
+        self._store_parsed(package, digest, files, page_url=new_policy.page_url)
         return files
 
     async def _refresh_simple_policy(self, package: str, policy: CachePolicy) -> None:
@@ -929,7 +918,9 @@ class CachedAsyncSimpleClient:
     ) -> None:
         """Store the body before its parsed records and negative-entry removal."""
         digest = self._cache.put_simple(package, body, policy)
-        self._store_parsed(package, digest, files, zip_sdists=zip_sdists)
+        self._store_parsed(
+            package, digest, files, zip_sdists=zip_sdists, page_url=policy.page_url
+        )
         self._cache.drop_negative(package)
 
     async def get_metadata_text(
@@ -1069,7 +1060,7 @@ class CachedAsyncSimpleClient:
     ) -> RangeMetadataResult:
         """Recover a sidecar-less wheel's METADATA by HTTP range reads.
 
-        The recovered text is cached under the same immutable ``metadata-v1``
+        The recovered text is cached under the same immutable ``metadata-v2``
         store the PEP 658 sidecar uses, keyed by the wheel URL. A cache hit is
         returned without any transport call, so a warm or previously-warmed
         offline resolve never re-ranges. A cold miss in offline mode raises
