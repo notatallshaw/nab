@@ -15,7 +15,10 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
+import threading
 from collections.abc import Callable, Coroutine, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, TypeVar
@@ -133,6 +136,95 @@ class _FakeTransport:
 
 def _cache(root: Path) -> OnDiskCache:
     return OnDiskCache(root, "https://pypi.org/simple")
+
+
+def test_failed_writers_do_not_wait_for_another_writers_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache = _cache(tmp_path)
+    parent = cache._parsed_path("pkg").parent
+    parent.parent.mkdir(parents=True)
+    parent.write_bytes(b"not a directory")
+    client = CachedAsyncSimpleClient(_FakeTransport([]), cache, _INDEX_NORM)
+    entered = threading.Event()
+    release = threading.Event()
+    reported = []
+
+    def warning(message: str, *args: object) -> None:
+        reported.append((message, args))
+        entered.set()
+        assert release.wait(timeout=10)
+
+    monkeypatch.setattr("nab_index.cached_client.logger.warning", warning)
+    digest = hashlib.sha256(_LISTING_BYTES).hexdigest()
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        first = workers.submit(client._store_parsed, "pkg", digest, _PARSED)
+        try:
+            assert entered.wait(timeout=5)
+            second = workers.submit(client._store_parsed, "pkg", digest, _PARSED)
+            second.result(timeout=5)
+            assert len(reported) == 1
+        finally:
+            release.set()
+        first.result(timeout=5)
+
+
+def test_cancelled_listing_write_finishes_before_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A blocked durable write leaves the loop responsive and survives cancellation."""
+    started = threading.Event()
+    released = threading.Event()
+    real_fsync = os.fsync
+    loop_thread = threading.get_ident()
+
+    def blocked_fsync(descriptor: int) -> None:
+        assert threading.get_ident() != loop_thread
+        started.set()
+        assert released.wait(timeout=5)
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", blocked_fsync)
+    cache = _cache(tmp_path)
+    client = CachedAsyncSimpleClient(
+        _FakeTransport([_FakeResponse(_LISTING_BYTES)]), cache, _INDEX
+    )
+
+    async def exercise() -> None:
+        request = asyncio.create_task(client.get_files("pkg"))
+        try:
+            assert await asyncio.to_thread(started.wait, 2)
+            # A later listing can replace this report while the disk write waits.
+            client._zip_sdists["pkg"] = frozenset({"2.0"})
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await request
+
+            closing = asyncio.create_task(client.aclose())
+            await asyncio.sleep(0)
+            assert not closing.done()
+        finally:
+            released.set()
+
+        await closing
+
+    _run(exercise())
+
+    stored = cache.get_simple("pkg")
+    assert stored is not None
+    body, policy = stored
+    assert body == _LISTING_BYTES
+    blob = cache.get_simple_parsed("pkg")
+    assert blob is not None
+    parsed = decode(blob, policy)
+    assert parsed is not None
+    assert parsed.zip_sdists == frozenset()
+
+    assert [file.filename for file in parsed.files] == [
+        "pkg-1.0-py3-none-any.whl",
+        "pkg-1.0.tar.gz",
+    ]
 
 
 def _decoded(blob: bytes | None, policy: CachePolicy) -> list[WheelFile | SdistFile]:

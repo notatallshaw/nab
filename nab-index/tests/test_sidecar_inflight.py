@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
@@ -450,3 +452,78 @@ def test_digest_algorithm_is_part_of_the_pending_identity() -> None:
             assert not client._metadata_pending
 
     asyncio.run(asyncio.wait_for(read(), timeout=5))
+
+
+def test_cancelled_metadata_write_finishes_before_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A blocked metadata sync leaves the loop responsive and remains owned on close."""
+    entered = threading.Event()
+    release = threading.Event()
+    loop_thread = threading.get_ident()
+    actual_fsync = os.fsync
+
+    def blocked_fsync(descriptor: int) -> None:
+        assert threading.get_ident() != loop_thread
+        entered.set()
+        assert release.wait(timeout=5)
+        actual_fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", blocked_fsync)
+    cache = OnDiskCache(tmp_path, _INDEX)
+    transport = HeldSidecarTransport({_FIRST: _BODY})
+
+    async def read() -> None:
+        transport.release.set()
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+        owner = asyncio.create_task(
+            client.get_metadata_text("demo", "1.0", _FIRST, _SHA256)
+        )
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            owner.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await owner
+            closing = asyncio.create_task(client.aclose())
+            await asyncio.sleep(0)
+            assert not closing.done()
+        finally:
+            release.set()
+        await closing
+        assert not client._cache_writes
+
+    asyncio.run(read())
+    assert cache.get_metadata("demo", _FIRST) == _BODY.decode()
+    assert transport.closed
+
+
+def test_custom_metadata_cache_keeps_the_caller_thread(
+    tmp_path: Path,
+) -> None:
+    caller = threading.get_ident()
+    writers = []
+
+    class ThreadBoundCache(OnDiskCache):
+        def put_metadata(self, package: str, url: str, text: str) -> None:
+            writers.append(threading.get_ident())
+            assert writers[-1] == caller
+            super().put_metadata(package, url, text)
+
+    cache = ThreadBoundCache(tmp_path, _INDEX)
+    transport = HeldSidecarTransport({_FIRST: _BODY})
+
+    async def read() -> None:
+        transport.release.set()
+        async with CachedAsyncSimpleClient(transport, cache, _INDEX) as client:
+            assert (
+                await client.get_metadata_text("demo", "1.0", _FIRST, _SHA256)
+                == _BODY.decode()
+            )
+            assert (
+                await client.get_metadata_text("demo", "1.0", _SECOND, _SHA256)
+                == _BODY.decode()
+            )
+
+    asyncio.run(read())
+    assert writers == [caller, caller]
+    assert cache.get_metadata("demo", _SECOND) == _BODY.decode()
