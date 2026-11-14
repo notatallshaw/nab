@@ -69,6 +69,8 @@ def _custom_hash(kind: str) -> tuple[str, str]:
 
 
 def _equal_text(value: str, alias: str) -> str:
+    """Return text that impersonates another string in a hash table."""
+
     class EqualText(str):
         __slots__ = ()
 
@@ -82,6 +84,7 @@ def _equal_text(value: str, alias: str) -> str:
 
 
 def _wrong_hash(kind: str) -> tuple[str, str]:
+    """Build an incorrect digest that compares equal to the valid identity."""
     if kind == "algorithm":
         return _equal_text("sha512", "sha256"), _SHA256[1]
     if kind == "digest":
@@ -105,6 +108,7 @@ async def _entered_read(
     entered: asyncio.Event,
     digest: tuple[str, str],
 ) -> str:
+    """Signal entry before requesting the second sidecar."""
     entered.set()
     return await client.get_metadata_text("demo", "1.0", _SECOND, digest)
 
