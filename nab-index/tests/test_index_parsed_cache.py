@@ -32,8 +32,10 @@ from nab_index.cache import (
     NullCache,
     OfflineError,
     OnDiskCache,
+    _atomic_write_record,
     _decode_policy,
     _encode_policy,
+    _read_cache_record,
     is_recognized_bucket,
 )
 from nab_index.cached_client import CachedAsyncSimpleClient, ParsedCacheStats
@@ -173,19 +175,19 @@ def test_failed_writers_do_not_wait_for_another_writers_warning(
 def test_cancelled_listing_write_finishes_before_close(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A blocked durable write leaves the loop responsive and survives cancellation."""
+    """A blocked atomic write leaves the loop responsive and survives cancellation."""
     started = threading.Event()
     released = threading.Event()
-    real_fsync = os.fsync
+    real_replace = os.replace
     loop_thread = threading.get_ident()
 
-    def blocked_fsync(descriptor: int) -> None:
+    def blocked_replace(source: Path, destination: Path) -> None:
         assert threading.get_ident() != loop_thread
         started.set()
         assert released.wait(timeout=5)
-        real_fsync(descriptor)
+        real_replace(source, destination)
 
-    monkeypatch.setattr(os, "fsync", blocked_fsync)
+    monkeypatch.setattr(os, "replace", blocked_replace)
     cache = _cache(tmp_path)
     client = CachedAsyncSimpleClient(
         _FakeTransport([_FakeResponse(_LISTING_BYTES)]), cache, _INDEX
@@ -311,7 +313,8 @@ class TestGetSimpleParsedBucket:
             / "pypi"
             / "foo.parsed"
         )
-        assert expected.read_bytes() == b"blob"
+        assert expected.is_file()
+        assert cache.get_simple_parsed("foo") == b"blob"
 
     def test_miss_returns_none(self, tmp_path: Path) -> None:
         assert _cache(tmp_path).get_simple_parsed("absent") is None
@@ -364,7 +367,7 @@ class TestGetSimplePolicy:
         cache = _cache(tmp_path)
         path = tmp_path / _SIMPLE_BUCKET / "pypi" / "foo.policy"
         path.parent.mkdir(parents=True)
-        path.write_bytes(b"not json")
+        _atomic_write_record(path, b"not json")
         with caplog.at_level(logging.WARNING):
             assert cache.get_simple_policy("foo") is None
         assert "Corrupt cache policy" in caplog.text
@@ -592,7 +595,7 @@ class TestWritePathParsedBlob:
             CachePolicy(fetched_at=0, max_age=0, etag="e1", page_url=_PAGE_URL),
         )
         old_files = _parse_files(json.loads(body), _INDEX_NORM, "pkg")
-        old_blob = encode(old_files, digest)
+        old_blob = encode(old_files, digest, page_url=_PAGE_URL)
         cache.put_simple_parsed("pkg", old_blob)
         transport = _FakeTransport(
             [_FakeResponse(b"", status=304, headers={"etag": "e1"})]
@@ -614,31 +617,48 @@ class TestWritePathParsedBlob:
     ) -> None:
         """A moved page re-resolves relative entries, so the old blob is retired."""
         cache = _cache(tmp_path)
+        listing = dict(_LISTING)
+        listing["files"] = [dict(row, url=row["filename"]) for row in _LISTING["files"]]
+        body = json.dumps(listing).encode()
         digest = cache.put_simple(
             "pkg",
-            _LISTING_BYTES,
+            body,
             CachePolicy(fetched_at=0, max_age=0, etag="e1", page_url=_PAGE_URL),
         )
-        old_blob = encode(_parse_files(_LISTING, _INDEX_NORM, "pkg"), digest)
+        old_blob = encode(
+            _parse_files(listing, _INDEX_NORM, "pkg", page_url=_PAGE_URL),
+            digest,
+            page_url=_PAGE_URL,
+        )
         cache.put_simple_parsed("pkg", old_blob)
         moved = "https://mirror.example/simple/pkg/"
         transport = _FakeTransport(
-            [_FakeResponse(b"", status=304, headers={"etag": "e1"}, url=moved)]
+            [
+                _FakeResponse(
+                    b"",
+                    status=304,
+                    headers={"etag": "e1", "cache-control": "max-age=600"},
+                    url=moved,
+                )
+            ]
         )
         client = CachedAsyncSimpleClient(transport, cache, _INDEX)
 
-        _run(client.get_files("pkg"))
+        first = _run(client.get_files("pkg"))
 
         result = cache.get_simple("pkg")
         assert result is not None
         new_body, policy = result
-        assert new_body == _LISTING_BYTES
+        assert new_body == body
         assert policy.page_url == moved
-        assert policy.body_digest is None
+        assert policy.body_digest == digest
         # The blob is still on disk but no longer binds, so the next read
         # rebuilds it against the new page rather than serving stale URLs.
         assert cache.get_simple_parsed("pkg") == old_blob
         assert decode(old_blob, policy) is None
+        second = _run(client.get_files("pkg"))
+        assert all(record.url.startswith(moved) for record in [*first, *second])
+        assert len(transport.calls) == 1
 
 
 _SURROGATE_REQUIRES_PYTHON = ">=3.8\ud800"
@@ -704,7 +724,7 @@ def _warm_bound(
     )
     digest = cache.put_simple("pkg", body, policy)
     files = _parse_files(json.loads(body), _INDEX_NORM, "pkg")
-    cache.put_simple_parsed("pkg", encode(files, digest))
+    cache.put_simple_parsed("pkg", encode(files, digest, page_url=_PAGE_URL))
     return files, digest
 
 
@@ -722,9 +742,11 @@ def _tamper_rows(blob: bytes, value: object) -> bytes:
 def _tamper_policy_digest(root: Path, value: object) -> None:
     """Rewrite the stored policy's ``body_digest`` cell to ``value`` on disk."""
     path = root.joinpath(*_POLICY_PATH_PARTS)
-    doc = json.loads(path.read_bytes())
+    raw = _read_cache_record(path)
+    assert raw is not None
+    doc = json.loads(raw)
     doc["body_digest"] = value
-    path.write_bytes(json.dumps(doc).encode("utf-8"))
+    _atomic_write_record(path, json.dumps(doc).encode("utf-8"))
 
 
 class TestReadPathParsedHit:
@@ -783,7 +805,7 @@ class TestReadPathRebuild:
         cache = _cache(tmp_path)
         files, _ = _warm_bound(cache)
         # Rebind the blob to a foreign body digest so validation fails.
-        cache.put_simple_parsed("pkg", encode(files, "f" * 64))
+        cache.put_simple_parsed("pkg", encode(files, "f" * 64, page_url=_PAGE_URL))
         transport = _FakeTransport([])
         client = CachedAsyncSimpleClient(transport, cache, _INDEX)
 
@@ -815,7 +837,9 @@ class TestReadPathRebuild:
         cache = _cache(tmp_path)
         files, digest = _warm_bound(cache)
         index = ["format", "codec", "key_scheme"].index(field)
-        tampered = _tamper_header(encode(files, digest), index, value)
+        tampered = _tamper_header(
+            encode(files, digest, page_url=_PAGE_URL), index, value
+        )
         cache.put_simple_parsed("pkg", tampered)
         transport = _FakeTransport([])
         client = CachedAsyncSimpleClient(transport, cache, _INDEX)
@@ -875,7 +899,7 @@ class TestReadPathRebuild:
     ) -> None:
         cache = _cache(tmp_path)
         files, digest = _warm_bound(cache)
-        good = encode(files, digest)
+        good = encode(files, digest, page_url=_PAGE_URL)
         cache.put_simple_parsed("pkg", good[: len(good) // 2])
         transport = _FakeTransport([])
         client = CachedAsyncSimpleClient(transport, cache, _INDEX)
@@ -897,7 +921,9 @@ class TestReadPathRebuild:
         # mangled on disk self-heals to a logged rebuild, never crashing.
         cache = _cache(tmp_path)
         files, digest = _warm_bound(cache)
-        cache.put_simple_parsed("pkg", _tamper_rows(encode(files, digest), rows))
+        cache.put_simple_parsed(
+            "pkg", _tamper_rows(encode(files, digest, page_url=_PAGE_URL), rows)
+        )
         transport = _FakeTransport([])
         client = CachedAsyncSimpleClient(transport, cache, _INDEX)
 
@@ -948,25 +974,25 @@ class TestReadPathRebuild:
             pytest.param(_NOT_HEX_DIGEST, id="right-length-not-hex"),
         ],
     )
-    def test_non_sha256_hex_policy_digest_self_heals(
+    def test_unbound_policy_refetches_before_rebinding(
         self, tmp_path: Path, cell: object
     ) -> None:
-        """A stored digest of the wrong shape is dropped, then rewritten."""
+        """An unbound policy cannot stamp an unverified body as fresh."""
         cache = _cache(tmp_path)
         files, digest = _warm_bound(cache)
         _tamper_policy_digest(tmp_path, cell)
         stats = ParsedCacheStats()
-        client = CachedAsyncSimpleClient(
-            _FakeTransport([]), cache, _INDEX, parsed_stats=stats
-        )
+        transport = _FakeTransport([_FakeResponse(_LISTING_BYTES)])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX, parsed_stats=stats)
 
-        # The first call rebuilds after the digest is dropped, the second hits.
+        # The first call refetches the unbound entry; the second reads its parsed hit.
         first = _run(client.get_files("pkg"))
         second = _run(client.get_files("pkg"))
 
         assert first == files
         assert second == files
         assert (stats.hit, stats.miss, stats.rebuild) == (1, 0, 1)
+        assert len(transport.calls) == 1
 
         got_policy = cache.get_simple_policy("pkg")
         assert got_policy is not None
@@ -1267,7 +1293,7 @@ class TestParsedCacheStats:
     def test_digest_mismatch_counts_a_rebuild(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         files, _ = _warm_bound(cache)
-        cache.put_simple_parsed("pkg", encode(files, "f" * 64))
+        cache.put_simple_parsed("pkg", encode(files, "f" * 64, page_url=_PAGE_URL))
         stats = ParsedCacheStats()
         client = CachedAsyncSimpleClient(
             _FakeTransport([]), cache, _INDEX, parsed_stats=stats
@@ -1376,3 +1402,41 @@ class TestReadPathEmptyListing:
             _run(client.get_files("pkg"))
 
         assert "Corrupt parsed-listing" not in caplog.text
+
+
+class LegacyListingCache(NullCache):
+    """A seeded legacy backend that learns body binding from the client."""
+
+    def __init__(self) -> None:
+        self.policy = CachePolicy(2_000_000_000, 99999, None)
+        self.blob: bytes | None = None
+
+    def get_simple_policy(self, package: str) -> CachePolicy:
+        return self.policy
+
+    def get_simple(self, package: str) -> tuple[bytes, CachePolicy]:
+        return _LISTING_BYTES, self.policy
+
+    def refresh_simple_policy(self, package: str, policy: CachePolicy) -> None:
+        self.policy = policy
+
+    def get_simple_parsed(self, package: str) -> bytes | None:
+        return self.blob
+
+    def put_simple_parsed(self, package: str, blob: bytes) -> None:
+        self.blob = blob
+
+
+def test_legacy_backend_without_body_binding_still_rebuilds_without_http() -> None:
+    cache = LegacyListingCache()
+    transport = _FakeTransport([])
+    stats = ParsedCacheStats()
+    client = CachedAsyncSimpleClient(transport, cache, _INDEX, parsed_stats=stats)
+
+    first = _run(client.get_files("pkg"))
+    second = _run(client.get_files("pkg"))
+
+    assert first == second == _PARSED
+    assert transport.calls == []
+    assert cache.policy.body_digest == hashlib.sha256(_LISTING_BYTES).hexdigest()
+    assert (stats.hit, stats.miss, stats.rebuild) == (1, 1, 0)
