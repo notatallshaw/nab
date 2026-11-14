@@ -1070,13 +1070,13 @@ class Provider:
 
         self.stats = ProviderStats()
 
-        self.defer_prerelease_prefetch = False
+        self.automatic_prefetch_admission = False
         if isinstance(self.coordinator, MetadataPrefetchDeferral):
             # Custom provider hooks keep their existing speculative behavior.
             defer = (
                 _listing.defer_metadata_prerelease if type(self) is Provider else None
             )
-            self.defer_prerelease_prefetch = (
+            self.automatic_prefetch_admission = (
                 self.coordinator.set_metadata_prefetch_deferral(defer)
             )
 
@@ -1692,7 +1692,7 @@ class Provider:
         version_range: VersionRange,
     ) -> None:
         """Use known positive constraints for deferred metadata guesses."""
-        if self.defer_prerelease_prefetch:
+        if self.automatic_prefetch_admission:
             _listing.speculative_prefetch(
                 self, normalized, versions, version_range=version_range
             )
@@ -1717,6 +1717,15 @@ class Provider:
             versions,
         )
         return next(ordered, None)
+
+    def prefetch_waits_for_preference(self, normalized: str) -> bool:
+        """Report whether demand should validate this package's preference first."""
+        return (
+            self.automatic_prefetch_admission
+            and normalized in self._preferences
+            and not self.has_overrides
+            and not self.wants_lowest(normalized)
+        )
 
     def _prefetch_walk_ahead(
         self, normalized: str, version_range: RangeProtocol[Version]

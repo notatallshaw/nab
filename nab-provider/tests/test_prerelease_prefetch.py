@@ -16,6 +16,7 @@ from nab_provider.testing import (
     make_coordinator,
     make_metadata,
     make_wheel,
+    pkg_override,
 )
 
 
@@ -72,6 +73,7 @@ def test_positive_range_prefetches_the_admitted_version(
     selected = provider.choose_version(
         "pkg", SpecifierSet(specifier, prereleases=prereleases).to_range()
     )
+    assert selected is not None
     assert selected == Version(expected)
     assert [call[1] for call in port.calls_to("request_metadata")] == [expected]
 
@@ -94,6 +96,7 @@ def test_lowest_uses_the_demand_admission_order(specifier: str, expected: str) -
     port = DeferringPort(["0.9a1", "1", "2b1"])
     provider = Provider(port, resolution_strategy=ResolutionStrategy.LOWEST)
     selected = provider.choose_version("pkg", SpecifierSet(specifier).to_range())
+    assert selected is not None
     assert selected == Version(expected)
     assert [call[1] for call in port.calls_to("request_metadata")] == [expected]
 
@@ -109,6 +112,7 @@ def test_tightening_constraints_keeps_one_initial_guess() -> None:
     assert [call[1] for call in port.calls_to("request_metadata")] == ["3"]
 
     selected = provider.choose_version("pkg", SpecifierSet("<2").to_range())
+    assert selected is not None
     assert selected == Version("1")
     provider.get_dependencies("pkg", selected)
     assert [call[1] for call in port.calls_to("request_metadata")] == ["3", "1"]
@@ -132,6 +136,7 @@ def test_legacy_port_keeps_existing_guesses() -> None:
     )
     provider = Provider(port)
     selected = provider.choose_version("pkg", SpecifierSet("").to_range())
+    assert selected is not None
     assert selected == Version("1.0")
     provider.get_dependencies("pkg", selected)
     assert [call[1] for call in port.calls_to("request_metadata")] == ["2.0b1", "1.0"]
@@ -144,3 +149,65 @@ def test_default_deferral_declines_prereleases_and_invalid_versions() -> None:
     assert not port.defer("1.0")
     assert port.defer("2.0rc1")
     assert port.defer("not-a-version")
+
+
+@pytest.mark.parametrize(
+    ("preferred", "specifier", "expected"),
+    [("1", "", "1"), ("1", ">=2", "2"), ("0", "", "2")],
+)
+def test_demand_validates_preferences_before_guessing_metadata(
+    preferred: str, specifier: str, expected: str
+) -> None:
+    port = DeferringPort(["1", "2"])
+    provider = Provider(port, preferences={"pkg": Version(preferred)})
+
+    selected = provider.choose_version("pkg", SpecifierSet(specifier).to_range())
+
+    assert selected is not None
+    assert selected == Version(expected)
+    provider.get_dependencies("pkg", selected)
+    assert [call[1] for call in port.calls_to("request_metadata")] == [expected]
+
+
+def test_known_preference_waits_for_demand() -> None:
+    port = DeferringPort(["1", "2"])
+    provider = Provider(port, preferences={"pkg": Version("1")})
+
+    provider.fetch_versions("pkg")
+    assert port.calls_to("request_metadata") == []
+
+    assert provider.choose_version("pkg", SpecifierSet("").to_range()) == Version("1")
+    assert [call[1] for call in port.calls_to("request_metadata")] == ["1"]
+
+
+def test_lowest_keeps_its_speculative_floor_with_preferences() -> None:
+    port = DeferringPort(["1", "2"])
+    provider = Provider(
+        port,
+        preferences={"pkg": Version("2")},
+        resolution_strategy=ResolutionStrategy.LOWEST,
+    )
+
+    provider.fetch_versions("pkg")
+    assert [call[1] for call in port.calls_to("request_metadata")] == ["1"]
+    assert provider.choose_version("pkg", SpecifierSet("").to_range()) == Version("1")
+
+
+def test_overrides_keep_existing_preference_guesses() -> None:
+    port = DeferringPort(["1", "2"])
+    provider = Provider(
+        port,
+        preferences={"pkg": Version("1")},
+        package_overrides=(pkg_override("other", assume_consistent_metadata=True),),
+    )
+
+    assert provider.choose_version("pkg", SpecifierSet("").to_range()) == Version("1")
+    assert [call[1] for call in port.calls_to("request_metadata")] == ["2", "1"]
+
+
+def test_legacy_port_keeps_existing_preference_guesses() -> None:
+    port = make_coordinator([make_wheel("1"), make_wheel("2")], auto_metadata=True)
+    provider = Provider(port, preferences={"pkg": Version("1")})
+
+    assert provider.choose_version("pkg", SpecifierSet("").to_range()) == Version("1")
+    assert [call[1] for call in port.calls_to("request_metadata")] == ["2", "1"]

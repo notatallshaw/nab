@@ -129,6 +129,10 @@ provider subclasses retain their existing speculative behavior. Once the deferre
 chosen, later constraint changes leave further requests to demand and lookahead rather than guessing
 successive older releases.
 
+Default transitive guesses are skipped when a version preference is present. Explicit windows,
+legacy ports, custom providers, overrides and lowest ordering still make speculative guesses when a
+preference is present.
+
 ## Cache-only fetches
 
 ```text

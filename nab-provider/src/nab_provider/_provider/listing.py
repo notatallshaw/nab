@@ -298,13 +298,17 @@ def metadata_prefetch_version(
     *,
     version_range: VersionRange | None = None,
 ) -> Version | None:
-    """Select one guess, deferring prereleases until their constraints arrive."""
+    """Return one guess, deferring preference and prerelease admission."""
+    # Let demand validate known preferences before guessing another version.
+    if provider.prefetch_waits_for_preference(normalized):
+        return None
+
     # Keep the provider's candidate-selection hook on this path.
     best = provider.pick_best_candidate(normalized, versions)
     if best is None:
         return None
     version, _ = best
-    if provider.defer_prerelease_prefetch and version.is_prerelease:
+    if provider.automatic_prefetch_admission and version.is_prerelease:
         if provider.metadata_prefetch_decisions.get(normalized) is not None:
             return None
         if version_range is None:
@@ -1481,6 +1485,6 @@ def prefetch_new_deps(provider: Provider, deps: Mapping[str, VersionRange]) -> N
                 normalized,
                 provider.versions_cache[normalized],
                 version_range=version_range
-                if provider.defer_prerelease_prefetch
+                if provider.automatic_prefetch_admission
                 else None,
             )
