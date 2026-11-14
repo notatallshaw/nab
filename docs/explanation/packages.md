@@ -120,6 +120,15 @@ Optional `MetadataArtifactHints` supplies the provider's wheel ranking for those
 project applies it within the existing version window; required requests and sibling checks keep
 their normal selection rules. The selector retains target context without retaining the provider.
 
+`MetadataPrefetchDeferral` lets the provider postpone default prerelease guesses until it has a
+positive dependency range. The provider's `first_matching_version` uses the same admission and
+strategy as demand selection over its prepared listing, including explicit prerelease opt-ins and
+prerelease-only fallback. `prefetch_in_range` resumes the deferred request without expanding the
+listing-arrival window. Explicit `PrefetchSettings.metadata_versions`, legacy fetch ports and custom
+provider subclasses retain their existing speculative behavior. Once the deferred candidate is
+chosen, later constraint changes leave further requests to demand and lookahead rather than guessing
+successive older releases.
+
 ## Cache-only fetches
 
 ```text
