@@ -13,7 +13,12 @@ import pytest
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.fetch import FetchCoordinator
-from nab_provider.fetch_port import FetchPort, MetadataPrefetchHints, Waitable
+from nab_provider.fetch_port import (
+    FetchPort,
+    MetadataArtifactHints,
+    MetadataPrefetchHints,
+    Waitable,
+)
 from nab_provider.store import sdist_artifact_key
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "nab_project"
@@ -36,7 +41,7 @@ HOST_SOURCES = (SRC / "_build_remote.py", SRC / "_sources.py")
 They hold the port under the name ``port``, so the census walks them for that
 handle rather than for ``coordinator``."""
 
-OPTIONAL_PROTOCOLS = (MetadataPrefetchHints,)
+OPTIONAL_PROTOCOLS = (MetadataPrefetchHints, MetadataArtifactHints)
 
 
 def declared_members(protocol: type) -> frozenset[str]:
@@ -209,13 +214,17 @@ class TestPortDeclaration:
             provider_census() | host_census() == declared_members(FetchPort) | optional
         )
 
-    def test_census_allows_an_explicit_optional_guard(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("protocol", OPTIONAL_PROTOCOLS)
+    def test_census_allows_an_explicit_optional_guard(
+        self, tmp_path: Path, protocol: type
+    ) -> None:
+        member = next(iter(declared_members(protocol)))
         path = tmp_path / "guarded.py"
         path.write_text(
-            "if isinstance(provider.coordinator, MetadataPrefetchHints):\n"
-            "    provider.coordinator.set_metadata_prefetch_filters({})\n"
+            f"if isinstance(provider.coordinator, {protocol.__name__}):\n"
+            f"    provider.coordinator.{member}(hint)\n"
         )
-        assert members_read_from(path) == declared_members(MetadataPrefetchHints)
+        assert members_read_from(path) == declared_members(protocol)
 
     @pytest.mark.parametrize(
         "source",
@@ -226,6 +235,22 @@ class TestPortDeclaration:
         ],
     )
     def test_census_rejects_unguarded_optional_reads(
+        self, tmp_path: Path, source: str
+    ) -> None:
+        path = tmp_path / "unguarded.py"
+        path.write_text(source)
+        with pytest.raises(AssertionError, match="without its runtime guard"):
+            members_read_from(path)
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "provider.coordinator.set_metadata_prefetch_selector(hint)\n",
+            "if isinstance(provider.coordinator, MetadataArtifactHints):\n    pass\nelse:\n    provider.coordinator.set_metadata_prefetch_selector(hint)\n",
+            "if isinstance(provider.coordinator, MetadataPrefetchHints):\n    provider.coordinator.set_metadata_prefetch_selector(hint)\n",
+        ],
+    )
+    def test_census_rejects_unguarded_artifact_hints(
         self, tmp_path: Path, source: str
     ) -> None:
         path = tmp_path / "unguarded.py"
@@ -310,11 +335,17 @@ class TestCoordinatorSatisfiesThePort:
     def test_instance_check_passes(self, coordinator: FetchCoordinator) -> None:
         assert isinstance(coordinator, FetchPort)
         assert isinstance(coordinator, MetadataPrefetchHints)
+        assert isinstance(coordinator, MetadataArtifactHints)
 
     def test_optional_hint_signature(self) -> None:
         assert parameter_shape(
             FetchCoordinator.set_metadata_prefetch_filters
         ) == parameter_shape(MetadataPrefetchHints.set_metadata_prefetch_filters)
+
+    def test_optional_artifact_signature(self) -> None:
+        assert parameter_shape(
+            FetchCoordinator.set_metadata_prefetch_selector
+        ) == parameter_shape(MetadataArtifactHints.set_metadata_prefetch_selector)
 
 
 class TestFakeSatisfiesThePort:

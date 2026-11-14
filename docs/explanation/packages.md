@@ -116,6 +116,10 @@ The provider supplies root-version bounds through optional `MetadataPrefetchHint
 layer uses those predicates to skip listing-arrival metadata for excluded versions; required
 requests stay unfiltered. The callbacks retain independent version ranges.
 
+Optional `MetadataArtifactHints` supplies the provider's wheel ranking for those guesses. The
+project applies it within the existing version window; required requests and sibling checks keep
+their normal selection rules. The selector retains target context without retaining the provider.
+
 ## Cache-only fetches
 
 ```text
