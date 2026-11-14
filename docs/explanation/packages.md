@@ -120,6 +120,15 @@ Optional `MetadataArtifactHints` supplies the provider's wheel ranking for those
 project applies it within the existing version window; required requests and sibling checks keep
 their normal selection rules. The selector retains target context without retaining the provider.
 
+`MetadataPrefetchAdmission` supplies a pure declared-target test for default listing-arrival
+guesses. The provider refuses a group only when every candidate's known Python support excludes the
+target; missing or malformed bounds remain admitted. The project applies the hint inside its
+existing window without replacing declined versions. Explicit windows, custom providers and
+overrides still make their speculative guesses; legacy ports need no new capability. Required
+metadata reads keep their normal selection rules. Admission uses the
+[normal language-minor comparison](../reference/target-environment.md), including patch-pinned
+targets.
+
 `MetadataPrefetchDeferral` lets the provider postpone default prerelease guesses until it has a
 positive dependency range. The provider's `first_matching_version` uses the same admission and
 strategy as demand selection over its prepared listing, including explicit prerelease opt-ins and

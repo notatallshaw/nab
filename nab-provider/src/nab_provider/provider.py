@@ -76,6 +76,7 @@ from .errors import (
 from .extra_keys import join_extra, split_extra
 from .fetch_port import (
     MetadataArtifactHints,
+    MetadataPrefetchAdmission,
     MetadataPrefetchDeferral,
     MetadataPrefetchHints,
 )
@@ -1091,8 +1092,28 @@ class Provider:
 
             self.coordinator.set_metadata_prefetch_selector(select)
 
+        self._configure_metadata_admission()
+
         if self.root_requirements:
             self._prefetch_root_listings()
+
+    def _configure_metadata_admission(self) -> None:
+        """Publish pure target admission when the caller's policy permits it."""
+        if isinstance(self.coordinator, MetadataPrefetchAdmission):
+            metadata_target = self.target
+            if (
+                type(self) is Provider
+                and not self.has_overrides
+                and metadata_target is not None
+            ):
+
+                def admit(wheels: list[WheelFile]) -> bool:
+                    """Keep target admission independent of provider state."""
+                    return _listing.metadata_prefetch_admitted(wheels, metadata_target)
+
+                self.coordinator.set_metadata_prefetch_admission(admit)
+            else:
+                self.coordinator.set_metadata_prefetch_admission(None)
 
     def _prefetch_root_listings(self) -> None:
         """Request remote roots after publishing their speculative version filters."""
