@@ -166,15 +166,17 @@ def _read_cache_record(path: str | Path) -> bytes | None:
     return payload
 
 
-def _atomic_write_record(path: Path, data: bytes) -> None:
-    """Publish a checked cache record without a storage synchronization barrier."""
-    chunks = (_CACHE_RECORD_MAGIC, hashlib.sha256(data).digest(), data)
+def _atomic_write_record(path: Path, data: bytes) -> bytes:
+    """Publish a checked cache record and return its SHA-256 bytes."""
+    checksum = hashlib.sha256(data).digest()
+    chunks = (_CACHE_RECORD_MAGIC, checksum, data)
     try:
         atomic_write_chunks(path, chunks, sync=False)
     except FileNotFoundError:
         # Avoid a mkdir attempt for every record in the same directory.
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_chunks(path, chunks, sync=False)
+    return checksum
 
 
 class OfflineError(Exception):
@@ -330,21 +332,20 @@ class OnDiskCache:
         self._sdist_json_dir = root / f"sdist-{_CACHE_VERSION_SDIST_JSON}" / self._index
         self._store_failed = False
 
-    def _store(self, path: Path, data: bytes) -> bool:
-        """Write ``data`` to ``path``, returning False if the write failed.
+    def _store(self, path: Path, data: bytes) -> bytes | None:
+        """Write ``data`` and return its stored checksum, or ``None`` on failure.
 
         Only the first failure warns.
         """
         try:
-            _atomic_write_record(path, data)
+            return _atomic_write_record(path, data)
         except OSError as exc:
             with _STORE_FAILURE_LOCK:
                 if self._store_failed:
-                    return False
+                    return None
                 self._store_failed = True
             logger.warning("cannot store cache entries under %s: %s", self._root, exc)
-            return False
-        return True
+            return None
 
     def _simple_paths(self, package: str) -> tuple[Path, Path]:
         segment = _require_single_segment(package)
@@ -422,12 +423,14 @@ class OnDiskCache:
         body the store does not hold.
         """
         body_path, policy_path = self._simple_paths(package)
-        if not self._store(body_path, body):
+        checksum = self._store(body_path, body)
+        if checksum is None:
             return None
-        digest = hashlib.sha256(body).hexdigest()
-        if not self._store(
-            policy_path, _encode_policy(replace(policy, body_digest=digest))
-        ):
+
+        # The stored record already supplies this body's digest.
+        digest = checksum.hex()
+        policy_bytes = _encode_policy(replace(policy, body_digest=digest))
+        if self._store(policy_path, policy_bytes) is None:
             return None
         return digest
 
