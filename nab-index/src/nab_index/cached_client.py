@@ -360,11 +360,16 @@ def _reusable_metadata_hash(
     metadata_hash: tuple[str, str] | None,
 ) -> tuple[str, str] | None:
     """Return an advertised digest only when its algorithm admits sidecar reuse."""
-    if metadata_hash is None:
+    if type(metadata_hash) is not tuple:
         return None
 
-    algorithm, _ = metadata_hash
-    if algorithm not in ACCEPTED_HASH_ALGORITHMS:
+    algorithm, digest = metadata_hash
+    # Custom equality cannot establish that two advertised digests match.
+    if (
+        type(algorithm) is not str
+        or type(digest) is not str
+        or algorithm not in ACCEPTED_HASH_ALGORITHMS
+    ):
         return None
 
     return metadata_hash
@@ -447,12 +452,20 @@ class CachedAsyncSimpleClient:
 
         # Replace old versions so backtracking cannot accumulate sidecar histories.
         self._verified_sidecars: dict[str, _VersionSidecars] = {}
+        self._metadata_pending: dict[
+            tuple[str, str, tuple[str, str]], asyncio.Future[str | None]
+        ] = {}
+        self._closed = False
 
     async def aclose(self) -> None:
         """Wait for policy writes, then close the underlying transport."""
+        self._closed = True
         if self._policy_writes:
             await asyncio.gather(*self._policy_writes, return_exceptions=True)
 
+        for pending in self._metadata_pending.values():
+            pending.cancel()
+        self._metadata_pending.clear()
         self._verified_sidecars.clear()
         await self._transport.aclose()
 
@@ -906,7 +919,7 @@ class CachedAsyncSimpleClient:
 
         # Share only metadata verified for the same package version.
         reusable_hash = _reusable_metadata_hash(metadata_hash)
-        if reusable_hash is not None:
+        if reusable_hash is not None and not self._closed:
             shared = self._verified_sidecars.get(package)
             if shared is not None and shared.version == version:
                 text = shared.texts.get(reusable_hash)
@@ -914,6 +927,58 @@ class CachedAsyncSimpleClient:
                     self._cache.put_metadata(package, metadata_url, text)
                     return text
 
+            return await self._shared_metadata_text(
+                package, version, metadata_url, reusable_hash
+            )
+
+        return await self._fetch_metadata_text(
+            package, version, metadata_url, metadata_hash
+        )
+
+    async def _shared_metadata_text(
+        self,
+        package: str,
+        version: str,
+        metadata_url: str,
+        metadata_hash: tuple[str, str],
+    ) -> str:
+        """Share verified content while keeping failed requests local to their URL."""
+        key = package, version, metadata_hash
+        pending = self._metadata_pending.get(key)
+        if pending is not None:
+            # Cancelling one waiter must leave the other readers' work intact.
+            text = await asyncio.shield(pending)
+            if text is not None:
+                self._cache.put_metadata(package, metadata_url, text)
+                return text
+            return await self._fetch_metadata_text(
+                package, version, metadata_url, metadata_hash
+            )
+
+        completion: asyncio.Future[str | None] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._metadata_pending[key] = completion
+        result: str | None = None
+        try:
+            result = await self._fetch_metadata_text(
+                package, version, metadata_url, metadata_hash
+            )
+            return result
+        finally:
+            if self._metadata_pending.get(key) is completion:
+                del self._metadata_pending[key]
+            if not completion.done():
+                completion.set_result(result)
+
+    async def _fetch_metadata_text(
+        self,
+        package: str,
+        version: str,
+        metadata_url: str,
+        metadata_hash: tuple[str, str] | None,
+    ) -> str:
+        """Verify a downloaded sidecar before publishing either form of reuse."""
         response = await self._transport.get(metadata_url)
         raise_unless_ok(response, metadata_url)
         content = response.content
@@ -930,7 +995,9 @@ class CachedAsyncSimpleClient:
             raise MalformedSimpleResponseError(msg) from exc
 
         self._cache.put_metadata(package, metadata_url, text)
-        if reusable_hash is not None:
+
+        reusable_hash = _reusable_metadata_hash(metadata_hash)
+        if reusable_hash is not None and not self._closed:
             current = self._verified_sidecars.get(package)
             if current is None or current.version != version:
                 current = _VersionSidecars(version)
