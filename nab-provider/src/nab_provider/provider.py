@@ -74,7 +74,11 @@ from .errors import (
     YankAdmissionRequiredError,
 )
 from .extra_keys import join_extra, split_extra
-from .fetch_port import MetadataArtifactHints, MetadataPrefetchHints
+from .fetch_port import (
+    MetadataArtifactHints,
+    MetadataPrefetchDeferral,
+    MetadataPrefetchHints,
+)
 from .metadata import WheelMetadata
 from .policy import (
     ArchiveSource,
@@ -970,6 +974,8 @@ class Provider:
         # walked. A dep named by several parents reaches both once per parent.
         self.speculative_listings: set[str] = set()
         self.speculative_candidates: set[tuple[str, Version]] = set()
+        # None awaits constraints; a version records the package's one guess.
+        self.metadata_prefetch_decisions: dict[str, Version | None] = {}
 
         # Derived views of versions_cache, built lazily alongside the listing.
         self.versions_only_cache: dict[str, list[Version]] = {}
@@ -1063,6 +1069,16 @@ class Provider:
         self._probing_satisfiable = False
 
         self.stats = ProviderStats()
+
+        self.defer_prerelease_prefetch = False
+        if isinstance(self.coordinator, MetadataPrefetchDeferral):
+            # Custom provider hooks keep their existing speculative behavior.
+            defer = (
+                _listing.defer_metadata_prerelease if type(self) is Provider else None
+            )
+            self.defer_prerelease_prefetch = (
+                self.coordinator.set_metadata_prefetch_deferral(defer)
+            )
 
         if isinstance(self.coordinator, MetadataArtifactHints):
             # Keep fetcher callbacks independent of provider caches.
@@ -1669,6 +1685,39 @@ class Provider:
         """See :func:`nab_provider._provider.listing.speculative_prefetch`."""
         _listing.speculative_prefetch(self, normalized, versions)
 
+    def prefetch_in_range(
+        self,
+        normalized: str,
+        versions: list[tuple[Version, DistFile]],
+        version_range: VersionRange,
+    ) -> None:
+        """Use known positive constraints for deferred metadata guesses."""
+        if self.defer_prerelease_prefetch:
+            _listing.speculative_prefetch(
+                self, normalized, versions, version_range=version_range
+            )
+        else:
+            self.speculative_prefetch(normalized, versions)
+
+    def first_matching_version(
+        self,
+        normalized: str,
+        version_range: VersionRange,
+        versions: list[tuple[Version, DistFile]],
+    ) -> Version | None:
+        """Find the first admitted prepared version without inspecting metadata."""
+        # Extras proxies still obey their base package's positive bounds.
+        base_range = self.solution_ranges.get(normalized)
+        if base_range is not None:
+            version_range = version_range & base_range
+        ordered = self._ordered_candidates(
+            normalized,
+            version_range,
+            self.versions_only(normalized, versions),
+            versions,
+        )
+        return next(ordered, None)
+
     def _prefetch_walk_ahead(
         self, normalized: str, version_range: RangeProtocol[Version]
     ) -> None:
@@ -1844,7 +1893,9 @@ class Provider:
                 self, package, base, extra, version_range
             )
 
-        version_list = self.fetch_versions(package)
+        version_list = self._fetch_versions_for_selection(
+            package, normalized, version_range
+        )
         all_versions = self.versions_only(normalized, version_list)
         candidates = self._ordered_candidates(
             normalized, version_range, all_versions, version_list
@@ -1870,6 +1921,18 @@ class Provider:
             all_versions,
             version_range,
         )
+
+    def _fetch_versions_for_selection(
+        self, package: str, normalized: str, version_range: VersionRange
+    ) -> list[tuple[Version, DistFile]]:
+        """Fetch the listing and resume any guess awaiting positive constraints."""
+        versions = self.fetch_versions(package)
+        if (
+            normalized in self.metadata_prefetch_decisions
+            and self.metadata_prefetch_decisions[normalized] is None
+        ):
+            self.prefetch_in_range(normalized, versions, version_range)
+        return versions
 
     def _ordered_candidates(
         self,

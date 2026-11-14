@@ -453,6 +453,7 @@ class FetchCoordinator:
             transport, prefetch_settings
         )
         self._metadata_prefetch_filters: dict[str, Callable[[str], bool]] = {}
+        self._metadata_prefetch_defer: Callable[[str], bool] | None = None
         self._metadata_prefetch_selector: (
             Callable[[list[WheelFile]], WheelFile] | None
         ) = None
@@ -1368,6 +1369,15 @@ class FetchCoordinator:
         """Use provider wheel ranking within the existing speculative window."""
         self._metadata_prefetch_selector = selector
 
+    def set_metadata_prefetch_deferral(
+        self, defer: Callable[[str], bool] | None
+    ) -> bool:
+        """Keep explicit windows ahead of automatic provider deferral."""
+        self._metadata_prefetch_defer = (
+            defer if self.prefetch_settings.metadata_versions is None else None
+        )
+        return self._metadata_prefetch_defer is not None
+
     def _prefetch_metadata_after_listing(
         self, package: str, files: Sequence[WheelFile | SdistFile]
     ) -> None:
@@ -1402,10 +1412,13 @@ class FetchCoordinator:
         version_filter = self._metadata_prefetch_filters.get(package)
         # Keep one target's ranking for this listing's speculative requests.
         selector = self._metadata_prefetch_selector
+        defer = self._metadata_prefetch_defer
         for wheels in reversed(newest.values()):
             # Ranking ties keep the listing's original wheel order.
             wheels.reverse()
             if version_filter is not None and not version_filter(wheels[0].version):
+                continue
+            if defer is not None and defer(wheels[0].version):
                 continue
 
             w = wheels[0] if selector is None else selector(wheels)

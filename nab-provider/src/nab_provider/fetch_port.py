@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 __all__ = [
     "FetchPort",
     "MetadataArtifactHints",
+    "MetadataPrefetchDeferral",
     "MetadataPrefetchHints",
     "PrefetchSettings",
     "Waitable",
@@ -82,6 +83,17 @@ class MetadataPrefetchHints(Protocol):
         self, filters: Mapping[str, Callable[[str], bool]]
     ) -> None:
         """Replace the speculative filters without restricting required fetches."""
+        ...
+
+
+@runtime_checkable
+class MetadataPrefetchDeferral(Protocol):
+    """Optional deferral of default guesses until the provider has constraints."""
+
+    def set_metadata_prefetch_deferral(
+        self, defer: Callable[[str], bool] | None
+    ) -> bool:
+        """Return whether automatic deferral applies; explicit windows take priority."""
         ...
 
 

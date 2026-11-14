@@ -16,6 +16,7 @@ from nab_project.fetch import FetchCoordinator
 from nab_provider.fetch_port import (
     FetchPort,
     MetadataArtifactHints,
+    MetadataPrefetchDeferral,
     MetadataPrefetchHints,
     Waitable,
 )
@@ -41,7 +42,11 @@ HOST_SOURCES = (SRC / "_build_remote.py", SRC / "_sources.py")
 They hold the port under the name ``port``, so the census walks them for that
 handle rather than for ``coordinator``."""
 
-OPTIONAL_PROTOCOLS = (MetadataPrefetchHints, MetadataArtifactHints)
+OPTIONAL_PROTOCOLS = (
+    MetadataPrefetchHints,
+    MetadataArtifactHints,
+    MetadataPrefetchDeferral,
+)
 
 
 def declared_members(protocol: type) -> frozenset[str]:
@@ -261,6 +266,22 @@ class TestPortDeclaration:
     @pytest.mark.parametrize(
         "source",
         [
+            "provider.coordinator.set_metadata_prefetch_deferral(hint)\n",
+            "if isinstance(provider.coordinator, MetadataPrefetchDeferral):\n    pass\nelse:\n    provider.coordinator.set_metadata_prefetch_deferral(hint)\n",
+            "if isinstance(provider.coordinator, MetadataPrefetchHints):\n    provider.coordinator.set_metadata_prefetch_deferral(hint)\n",
+        ],
+    )
+    def test_census_rejects_unguarded_deferral_hints(
+        self, tmp_path: Path, source: str
+    ) -> None:
+        path = tmp_path / "unguarded.py"
+        path.write_text(source)
+        with pytest.raises(AssertionError, match="without its runtime guard"):
+            members_read_from(path)
+
+    @pytest.mark.parametrize(
+        "source",
+        [
             "port = provider.coordinator\nport.request_listing('a')\n",
             "self._port = coordinator\nself._port.request_listing('a')\n",
             "ports = [coordinator]\nports[0].request_listing('a')\n",
@@ -336,6 +357,7 @@ class TestCoordinatorSatisfiesThePort:
         assert isinstance(coordinator, FetchPort)
         assert isinstance(coordinator, MetadataPrefetchHints)
         assert isinstance(coordinator, MetadataArtifactHints)
+        assert isinstance(coordinator, MetadataPrefetchDeferral)
 
     def test_optional_hint_signature(self) -> None:
         assert parameter_shape(
@@ -346,6 +368,11 @@ class TestCoordinatorSatisfiesThePort:
         assert parameter_shape(
             FetchCoordinator.set_metadata_prefetch_selector
         ) == parameter_shape(MetadataArtifactHints.set_metadata_prefetch_selector)
+
+    def test_optional_deferral_signature(self) -> None:
+        assert parameter_shape(
+            FetchCoordinator.set_metadata_prefetch_deferral
+        ) == parameter_shape(MetadataPrefetchDeferral.set_metadata_prefetch_deferral)
 
 
 class TestFakeSatisfiesThePort:

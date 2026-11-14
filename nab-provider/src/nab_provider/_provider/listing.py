@@ -209,6 +209,8 @@ def speculative_prefetch(
     provider: Provider,
     normalized: str,
     versions: list[tuple[Version, DistFile]],
+    *,
+    version_range: VersionRange | None = None,
 ) -> None:
     """Fire metadata prefetch for likely candidates.
 
@@ -222,7 +224,17 @@ def speculative_prefetch(
     if root_range is not None and not (~root_range).is_empty:
         prefetch_root_batch(provider, normalized, versions, root_range)
     else:
-        prefetch_transitive_best(provider, normalized, versions)
+        prefetch_transitive_best(
+            provider, normalized, versions, version_range=version_range
+        )
+
+
+def defer_metadata_prerelease(version: str) -> bool:
+    """Wait for a positive range before guessing metadata for a prerelease."""
+    try:
+        return Version(version).is_prerelease
+    except InvalidVersion:
+        return True
 
 
 def _has_metadata_override_or_representative(
@@ -279,26 +291,47 @@ def prefetch_root_batch(
         provider.coordinator.request_metadata_batch(items)
 
 
+def metadata_prefetch_version(
+    provider: Provider,
+    normalized: str,
+    versions: list[tuple[Version, DistFile]],
+    *,
+    version_range: VersionRange | None = None,
+) -> Version | None:
+    """Select one guess, deferring prereleases until their constraints arrive."""
+    # Keep the provider's candidate-selection hook on this path.
+    best = provider.pick_best_candidate(normalized, versions)
+    if best is None:
+        return None
+    version, _ = best
+    if provider.defer_prerelease_prefetch and version.is_prerelease:
+        if provider.metadata_prefetch_decisions.get(normalized) is not None:
+            return None
+        if version_range is None:
+            provider.metadata_prefetch_decisions.setdefault(normalized, None)
+            return None
+        # Use the same admission and strategy as demand, including pre-only fallback.
+        selected = provider.first_matching_version(normalized, version_range, versions)
+        if selected is None:
+            return None
+        provider.metadata_prefetch_decisions[normalized] = selected
+        version = selected
+    return version
+
+
 def prefetch_transitive_best(
     provider: Provider,
     normalized: str,
     versions: list[tuple[Version, DistFile]],
+    *,
+    version_range: VersionRange | None = None,
 ) -> None:
-    """Fire metadata prefetch for the single best transitive candidate.
-
-    Requests a candidate at most once. A dep with no root constraint reaches
-    here once per parent that names it, and within one resolve the artifact a
-    candidate resolves to is fixed. The mark goes on above the override and
-    artifact checks, so it records a candidate as seen even when no request
-    follows.
-    """
-    # Routed through ``provider.pick_best_candidate`` so existing
-    # ``patch.object(provider, "pick_best_candidate", ...)`` mocks
-    # in the test suite still drive this prefetch path.
-    best = provider.pick_best_candidate(normalized, versions)
-    if best is None:
+    """Request one transitive guess without repeating cached or declined work."""
+    version = metadata_prefetch_version(
+        provider, normalized, versions, version_range=version_range
+    )
+    if version is None:
         return
-    version, _ = best
     if (normalized, version) in provider.deps_cache:
         return
 
@@ -1426,7 +1459,7 @@ def prefetch_new_deps(provider: Provider, deps: Mapping[str, VersionRange]) -> N
     A dep named by several parents arrives once per parent, so only
     the first of them requests its listing.
     """
-    for dep in deps:
+    for dep, version_range in deps.items():
         _, _, normalized = provider.split_and_normalize(dep)
         if (
             normalized in provider.local_sources
@@ -1444,5 +1477,10 @@ def prefetch_new_deps(provider: Provider, deps: Mapping[str, VersionRange]) -> N
         else:
             # Listing cached: fire speculative metadata prefetch.
             speculative_prefetch(
-                provider, normalized, provider.versions_cache[normalized]
+                provider,
+                normalized,
+                provider.versions_cache[normalized],
+                version_range=version_range
+                if provider.defer_prerelease_prefetch
+                else None,
             )
