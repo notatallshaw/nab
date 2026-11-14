@@ -161,6 +161,15 @@ def _expand_table(held: object) -> object:
     return held
 
 
+def _compact_rehydration_cell(raw: object) -> object:
+    """Keep a raw SHA256 table in the form the rehydration factories accept."""
+    if isinstance(raw, dict) and len(raw) == 1:
+        digest = raw.get("sha256")
+        if type(digest) is str:
+            return digest
+    return raw
+
+
 class _DeferredIntegrity:
     """Parses a record's ``hashes`` table the first time something reads it.
 
@@ -192,6 +201,25 @@ class _DeferredIntegrity:
             return _expand_table(self._raw_hashes)
         except AttributeError:
             return None
+
+    def hashes_for_rehydration(self) -> object:
+        """Return hashes as a parsed value or an unparsed rehydration cell."""
+        record_type = type(self)
+        if record_type is not WheelFile and record_type is not SdistFile:
+            # Custom records retain the raw-reader override contract.
+            raw = self.raw_hashes()
+            return self.hashes if raw is None else _compact_rehydration_cell(raw)
+
+        try:
+            held = self._raw_hashes
+        except AttributeError:
+            return self.hashes
+
+        if held is None:
+            return self.hashes
+        if type(held) is str:
+            return held
+        return _compact_rehydration_cell(_expand_table(held))
 
 
 def defer_hashes(record: WheelFile | SdistFile, table: object) -> None:
@@ -311,6 +339,24 @@ class WheelFile(_DeferredIntegrity, HashableRecord):
             return _expand_table(self._raw_metadata)
         except AttributeError:
             return None
+
+    def sidecar_for_rehydration(self) -> object:
+        """Return a parsed sidecar hash or its unparsed rehydration cell."""
+        if type(self) is not WheelFile:
+            # Custom records retain the raw-reader override contract.
+            raw = self.raw_sidecar()
+            return self.metadata_hash if raw is None else _compact_rehydration_cell(raw)
+
+        try:
+            held = self._raw_metadata
+        except AttributeError:
+            return self.metadata_hash
+
+        if held is None:
+            return self.metadata_hash
+        if type(held) is str:
+            return held
+        return _compact_rehydration_cell(_expand_table(held))
 
     @property
     def metadata_url(self) -> str | None:

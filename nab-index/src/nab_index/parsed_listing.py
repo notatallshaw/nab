@@ -82,31 +82,6 @@ class ParsedListing(NamedTuple):
     zip_sdists: frozenset[str]
 
 
-def _hashes_cell(record: WheelFile | SdistFile) -> object:
-    """Return the row cell for ``hashes``: the raw table, or the parsed pairs.
-
-    A record built from the index's own table writes that table, so encoding a
-    fresh listing does not force the parse it deferred.
-    """
-    raw = record.raw_hashes()
-    return record.hashes if raw is None else _raw_table_cell(raw)
-
-
-def _sidecar_cell(wheel: WheelFile) -> object:
-    """Return the row cell for ``metadata_hash``, raw table or parsed pair."""
-    raw = wheel.raw_sidecar()
-    return wheel.metadata_hash if raw is None else _raw_table_cell(raw)
-
-
-def _raw_table_cell(raw: object) -> object:
-    """Omit JSON objects around raw sha256 digests."""
-    if isinstance(raw, dict) and len(raw) == 1:
-        digest = raw.get("sha256")
-        if type(digest) is str:
-            return digest
-    return raw
-
-
 def encode(
     files: list[WheelFile | SdistFile],
     body_digest: str,
@@ -142,9 +117,9 @@ def encode(
                     record.requires_python,
                     record.has_metadata,
                     record.upload_time,
-                    _hashes_cell(record),
+                    record.hashes_for_rehydration(),
                     record.size,
-                    _sidecar_cell(record),
+                    record.sidecar_for_rehydration(),
                 ]
             )
         else:
@@ -156,7 +131,7 @@ def encode(
                     version_cell,
                     record.requires_python,
                     record.upload_time,
-                    _hashes_cell(record),
+                    record.hashes_for_rehydration(),
                     record.size,
                 ]
             )
