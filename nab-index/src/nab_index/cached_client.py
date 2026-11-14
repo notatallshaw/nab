@@ -638,11 +638,13 @@ class CachedAsyncSimpleClient:
         except OSError as exc:
             # Concurrent disk writers share the one-time failure report.
             with self._parsed_store_lock:
-                if not self._parsed_store_failed:
-                    self._parsed_store_failed = True
-                    logger.warning(
-                        "cannot store parsed listings for %s: %s", self._index_url, exc
-                    )
+                if self._parsed_store_failed:
+                    return
+                self._parsed_store_failed = True
+
+            logger.warning(
+                "cannot store parsed listings for %s: %s", self._index_url, exc
+            )
 
     def _rebuild_parsed(
         self,

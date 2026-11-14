@@ -18,6 +18,7 @@ import logging
 import os
 import threading
 from collections.abc import Callable, Coroutine, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, TypeVar
@@ -135,6 +136,38 @@ class _FakeTransport:
 
 def _cache(root: Path) -> OnDiskCache:
     return OnDiskCache(root, "https://pypi.org/simple")
+
+
+def test_failed_writers_do_not_wait_for_another_writers_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache = _cache(tmp_path)
+    parent = cache._parsed_path("pkg").parent
+    parent.parent.mkdir(parents=True)
+    parent.write_bytes(b"not a directory")
+    client = CachedAsyncSimpleClient(_FakeTransport([]), cache, _INDEX_NORM)
+    entered = threading.Event()
+    release = threading.Event()
+    reported = []
+
+    def warning(message: str, *args: object) -> None:
+        reported.append((message, args))
+        entered.set()
+        assert release.wait(timeout=10)
+
+    monkeypatch.setattr("nab_index.cached_client.logger.warning", warning)
+    digest = hashlib.sha256(_LISTING_BYTES).hexdigest()
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        first = workers.submit(client._store_parsed, "pkg", digest, _PARSED)
+        try:
+            assert entered.wait(timeout=5)
+            second = workers.submit(client._store_parsed, "pkg", digest, _PARSED)
+            second.result(timeout=5)
+            assert len(reported) == 1
+        finally:
+            release.set()
+        first.result(timeout=5)
 
 
 def test_cancelled_listing_write_finishes_before_close(
