@@ -168,10 +168,13 @@ def _read_cache_record(path: str | Path) -> bytes | None:
 
 def _atomic_write_record(path: Path, data: bytes) -> None:
     """Publish a checked cache record without a storage synchronization barrier."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_chunks(
-        path, (_CACHE_RECORD_MAGIC, hashlib.sha256(data).digest(), data), sync=False
-    )
+    chunks = (_CACHE_RECORD_MAGIC, hashlib.sha256(data).digest(), data)
+    try:
+        atomic_write_chunks(path, chunks, sync=False)
+    except FileNotFoundError:
+        # Avoid a mkdir attempt for every record in the same directory.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_chunks(path, chunks, sync=False)
 
 
 class OfflineError(Exception):
