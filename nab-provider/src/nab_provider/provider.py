@@ -74,7 +74,7 @@ from .errors import (
     YankAdmissionRequiredError,
 )
 from .extra_keys import join_extra, split_extra
-from .fetch_port import MetadataPrefetchHints
+from .fetch_port import MetadataArtifactHints, MetadataPrefetchHints
 from .metadata import WheelMetadata
 from .policy import (
     ArchiveSource,
@@ -1063,6 +1063,17 @@ class Provider:
         self._probing_satisfiable = False
 
         self.stats = ProviderStats()
+
+        if isinstance(self.coordinator, MetadataArtifactHints):
+            # Keep fetcher callbacks independent of provider caches.
+            tags = self.wheel_tags
+            target = self.target
+
+            def select(wheels: list[WheelFile]) -> WheelFile:
+                """Load metadata ranking only when a listing needs it."""
+                return _metadata_resolver.pick_metadata_wheel(wheels, tags, target)
+
+            self.coordinator.set_metadata_prefetch_selector(select)
 
         if self.root_requirements:
             self._prefetch_root_listings()

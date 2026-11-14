@@ -29,10 +29,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from .policy import SourceRequest
+    from .records import WheelFile
     from .store import InMemoryIndex
 
 __all__ = [
     "FetchPort",
+    "MetadataArtifactHints",
     "MetadataPrefetchHints",
     "PrefetchSettings",
     "Waitable",
@@ -59,6 +61,17 @@ class PrefetchSettings:
             raise ValueError(msg)
         self.metadata_versions = metadata_versions
         self.lookahead_versions = lookahead_versions
+
+
+@runtime_checkable
+class MetadataArtifactHints(Protocol):
+    """Optional wheel ranking for listing-arrival metadata guesses."""
+
+    def set_metadata_prefetch_selector(
+        self, selector: Callable[[list[WheelFile]], WheelFile]
+    ) -> None:
+        """Use a pure selector over a non-empty candidate list on the fetch loop."""
+        ...
 
 
 @runtime_checkable

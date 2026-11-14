@@ -8,11 +8,15 @@ from collections.abc import Callable, Mapping
 
 import pytest
 
+from nab_provider._provider.metadata_resolver import pick_metadata_wheel
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider.provider import Provider
+from nab_provider.records import WheelFile
 from nab_provider.store import InMemoryIndex
-from nab_provider.testing import FakeFetchPort, make_coordinator
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget
+from nab_provider.testing import FakeFetchPort, make_coordinator, make_wheel
 
 
 def _no_result(*_args: str) -> None:
@@ -36,6 +40,25 @@ class HintPort(FakeFetchPort):
         self, filters: Mapping[str, Callable[[str], bool]]
     ) -> None:
         self.filters = dict(filters)
+
+
+class ArtifactHintPort(FakeFetchPort):
+    """Support artifact hints independently of root-version hints."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            InMemoryIndex(),
+            serve_metadata=_no_result,
+            serve_sdist=_no_result,
+            serve_range=_no_result,
+            serve_archive=_no_result,
+        )
+        self.selector: Callable[[list[WheelFile]], WheelFile] | None = None
+
+    def set_metadata_prefetch_selector(
+        self, selector: Callable[[list[WheelFile]], WheelFile]
+    ) -> None:
+        self.selector = selector
 
 
 def test_normalized_roots_combine_constraints_without_retaining_provider() -> None:
@@ -84,3 +107,42 @@ def test_host_without_optional_hints_keeps_requesting_root_listings() -> None:
     port = make_coordinator([])
     Provider(port, root_requirements={"foo": SpecifierSet("==1").to_range()})
     assert port.calls_to("request_listing")
+
+
+def test_artifact_selector_keeps_target_context_without_retaining_provider() -> None:
+    port = ArtifactHintPort()
+    wheels = [
+        make_wheel(tag="cp310-none-any"),
+        make_wheel(tag="cp312-none-any"),
+    ]
+    first = Provider(
+        port,
+        ResolveTarget.for_declared(
+            python_version="3.10", spec=PlatformSpec("linux_x86_64")
+        ),
+    )
+    earlier_selector = port.selector
+    assert earlier_selector is not None
+    assert earlier_selector(wheels) is wheels[0]
+
+    reference = weakref.ref(first)
+    del first
+    gc.collect()
+    assert reference() is None
+
+    Provider(
+        port,
+        ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec("linux_x86_64")
+        ),
+    )
+    assert port.selector is not None
+    assert port.selector(wheels) is wheels[1]
+    assert earlier_selector(wheels) is wheels[0]
+
+
+def test_metadata_wheel_selection_requires_candidates() -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        pick_metadata_wheel([], None)
+    wheel = make_wheel()
+    assert pick_metadata_wheel([wheel], None) is wheel
