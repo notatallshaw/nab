@@ -3963,11 +3963,11 @@ class TestGetSdistFiles:
         real_atomic_write = cache_mod._atomic_write_record
         fail = {"active": True}
 
-        def flaky_atomic_write(path: Path, data: bytes) -> None:
+        def flaky_atomic_write(path: Path, data: bytes) -> bytes:
             if fail["active"] and marker in data:
                 msg = "simulated crash committing pyproject"
                 raise OSError(msg)
-            real_atomic_write(path, data)
+            return real_atomic_write(path, data)
 
         monkeypatch.setattr(cache_mod, "_atomic_write_record", flaky_atomic_write)
 
@@ -5524,7 +5524,7 @@ class _PolicyWriteProbe:
     """Record writer threads and optionally hold a real cache write open."""
 
     def __init__(
-        self, write: Callable[[Path, bytes], None], *, blocked: bool = False
+        self, write: Callable[[Path, bytes], bytes], *, blocked: bool = False
     ) -> None:
         self.write = write
         self.threads: list[int] = []
@@ -5533,12 +5533,12 @@ class _PolicyWriteProbe:
         if not blocked:
             self.release.set()
 
-    def __call__(self, path: Path, data: bytes) -> None:
+    def __call__(self, path: Path, data: bytes) -> bytes:
         self.threads.append(threading.get_ident())
         self.entered.set()
         if not self.release.wait(10):
             raise AssertionError("cache write was never released")
-        self.write(path, data)
+        return self.write(path, data)
 
 
 def _revalidation_client(
@@ -5644,7 +5644,7 @@ class TestPolicyWriteScheduling:
         cache = _make_cache(tmp_path)
         client = _revalidation_client(cache)
 
-        def fail(_path: Path, _data: bytes) -> None:
+        def fail(_path: Path, _data: bytes) -> bytes:
             raise RuntimeError("policy write failed")
 
         monkeypatch.setattr(cache_mod, "_atomic_write_record", fail)

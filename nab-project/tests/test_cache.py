@@ -554,7 +554,7 @@ class TestUnwritableRoot:
     def test_permission_denied_does_not_raise(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def denied(_path: Path, _data: bytes) -> None:
+        def denied(_path: Path, _data: bytes) -> bytes:
             raise PermissionError(13, "Permission denied")
 
         monkeypatch.setattr("nab_index.cache._atomic_write_record", denied)
@@ -598,10 +598,10 @@ class TestUnwritableRoot:
         old_policy = CachePolicy(fetched_at=0, max_age=600, etag="E1")
         old_digest = cache.put_simple("foo", b"OLD-LISTING", old_policy)
 
-        def fail_body(path: Path, data: bytes) -> None:
+        def fail_body(path: Path, data: bytes) -> bytes:
             if path.suffix == ".json":
                 raise OSError(28, "No space left on device")
-            _atomic_write_record(path, data)
+            return _atomic_write_record(path, data)
 
         monkeypatch.setattr("nab_index.cache._atomic_write_record", fail_body)
         cache.put_simple(
@@ -623,10 +623,10 @@ class TestUnwritableRoot:
         """
         cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
 
-        def fail_policy(path: Path, data: bytes) -> None:
+        def fail_policy(path: Path, data: bytes) -> bytes:
             if path.suffix == ".policy":
                 raise OSError(28, "No space left on device")
-            _atomic_write_record(path, data)
+            return _atomic_write_record(path, data)
 
         monkeypatch.setattr("nab_index.cache._atomic_write_record", fail_policy)
         digest = cache.put_simple(
