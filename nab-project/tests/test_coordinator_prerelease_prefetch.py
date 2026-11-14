@@ -61,7 +61,7 @@ def resolve_metadata(
     provider_type: type[Provider] = Provider,
 ) -> tuple[Version, dict[str, int], list[str]]:
     """Read actual sidecars and retain requests queued before dependencies."""
-    requested = []
+    requested: list[str] = []
     with (
         metadata_index(versions) as routes,
         FetchCoordinator(
@@ -124,6 +124,44 @@ def test_deferral_callback_does_not_retain_provider() -> None:
         assert reference() is None
         assert not defer("1.0")
         assert defer("2.0rc1")
+
+
+@pytest.mark.parametrize(
+    ("latest", "window", "expected"),
+    [("2.0", None, ["2.0"]), ("2.0b1", None, []), ("2.0b1", 1, ["2.0b1"])],
+)
+def test_listing_tail_respects_provider_deferral_without_expanding_window(
+    monkeypatch: pytest.MonkeyPatch,
+    latest: str,
+    window: int | None,
+    expected: list[str],
+) -> None:
+    requested: list[str] = []
+
+    def request(
+        package: str,
+        version: str,
+        url: str,
+        metadata_hash: tuple[str, str] | None = None,
+    ) -> threading.Event:
+        requested.append(version)
+        return threading.Event()
+
+    coordinator = FetchCoordinator(
+        HttpxAsyncTransport(),
+        prefetch_settings=PrefetchSettings(metadata_versions=window),
+        start_on_demand=True,
+    )
+    try:
+        Provider(coordinator)
+        monkeypatch.setattr(coordinator, "request_metadata", request)
+
+        # No root requirement filters this transitive listing before deferral.
+        coordinator._run_listing_tail("pkg", [make_wheel("1.0"), make_wheel(latest)])
+    finally:
+        coordinator.shutdown()
+
+    assert requested == expected
 
 
 @pytest.mark.parametrize(("specifier", "expected"), [("", "1.0"), (">=2.0b1", "2.0b1")])
