@@ -135,7 +135,7 @@ def _compact_table(table: dict[object, object]) -> object:
 def _compact_shared_table(table: dict[object, object]) -> object:
     """Compact ``table`` for a caller whose rows already share one name object.
 
-    One cached listing's rows are decoded together and get a single object for
+    One JSON listing's rows are decoded together and get a single object for
     a repeated name, and :func:`parse_hash_table` interns whatever a reader
     parses out of the pair, so :func:`_compact_table`'s per-row intern buys
     nothing here.
@@ -366,7 +366,7 @@ def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its ow
     size: int | None,
     metadata_hash: tuple[str, str] | dict[Any, Any] | str | None,
 ) -> WheelFile:
-    """Return a wheel rebuilt from a cached listing row.
+    """Return a wheel from decoded remote listing fields.
 
     ``hashes`` and ``metadata_hash`` each take either a parsed value or the
     index's own table. A string represents a raw ``{"sha256": digest}`` table.
@@ -374,7 +374,7 @@ def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its ow
     Deferring a field means leaving its slot unwritten, which
     ``__init__`` cannot do, so this writes the slots directly.
 
-    ``local_path`` is ``None``: a cached listing row carries none.
+    ``local_path`` is ``None``: remote listings carry none.
     """
     wheel = WheelFile.__new__(WheelFile)
     wheel.filename = filename

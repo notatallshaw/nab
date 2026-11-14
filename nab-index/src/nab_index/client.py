@@ -53,7 +53,7 @@ from nab_provider.records import (
     SdistFile,
     WheelFile,
     defer_hashes,
-    defer_sidecar_hash,
+    rehydrated_wheel,
 )
 from nab_provider.serialization import SimpleSerialization, simple_accept_header
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
@@ -783,18 +783,18 @@ def _parse_file_entry(
             if "core-metadata" in file_info
             else file_info.get(_LEGACY_METADATA_KEY)
         )
-        wheel = WheelFile(
+        # Leave deferred integrity slots unwritten instead of clearing defaults.
+        return rehydrated_wheel(
             filename=filename,
             url=file_url,
             version=version,
             requires_python=requires_python,
             has_metadata=sidecar is True or isinstance(sidecar, dict),
             upload_time=upload_time,
+            hashes=raw_hashes if isinstance(raw_hashes, dict) else (),
             size=size,
+            metadata_hash=sidecar if isinstance(sidecar, dict) else None,
         )
-        defer_hashes(wheel, raw_hashes)
-        defer_sidecar_hash(wheel, sidecar)
-        return wheel
 
     sdist_parsed = _parse_sdist_filename(filename)
     if sdist_parsed is None:
