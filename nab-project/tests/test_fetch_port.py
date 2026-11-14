@@ -13,7 +13,7 @@ import pytest
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.fetch import FetchCoordinator
-from nab_provider.fetch_port import FetchPort, Waitable
+from nab_provider.fetch_port import FetchPort, MetadataPrefetchHints, Waitable
 from nab_provider.store import sdist_artifact_key
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "nab_project"
@@ -35,6 +35,8 @@ HOST_SOURCES = (SRC / "_build_remote.py", SRC / "_sources.py")
 
 They hold the port under the name ``port``, so the census walks them for that
 handle rather than for ``coordinator``."""
+
+OPTIONAL_PROTOCOLS = (MetadataPrefetchHints,)
 
 
 def declared_members(protocol: type) -> frozenset[str]:
@@ -72,6 +74,58 @@ def binding_of(node: ast.AST) -> tuple[ast.expr, Sequence[ast.expr]] | None:
     return None
 
 
+def narrowed_protocol(node: ast.expr, handle: str) -> type | None:
+    """Recognize an explicit runtime check of one declared optional capability."""
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "isinstance"
+        and len(node.args) == 2
+        and is_the_handle(node.args[0], handle)
+        and isinstance(node.args[1], ast.Name)
+    ):
+        return None
+    return next(
+        (
+            protocol
+            for protocol in OPTIONAL_PROTOCOLS
+            if protocol.__name__ == node.args[1].id
+        ),
+        None,
+    )
+
+
+def check_optional_guards(module: ast.Module, handle: str) -> None:
+    """Require optional-member reads to stay inside their narrowing branch."""
+    parents = {
+        id(child): parent
+        for parent in ast.walk(module)
+        for child in ast.iter_child_nodes(parent)
+    }
+    for node in ast.walk(module):
+        if not (isinstance(node, ast.Attribute) and is_the_handle(node.value, handle)):
+            continue
+        owners = {
+            protocol
+            for protocol in OPTIONAL_PROTOCOLS
+            if node.attr in declared_members(protocol)
+        }
+        if not owners:
+            continue
+        current: ast.AST = node
+        while (parent := parents.get(id(current))) is not None:
+            if (
+                isinstance(parent, ast.If)
+                and current in parent.body
+                and narrowed_protocol(parent.test, handle) in owners
+            ):
+                break
+            current = parent
+        else:
+            msg = f"optional member {node.attr} is read without its runtime guard"
+            raise AssertionError(msg)
+
+
 def followable_handles(module: ast.Module, handle: str) -> set[int]:
     """The ``id()`` of every handle occurrence in ``module`` the walk can account for.
 
@@ -87,6 +141,8 @@ def followable_handles(module: ast.Module, handle: str) -> set[int]:
             followable.add(id(node.value))
             continue
         if isinstance(node, ast.Call):
+            if narrowed_protocol(node, handle) is not None:
+                followable.add(id(node.args[0]))
             followable.update(
                 id(kw.value)
                 for kw in node.keywords
@@ -111,6 +167,7 @@ def members_read_from(path: Path, handle: str = "coordinator") -> set[str]:
     has too many forms to follow.
     """
     module = ast.parse(path.read_text(encoding="utf-8"))
+    check_optional_guards(module, handle)
     followable = followable_handles(module, handle)
 
     members: set[str] = set()
@@ -145,7 +202,36 @@ def coordinator() -> FetchCoordinator:
 class TestPortDeclaration:
     def test_declares_exactly_the_members_its_consumers_use(self) -> None:
         """The port is a census, so recompute it rather than restate it here."""
-        assert provider_census() | host_census() == declared_members(FetchPort)
+        optional = set().union(
+            *(declared_members(protocol) for protocol in OPTIONAL_PROTOCOLS)
+        )
+        assert (
+            provider_census() | host_census() == declared_members(FetchPort) | optional
+        )
+
+    def test_census_allows_an_explicit_optional_guard(self, tmp_path: Path) -> None:
+        path = tmp_path / "guarded.py"
+        path.write_text(
+            "if isinstance(provider.coordinator, MetadataPrefetchHints):\n"
+            "    provider.coordinator.set_metadata_prefetch_filters({})\n"
+        )
+        assert members_read_from(path) == declared_members(MetadataPrefetchHints)
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "provider.coordinator.set_metadata_prefetch_filters({})\n",
+            "if isinstance(provider.coordinator, MetadataPrefetchHints):\n    pass\nelse:\n    provider.coordinator.set_metadata_prefetch_filters({})\n",
+            "if isinstance(provider.coordinator, FetchPort):\n    provider.coordinator.set_metadata_prefetch_filters({})\n",
+        ],
+    )
+    def test_census_rejects_unguarded_optional_reads(
+        self, tmp_path: Path, source: str
+    ) -> None:
+        path = tmp_path / "unguarded.py"
+        path.write_text(source)
+        with pytest.raises(AssertionError, match="without its runtime guard"):
+            members_read_from(path)
 
     @pytest.mark.parametrize(
         "source",
@@ -223,6 +309,12 @@ class TestRequestSignatures:
 class TestCoordinatorSatisfiesThePort:
     def test_instance_check_passes(self, coordinator: FetchCoordinator) -> None:
         assert isinstance(coordinator, FetchPort)
+        assert isinstance(coordinator, MetadataPrefetchHints)
+
+    def test_optional_hint_signature(self) -> None:
+        assert parameter_shape(
+            FetchCoordinator.set_metadata_prefetch_filters
+        ) == parameter_shape(MetadataPrefetchHints.set_metadata_prefetch_filters)
 
 
 class TestFakeSatisfiesThePort:

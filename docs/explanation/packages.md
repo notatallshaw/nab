@@ -112,6 +112,10 @@ checks active. Omitted fields inherit transport recommendations, or defaults for
 without them. The index recommends windows, the project snapshots settings, and the provider owns
 lookahead.
 
+The provider supplies root-version bounds through optional `MetadataPrefetchHints`. The project
+layer uses those predicates to skip listing-arrival metadata for excluded versions; required
+requests stay unfiltered. The callbacks retain independent version ranges.
+
 ## Cache-only fetches
 
 ```text

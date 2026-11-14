@@ -452,6 +452,7 @@ class FetchCoordinator:
         self.prefetch_settings = _resolve_prefetch_settings(
             transport, prefetch_settings
         )
+        self._metadata_prefetch_filters: dict[str, Callable[[str], bool]] = {}
         self._offline = offline
         self._start_on_demand = start_on_demand
 
@@ -1352,6 +1353,12 @@ class FetchCoordinator:
             self._on_fetch()
         self._prefetch_metadata_after_listing(req.package, files)
 
+    def set_metadata_prefetch_filters(
+        self, filters: Mapping[str, Callable[[str], bool]]
+    ) -> None:
+        """Snapshot version filters for speculative metadata, leaving demand alone."""
+        self._metadata_prefetch_filters = dict(filters)
+
     def _prefetch_metadata_after_listing(
         self, package: str, files: Sequence[WheelFile | SdistFile]
     ) -> None:
@@ -1380,7 +1387,11 @@ class FetchCoordinator:
                 break
             newest[f.version] = f
 
+        version_filter = self._metadata_prefetch_filters.get(package)
         for w in reversed(newest.values()):
+            if version_filter is not None and not version_filter(w.version):
+                continue
+
             # A release clears the URL first, so a URL read after the hash
             # means the release had not begun when the hash was read.
             metadata_hash = w.metadata_hash
