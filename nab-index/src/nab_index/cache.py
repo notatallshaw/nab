@@ -153,7 +153,9 @@ def _record_payload(header: bytes, data: bytes) -> bytes | None:
     return data
 
 
-def _read_cache_record(path: str | Path) -> bytes | None:
+def _read_cache_record(
+    path: str | Path, *, expected_digest: str | None = None
+) -> bytes | None:
     """Read checked payload bytes without copying them out of a larger buffer."""
     with open(path, "rb", buffering=0) as handle:  # noqa: PTH123 - whole payload read
         header = handle.read(_CACHE_RECORD_HEADER_BYTES)
@@ -163,6 +165,14 @@ def _read_cache_record(path: str | Path) -> bytes | None:
         logger.warning(
             "Corrupt cache record %s: checksum invalid; treating as a miss", path
         )
+        return None
+
+    # Reuse the checked header for policy binding instead of hashing the body again.
+    if (
+        expected_digest is not None
+        and header[len(_CACHE_RECORD_MAGIC) :].hex() != expected_digest
+    ):
+        return None
     return payload
 
 
@@ -395,19 +405,27 @@ class OnDiskCache:
         body_path, policy_path = self._simple_paths(package)
         try:
             policy_bytes = _read_cache_record(policy_path)
-            body = _read_cache_record(body_path)
+        except OSError:
+            return None
+        policy = _decode_policy(policy_bytes) if policy_bytes is not None else None
+
+        # Keep corrupt-body reporting even when the policy cannot be decoded.
+        try:
+            body = _read_cache_record(
+                body_path,
+                expected_digest=policy.body_digest if policy is not None else None,
+            )
         except OSError:
             return None
         if policy_bytes is None:
             return None
-        policy = _decode_policy(policy_bytes)
         if policy is None:
             logger.warning(
                 "Corrupt cache policy %s: not decodable; treating as a miss",
                 policy_path,
             )
             return None
-        if body is None or policy.body_digest != hashlib.sha256(body).hexdigest():
+        if body is None or policy.body_digest is None:
             return None
         return (body, policy)
 
