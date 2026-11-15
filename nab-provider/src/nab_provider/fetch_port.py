@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 __all__ = [
     "FetchPort",
     "MetadataArtifactHints",
+    "MetadataPrefetchAdmission",
     "MetadataPrefetchDeferral",
     "MetadataPrefetchHints",
     "PrefetchSettings",
@@ -72,6 +73,17 @@ class MetadataArtifactHints(Protocol):
         self, selector: Callable[[list[WheelFile]], WheelFile]
     ) -> None:
         """Use a pure selector over a non-empty candidate list on the fetch loop."""
+        ...
+
+
+@runtime_checkable
+class MetadataPrefetchAdmission(Protocol):
+    """Optional admission of default listing-arrival metadata guesses."""
+
+    def set_metadata_prefetch_admission(
+        self, admit: Callable[[list[WheelFile]], bool] | None
+    ) -> None:
+        """Use a pure candidate-group predicate; explicit windows take priority."""
         ...
 
 

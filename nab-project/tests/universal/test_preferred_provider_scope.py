@@ -7,13 +7,17 @@ from datetime import datetime, timezone
 
 import pytest
 
+from nab_index.httpx_async_transport import HttpxAsyncTransport
+from nab_project.fetch import FetchCoordinator
 from nab_project.inputs import ResolveInputs
+from nab_project.lockfile import IndexPin
 from nab_project.resolve import resolve_with_coordinator
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import InvalidUploadTimeError, MissingExtraError
 from nab_provider.policy import BuildPolicy, DecisionOrder
 from nab_provider.provider import Provider
+from nab_provider.records import WheelFile
 from nab_provider.tags import PlatformSpec, TagSet
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import (
@@ -22,6 +26,7 @@ from nab_provider.testing import (
     make_metadata,
     make_wheel,
 )
+from nab_provider.yanking import append_yanked_file
 from nab_resolver.errors import ResolutionTerminatedError
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import RangeProtocol, RootRequirement
@@ -399,3 +404,89 @@ def test_soft_preferences_keep_ordinary_first_target_preparation(
     assert result.target_results[0].pins == {"a": Version("1")}
     assert seen == {older.filename, newer.filename}
     assert port.calls_to("request_metadata")
+
+
+@pytest.mark.parametrize(
+    "requirements",
+    [
+        ["a>=20"],
+        ["a[speed]>=20", "a==20"],
+        ['a>=20; sys_platform == "linux"', 'a==20; sys_platform == "win32"'],
+    ],
+)
+def test_root_excludes_old_withdrawals_from_later_target_preparation(
+    requirements: list[str],
+) -> None:
+    history = [make_wheel(str(version), package="a") for version in range(1, 21)]
+    alias = make_wheel("20.0", package="a", tag="py2.py3-none-any")
+    files = append_yanked_file(
+        [*history, alias], make_wheel("0", package="a"), reason="withdrawn"
+    )
+    with FetchCoordinator(HttpxAsyncTransport(), start_on_demand=True) as coordinator:
+        coordinator.index.store_listing("a", files, has_yanked_files=True)
+        coordinator.index.store_listing_index("a", coordinator.indexes[0].name)
+        for file in files:
+            assert isinstance(file, WheelFile)
+            metadata_url = file.metadata_url
+            assert metadata_url is not None
+            coordinator.index.store_metadata(
+                "a",
+                file.version,
+                make_metadata("a", file.version, provides_extra=("speed",)),
+                metadata_url=metadata_url,
+            )
+
+        result = resolve_with_coordinator(
+            coordinator,
+            [target("linux_x86_64"), target("windows_amd64")],
+            [Requirement(text) for text in requirements],
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+        )
+    result.raise_for_failure()
+    first, second = result.target_results
+
+    assert first.pins["a"] == second.pins["a"] == Version("20")
+    assert first.distributions_seen == 22
+    assert second.distributions_seen == 2
+    assert second.lock is not None
+    pin = second.lock.pins["a"]
+    assert isinstance(pin, IndexPin)
+    assert len(pin.wheels) == 2
+
+
+def test_different_target_roots_still_force_a_complete_trial() -> None:
+    files = append_yanked_file(
+        [make_wheel("1", package="a"), make_wheel("2", package="a")],
+        make_wheel("0", package="a"),
+        reason="withdrawn",
+    )
+    with FetchCoordinator(HttpxAsyncTransport(), start_on_demand=True) as coordinator:
+        coordinator.index.store_listing("a", files, has_yanked_files=True)
+        coordinator.index.store_listing_index("a", coordinator.indexes[0].name)
+        for file in files:
+            assert isinstance(file, WheelFile)
+            metadata_url = file.metadata_url
+            assert metadata_url is not None
+            coordinator.index.store_metadata(
+                "a",
+                file.version,
+                make_metadata("a", file.version),
+                metadata_url=metadata_url,
+            )
+
+        result = resolve_with_coordinator(
+            coordinator,
+            [target("linux_x86_64"), target("windows_amd64")],
+            [
+                Requirement('a==2; sys_platform == "linux"'),
+                Requirement('a==1; sys_platform == "win32"'),
+            ],
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+        )
+    result.raise_for_failure()
+
+    assert [item.pins for item in result.target_results] == [
+        {"a": Version("2")},
+        {"a": Version("1")},
+    ]
+    assert all(item.distributions_seen >= 3 for item in result.target_results)

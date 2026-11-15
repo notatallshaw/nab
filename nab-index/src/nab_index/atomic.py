@@ -109,10 +109,16 @@ def _staged(path: Path) -> Generator[int, None, None]:
             os.close(fd)
 
         # The rename carries the staging file's mode across.
-        if path.exists():
-            tmp_path.chmod(stat.S_IMODE(path.stat().st_mode))
-        else:
-            tmp_path.chmod(_default_mode())
+        try:
+            mode = stat.S_IMODE(path.stat().st_mode)
+        except FileNotFoundError:
+            mode = _default_mode()
+        except OSError:
+            # Python versions differ in which metadata errors exists() suppresses.
+            if path.exists():
+                raise
+            mode = _default_mode()
+        tmp_path.chmod(mode)
 
         # Path.replace would route around os.replace on Python 3.10
         # (pathlib captures it at import time), defeating monkeypatches.

@@ -20,6 +20,7 @@ from nab_index.client import (
     zip_sdist_versions,
 )
 from nab_markersets._compat import get_int_max_str_digits
+from nab_provider.yanking import YankedListing
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
@@ -404,3 +405,70 @@ def test_sdist_member_top_level_rejects_empty_or_absolute(name: str) -> None:
     # A member that strips to nothing, or points at an absolute path, is
     # reported at depth -1 so callers skip it rather than treat it as a root.
     assert _sdist_member_top_level(name) == (-1, "", "")
+
+
+@pytest.mark.parametrize("reason", [True, "withdrawn", 1, False, "", None])
+@pytest.mark.parametrize(
+    "filename", ["foo-1.0-py3-none-any.whl", "foo-1.0.tar.gz", "foo-1.0.zip"]
+)
+def test_parsed_withdrawal_preserves_record_fields(
+    reason: object, filename: str
+) -> None:
+    data = {
+        "files": [
+            {"filename": "foo-0.5.tar.gz", "url": "foo-0.5.tar.gz"},
+            {
+                "filename": filename,
+                "url": "../files/" + filename,
+                "yanked": reason,
+                "hashes": {"sha256": "abc"},
+                "core-metadata": {"sha256": "def"},
+                "requires-python": ">=3.10",
+                "size": 123,
+            },
+            {"filename": "foo-2.0.tar.gz", "url": "foo-2.0.tar.gz"},
+        ]
+    }
+
+    files = _parse_files(data, INDEX_URL, "Foo", page_url="https://e.example/page/")
+
+    assert [file.version for file in files] == ["0.5", "1.0", "2.0"]
+    first = files[1]
+    assert first.url == "https://e.example/files/" + filename
+    assert first.hashes == (("sha256", "abc"),)
+    assert first.requires_python == ">=3.10"
+    assert first.size == 123
+    assert first.yanked == (
+        reason if isinstance(reason, str) and reason else bool(reason)
+    )
+    if reason:
+        assert isinstance(files, YankedListing)
+        assert files.withdrawn_versions == {"1.0"}
+    else:
+        assert type(files) is list
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"url": "file.whl"},
+        {"filename": "foo-1.0.tar.gz", "url": None},
+        {"filename": "other-1.0.tar.gz", "url": "file.tar.gz"},
+        {"filename": "foo-1.0.tar.gz", "url": "https://[bad/file"},
+    ],
+)
+def test_invalid_withdrawn_entry_does_not_mark_live_listing(
+    entry: dict[str, object],
+) -> None:
+    data = {
+        "files": [
+            dict(entry, yanked="withdrawn"),
+            {"filename": "foo-2.0.tar.gz", "url": "foo-2.0.tar.gz"},
+        ]
+    }
+
+    files = _parse_files(data, INDEX_URL, "foo")
+
+    assert [file.version for file in files] == ["2.0"]
+    assert not files[0].yanked
+    assert type(files) is list

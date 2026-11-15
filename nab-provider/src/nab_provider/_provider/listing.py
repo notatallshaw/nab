@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from ..fetch_port import Waitable
     from ..policy import ArchiveSource, LocalSource, VcsSource
     from ..provider import DistFile, Provider, ProviderStats
+    from ..target import ResolveTarget
 
     _PreparedListing = tuple[
         list[tuple[Version, DistFile]],
@@ -298,13 +299,17 @@ def metadata_prefetch_version(
     *,
     version_range: VersionRange | None = None,
 ) -> Version | None:
-    """Select one guess, deferring prereleases until their constraints arrive."""
+    """Return one guess, deferring preference and prerelease admission."""
+    # Let demand validate known preferences before guessing another version.
+    if provider.prefetch_waits_for_preference(normalized):
+        return None
+
     # Keep the provider's candidate-selection hook on this path.
     best = provider.pick_best_candidate(normalized, versions)
     if best is None:
         return None
     version, _ = best
-    if provider.defer_prerelease_prefetch and version.is_prerelease:
+    if provider.automatic_prefetch_admission and version.is_prerelease:
         if provider.metadata_prefetch_decisions.get(normalized) is not None:
             return None
         if version_range is None:
@@ -1179,18 +1184,34 @@ def excluded_by_python(
         return False
     cached = provider.requires_python_cache.get(effective)
     if cached is None:
-        try:
-            spec = SpecifierSet(effective)
-            cached = not provider.target.admits_requires_python(spec)
-        except ValueError:
-            # Malformed Requires-Python on the dist, or a digit run int()
-            # refuses: treat as not-excluded, let downstream logic decide.
-            # Our own python_version is validated at Provider construction.
-            cached = False
+        cached = not _admits_python_requirement(provider.target, effective)
         provider.requires_python_cache[effective] = cached
     if cached:
         provider.stats.excluded_by_python += 1
     return cached
+
+
+def _admits_python_requirement(target: ResolveTarget, requirement: str) -> bool:
+    """Apply target admission, treating malformed bounds as unknown."""
+    try:
+        return target.admits_requires_python(SpecifierSet(requirement))
+    except ValueError:
+        return True
+
+
+def metadata_prefetch_admitted(wheels: list[WheelFile], target: ResolveTarget) -> bool:
+    """Admit a group unless every candidate's Python support excludes the target."""
+    excluded: set[str] = set()
+    for wheel in wheels:
+        requirement = wheel.requires_python
+        if requirement is None or requirement == "":
+            return True
+        if requirement in excluded:
+            continue
+        if _admits_python_requirement(target, requirement):
+            return True
+        excluded.add(requirement)
+    return False
 
 
 def upload_time_cause(dist: DistFile, cutoff: datetime | None) -> Cause | None:
@@ -1481,6 +1502,6 @@ def prefetch_new_deps(provider: Provider, deps: Mapping[str, VersionRange]) -> N
                 normalized,
                 provider.versions_cache[normalized],
                 version_range=version_range
-                if provider.defer_prerelease_prefetch
+                if provider.automatic_prefetch_admission
                 else None,
             )

@@ -59,6 +59,8 @@ def resolve_metadata(
     prereleases: bool | None = None,
     settings: PrefetchSettings | None = None,
     provider_type: type[Provider] = Provider,
+    preferences: dict[str, Version] | None = None,
+    cached_listing: bool = False,
 ) -> tuple[Version, dict[str, int], list[str]]:
     """Read actual sidecars and retain requests queued before dependencies."""
     requested: list[str] = []
@@ -81,7 +83,11 @@ def resolve_metadata(
 
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr(coordinator, "request_metadata", request)
-            provider = provider_type(coordinator)
+            if cached_listing:
+                coordinator.index.store_listing(
+                    "pkg", [make_wheel(version) for version in versions]
+                )
+            provider = provider_type(coordinator, preferences=preferences)
             selected = provider.choose_version(
                 "pkg", SpecifierSet(specifier, prereleases=prereleases).to_range()
             )
@@ -172,3 +178,31 @@ def test_coordinator_prefetches_the_admitted_version(
     assert selected == Version(expected)
     assert expected in prefetched
     assert requests == {version: int(version == expected) for version in requests}
+
+
+@pytest.mark.parametrize(
+    ("settings", "provider_type", "cached_listing", "expected"),
+    [
+        (None, Provider, True, {"1.0": 1, "2.0": 0}),
+        (None, Provider, False, {"1.0": 1, "2.0": 1}),
+        (PrefetchSettings(metadata_versions=1), Provider, True, {"1.0": 1, "2.0": 1}),
+        (None, CustomProvider, True, {"1.0": 1, "2.0": 1}),
+    ],
+)
+def test_preference_deferral_preserves_explicit_and_custom_requests(
+    settings: PrefetchSettings | None,
+    provider_type: type[Provider],
+    cached_listing: bool,
+    expected: dict[str, int],
+) -> None:
+    selected, requests, _ = resolve_metadata(
+        ["1.0", "2.0"],
+        "",
+        settings=settings,
+        provider_type=provider_type,
+        preferences={"pkg": Version("1.0")},
+        cached_listing=cached_listing,
+    )
+
+    assert selected == Version("1.0")
+    assert requests == expected

@@ -827,8 +827,24 @@ class CachedAsyncSimpleClient:
             response, self._index_url, package, self._serialization
         )
 
+        unchanged: list[WheelFile | SdistFile] | None = None
+        if (
+            policy.body_digest is not None
+            and hashlib.sha256(new_body).hexdigest() == policy.body_digest
+        ):
+            # A 200 must still repair missing or corrupt cached representations.
+            cached = self._cache.get_simple(package)
+            if cached is not None and cached[1].body_digest == policy.body_digest:
+                unchanged = self._parsed_hit(
+                    package, replace(policy, page_url=response.url)
+                )
+
         # Parse before caching so a bad body never poisons the cache.
-        files = self._parse_listing(new_body, package, response.url)
+        files = (
+            self._parse_listing(new_body, package, response.url)
+            if unchanged is None
+            else unchanged
+        )
 
         new_policy = CachePolicy(
             fetched_at=_freshness_start(response),
@@ -836,8 +852,14 @@ class CachedAsyncSimpleClient:
             etag=_header(response, "etag"),
             page_url=response.url,
         )
-        digest = self._cache.put_simple(package, new_body, new_policy)
-        self._store_parsed(package, digest, files, page_url=new_policy.page_url)
+        if unchanged is not None:
+            await self._refresh_simple_policy(
+                package, replace(new_policy, body_digest=policy.body_digest)
+            )
+        else:
+            digest = self._cache.put_simple(package, new_body, new_policy)
+            self._store_parsed(package, digest, files, page_url=new_policy.page_url)
+
         return files
 
     async def _refresh_simple_policy(self, package: str, policy: CachePolicy) -> None:

@@ -24,7 +24,9 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import pytest
+import urllib3
 
+import nab_index.cache as cache_module
 from nab_index.cache import (
     CACHE_VERSION_SIMPLE,
     CACHE_VERSION_SIMPLE_PARSED,
@@ -41,6 +43,7 @@ from nab_index.cache import (
 from nab_index.cached_client import CachedAsyncSimpleClient, ParsedCacheStats
 from nab_index.client import SdistFile, WheelFile, _parse_files
 from nab_index.parsed_listing import corruption_reason, decode, encode
+from nab_index.urllib3_async_transport import _Urllib3Response
 
 # Derived so a bucket-version bump does not need every path updated.
 _SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
@@ -1440,3 +1443,202 @@ def test_legacy_backend_without_body_binding_still_rebuilds_without_http() -> No
     assert transport.calls == []
     assert cache.policy.body_digest == hashlib.sha256(_LISTING_BYTES).hexdigest()
     assert (stats.hit, stats.miss, stats.rebuild) == (1, 1, 0)
+
+
+class _ListingResponseTransport:
+    """Serve a real response after an optional competing cache write."""
+
+    def __init__(
+        self,
+        body: bytes,
+        *,
+        headers: Mapping[str, str] | None = None,
+        url: str = "",
+        before_response: Callable[[], None] | None = None,
+    ) -> None:
+        self.body = body
+        self.headers = headers
+        self.url = url
+        self.before_response = before_response
+
+    async def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> _Urllib3Response:
+        if self.before_response is not None:
+            self.before_response()
+        response = urllib3.HTTPResponse(
+            body=self.body, status=200, headers=self.headers
+        )
+        return _Urllib3Response(response, self.body, self.url or url)
+
+    async def aclose(self) -> None:
+        pass
+
+
+def _read_listing_and_close(
+    client: CachedAsyncSimpleClient,
+) -> list[WheelFile | SdistFile]:
+    """Read one listing and drain its cache writes in the same event loop."""
+
+    async def read() -> list[WheelFile | SdistFile]:
+        async with client:
+            return await client.get_files("pkg")
+
+    return _run(read())
+
+
+def _listing_record_writes(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Count actual record publications without replacing their behavior."""
+    writes: list[str] = []
+    original = cache_module._atomic_write_record
+
+    def write(path: Path, data: bytes) -> bytes:
+        writes.append(path.suffix)
+        return original(path, data)
+
+    monkeypatch.setattr(cache_module, "_atomic_write_record", write)
+    return writes
+
+
+def test_identical_200_refreshes_only_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A verified unchanged listing keeps its raw and parsed records."""
+    cache = _cache(tmp_path)
+    expected, digest = _warm_bound(cache, fresh=False)
+    raw_before = cache.get_simple("pkg")
+    parsed_before = cache.get_simple_parsed("pkg")
+    writes = _listing_record_writes(monkeypatch)
+    stats = ParsedCacheStats()
+    transport = _ListingResponseTransport(
+        _LISTING_BYTES, headers={"etag": "new", "cache-control": "max-age=120"}
+    )
+    client = CachedAsyncSimpleClient(transport, cache, _INDEX, parsed_stats=stats)
+
+    assert _read_listing_and_close(client) == expected
+    assert writes == [".policy"]
+    assert stats.hit == 1
+    assert cache.get_simple_parsed("pkg") == parsed_before
+    stored = cache.get_simple("pkg")
+    assert stored is not None
+    assert raw_before is not None
+    assert stored[0] == raw_before[0]
+    assert stored[1].body_digest == digest
+    assert stored[1].etag == "new"
+    assert stored[1].max_age == 120
+    assert stored[1].page_url == _PAGE_URL
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "raw-missing",
+        "raw-corrupt",
+        "parsed-missing",
+        "parsed-corrupt",
+        "parsed-binding",
+        "page-binding",
+        "policy-unbound",
+    ],
+)
+def test_identical_200_repairs_invalid_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str
+) -> None:
+    """A matching response digest alone cannot excuse a damaged cache record."""
+    cache = _cache(tmp_path)
+    expected, digest = _warm_bound(cache, fresh=False)
+    body_path, policy_path = cache._simple_paths("pkg")
+    parsed_path = cache._parsed_path("pkg")
+    if damage == "raw-missing":
+        body_path.unlink()
+    elif damage == "raw-corrupt":
+        body_path.write_bytes(b"truncated")
+    elif damage == "parsed-missing":
+        parsed_path.unlink()
+    elif damage == "parsed-corrupt":
+        parsed_path.write_bytes(b"truncated")
+    elif damage == "parsed-binding":
+        cache.put_simple_parsed("pkg", encode(expected, "0" * 64, page_url=_PAGE_URL))
+    elif damage == "page-binding":
+        cache.put_simple_parsed(
+            "pkg", encode(expected, digest, page_url="https://old.invalid/pkg/")
+        )
+    else:
+        _atomic_write_record(
+            policy_path,
+            _encode_policy(
+                CachePolicy(fetched_at=0, max_age=0, etag="old", page_url=_PAGE_URL)
+            ),
+        )
+    writes = _listing_record_writes(monkeypatch)
+    client = CachedAsyncSimpleClient(
+        _ListingResponseTransport(_LISTING_BYTES), cache, _INDEX
+    )
+
+    assert _read_listing_and_close(client) == expected
+    assert writes == [".json", ".policy", ".parsed"]
+    stored = cache.get_simple("pkg")
+    blob = cache.get_simple_parsed("pkg")
+    assert stored is not None
+    assert blob is not None
+    assert stored[0] == _LISTING_BYTES
+    assert decode(blob, stored[1]) is not None
+
+
+def test_identical_200_repairs_a_concurrently_replaced_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cache writer during the request cannot leave a different raw body bound."""
+    cache = _cache(tmp_path)
+    expected, _ = _warm_bound(cache, fresh=False)
+
+    def replace_body() -> None:
+        cache.put_simple(
+            "pkg", _LISTING_V2_BYTES, CachePolicy(fetched_at=0, max_age=0, etag="raced")
+        )
+
+    writes = _listing_record_writes(monkeypatch)
+    client = CachedAsyncSimpleClient(
+        _ListingResponseTransport(_LISTING_BYTES, before_response=replace_body),
+        cache,
+        _INDEX,
+    )
+
+    assert _read_listing_and_close(client) == expected
+    assert writes == [".json", ".policy", ".json", ".policy", ".parsed"]
+    stored = cache.get_simple("pkg")
+    assert stored is not None
+    assert stored[0] == _LISTING_BYTES
+
+
+def test_identical_200_redirect_rebuilds_relative_urls(tmp_path: Path) -> None:
+    """Identical bytes at a new page still change relative artifact URLs."""
+    body = json.dumps(
+        {
+            "meta": {"api-version": "1.0"},
+            "name": "pkg",
+            "files": [
+                {
+                    "filename": "pkg-1.0-py3-none-any.whl",
+                    "url": "pkg-1.0-py3-none-any.whl",
+                }
+            ],
+        }
+    ).encode()
+    cache = _cache(tmp_path)
+    previous, _ = _warm_bound(cache, fresh=False, body=body)
+    page_url = "https://pypi.org/moved/pkg/"
+    client = CachedAsyncSimpleClient(
+        _ListingResponseTransport(body, url=page_url), cache, _INDEX
+    )
+
+    files = _read_listing_and_close(client)
+    assert files != previous
+    assert files == _parse_files(
+        json.loads(body), _INDEX_NORM, "pkg", page_url=page_url
+    )
+    stored = cache.get_simple("pkg")
+    blob = cache.get_simple_parsed("pkg")
+    assert stored is not None
+    assert blob is not None
+    assert _decoded(blob, stored[1]) == files
