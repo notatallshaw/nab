@@ -7,12 +7,15 @@ from datetime import datetime, timezone
 import pytest
 
 from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import (
     MetadataHashMismatchError,
     SiblingMetadataDivergenceError,
 )
+from nab_provider.overrides import PackageOverride
+from nab_provider.policy import DistPolicy
 from nab_provider.provider import ListingFilterCache, Provider
 from nab_provider.records import DistFile
 from nab_provider.tags import PlatformSpec, TagSet
@@ -363,3 +366,114 @@ def test_direct_plain_listing_preserves_withdrawn_sibling_alternatives() -> None
 
     assert selected == reference.filter_distributions("pkg", files)
     assert {version for version, _ in selected} == {Version("1"), Version("2")}
+
+
+@pytest.mark.parametrize("root", ["==1", ">=1", "==1.0.*"])
+def test_root_excludes_historical_withdrawal_from_preferred_trial(root: str) -> None:
+    files = append_yanked_file(
+        [make_wheel("1"), make_wheel("1.0"), make_wheel("2")],
+        make_wheel("0"),
+        reason="withdrawn",
+    )
+    port = make_coordinator(files)
+    cache = ListingFilterCache()
+    provider = Provider(
+        port,
+        target(),
+        root_requirements={"pkg": SpecifierSet(root).to_range()},
+        listing_filter_cache=cache,
+        defer_yanked=True,
+    )
+    provider.prepare_preferred_releases({"pkg": Version("1")})
+
+    selected = provider.fetch_versions("pkg")
+
+    assert {dist.filename for _, dist in selected} == {
+        files[0].filename,
+        files[1].filename,
+    }
+    assert provider.stats.distributions_seen == 2
+    assert provider.yanked_versions == frozenset({("pkg", Version("0"))})
+
+    # Root constraints do not narrow the shared cache or an ordinary fetch.
+    normal = Provider(
+        port,
+        target(),
+        root_requirements={"pkg": SpecifierSet(root).to_range()},
+        listing_filter_cache=cache,
+        defer_yanked=True,
+    )
+    assert {version for version, _ in normal.fetch_versions("pkg")} == {
+        Version("0"),
+        Version("1"),
+        Version("2"),
+    }
+
+
+@pytest.mark.parametrize(
+    ("root", "withdrawn"),
+    [
+        (None, "0"),
+        (">=0", "0"),
+        ("==0", "0"),
+        ("==1", "1.0"),
+        ("==1", "1+local"),
+        (">0", "1rc1"),
+    ],
+)
+def test_relevant_or_unproved_root_withdrawal_keeps_complete_trial(
+    root: str | None, withdrawn: str
+) -> None:
+    files = append_yanked_file(
+        [make_wheel("1"), make_wheel("2")],
+        make_wheel(withdrawn),
+        reason="withdrawn",
+    )
+    roots = (
+        {}
+        if root is None
+        else {"pkg": SpecifierSet(root, prereleases=False).to_range()}
+    )
+    provider = Provider(
+        make_coordinator(files),
+        target(),
+        root_requirements=roots,
+        listing_filter_cache=ListingFilterCache(),
+        defer_yanked=True,
+    )
+    provider.prepare_preferred_releases({"pkg": Version("1")})
+
+    assert {version for version, _ in provider.fetch_versions("pkg")} == {
+        Version("1"),
+        Version("2"),
+        Version(withdrawn),
+    }
+    assert provider.stats.distributions_seen == len(files)
+
+
+def test_root_scoped_withdrawal_does_not_bypass_package_overrides() -> None:
+    files = append_yanked_file(
+        [make_wheel("1"), make_wheel("2")], make_wheel("0"), reason="withdrawn"
+    )
+    provider = Provider(
+        make_coordinator(files),
+        target(),
+        root_requirements={"pkg": SpecifierSet("==1").to_range()},
+        listing_filter_cache=ListingFilterCache(),
+        package_overrides=[
+            PackageOverride(
+                requirement=Requirement("pkg"),
+                name="pkg",
+                version_range=VersionRange.full(),
+                dist_policy=DistPolicy.WHEEL_ONLY,
+            )
+        ],
+        defer_yanked=True,
+    )
+    provider.prepare_preferred_releases({"pkg": Version("1")})
+
+    assert {version for version, _ in provider.fetch_versions("pkg")} == {
+        Version("0"),
+        Version("1"),
+        Version("2"),
+    }

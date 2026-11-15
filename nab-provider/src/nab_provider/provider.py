@@ -1832,6 +1832,19 @@ class Provider:
                 not self._unchanged_preferred_model
                 or (normalized, preferred) in self.yanked_versions
             )
+            if withdrawals_matter and not self.has_overrides:
+                required = self.root_requirements.get(normalized)
+                if (
+                    required is not None
+                    and preferred is not None
+                    and required.contains(preferred, prereleases=True)
+                ):
+                    # Historical withdrawals outside the root cannot affect admission.
+                    withdrawals_matter = any(
+                        name == normalized
+                        and required.contains(version, prereleases=True)
+                        for name, version in self.yanked_versions
+                    )
             # A withdrawn hinted release or a forced change needs all alternatives.
             if (
                 withdrawals_matter
