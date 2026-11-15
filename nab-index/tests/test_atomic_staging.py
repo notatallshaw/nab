@@ -259,8 +259,13 @@ def test_self_referencing_destination_uses_the_missing_target_policy(
 
 
 @pytest.mark.parametrize("error_number", [errno.EACCES, errno.EIO, errno.ELOOP])
+@pytest.mark.parametrize("patch_os_stat", [False, True])
 def test_destination_errors_follow_pathlib_exists_policy(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_number: int
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_number: int,
+    *,
+    patch_os_stat: bool,
 ) -> None:
     target = tmp_path / "lock"
     target.write_bytes(b"old")
@@ -277,7 +282,8 @@ def test_destination_errors_follow_pathlib_exists_policy(
         return actual_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
 
     with monkeypatch.context() as context:
-        context.setattr(os, "stat", refuse_stat)
+        if patch_os_stat:
+            context.setattr(os, "stat", refuse_stat)
         # Older pathlib releases retain the original OS accessor.
         context.setattr(
             Path,
@@ -286,13 +292,11 @@ def test_destination_errors_follow_pathlib_exists_policy(
                 path, follow_symlinks=follow_symlinks
             ),
         )
-        # Python versions differ in which errors exists() treats as absence.
+        # A native existence probe can bypass the failing metadata lookup.
         try:
-            target.exists()
+            refused = target.exists()
         except OSError:
             refused = True
-        else:
-            refused = False
 
         if refused:
             with pytest.raises(
