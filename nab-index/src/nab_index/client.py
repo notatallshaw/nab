@@ -53,7 +53,7 @@ from nab_provider.records import (
     SdistFile,
     WheelFile,
     defer_hashes,
-    defer_sidecar_hash,
+    rehydrated_wheel,
 )
 from nab_provider.serialization import SimpleSerialization, simple_accept_header
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
@@ -591,16 +591,19 @@ def _parse_files(
     for file_info in raw_files:
         if not isinstance(file_info, dict):
             continue
-        # PEP 592: ``true`` or a non-empty reason string means yanked.
-        if file_info.get("yanked"):
-            files = _with_yanked_file(files, file_info, index_url, package, page_url)
-            continue
         filename = file_info.get("filename")
         raw_url = file_info.get("url")
         if not isinstance(filename, str) or not isinstance(raw_url, str):
             continue
         parsed = _parse_file_entry(file_info, filename, raw_url, base_url, expected)
-        if parsed is not None:
+        if parsed is None:
+            continue
+
+        # PEP 592: ``true`` or a non-empty reason string means yanked.
+        reason = file_info.get("yanked")
+        if reason:
+            files = _with_yanked_file(files, parsed, reason)
+        else:
             files.append(parsed)
 
     return files
@@ -608,27 +611,16 @@ def _parse_files(
 
 def _with_yanked_file(
     files: list[WheelFile | SdistFile],
-    file_info: _FileEntry,
-    index_url: str,
-    package: str,
-    page_url: str | None,
+    file: WheelFile | SdistFile,
+    reason: object,
 ) -> list[WheelFile | SdistFile]:
     """Retain a withdrawn file without adding storage to ordinary records."""
     # Load withdrawal record classes only when the page contains a yank.
     from nab_provider.yanking import append_yanked_file  # noqa: PLC0415
 
-    retained = _parse_files(
-        {"files": [dict(file_info, yanked=False)]},
-        index_url,
-        package,
-        page_url=page_url,
+    return append_yanked_file(
+        files, file, reason=reason if isinstance(reason, str) else True
     )
-    reason = file_info["yanked"]
-    for file in retained:
-        files = append_yanked_file(
-            files, file, reason=reason if isinstance(reason, str) else True
-        )
-    return files
 
 
 def _listing_base_url(index_url: str, package: str, page_url: str | None) -> str:
@@ -783,18 +775,18 @@ def _parse_file_entry(
             if "core-metadata" in file_info
             else file_info.get(_LEGACY_METADATA_KEY)
         )
-        wheel = WheelFile(
+        # Leave deferred integrity slots unwritten instead of clearing defaults.
+        return rehydrated_wheel(
             filename=filename,
             url=file_url,
             version=version,
             requires_python=requires_python,
             has_metadata=sidecar is True or isinstance(sidecar, dict),
             upload_time=upload_time,
+            hashes=raw_hashes if isinstance(raw_hashes, dict) else (),
             size=size,
+            metadata_hash=sidecar if isinstance(sidecar, dict) else None,
         )
-        defer_hashes(wheel, raw_hashes)
-        defer_sidecar_hash(wheel, sidecar)
-        return wheel
 
     sdist_parsed = _parse_sdist_filename(filename)
     if sdist_parsed is None:

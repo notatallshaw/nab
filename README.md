@@ -205,10 +205,13 @@ decision-order = "arrival"
 dist-policy = "wheel-only"
 metadata-policy = "prefer-wheel"
 assume-consistent-metadata = true
+max-concurrency = 50
 ```
 
 Existing-lock runs also set `lock-policy = "reuse"`. `wheel-only` considers prebuilt wheels and
-excludes source distributions. These settings can be slower when dependencies change.
+excludes source distributions. The concurrency limit lets the client overlap more waiting HTTP
+requests. Higher concurrency can use more connections and memory. These settings can be slower when
+dependencies change.
 
 ## Libraries
 

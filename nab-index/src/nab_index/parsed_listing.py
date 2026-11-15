@@ -2,8 +2,8 @@
 
 The UTF-8 JSON wire form is ``[header, rows]``. The header carries format,
 codec, sort-key scheme, source-body digest, served zip-sdist versions,
-and sparse withdrawal flags.
-An incompatible header or digest is a cache miss.
+sparse withdrawal flags, and the response page URL.
+An incompatible header, body digest or page URL is a cache miss.
 
 Rows preserve source order and tag each flat record as a wheel or sdist. A
 version cell is ``null`` where the row above carries the same version. Decode
@@ -48,7 +48,7 @@ __all__ = ["ParsedListing", "corruption_reason", "decode", "encode"]
 # blob surfacing under the current bucket. Bump it when the header or row shape
 # changes, or when the same body parses to different records: ``body_digest``
 # pins only the input.
-FORMAT_VERSION = 8
+FORMAT_VERSION = 9
 # Serialization variant that wrote the rows, so a future codec switch
 # self-heals rather than misdecodes.
 CODEC = 1
@@ -57,7 +57,7 @@ CODEC = 1
 KEY_SCHEME = 0
 
 _TOP_LEN = 2
-_HEADER_LEN = 6
+_HEADER_LEN = 7
 _PAIR_LEN = 2
 _TAG_WHEEL = 0
 _TAG_SDIST = 1
@@ -68,6 +68,7 @@ _BUILD_CELLS = len(_BUILD_ID)
 _H_DIGEST = 3
 _H_ZIP_SDISTS = 4
 _H_YANKS = 5
+_H_PAGE_URL = 6
 
 
 class _BadRowError(ValueError):
@@ -81,40 +82,18 @@ class ParsedListing(NamedTuple):
     zip_sdists: frozenset[str]
 
 
-def _hashes_cell(record: WheelFile | SdistFile) -> object:
-    """Return the row cell for ``hashes``: the raw table, or the parsed pairs.
-
-    A record built from the index's own table writes that table, so encoding a
-    fresh listing does not force the parse it deferred.
-    """
-    raw = record.raw_hashes()
-    return record.hashes if raw is None else _raw_table_cell(raw)
-
-
-def _sidecar_cell(wheel: WheelFile) -> object:
-    """Return the row cell for ``metadata_hash``, raw table or parsed pair."""
-    raw = wheel.raw_sidecar()
-    return wheel.metadata_hash if raw is None else _raw_table_cell(raw)
-
-
-def _raw_table_cell(raw: object) -> object:
-    """Omit JSON objects around raw sha256 digests."""
-    if isinstance(raw, dict) and len(raw) == 1:
-        digest = raw.get("sha256")
-        if type(digest) is str:
-            return digest
-    return raw
-
-
 def encode(
     files: list[WheelFile | SdistFile],
     body_digest: str,
     zip_sdists: frozenset[str] = frozenset(),
+    *,
+    page_url: str | None = None,
 ) -> bytes:
     """Encode parsed listing ``files`` into a cache blob bound to ``body_digest``.
 
     ``body_digest`` is the sha256 hex of the raw body the records were parsed
     from; :func:`decode` rehydrates only when it matches the policy's digest.
+    ``page_url`` binds relative file URLs to the page used to resolve them.
     ``zip_sdists`` names the releases offered as a ``.zip`` sdist, including
     links that cannot become records. ``local_path`` is not stored (a
     parsed-cache entry always comes from a remote body) and ``metadata_url``
@@ -138,9 +117,9 @@ def encode(
                     record.requires_python,
                     record.has_metadata,
                     record.upload_time,
-                    _hashes_cell(record),
+                    record.hashes_for_rehydration(),
                     record.size,
-                    _sidecar_cell(record),
+                    record.sidecar_for_rehydration(),
                 ]
             )
         else:
@@ -152,13 +131,13 @@ def encode(
                     version_cell,
                     record.requires_python,
                     record.upload_time,
-                    _hashes_cell(record),
+                    record.hashes_for_rehydration(),
                     record.size,
                 ]
             )
         if record.yanked:
             yanks[str(len(rows) - 1)] = record.yanked
-    header = [*_BUILD_ID, body_digest, sorted(zip_sdists), yanks]
+    header = [*_BUILD_ID, body_digest, sorted(zip_sdists), yanks, page_url]
 
     # Escape non-ASCII: a field kept verbatim from the listing, such as
     # ``requires_python``, can hold a lone surrogate with no UTF-8 form.
@@ -171,7 +150,7 @@ def decode(blob: bytes, policy: CachePolicy) -> ParsedListing | None:
     Returns ``None`` (treat as a cache miss and rebuild from the raw body) when
     the blob does not decode, is the wrong shape, was written by a different
     build (``format`` / ``codec`` / ``key_scheme``), or is not bound to
-    ``policy``'s body (``body_digest``).  Otherwise rehydrates the records,
+    ``policy``'s body and page URL.  Otherwise rehydrates the records,
     re-interning ``requires_python`` and hash-algorithm names so string identity
     matches a fresh parse.
     """
@@ -184,7 +163,11 @@ def decode(blob: bytes, policy: CachePolicy) -> ParsedListing | None:
     header, rows = loaded
     if not _names_this_build(header):
         return None
-    if policy.body_digest is None or header[_H_DIGEST] != policy.body_digest:
+    if (
+        policy.body_digest is None
+        or header[_H_DIGEST] != policy.body_digest
+        or header[_H_PAGE_URL] != policy.page_url
+    ):
         return None
     # A blob whose header matches this build but whose rows or ``.zip`` cell
     # are the wrong shape must rebuild, not crash the resolve.
@@ -218,7 +201,13 @@ def corruption_reason(blob: bytes) -> str | None:
     header, rows = loaded
     if _from_another_build(header):
         return None
-    if not _names_this_build(header) or _bad_zip_sdists_cell(header):
+    if (
+        not _names_this_build(header)
+        or _bad_zip_sdists_cell(header)
+        or (
+            header[_H_PAGE_URL] is not None and not isinstance(header[_H_PAGE_URL], str)
+        )
+    ):
         return "unexpected header shape"
     try:
         _restore_yanks(_decode_rows(rows), header[_H_YANKS])

@@ -24,12 +24,13 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Iterable
     from pathlib import Path
 
 
 __all__ = [
     "atomic_write",
+    "atomic_write_chunks",
     "atomic_write_text",
 ]
 
@@ -90,19 +91,34 @@ def _temporary_file(path: Path) -> tuple[int, Path]:
 
 @contextmanager
 def _staged(path: Path) -> Generator[int, None, None]:
-    """Yield a staging descriptor beside ``path``; replace it on a clean exit.
+    """Own a staging descriptor beside ``path``; close it before replacement.
 
     Cleanup OSErrors do not replace the original failure.
     """
     fd, tmp_path = _temporary_file(path)
     try:
-        yield fd
+        try:
+            yield fd
+        except BaseException:
+            # Preserve the writer's failure if closing the descriptor also fails.
+            with contextlib.suppress(OSError):
+                os.close(fd)
+            raise
+        else:
+            # A failed close may already have released its number; never retry.
+            os.close(fd)
 
         # The rename carries the staging file's mode across.
-        if path.exists():
-            tmp_path.chmod(stat.S_IMODE(path.stat().st_mode))
-        else:
-            tmp_path.chmod(_default_mode())
+        try:
+            mode = stat.S_IMODE(path.stat().st_mode)
+        except FileNotFoundError:
+            mode = _default_mode()
+        except OSError:
+            # Python versions differ in which metadata errors exists() suppresses.
+            if path.exists():
+                raise
+            mode = _default_mode()
+        tmp_path.chmod(mode)
 
         # Path.replace would route around os.replace on Python 3.10
         # (pathlib captures it at import time), defeating monkeypatches.
@@ -115,18 +131,30 @@ def _staged(path: Path) -> Generator[int, None, None]:
 
 def atomic_write(path: Path, data: bytes) -> None:
     """Replace ``path`` with ``data``."""
-    with _staged(path) as fd, os.fdopen(fd, "wb") as f:
-        f.write(data)
+    atomic_write_chunks(path, (data,))
+
+
+def atomic_write_chunks(
+    path: Path, chunks: Iterable[bytes], *, sync: bool = True
+) -> None:
+    """Replace a file from chunks, synchronizing its data by default."""
+    with _staged(path) as fd, os.fdopen(fd, "wb", closefd=False) as f:
+        for chunk in chunks:
+            f.write(chunk)
 
         # close() only reaches the page cache, where a full disk can still
         # surface at writeback, after the rename has replaced the file.
         f.flush()
-        os.fsync(f.fileno())
+        if sync:
+            os.fsync(f.fileno())
 
 
 def atomic_write_text(path: Path, text: str) -> None:
     """Replace ``path`` with ``text``, encoded as UTF-8."""
-    with _staged(path) as fd, os.fdopen(fd, "w", encoding="utf-8") as f:
+    with (
+        _staged(path) as fd,
+        os.fdopen(fd, "w", encoding="utf-8", closefd=False) as f,
+    ):
         f.write(text)
 
         f.flush()

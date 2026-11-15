@@ -9,21 +9,27 @@ with [`nab cache`](cli.md).
 
 Each record nab writes is one file under a versioned bucket directory. Bumping a bucket's version
 suffix retires the old records: the stale directory is harmless and `nab cache clear` reclaims it.
-The one exception is `sdist-v1/`, which nab still reads.
+Older `sdist-v2/` and `sdist-v1/` records are carried forward when the current bucket misses.
 
 | Bucket              | Holds                                                      |
 | ------------------- | ---------------------------------------------------------- |
-| `simple-v4/`        | the Simple-API listing body and a `.policy` sidecar        |
-| `simple-parsed-v1/` | the parsed listing, an accelerator for the body            |
-| `simple-neg-v0/`    | a short-lived record that a name returned a 404            |
-| `metadata-v1/`      | PEP 658 metadata and recovered wheel `METADATA`, immutable |
-| `sdist-v2/`         | an sdist's `PKG-INFO` and `pyproject.toml`, immutable      |
+| `simple-v5/`        | the Simple-API listing body and a `.policy` sidecar        |
+| `simple-parsed-v2/` | the parsed listing, an accelerator for the body            |
+| `simple-neg-v1/`    | a short-lived record that a name returned a 404            |
+| `metadata-v2/`      | PEP 658 metadata and recovered wheel `METADATA`, immutable |
+| `sdist-v3/`         | an sdist's `PKG-INFO` and `pyproject.toml`, immutable      |
+| `sdist-v2/`         | the retired binary records                                 |
 | `sdist-v1/`         | the same records in the retired JSON format                |
 
 ### Index records
 
-A matching `sdist-v1/` record is copied into `sdist-v2/` when the newer bucket misses. The original
-remains in `sdist-v1/`.
+A matching `sdist-v2/` binary record or `sdist-v1/` JSON record is copied into `sdist-v3/` when the
+current bucket misses. The original remains available to older Nab versions.
+
+Current response records carry a format marker and SHA-256 checksum around their payload. Writes use
+buffered atomic replacement, and reads reject incomplete or changed records. After an abrupt
+shutdown a cache entry may need rebuilding or refetching. Lockfile write synchronization is
+unchanged.
 
 Record buckets are keyed per index, so two indexes never share an entry.
 
@@ -86,15 +92,15 @@ listing body + policy digest
      warm resolve input
 ```
 
-The `simple-parsed-v1/` bucket stores those records so a warm hit rehydrates them and never reads
+The `simple-parsed-v2/` bucket stores those records so a warm hit rehydrates them and never reads
 the large raw body. A stale entry is served the same way once the index answers `304 Not Modified`,
 since that confirms the body the blob is bound to.
 
 ### When a parsed listing is rebuilt
 
 Each parsed blob is bound to the exact body it came from by a `body_digest` that the `.policy` also
-carries. On a hit the two digests are compared; they match only while the body is unchanged, so any
-body update invalidates the blob by construction and forces a rebuild from the raw body.
+carries. On a hit the digests and response page URLs are compared. A body or page change invalidates
+the blob and forces a rebuild from the raw body.
 
 A revalidation that lands on a different page retires the blob too, since a relative entry resolves
 against the page URL and a move changes every file URL the records hold. A blob is also rebuilt when
@@ -119,9 +125,9 @@ nab cache verify
 `nab cache verify` walks the record buckets read-only and lists on stdout every entry that will not
 parse, including a parsed blob that is not decodable, exiting 1 when the listing is not empty.
 
-It checks structure only, not freshness: a stale-but-valid parsed blob is not corrupt, since the
-digest binding retires it at read time. Clones and extracted archives hold no nab records, so
-`verify` skips them.
+It checks current record checksums and payload structure, not freshness: a stale-but-valid parsed
+blob is not corrupt, since the digest binding retires it at read time. Clones and extracted archives
+hold no nab records, so `verify` skips them.
 
 To delete cached records, clones and extracted archives:
 
@@ -135,8 +141,8 @@ symlink out of it.
 
 ## Cache write failures
 
-If the cache is read-only, full, or over quota, nab warns once and continues index fetches without
-storing new records. Existing readable records can still be used. Cloning a VCS source or extracting
+If the filesystem reports a cache write failure, nab warns once and continues index fetches without
+storing that record. Existing readable records can still be used. Cloning a VCS source or extracting
 an archive requires a writable cache directory and fails without one.
 
 Set `cache = false` in `nab.toml` or `NAB_CACHE=false` to disable cache use by default. The CLI

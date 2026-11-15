@@ -1,20 +1,24 @@
 """On-disk cache for nab-index.
 
-Stores PEP 691 Simple API responses (JSON body plus a sidecar cache
-policy file) and PEP 658 wheel metadata (raw text, treated as
-immutable). The cache is consulted by :class:`CachedAsyncSimpleClient`
+Stores PEP 691 Simple API responses and PEP 658 wheel metadata as
+checked records. Buffered atomic replacement avoids cache storage barriers;
+a missing or damaged record is fetched again.
+The cache is consulted by :class:`CachedAsyncSimpleClient`
 before any HTTP transport call.
+
+Current record files start with a format marker and SHA-256 checksum.
+The payloads retain the formats below. Source trees are not wrapped.
 
 Layout under ``root``:
 
-    simple-v4/<index>[-<serialization>]/<package>.json    <- PEP 691 JSON body
-    simple-v4/<index>[-<serialization>]/<package>.policy  <- {fetched_at, max_age,
+    simple-v5/<index>[-<serialization>]/<package>.json    <- PEP 691 JSON body
+    simple-v5/<index>[-<serialization>]/<package>.policy  <- {fetched_at, max_age,
                                                               etag, page_url,
                                                               body_digest}
-    simple-parsed-v1/<index>[-<serialization>]/<package>.parsed  <- parsed blob
-    simple-neg-v0/<index>[-<serialization>]/<package>.neg <- {fetched_at, max_age, etag}
-    metadata-v1/<index>/<package>/<url digest>.metadata
-    sdist-v2/<index>/<package>/<version>.record  <- pkg_info and pyproject,
+    simple-parsed-v2/<index>[-<serialization>]/<package>.parsed  <- parsed blob
+    simple-neg-v1/<index>[-<serialization>]/<package>.neg <- {fetched_at, max_age, etag}
+    metadata-v2/<index>/<package>/<url digest>.metadata
+    sdist-v3/<index>/<package>/<version>.record  <- pkg_info and pyproject,
                                                     length-prefixed UTF-8
     sdist-v1/<index>/<package>/<version>.json    <- the same pair, as JSON
 
@@ -22,9 +26,9 @@ An index pinned to one serialization gets its own listings directory,
 since a stored body records nothing about which serialization it came from.
 
 Bump the bucket version when its stored records can no longer be reused.
-The old directory is ignored. ``sdist-v1`` is the exception, still read
-when ``sdist-v2`` misses, since rebuilding one of its records means
-downloading the archive again.
+Older listings and metadata are ignored. The previous binary ``sdist-v2``
+and JSON ``sdist-v1`` records are carried forward when the current bucket
+misses, since rebuilding them costs an archive download.
 
 When the index serves PEP 503 HTML the stored body is nab's own rendering
 of the page. A 304 revalidation keeps the old body, so changing that
@@ -71,7 +75,7 @@ from nab_provider.serialization import SimpleSerialization
 from nab_provider.value import HashableRecord, replace
 
 from ._json_decode import decode_json
-from .atomic import atomic_write
+from .atomic import atomic_write_chunks
 from .parsed_listing import corruption_reason as _parsed_corruption
 
 if TYPE_CHECKING:
@@ -93,14 +97,15 @@ __all__ = [
 ]
 
 
-CACHE_VERSION_SIMPLE = "v4"
-CACHE_VERSION_SIMPLE_PARSED = "v1"
-CACHE_VERSION_SIMPLE_NEG = "v0"
-CACHE_VERSION_METADATA = "v1"
-CACHE_VERSION_SDIST = "v2"
+CACHE_VERSION_SIMPLE = "v5"
+CACHE_VERSION_SIMPLE_PARSED = "v2"
+CACHE_VERSION_SIMPLE_NEG = "v1"
+CACHE_VERSION_METADATA = "v2"
+CACHE_VERSION_SDIST = "v3"
 # Retired bucket of JSON sdist records, read when the current bucket misses
 # and rewritten there, since rebuilding one costs an archive download.
 _CACHE_VERSION_SDIST_JSON = "v1"
+_CACHE_VERSION_SDIST_LEGACY_RECORD = "v2"
 CACHE_VERSION_VCS = "v1"
 CACHE_VERSION_ARCHIVE = "v2"
 
@@ -121,6 +126,67 @@ DEFAULT_PYPI_URLS = frozenset(
         "http://pypi.org/simple",
     ]
 )
+
+
+_CACHE_RECORD_MAGIC = b"nabcache1\x00"
+# SHA-256 stores a 32-byte digest; this is the record format, not a size limit.
+_CACHE_RECORD_HEADER_BYTES = len(_CACHE_RECORD_MAGIC) + 32
+_CHECKED_RECORD_BUCKETS = frozenset(
+    {
+        f"simple-{CACHE_VERSION_SIMPLE}",
+        f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}",
+        f"simple-neg-{CACHE_VERSION_SIMPLE_NEG}",
+        f"metadata-{CACHE_VERSION_METADATA}",
+        f"sdist-{CACHE_VERSION_SDIST}",
+    }
+)
+
+
+def _record_payload(header: bytes, data: bytes) -> bytes | None:
+    """Validate a fixed cache header and its complete payload."""
+    if len(header) != _CACHE_RECORD_HEADER_BYTES or not header.startswith(
+        _CACHE_RECORD_MAGIC
+    ):
+        return None
+    if hashlib.sha256(data).digest() != header[len(_CACHE_RECORD_MAGIC) :]:
+        return None
+    return data
+
+
+def _read_cache_record(
+    path: str | Path, *, expected_digest: str | None = None
+) -> bytes | None:
+    """Read checked payload bytes without copying them out of a larger buffer."""
+    with open(path, "rb", buffering=0) as handle:  # noqa: PTH123 - whole payload read
+        header = handle.read(_CACHE_RECORD_HEADER_BYTES)
+        data = handle.read()
+    payload = _record_payload(header, data)
+    if payload is None:
+        logger.warning(
+            "Corrupt cache record %s: checksum invalid; treating as a miss", path
+        )
+        return None
+
+    # Reuse the checked header for policy binding instead of hashing the body again.
+    if (
+        expected_digest is not None
+        and header[len(_CACHE_RECORD_MAGIC) :].hex() != expected_digest
+    ):
+        return None
+    return payload
+
+
+def _atomic_write_record(path: Path, data: bytes) -> bytes:
+    """Publish a checked cache record and return its SHA-256 bytes."""
+    checksum = hashlib.sha256(data).digest()
+    chunks = (_CACHE_RECORD_MAGIC, checksum, data)
+    try:
+        atomic_write_chunks(path, chunks, sync=False)
+    except FileNotFoundError:
+        # Avoid a mkdir attempt for every record in the same directory.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_chunks(path, chunks, sync=False)
+    return checksum
 
 
 class OfflineError(Exception):
@@ -196,12 +262,6 @@ def _index_dirname(index_url: str) -> str:
     if index_url.rstrip("/") in DEFAULT_PYPI_URLS:
         return "pypi"
     return hashlib.sha256(index_url.encode("utf-8")).hexdigest()[:16]
-
-
-def _atomic_write(path: Path, data: bytes) -> None:
-    """Create the cache bucket for ``path``, then write ``data`` into it."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, data)
 
 
 def _require_single_segment(component: str) -> str:
@@ -282,22 +342,20 @@ class OnDiskCache:
         self._sdist_json_dir = root / f"sdist-{_CACHE_VERSION_SDIST_JSON}" / self._index
         self._store_failed = False
 
-    def _store(self, path: Path, data: bytes) -> bool:
-        """Write ``data`` to ``path``, returning False if the write failed.
+    def _store(self, path: Path, data: bytes) -> bytes | None:
+        """Write ``data`` and return its stored checksum, or ``None`` on failure.
 
-        Only the first failure warns: a root that refuses one write
-        refuses the rest.
+        Only the first failure warns.
         """
         try:
-            _atomic_write(path, data)
+            return _atomic_write_record(path, data)
         except OSError as exc:
             with _STORE_FAILURE_LOCK:
                 if self._store_failed:
-                    return False
+                    return None
                 self._store_failed = True
             logger.warning("cannot store cache entries under %s: %s", self._root, exc)
-            return False
-        return True
+            return None
 
     def _simple_paths(self, package: str) -> tuple[Path, Path]:
         segment = _require_single_segment(package)
@@ -346,16 +404,28 @@ class OnDiskCache:
         """Return ``(body_bytes, policy)`` if cached, else ``None``."""
         body_path, policy_path = self._simple_paths(package)
         try:
-            policy_bytes = policy_path.read_bytes()
-            body = body_path.read_bytes()
+            policy_bytes = _read_cache_record(policy_path)
         except OSError:
             return None
-        policy = _decode_policy(policy_bytes)
+        policy = _decode_policy(policy_bytes) if policy_bytes is not None else None
+
+        # Keep corrupt-body reporting even when the policy cannot be decoded.
+        try:
+            body = _read_cache_record(
+                body_path,
+                expected_digest=policy.body_digest if policy is not None else None,
+            )
+        except OSError:
+            return None
+        if policy_bytes is None:
+            return None
         if policy is None:
             logger.warning(
                 "Corrupt cache policy %s: not decodable; treating as a miss",
                 policy_path,
             )
+            return None
+        if body is None or policy.body_digest is None:
             return None
         return (body, policy)
 
@@ -371,12 +441,14 @@ class OnDiskCache:
         body the store does not hold.
         """
         body_path, policy_path = self._simple_paths(package)
-        if not self._store(body_path, body):
+        checksum = self._store(body_path, body)
+        if checksum is None:
             return None
-        digest = hashlib.sha256(body).hexdigest()
-        if not self._store(
-            policy_path, _encode_policy(replace(policy, body_digest=digest))
-        ):
+
+        # The stored record already supplies this body's digest.
+        digest = checksum.hex()
+        policy_bytes = _encode_policy(replace(policy, body_digest=digest))
+        if self._store(policy_path, policy_bytes) is None:
             return None
         return digest
 
@@ -387,6 +459,10 @@ class OnDiskCache:
         valid but the freshness window has slid forward.
         """
         _, policy_path = self._simple_paths(package)
+        if policy.body_digest is None:
+            previous = self.get_simple_policy(package)
+            if previous is not None:
+                policy = replace(policy, body_digest=previous.body_digest)
         self._store(policy_path, _encode_policy(policy))
 
     def get_simple_policy(self, package: str) -> CachePolicy | None:
@@ -398,8 +474,10 @@ class OnDiskCache:
         """
         _, policy_path = self._simple_paths(package)
         try:
-            policy_bytes = policy_path.read_bytes()
+            policy_bytes = _read_cache_record(policy_path)
         except OSError:
+            return None
+        if policy_bytes is None:
             return None
         policy = _decode_policy(policy_bytes)
         if policy is None:
@@ -416,19 +494,22 @@ class OnDiskCache:
         ``parsed_listing``. An absent blob is a silent miss.
         """
         try:
-            return self._parsed_path(package).read_bytes()
+            return _read_cache_record(self._parsed_path(package))
         except OSError:
             return None
 
     def get_simple_parsed_size(self, package: str) -> int | None:
-        """Return the on-disk size of the parsed-listing blob in bytes, or ``None``.
+        """Return the stored parsed payload size in bytes, excluding its record header.
 
         A single ``stat`` on the same path :meth:`get_simple_parsed` reads, so a
         caller can size the blob before deciding whether to read and decode it.
         An absent blob is a silent miss.
         """
         try:
-            return self._parsed_path(package).stat().st_size
+            return max(
+                0,
+                self._parsed_path(package).stat().st_size - _CACHE_RECORD_HEADER_BYTES,
+            )
         except OSError:
             return None
 
@@ -437,7 +518,7 @@ class OnDiskCache:
 
         A refused write raises ``OSError``.
         """
-        _atomic_write(self._parsed_path(package), blob)
+        _atomic_write_record(self._parsed_path(package), blob)
 
     def get_metadata(self, package: str, metadata_url: str) -> str | None:
         """Return the cached sidecar text for ``metadata_url``, or ``None``.
@@ -447,10 +528,10 @@ class OnDiskCache:
         """
         path = self._metadata_file(package, metadata_url)
         try:
-            # Unbuffered: the file is read whole, so buffering only adds a copy.
-            with open(path, "rb", buffering=0) as handle:  # noqa: PTH123
-                raw = handle.read()
+            raw = _read_cache_record(path)
         except OSError:
+            return None
+        if raw is None:
             return None
         try:
             return raw.decode("utf-8")
@@ -476,15 +557,41 @@ class OnDiskCache:
         """
         path = self._sdist_path(package, version)
         try:
-            raw = path.read_bytes()
+            raw = _read_cache_record(path)
         except OSError:
-            return self._carry_over_json_record(package, version)
+            return self._carry_over_sdist_record(package, version)
+        if raw is None:
+            return None
         record = _decode_sdist_record(raw)
         if record is None:
             logger.warning(
                 "Corrupt sdist cache record %s: not decodable; treating as a miss",
                 path,
             )
+        return record
+
+    def _carry_over_sdist_record(
+        self, package: str, version: str
+    ) -> tuple[str | None, str | None] | None:
+        """Carry the previous durable record into the checked format."""
+        path = (
+            self._root
+            / f"sdist-{_CACHE_VERSION_SDIST_LEGACY_RECORD}"
+            / self._index
+            / _require_single_segment(package)
+            / f"{_require_single_segment(version)}.record"
+        )
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            return self._carry_over_json_record(package, version)
+        record = _decode_sdist_record(raw)
+        if record is None:
+            logger.warning(
+                "Corrupt sdist cache record %s: not decodable; treating as a miss", path
+            )
+            return None
+        self.put_sdist_files(package, version, *record)
         return record
 
     def _carry_over_json_record(
@@ -528,8 +635,10 @@ class OnDiskCache:
         """Return the freshness policy of a cached name-level 404, or ``None``."""
         neg_path = self._neg_path(package)
         try:
-            neg_bytes = neg_path.read_bytes()
+            neg_bytes = _read_cache_record(neg_path)
         except OSError:
+            return None
+        if neg_bytes is None:
             return None
         policy = _decode_policy(neg_bytes)
         if policy is None:
@@ -609,6 +718,15 @@ class OnDiskCache:
         except OSError as exc:
             return f"unreadable: {exc.strerror or exc}"
         suffix = path.suffix
+        if suffix not in (".policy", ".neg", ".json") and suffix not in _ENTRY_READERS:
+            return None
+        if self._bucket_of(path) in _CHECKED_RECORD_BUCKETS:
+            payload = _record_payload(
+                raw[:_CACHE_RECORD_HEADER_BYTES], raw[_CACHE_RECORD_HEADER_BYTES:]
+            )
+            if payload is None:
+                return "cache record checksum invalid"
+            raw = payload
         if suffix in (".policy", ".neg"):
             return None if _decode_policy(raw) is not None else "policy not decodable"
         if suffix == ".json":

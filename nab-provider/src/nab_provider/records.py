@@ -135,7 +135,7 @@ def _compact_table(table: dict[object, object]) -> object:
 def _compact_shared_table(table: dict[object, object]) -> object:
     """Compact ``table`` for a caller whose rows already share one name object.
 
-    One cached listing's rows are decoded together and get a single object for
+    One JSON listing's rows are decoded together and get a single object for
     a repeated name, and :func:`parse_hash_table` interns whatever a reader
     parses out of the pair, so :func:`_compact_table`'s per-row intern buys
     nothing here.
@@ -159,6 +159,15 @@ def _expand_table(held: object) -> object:
         algo, digest = held
         return {algo: digest}
     return held
+
+
+def _compact_rehydration_cell(raw: object) -> object:
+    """Keep a raw SHA256 table in the form the rehydration factories accept."""
+    if isinstance(raw, dict) and len(raw) == 1:
+        digest = raw.get("sha256")
+        if type(digest) is str:
+            return digest
+    return raw
 
 
 class _DeferredIntegrity:
@@ -192,6 +201,25 @@ class _DeferredIntegrity:
             return _expand_table(self._raw_hashes)
         except AttributeError:
             return None
+
+    def hashes_for_rehydration(self) -> object:
+        """Return hashes as a parsed value or an unparsed rehydration cell."""
+        record_type = type(self)
+        if record_type is not WheelFile and record_type is not SdistFile:
+            # Custom records retain the raw-reader override contract.
+            raw = self.raw_hashes()
+            return self.hashes if raw is None else _compact_rehydration_cell(raw)
+
+        try:
+            held = self._raw_hashes
+        except AttributeError:
+            return self.hashes
+
+        if held is None:
+            return self.hashes
+        if type(held) is str:
+            return held
+        return _compact_rehydration_cell(_expand_table(held))
 
 
 def defer_hashes(record: WheelFile | SdistFile, table: object) -> None:
@@ -312,6 +340,24 @@ class WheelFile(_DeferredIntegrity, HashableRecord):
         except AttributeError:
             return None
 
+    def sidecar_for_rehydration(self) -> object:
+        """Return a parsed sidecar hash or its unparsed rehydration cell."""
+        if type(self) is not WheelFile:
+            # Custom records retain the raw-reader override contract.
+            raw = self.raw_sidecar()
+            return self.metadata_hash if raw is None else _compact_rehydration_cell(raw)
+
+        try:
+            held = self._raw_metadata
+        except AttributeError:
+            return self.metadata_hash
+
+        if held is None:
+            return self.metadata_hash
+        if type(held) is str:
+            return held
+        return _compact_rehydration_cell(_expand_table(held))
+
     @property
     def metadata_url(self) -> str | None:
         """Return the PEP 658/714 metadata URL, or None when unsupported.
@@ -366,7 +412,7 @@ def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its ow
     size: int | None,
     metadata_hash: tuple[str, str] | dict[Any, Any] | str | None,
 ) -> WheelFile:
-    """Return a wheel rebuilt from a cached listing row.
+    """Return a wheel from decoded remote listing fields.
 
     ``hashes`` and ``metadata_hash`` each take either a parsed value or the
     index's own table. A string represents a raw ``{"sha256": digest}`` table.
@@ -374,7 +420,7 @@ def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its ow
     Deferring a field means leaving its slot unwritten, which
     ``__init__`` cannot do, so this writes the slots directly.
 
-    ``local_path`` is ``None``: a cached listing row carries none.
+    ``local_path`` is ``None``: remote listings carry none.
     """
     wheel = WheelFile.__new__(WheelFile)
     wheel.filename = filename

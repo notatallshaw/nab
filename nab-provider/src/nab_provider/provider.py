@@ -22,6 +22,7 @@ __lazy_modules__ = (
     "nab_provider.environment",
     "nab_provider.errors",
     "nab_provider.extra_keys",
+    "nab_provider.fetch_port",
     "nab_provider.metadata",
     "nab_provider.records",
     "nab_provider.vcs_admission",
@@ -73,6 +74,12 @@ from .errors import (
     YankAdmissionRequiredError,
 )
 from .extra_keys import join_extra, split_extra
+from .fetch_port import (
+    MetadataArtifactHints,
+    MetadataPrefetchAdmission,
+    MetadataPrefetchDeferral,
+    MetadataPrefetchHints,
+)
 from .metadata import WheelMetadata
 from .policy import (
     ArchiveSource,
@@ -968,6 +975,8 @@ class Provider:
         # walked. A dep named by several parents reaches both once per parent.
         self.speculative_listings: set[str] = set()
         self.speculative_candidates: set[tuple[str, Version]] = set()
+        # None awaits constraints; a version records the package's one guess.
+        self.metadata_prefetch_decisions: dict[str, Version | None] = {}
 
         # Derived views of versions_cache, built lazily alongside the listing.
         self.versions_only_cache: dict[str, list[Version]] = {}
@@ -1062,16 +1071,80 @@ class Provider:
 
         self.stats = ProviderStats()
 
+        self.automatic_prefetch_admission = False
+        if isinstance(self.coordinator, MetadataPrefetchDeferral):
+            # Custom provider hooks keep their existing speculative behavior.
+            defer = (
+                _listing.defer_metadata_prerelease if type(self) is Provider else None
+            )
+            self.automatic_prefetch_admission = (
+                self.coordinator.set_metadata_prefetch_deferral(defer)
+            )
+
+        if isinstance(self.coordinator, MetadataArtifactHints):
+            # Keep fetcher callbacks independent of provider caches.
+            tags = self.wheel_tags
+            target = self.target
+
+            def select(wheels: list[WheelFile]) -> WheelFile:
+                """Load metadata ranking only when a listing needs it."""
+                return _metadata_resolver.pick_metadata_wheel(wheels, tags, target)
+
+            self.coordinator.set_metadata_prefetch_selector(select)
+
+        self._configure_metadata_admission()
+
         if self.root_requirements:
-            for pkg in self.root_requirements:
-                _, _, normalized = self.split_and_normalize(pkg)
-                if (
-                    normalized in self.local_sources
-                    or normalized in self.vcs_sources
-                    or normalized in self.archive_sources
-                ):
-                    continue
-                self.coordinator.request_listing(normalized)
+            self._prefetch_root_listings()
+
+    def _configure_metadata_admission(self) -> None:
+        """Publish pure target admission when the caller's policy permits it."""
+        if isinstance(self.coordinator, MetadataPrefetchAdmission):
+            metadata_target = self.target
+            if (
+                type(self) is Provider
+                and not self.has_overrides
+                and metadata_target is not None
+            ):
+
+                def admit(wheels: list[WheelFile]) -> bool:
+                    """Keep target admission independent of provider state."""
+                    return _listing.metadata_prefetch_admitted(wheels, metadata_target)
+
+                self.coordinator.set_metadata_prefetch_admission(admit)
+            else:
+                self.coordinator.set_metadata_prefetch_admission(None)
+
+    def _prefetch_root_listings(self) -> None:
+        """Request remote roots after publishing their speculative version filters."""
+        remote_roots = []
+        for package, version_range in self.root_requirements.items():
+            _, _, normalized = self.split_and_normalize(package)
+            if (
+                normalized in self.local_sources
+                or normalized in self.vcs_sources
+                or normalized in self.archive_sources
+            ):
+                continue
+            remote_roots.append((normalized, version_range))
+
+        if isinstance(self.coordinator, MetadataPrefetchHints):
+            ranges: dict[str, VersionRange] = {}
+            for normalized, version_range in remote_roots:
+                previous = ranges.get(normalized)
+                ranges[normalized] = (
+                    version_range if previous is None else previous & version_range
+                )
+            # Keep callback lifetimes independent of provider caches.
+            self.coordinator.set_metadata_prefetch_filters(
+                {
+                    name: version_range.__contains__
+                    for name, version_range in ranges.items()
+                }
+            )
+
+        for normalized, _ in remote_roots:
+            self.coordinator.request_listing(normalized)
 
     @property
     def extra_deps_map(self) -> _metadata_resolver.ExtraDepsMap:
@@ -1633,6 +1706,48 @@ class Provider:
         """See :func:`nab_provider._provider.listing.speculative_prefetch`."""
         _listing.speculative_prefetch(self, normalized, versions)
 
+    def prefetch_in_range(
+        self,
+        normalized: str,
+        versions: list[tuple[Version, DistFile]],
+        version_range: VersionRange,
+    ) -> None:
+        """Use known positive constraints for deferred metadata guesses."""
+        if self.automatic_prefetch_admission:
+            _listing.speculative_prefetch(
+                self, normalized, versions, version_range=version_range
+            )
+        else:
+            self.speculative_prefetch(normalized, versions)
+
+    def first_matching_version(
+        self,
+        normalized: str,
+        version_range: VersionRange,
+        versions: list[tuple[Version, DistFile]],
+    ) -> Version | None:
+        """Find the first admitted prepared version without inspecting metadata."""
+        # Extras proxies still obey their base package's positive bounds.
+        base_range = self.solution_ranges.get(normalized)
+        if base_range is not None:
+            version_range = version_range & base_range
+        ordered = self._ordered_candidates(
+            normalized,
+            version_range,
+            self.versions_only(normalized, versions),
+            versions,
+        )
+        return next(ordered, None)
+
+    def prefetch_waits_for_preference(self, normalized: str) -> bool:
+        """Report whether demand should validate this package's preference first."""
+        return (
+            self.automatic_prefetch_admission
+            and normalized in self._preferences
+            and not self.has_overrides
+            and not self.wants_lowest(normalized)
+        )
+
     def _prefetch_walk_ahead(
         self, normalized: str, version_range: RangeProtocol[Version]
     ) -> None:
@@ -1717,6 +1832,19 @@ class Provider:
                 not self._unchanged_preferred_model
                 or (normalized, preferred) in self.yanked_versions
             )
+            if withdrawals_matter and not self.has_overrides:
+                required = self.root_requirements.get(normalized)
+                if (
+                    required is not None
+                    and preferred is not None
+                    and required.contains(preferred, prereleases=True)
+                ):
+                    # Historical withdrawals outside the root cannot affect admission.
+                    withdrawals_matter = any(
+                        name == normalized
+                        and required.contains(version, prereleases=True)
+                        for name, version in self.yanked_versions
+                    )
             # A withdrawn hinted release or a forced change needs all alternatives.
             if (
                 withdrawals_matter
@@ -1808,7 +1936,9 @@ class Provider:
                 self, package, base, extra, version_range
             )
 
-        version_list = self.fetch_versions(package)
+        version_list = self._fetch_versions_for_selection(
+            package, normalized, version_range
+        )
         all_versions = self.versions_only(normalized, version_list)
         candidates = self._ordered_candidates(
             normalized, version_range, all_versions, version_list
@@ -1834,6 +1964,18 @@ class Provider:
             all_versions,
             version_range,
         )
+
+    def _fetch_versions_for_selection(
+        self, package: str, normalized: str, version_range: VersionRange
+    ) -> list[tuple[Version, DistFile]]:
+        """Fetch the listing and resume any guess awaiting positive constraints."""
+        versions = self.fetch_versions(package)
+        if (
+            normalized in self.metadata_prefetch_decisions
+            and self.metadata_prefetch_decisions[normalized] is None
+        ):
+            self.prefetch_in_range(normalized, versions, version_range)
+        return versions
 
     def _ordered_candidates(
         self,

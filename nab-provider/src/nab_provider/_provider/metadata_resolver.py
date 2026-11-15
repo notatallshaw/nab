@@ -734,6 +734,19 @@ def pick_dist(
     if not wheels:
         return min(dists, key=lambda dist: dist.filename.endswith(".zip"))
 
+    return pick_metadata_wheel(wheels, tags, target)
+
+
+def pick_metadata_wheel(
+    wheels: list[WheelFile], tags: TagSet | None, target: ResolveTarget | None = None
+) -> WheelFile:
+    """Select metadata from non-empty wheel candidates using the read's ranking."""
+    if not wheels:
+        message = "metadata wheel candidates must not be empty"
+        raise ValueError(message)
+    if len(wheels) == 1:
+        return wheels[0]
+
     if tags is None:
         wheels = _python_axis_narrowed(target, wheels)
         installed = None

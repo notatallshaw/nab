@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from nab_index.client import _parse_files
+from nab_provider.records import WheelFile
 
 
 @pytest.mark.parametrize(
@@ -85,3 +86,44 @@ def test_absent_optional_fields(file_entry: dict[str, object]) -> None:
     assert len(files) == 1
     assert files[0].size is None
     assert files[0].upload_time is None
+
+
+@pytest.mark.parametrize("value", ["a" * 64, [["sha256", "a" * 64]], True, 42, None])
+def test_non_table_hashes_are_ignored(
+    file_entry: dict[str, object], value: object
+) -> None:
+    files = _parse_files(
+        {"files": [file_entry | {"hashes": value}]}, "https://example.com/", "foo"
+    )
+
+    assert len(files) == 1
+    assert files[0].hashes == ()
+
+
+@pytest.mark.parametrize(
+    ("value", "advertised", "expected"),
+    [
+        (True, True, None),
+        (False, False, None),
+        ({"sha256": "A" * 64}, True, ("sha256", "a" * 64)),
+        ("a" * 64, False, None),
+    ],
+)
+def test_core_metadata_preserves_table_and_boolean_meanings(
+    wheel_entry: dict[str, object],
+    value: object,
+    expected: tuple[str, str] | None,
+    *,
+    advertised: bool,
+) -> None:
+    entry = wheel_entry | {
+        "core-metadata": value,
+        "dist-info-metadata": {"sha256": "b" * 64},
+    }
+    files = _parse_files({"files": [entry]}, "https://example.com/", "foo")
+
+    assert len(files) == 1
+    wheel = files[0]
+    assert isinstance(wheel, WheelFile)
+    assert wheel.has_metadata is advertised
+    assert wheel.metadata_hash == expected

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import os
+import sys
 from base64 import urlsafe_b64encode
 from pathlib import Path
 
@@ -172,4 +173,178 @@ def test_staging_fits_the_existing_filename_budget(tmp_path: Path) -> None:
     atomic.atomic_write(target, b"new")
 
     assert target.read_bytes() == b"new"
+    assert list(tmp_path.iterdir()) == [target]
+
+
+def test_default_binary_sync_failure_keeps_the_previous_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "artifact"
+    target.write_bytes(b"old")
+
+    def fail_sync(_fd: int) -> None:
+        raise OSError("storage sync failed")
+
+    monkeypatch.setattr(atomic.os, "fsync", fail_sync)
+    with pytest.raises(OSError, match="storage sync failed"):
+        atomic.atomic_write(target, b"new")
+    assert target.read_bytes() == b"old"
+    assert list(tmp_path.iterdir()) == [target]
+
+
+@pytest.mark.parametrize("text", [False, True])
+def test_removed_destination_keeps_the_observed_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, text: bool
+) -> None:
+    target = tmp_path / "lock"
+    target.write_bytes(b"old")
+    target.chmod(0o640)
+    expected = target.stat().st_mode
+    actual_stat = os.stat
+    observed = False
+
+    def remove_after_stat(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes] | int,
+        *,
+        dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+    ) -> os.stat_result:
+        nonlocal observed
+        result = actual_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+        if path == target and not observed:
+            observed = True
+            target.unlink()
+        return result
+
+    with monkeypatch.context() as context:
+        context.setattr(os, "stat", remove_after_stat)
+        # Older pathlib releases retain the original OS accessor.
+        context.setattr(
+            Path,
+            "stat",
+            lambda path, *, follow_symlinks=True: remove_after_stat(
+                path, follow_symlinks=follow_symlinks
+            ),
+        )
+        if text:
+            atomic.atomic_write_text(target, "new")
+        else:
+            atomic.atomic_write(target, b"new")
+
+    assert observed
+    assert target.read_bytes() == b"new"
+    assert target.stat().st_mode == expected
+    assert list(tmp_path.iterdir()) == [target]
+
+
+def test_self_referencing_destination_uses_the_missing_target_policy(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "lock"
+    reference = tmp_path / "reference"
+    reference.write_bytes(b"mode")
+    expected = reference.stat().st_mode
+    try:
+        target.symlink_to(target)
+    except OSError as exc:
+        if sys.platform == "win32" and exc.winerror == 1314:
+            pytest.skip("creating symlinks requires Windows privilege")
+        raise
+
+    atomic.atomic_write(target, b"new")
+
+    assert not target.is_symlink()
+    assert target.read_bytes() == b"new"
+    assert target.stat().st_mode == expected
+
+
+@pytest.mark.parametrize("error_number", [errno.EACCES, errno.EIO, errno.ELOOP])
+@pytest.mark.parametrize("patch_os_stat", [False, True])
+def test_destination_errors_follow_pathlib_exists_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_number: int,
+    *,
+    patch_os_stat: bool,
+) -> None:
+    target = tmp_path / "lock"
+    target.write_bytes(b"old")
+    actual_stat = os.stat
+
+    def refuse_stat(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes] | int,
+        *,
+        dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+    ) -> os.stat_result:
+        if path == target:
+            raise OSError(error_number, "destination metadata unavailable")
+        return actual_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+
+    with monkeypatch.context() as context:
+        if patch_os_stat:
+            context.setattr(os, "stat", refuse_stat)
+        # Older pathlib releases retain the original OS accessor.
+        context.setattr(
+            Path,
+            "stat",
+            lambda path, *, follow_symlinks=True: refuse_stat(
+                path, follow_symlinks=follow_symlinks
+            ),
+        )
+        # A native existence probe can bypass the failing metadata lookup.
+        try:
+            refused = target.exists()
+        except OSError:
+            refused = True
+
+        if refused:
+            with pytest.raises(
+                OSError, match="destination metadata unavailable"
+            ) as error:
+                atomic.atomic_write(target, b"new")
+            assert error.value.errno == error_number
+        else:
+            atomic.atomic_write(target, b"new")
+
+    assert target.read_bytes() == (b"old" if refused else b"new")
+    assert list(tmp_path.iterdir()) == [target]
+
+
+def test_existing_destination_refuses_an_unreadable_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "lock"
+    target.write_bytes(b"old")
+    actual_stat = os.stat
+    failure = OSError(errno.EIO, "destination metadata unavailable")
+    failed = False
+
+    def fail_once(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes] | int,
+        *,
+        dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+    ) -> os.stat_result:
+        nonlocal failed
+        if path == target and not failed:
+            failed = True
+            raise failure
+        return actual_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+
+    with monkeypatch.context() as context:
+        context.setattr(os, "stat", fail_once)
+        # Older pathlib releases retain the original OS accessor.
+        context.setattr(
+            Path,
+            "stat",
+            lambda path, *, follow_symlinks=True: fail_once(
+                path, follow_symlinks=follow_symlinks
+            ),
+        )
+        with pytest.raises(OSError, match="destination metadata unavailable") as error:
+            atomic.atomic_write(target, b"new")
+
+    assert error.value is failure
+    assert target.read_bytes() == b"old"
     assert list(tmp_path.iterdir()) == [target]

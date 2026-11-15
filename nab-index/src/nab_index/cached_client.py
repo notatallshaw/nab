@@ -29,9 +29,10 @@ import asyncio
 import hashlib
 import logging
 import re
+import threading
 import time
 from datetime import timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ParamSpec
 
 from packaging.utils import canonicalize_name
 
@@ -84,6 +85,8 @@ from .parsed_listing import (
 from .transport import IDENTITY_HEADERS, raise_unless_ok
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from packaging.utils import NormalizedName
     from typing_extensions import Self
 
@@ -99,6 +102,7 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 _MAX_POLICY_WRITES = 4
+_CacheWriteArgs = ParamSpec("_CacheWriteArgs")
 
 
 class ParsedCacheStats(Record):
@@ -274,18 +278,6 @@ def _freshness_lifetime(response: HttpResponse) -> int:
     return _expires_lifetime(expires, _header(response, "date"))
 
 
-def _carried_digest(policy: CachePolicy, page_url: str) -> str | None:
-    """Return the body digest a 304 may carry forward, or ``None`` to retire it.
-
-    A 304 leaves the body alone, so the parsed blob bound to it still describes
-    that body, but only while the page it was parsed from is the same one: a
-    relative entry resolves against the page URL, so a move re-resolves every
-    file URL. Dropping the digest retires the blob, and the next read rebuilds
-    it against the new base.
-    """
-    return policy.body_digest if page_url == policy.page_url else None
-
-
 def read_fresh_parsed_listing(
     cache: CacheBackend, package: str, *, offline: bool
 ) -> ParsedListing | None:
@@ -360,11 +352,16 @@ def _reusable_metadata_hash(
     metadata_hash: tuple[str, str] | None,
 ) -> tuple[str, str] | None:
     """Return an advertised digest only when its algorithm admits sidecar reuse."""
-    if metadata_hash is None:
+    if type(metadata_hash) is not tuple:
         return None
 
-    algorithm, _ = metadata_hash
-    if algorithm not in ACCEPTED_HASH_ALGORITHMS:
+    algorithm, digest = metadata_hash
+    # Custom equality cannot establish that two advertised digests match.
+    if (
+        type(algorithm) is not str
+        or type(digest) is not str
+        or algorithm not in ACCEPTED_HASH_ALGORITHMS
+    ):
         return None
 
     return metadata_hash
@@ -442,17 +439,26 @@ class CachedAsyncSimpleClient:
             parsed_stats if parsed_stats is not None else ParsedCacheStats()
         )
         self._parsed_store_failed = False
+        self._parsed_store_lock = threading.Lock()
         self._sdist_archive_hold = sdist_archive_hold
-        self._policy_writes: set[asyncio.Task[None]] = set()
+        self._cache_writes: set[asyncio.Task[None]] = set()
 
         # Replace old versions so backtracking cannot accumulate sidecar histories.
         self._verified_sidecars: dict[str, _VersionSidecars] = {}
+        self._metadata_pending: dict[
+            tuple[str, str, tuple[str, str]], asyncio.Future[str | None]
+        ] = {}
+        self._closed = False
 
     async def aclose(self) -> None:
-        """Wait for policy writes, then close the underlying transport."""
-        if self._policy_writes:
-            await asyncio.gather(*self._policy_writes, return_exceptions=True)
+        """Wait for cache writes, then close the underlying transport."""
+        self._closed = True
+        if self._cache_writes:
+            await asyncio.gather(*self._cache_writes, return_exceptions=True)
 
+        for pending in self._metadata_pending.values():
+            pending.cancel()
+        self._metadata_pending.clear()
         self._verified_sidecars.clear()
         await self._transport.aclose()
 
@@ -588,7 +594,13 @@ class CachedAsyncSimpleClient:
         return None
 
     def _store_parsed(
-        self, package: str, digest: str | None, files: list[WheelFile | SdistFile]
+        self,
+        package: str,
+        digest: str | None,
+        files: list[WheelFile | SdistFile],
+        *,
+        zip_sdists: frozenset[str] | None = None,
+        page_url: str | None = None,
     ) -> None:
         """Write the parsed blob for ``files``, when there is one worth writing.
 
@@ -607,16 +619,21 @@ class CachedAsyncSimpleClient:
         if digest is None or not files:
             return
 
-        zip_sdists = self._zip_sdists.get(package, frozenset())
-        blob = _encode_parsed(files, digest, zip_sdists)
+        if zip_sdists is None:
+            zip_sdists = self._zip_sdists.get(package, frozenset())
+        blob = _encode_parsed(files, digest, zip_sdists, page_url=page_url)
         try:
             self._cache.put_simple_parsed(package, blob)
         except OSError as exc:
-            if not self._parsed_store_failed:
+            # Concurrent disk writers share the one-time failure report.
+            with self._parsed_store_lock:
+                if self._parsed_store_failed:
+                    return
                 self._parsed_store_failed = True
-                logger.warning(
-                    "cannot store parsed listings for %s: %s", self._index_url, exc
-                )
+
+            logger.warning(
+                "cannot store parsed listings for %s: %s", self._index_url, exc
+            )
 
     def _rebuild_parsed(
         self,
@@ -642,7 +659,7 @@ class CachedAsyncSimpleClient:
             self._cache.refresh_simple_policy(
                 package, replace(policy, body_digest=digest)
             )
-        self._store_parsed(package, digest, files)
+        self._store_parsed(package, digest, files, page_url=policy.page_url)
 
     def _negative_policy(self, response: HttpResponse) -> CachePolicy:
         """Freshness policy for a name-level 404, clamped to the 600s cap."""
@@ -789,7 +806,7 @@ class CachedAsyncSimpleClient:
                 ),
                 etag=_header(response, "etag") or policy.etag,
                 page_url=response.url,
-                body_digest=_carried_digest(policy, response.url),
+                body_digest=policy.body_digest,
             )
 
             # Find the records before refreshing the policy, so a body that
@@ -810,8 +827,24 @@ class CachedAsyncSimpleClient:
             response, self._index_url, package, self._serialization
         )
 
+        unchanged: list[WheelFile | SdistFile] | None = None
+        if (
+            policy.body_digest is not None
+            and hashlib.sha256(new_body).hexdigest() == policy.body_digest
+        ):
+            # A 200 must still repair missing or corrupt cached representations.
+            cached = self._cache.get_simple(package)
+            if cached is not None and cached[1].body_digest == policy.body_digest:
+                unchanged = self._parsed_hit(
+                    package, replace(policy, page_url=response.url)
+                )
+
         # Parse before caching so a bad body never poisons the cache.
-        files = self._parse_listing(new_body, package, response.url)
+        files = (
+            self._parse_listing(new_body, package, response.url)
+            if unchanged is None
+            else unchanged
+        )
 
         new_policy = CachePolicy(
             fetched_at=_freshness_start(response),
@@ -819,30 +852,44 @@ class CachedAsyncSimpleClient:
             etag=_header(response, "etag"),
             page_url=response.url,
         )
-        digest = self._cache.put_simple(package, new_body, new_policy)
-        self._store_parsed(package, digest, files)
+        if unchanged is not None:
+            await self._refresh_simple_policy(
+                package, replace(new_policy, body_digest=policy.body_digest)
+            )
+        else:
+            digest = self._cache.put_simple(package, new_body, new_policy)
+            self._store_parsed(package, digest, files, page_url=new_policy.page_url)
+
         return files
 
     async def _refresh_simple_policy(self, package: str, policy: CachePolicy) -> None:
         """Persist a revalidation policy with at most four background writes."""
-        # Custom backends need not support writes from another thread.
-        if (
-            type(self._cache) is not OnDiskCache
-            or len(self._policy_writes) >= _MAX_POLICY_WRITES
-        ):
+        if len(self._cache_writes) >= _MAX_POLICY_WRITES:
             self._cache.refresh_simple_policy(package, policy)
             return
 
-        task = asyncio.create_task(
-            asyncio.to_thread(self._cache.refresh_simple_policy, package, policy)
-        )
-        self._policy_writes.add(task)
-        task.add_done_callback(self._policy_write_done)
+        await self._write_cache(self._cache.refresh_simple_policy, package, policy)
+
+    async def _write_cache(
+        self,
+        operation: Callable[_CacheWriteArgs, None],
+        *args: _CacheWriteArgs.args,
+        **kwargs: _CacheWriteArgs.kwargs,
+    ) -> None:
+        """Own a disk write until completion, including after caller cancellation."""
+        # Custom backends keep their thread contract; close admits no new workers.
+        if type(self._cache) is not OnDiskCache or self._closed:
+            operation(*args, **kwargs)
+            return
+
+        task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+        self._cache_writes.add(task)
+        task.add_done_callback(self._cache_write_done)
         await asyncio.shield(task)
 
-    def _policy_write_done(self, task: asyncio.Task[None]) -> None:
+    def _cache_write_done(self, task: asyncio.Task[None]) -> None:
         """Release the task and observe failures after a cancelled wait."""
-        self._policy_writes.discard(task)
+        self._cache_writes.discard(task)
         if not task.cancelled():
             task.exception()
 
@@ -865,10 +912,38 @@ class CachedAsyncSimpleClient:
             etag=_header(response, "etag"),
             page_url=response.url,
         )
-        digest = self._cache.put_simple(package, body, policy)
-        self._store_parsed(package, digest, files)
-        self._cache.drop_negative(package)
+        await self._persist_listing(package, body, policy, files)
         return files
+
+    async def _persist_listing(
+        self,
+        package: str,
+        body: bytes,
+        policy: CachePolicy,
+        files: list[WheelFile | SdistFile],
+    ) -> None:
+        """Persist disk listings without blocking unrelated network completions."""
+        # A later response may replace this report while the worker is running.
+        zip_sdists = self._zip_sdists.get(package, frozenset())
+
+        await self._write_cache(
+            self._store_listing, package, body, policy, files, zip_sdists
+        )
+
+    def _store_listing(
+        self,
+        package: str,
+        body: bytes,
+        policy: CachePolicy,
+        files: list[WheelFile | SdistFile],
+        zip_sdists: frozenset[str],
+    ) -> None:
+        """Store the body before its parsed records and negative-entry removal."""
+        digest = self._cache.put_simple(package, body, policy)
+        self._store_parsed(
+            package, digest, files, zip_sdists=zip_sdists, page_url=policy.page_url
+        )
+        self._cache.drop_negative(package)
 
     async def get_metadata_text(
         self,
@@ -906,14 +981,70 @@ class CachedAsyncSimpleClient:
 
         # Share only metadata verified for the same package version.
         reusable_hash = _reusable_metadata_hash(metadata_hash)
-        if reusable_hash is not None:
+        if reusable_hash is not None and not self._closed:
             shared = self._verified_sidecars.get(package)
             if shared is not None and shared.version == version:
                 text = shared.texts.get(reusable_hash)
                 if text is not None:
-                    self._cache.put_metadata(package, metadata_url, text)
+                    await self._write_cache(
+                        self._cache.put_metadata, package, metadata_url, text
+                    )
                     return text
 
+            return await self._shared_metadata_text(
+                package, version, metadata_url, reusable_hash
+            )
+
+        return await self._fetch_metadata_text(
+            package, version, metadata_url, metadata_hash
+        )
+
+    async def _shared_metadata_text(
+        self,
+        package: str,
+        version: str,
+        metadata_url: str,
+        metadata_hash: tuple[str, str],
+    ) -> str:
+        """Share verified content while keeping failed requests local to their URL."""
+        key = package, version, metadata_hash
+        pending = self._metadata_pending.get(key)
+        if pending is not None:
+            # Cancelling one waiter must leave the other readers' work intact.
+            text = await asyncio.shield(pending)
+            if text is not None:
+                await self._write_cache(
+                    self._cache.put_metadata, package, metadata_url, text
+                )
+                return text
+            return await self._fetch_metadata_text(
+                package, version, metadata_url, metadata_hash
+            )
+
+        completion: asyncio.Future[str | None] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._metadata_pending[key] = completion
+        result: str | None = None
+        try:
+            result = await self._fetch_metadata_text(
+                package, version, metadata_url, metadata_hash
+            )
+            return result
+        finally:
+            if self._metadata_pending.get(key) is completion:
+                del self._metadata_pending[key]
+            if not completion.done():
+                completion.set_result(result)
+
+    async def _fetch_metadata_text(
+        self,
+        package: str,
+        version: str,
+        metadata_url: str,
+        metadata_hash: tuple[str, str] | None,
+    ) -> str:
+        """Verify a downloaded sidecar before publishing either form of reuse."""
         response = await self._transport.get(metadata_url)
         raise_unless_ok(response, metadata_url)
         content = response.content
@@ -929,8 +1060,10 @@ class CachedAsyncSimpleClient:
             )
             raise MalformedSimpleResponseError(msg) from exc
 
-        self._cache.put_metadata(package, metadata_url, text)
-        if reusable_hash is not None:
+        await self._write_cache(self._cache.put_metadata, package, metadata_url, text)
+
+        reusable_hash = _reusable_metadata_hash(metadata_hash)
+        if reusable_hash is not None and not self._closed:
             current = self._verified_sidecars.get(package)
             if current is None or current.version != version:
                 current = _VersionSidecars(version)
@@ -949,7 +1082,7 @@ class CachedAsyncSimpleClient:
     ) -> RangeMetadataResult:
         """Recover a sidecar-less wheel's METADATA by HTTP range reads.
 
-        The recovered text is cached under the same immutable ``metadata-v1``
+        The recovered text is cached under the same immutable ``metadata-v2``
         store the PEP 658 sidecar uses, keyed by the wheel URL. A cache hit is
         returned without any transport call, so a warm or previously-warmed
         offline resolve never re-ranges. A cold miss in offline mode raises
@@ -979,7 +1112,9 @@ class CachedAsyncSimpleClient:
             wheel_hash=select_artifact_hash(wheel_hashes),
         )
         if result.text is not None:
-            self._cache.put_metadata(package, wheel_url, result.text)
+            await self._write_cache(
+                self._cache.put_metadata, package, wheel_url, result.text
+            )
         return result
 
     async def get_sdist_files(

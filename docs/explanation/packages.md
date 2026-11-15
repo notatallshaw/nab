@@ -112,6 +112,36 @@ checks active. Omitted fields inherit transport recommendations, or defaults for
 without them. The index recommends windows, the project snapshots settings, and the provider owns
 lookahead.
 
+The provider supplies root-version bounds through optional `MetadataPrefetchHints`. The project
+layer uses those predicates to skip listing-arrival metadata for excluded versions; required
+requests stay unfiltered. The callbacks retain independent version ranges.
+
+Optional `MetadataArtifactHints` supplies the provider's wheel ranking for those guesses. The
+project applies it within the existing version window; required requests and sibling checks keep
+their normal selection rules. The selector retains target context without retaining the provider.
+
+`MetadataPrefetchAdmission` supplies a pure declared-target test for default listing-arrival
+guesses. The provider refuses a group only when every candidate's known Python support excludes the
+target; missing or malformed bounds remain admitted. The project applies the hint inside its
+existing window without replacing declined versions. Explicit windows, custom providers and
+overrides still make their speculative guesses; legacy ports need no new capability. Required
+metadata reads keep their normal selection rules. Admission uses the
+[normal language-minor comparison](../reference/target-environment.md), including patch-pinned
+targets.
+
+`MetadataPrefetchDeferral` lets the provider postpone default prerelease guesses until it has a
+positive dependency range. The provider's `first_matching_version` uses the same admission and
+strategy as demand selection over its prepared listing, including explicit prerelease opt-ins and
+prerelease-only fallback. `prefetch_in_range` resumes the deferred request without expanding the
+listing-arrival window. Explicit `PrefetchSettings.metadata_versions`, legacy fetch ports and custom
+provider subclasses retain their existing speculative behavior. Once the deferred candidate is
+chosen, later constraint changes leave further requests to demand and lookahead rather than guessing
+successive older releases.
+
+Default transitive guesses are skipped when a version preference is present. Explicit windows,
+legacy ports, custom providers, overrides and lowest ordering still make speculative guesses when a
+preference is present.
+
 ## Cache-only fetches
 
 ```text

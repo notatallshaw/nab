@@ -82,7 +82,8 @@ def compute_matching(
                 return 0
             provider.versions_cache[normalized] = versions
             provider.stats.listings_fetched += 1
-            provider.speculative_prefetch(normalized, versions)
+            assert isinstance(version_range, VersionRange)
+            provider.prefetch_in_range(normalized, versions, version_range)
 
     if normalized in provider.versions_cache:
         assert isinstance(version_range, VersionRange)

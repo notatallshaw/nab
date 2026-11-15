@@ -26,13 +26,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from .policy import SourceRequest
+    from .records import WheelFile
     from .store import InMemoryIndex
 
 __all__ = [
     "FetchPort",
+    "MetadataArtifactHints",
+    "MetadataPrefetchAdmission",
+    "MetadataPrefetchDeferral",
+    "MetadataPrefetchHints",
     "PrefetchSettings",
     "Waitable",
 ]
@@ -58,6 +63,50 @@ class PrefetchSettings:
             raise ValueError(msg)
         self.metadata_versions = metadata_versions
         self.lookahead_versions = lookahead_versions
+
+
+@runtime_checkable
+class MetadataArtifactHints(Protocol):
+    """Optional wheel ranking for listing-arrival metadata guesses."""
+
+    def set_metadata_prefetch_selector(
+        self, selector: Callable[[list[WheelFile]], WheelFile]
+    ) -> None:
+        """Use a pure selector over a non-empty candidate list on the fetch loop."""
+        ...
+
+
+@runtime_checkable
+class MetadataPrefetchAdmission(Protocol):
+    """Optional admission of default listing-arrival metadata guesses."""
+
+    def set_metadata_prefetch_admission(
+        self, admit: Callable[[list[WheelFile]], bool] | None
+    ) -> None:
+        """Use a pure candidate-group predicate; explicit windows take priority."""
+        ...
+
+
+@runtime_checkable
+class MetadataPrefetchHints(Protocol):
+    """Optional version filters for listing-arrival metadata guesses."""
+
+    def set_metadata_prefetch_filters(
+        self, filters: Mapping[str, Callable[[str], bool]]
+    ) -> None:
+        """Replace the speculative filters without restricting required fetches."""
+        ...
+
+
+@runtime_checkable
+class MetadataPrefetchDeferral(Protocol):
+    """Optional deferral of default guesses until the provider has constraints."""
+
+    def set_metadata_prefetch_deferral(
+        self, defer: Callable[[str], bool] | None
+    ) -> bool:
+        """Return whether automatic deferral applies; explicit windows take priority."""
+        ...
 
 
 @runtime_checkable

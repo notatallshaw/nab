@@ -376,6 +376,24 @@ def _coordinator_cache(
     return NullCache()
 
 
+def _metadata_prefetch_groups(
+    files: Sequence[WheelFile | SdistFile], wanted: int
+) -> dict[str, list[WheelFile]]:
+    """Group sidecar candidates within the requested version window."""
+    newest: dict[str, list[WheelFile]] = {}
+    for file in reversed(files):
+        if not (isinstance(file, WheelFile) and file.has_metadata) or file.yanked:
+            continue
+        group = newest.get(file.version)
+        if group is None:
+            if len(newest) == wanted:
+                break
+            group = []
+            newest[file.version] = group
+        group.append(file)
+    return newest
+
+
 class FetchCoordinator:
     """Bridges the sync provider and the async fetcher.
 
@@ -452,6 +470,12 @@ class FetchCoordinator:
         self.prefetch_settings = _resolve_prefetch_settings(
             transport, prefetch_settings
         )
+        self._metadata_prefetch_filters: dict[str, Callable[[str], bool]] = {}
+        self._metadata_prefetch_defer: Callable[[str], bool] | None = None
+        self._metadata_prefetch_admit: Callable[[list[WheelFile]], bool] | None = None
+        self._metadata_prefetch_selector: (
+            Callable[[list[WheelFile]], WheelFile] | None
+        ) = None
         self._offline = offline
         self._start_on_demand = start_on_demand
 
@@ -1352,6 +1376,35 @@ class FetchCoordinator:
             self._on_fetch()
         self._prefetch_metadata_after_listing(req.package, files)
 
+    def set_metadata_prefetch_filters(
+        self, filters: Mapping[str, Callable[[str], bool]]
+    ) -> None:
+        """Snapshot version filters for speculative metadata, leaving demand alone."""
+        self._metadata_prefetch_filters = dict(filters)
+
+    def set_metadata_prefetch_selector(
+        self, selector: Callable[[list[WheelFile]], WheelFile]
+    ) -> None:
+        """Use provider wheel ranking within the existing speculative window."""
+        self._metadata_prefetch_selector = selector
+
+    def set_metadata_prefetch_deferral(
+        self, defer: Callable[[str], bool] | None
+    ) -> bool:
+        """Keep explicit windows ahead of automatic provider deferral."""
+        self._metadata_prefetch_defer = (
+            defer if self.prefetch_settings.metadata_versions is None else None
+        )
+        return self._metadata_prefetch_defer is not None
+
+    def set_metadata_prefetch_admission(
+        self, admit: Callable[[list[WheelFile]], bool] | None
+    ) -> None:
+        """Apply automatic admission only within the default version window."""
+        self._metadata_prefetch_admit = (
+            admit if self.prefetch_settings.metadata_versions is None else None
+        )
+
     def _prefetch_metadata_after_listing(
         self, package: str, files: Sequence[WheelFile | SdistFile]
     ) -> None:
@@ -1361,9 +1414,8 @@ class FetchCoordinator:
         which nab does not enforce. An index that interleaves versions warms an
         older release, costing a request rather than a wrong resolve.
 
-        One wheel per version: the first with a sidecar is the one the provider
-        picks for that version's metadata. The backwards walk assigns
-        unconditionally, so that first wheel is the one left in place.
+        Use the provider's ranking within each version's sidecar candidates.
+        Without a selector, retain the listing's first sidecar wheel.
 
         The resolver thread filters these same records while this walk
         runs, so a wheel it releases mid-walk answers no metadata URL and
@@ -1372,15 +1424,25 @@ class FetchCoordinator:
         wanted = self.prefetch_settings.metadata_versions
         if wanted is None:
             wanted = self.PREFETCH_METADATA_COUNT
-        newest: dict[str, WheelFile] = {}
-        for f in reversed(files):
-            if not (isinstance(f, WheelFile) and f.has_metadata) or f.yanked:
-                continue
-            if f.version not in newest and len(newest) == wanted:
-                break
-            newest[f.version] = f
+        newest = _metadata_prefetch_groups(files, wanted)
 
-        for w in reversed(newest.values()):
+        version_filter = self._metadata_prefetch_filters.get(package)
+        # Keep one target's ranking for this listing's speculative requests.
+        selector = self._metadata_prefetch_selector
+        defer = self._metadata_prefetch_defer
+        admit = self._metadata_prefetch_admit
+        for wheels in reversed(newest.values()):
+            # Ranking ties keep the listing's original wheel order.
+            wheels.reverse()
+            if version_filter is not None and not version_filter(wheels[0].version):
+                continue
+            if defer is not None and defer(wheels[0].version):
+                continue
+            if admit is not None and not admit(wheels):
+                continue
+
+            w = wheels[0] if selector is None else selector(wheels)
+
             # A release clears the URL first, so a URL read after the hash
             # means the release had not begun when the hash was read.
             metadata_hash = w.metadata_hash

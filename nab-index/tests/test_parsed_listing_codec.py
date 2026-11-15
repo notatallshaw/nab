@@ -25,7 +25,7 @@ from nab_index.parsed_listing import (
     decode,
     encode,
 )
-from nab_provider.records import defer_hashes, defer_sidecar_hash
+from nab_provider.records import defer_hashes, defer_sidecar_hash, rehydrated_wheel
 from nab_provider.value import replace
 
 DIGEST = "a" * 64
@@ -65,6 +65,12 @@ _S_VERSION = 3
 _S_REQUIRES_PYTHON = 4
 _S_UPLOAD_TIME = 5
 _S_SIZE = 7
+
+
+class _DigestText(str):
+    """Retain a native factory's accepted string-subclass cell."""
+
+    __slots__ = ()
 
 
 def _policy(digest: str | None = DIGEST) -> CachePolicy:
@@ -169,7 +175,7 @@ def test_lone_surrogate_in_field_round_trips() -> None:
 def test_blob_is_portable_json() -> None:
     """The wire form carries no interpreter tag, so any reader can decode it."""
     header, rows = json.loads(encode(SAMPLE, DIGEST))
-    assert header == [FORMAT_VERSION, CODEC, KEY_SCHEME, DIGEST, [], {}]
+    assert header == [FORMAT_VERSION, CODEC, KEY_SCHEME, DIGEST, [], {}, None]
     assert [row[0] for row in rows] == [_TAG_WHEEL, _TAG_SDIST, _TAG_WHEEL, _TAG_SDIST]
 
 
@@ -484,6 +490,7 @@ def test_a_rehydrated_record_defers_the_same_parse() -> None:
     (wheel,) = _roundtrip(
         [_deferred_wheel({"SHA256": DIGEST.upper()}, sidecar={"sha256": DIGEST})]
     )
+    assert isinstance(wheel, WheelFile)
 
     assert wheel.raw_hashes() == {"SHA256": DIGEST.upper()}
     assert wheel.raw_sidecar() == {"sha256": DIGEST}
@@ -574,3 +581,55 @@ def test_compact_raw_sha256_preserves_integrity_semantics(digest: str) -> None:
     assert record.hashes == wheel.hashes
     assert record.metadata_hash == wheel.metadata_hash
     assert encode(restored.files, DIGEST) == blob
+
+
+def test_page_context_is_part_of_the_parsed_binding() -> None:
+    old = CachePolicy(
+        1, 600, None, page_url="https://old.example/pkg/", body_digest=DIGEST
+    )
+    new = CachePolicy(
+        2, 600, None, page_url="https://new.example/pkg/", body_digest=DIGEST
+    )
+    blob = encode(SAMPLE, DIGEST, page_url=old.page_url)
+    assert decode(blob, old) is not None
+    assert decode(blob, new) is None
+    assert corruption_reason(blob) is None
+
+
+@pytest.mark.parametrize("page_url", [1, False, [], {}])
+def test_non_text_page_context_is_corruption(page_url: object) -> None:
+    blob = _tamper_header(6, page_url)
+    assert decode(blob, _policy()) is None
+    assert corruption_reason(blob) is not None
+
+
+@pytest.mark.parametrize(
+    ("raw", "cell"),
+    [(DIGEST, DIGEST), (_DigestText(DIGEST), {"sha256": _DigestText(DIGEST)})],
+)
+def test_rehydration_handoff_retains_the_existing_wire_shape(
+    raw: str, cell: object
+) -> None:
+    wheel = rehydrated_wheel(
+        filename="pkg-1.0-py3-none-any.whl",
+        url="https://example.com/pkg.whl",
+        version="1.0",
+        requires_python=None,
+        has_metadata=True,
+        upload_time=None,
+        hashes=raw,
+        size=None,
+        metadata_hash=raw,
+    )
+    blob = encode([wheel], DIGEST)
+    rows = json.loads(blob)[1]
+
+    assert rows[0][_W_HASHES] == cell
+    assert rows[0][_W_METADATA_HASH] == cell
+
+    restored = decode(blob, _policy())
+    assert restored is not None
+    (record,) = restored.files
+    assert isinstance(record, WheelFile)
+    assert record.hashes == wheel.hashes
+    assert record.metadata_hash == wheel.metadata_hash
