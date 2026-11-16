@@ -44,6 +44,7 @@ __all__ = [
     "InvalidProjectTableError",
     "expand_extra_requirements",
     "expand_group_includes",
+    "expand_project_requirements",
     "expand_self_extras",
     "parse_project_requirement",
     "parse_requirements",
@@ -292,6 +293,71 @@ def _self_ref_edges(
         if isinstance(residual, str):
             edge = gates | {residual}
     return [(canonicalize_name(sub), edge) for sub in sorted(req.extras)]
+
+
+def expand_project_requirements(
+    requirements: Sequence[Requirement],
+    projects: Mapping[str, Mapping[str, Sequence[str]]],
+) -> list[Requirement]:
+    """Replace references to supplied projects with their selected extra dependencies.
+
+    The projects themselves are installed separately. Conditions on local references
+    also apply to the dependencies of their extras across project boundaries.
+    """
+    local = {
+        canonicalize_name(name): _canonicalize_optional_deps(optional)
+        for name, optional in projects.items()
+    }
+    pending = [(requirement, frozenset[str]()) for requirement in requirements]
+    visited: set[tuple[str, str, frozenset[str]]] = set()
+    result: list[Requirement] = []
+    while pending:
+        requirement, gates = pending.pop(0)
+        name = canonicalize_name(requirement.name)
+        optional = local.get(name)
+        if optional is None:
+            # Keep the caller's parsed requirements unchanged.
+            emitted = parse_requirement(str(requirement))
+            if gates:
+                emitted.marker = _and_markers(emitted.marker, gates)
+            result.append(emitted)
+            continue
+        if requirement.url is not None:
+            msg = f"local project {name!r} also has a direct URL requirement"
+            raise InvalidProjectRequirementError(msg)
+        if requirement.marker is not None:
+            gates = gates | {str(requirement.marker)}
+        for extra in sorted({canonicalize_name(extra) for extra in requirement.extras}):
+            key = (name, extra, gates)
+            if key in visited:
+                continue
+            visited.add(key)
+            pending.extend(_project_extra_requirements(optional, name, extra, gates))
+    return result
+
+
+def _project_extra_requirements(
+    optional: Mapping[str, Sequence[str]],
+    name: str,
+    extra: str,
+    gates: frozenset[str],
+) -> list[tuple[Requirement, frozenset[str]]]:
+    """Reduce extra markers while carrying environment conditions onto children."""
+    if extra not in optional:
+        msg = f"project {name!r} has no extra {extra!r}"
+        raise LookupError(msg)
+    result = []
+    for child in parse_requirements(optional[extra], f"{name}[{extra}]"):
+        edge = gates
+        if child.marker is not None:
+            residual = _environment_residual(child.marker, extra)
+            if residual is False:
+                continue
+            if isinstance(residual, str):
+                edge = edge | {residual}
+            child.marker = None
+        result.append((child, edge))
+    return result
 
 
 def expand_group_includes(
