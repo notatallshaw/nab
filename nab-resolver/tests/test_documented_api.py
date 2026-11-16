@@ -35,7 +35,7 @@ SUPPORTED_API = {
         "ResolutionStalledError",
         "ResolutionTerminatedError",
     },
-    "nab_resolver.ranges": {"Range"},
+    "nab_resolver.ranges": {"IntegerRangeMembership", "Range"},
     "nab_resolver.resolver": {
         "BaseProvider",
         "DEFAULT_MAX_ITERATIONS",

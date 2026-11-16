@@ -21,6 +21,8 @@ from .types import RangeRelation, VersionType
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from .types import RangeProtocol
+
 # Bound once so the hot return paths load a module global instead of a class
 # attribute.
 _EMPTY_REL = RangeRelation.EMPTY
@@ -32,6 +34,7 @@ __all__ = [
     "NEGATIVE_INFINITY",
     "POSITIVE_INFINITY",
     "Bound",
+    "IntegerRangeMembership",
     "Interval",
     "Range",
 ]
@@ -799,3 +802,79 @@ def _normalize_intervals(intervals: list[Interval]) -> tuple[Interval, ...]:
             merged.append((lower, lower_inclusive, upper, upper_inclusive))
 
     return tuple(merged)
+
+
+class _IntegerMembershipEntry:
+    """Keep a range alive alongside its integer point lookup, if available."""
+
+    __slots__ = ("owner", "points")
+
+    def __init__(self, owner: object, points: frozenset[int] | None) -> None:
+        self.owner = owner
+        self.points = points
+
+
+class IntegerRangeMembership:
+    """Reuse integer point lookups until cleared or discarded.
+
+    Other probes and ranges retain their own membership behavior. Owners are
+    retained until :meth:`clear`, so use one lookup for a bounded operation.
+    """
+
+    __slots__ = ("_entries",)
+
+    def __init__(self) -> None:
+        """Start an empty lookup owned by its caller."""
+        self._entries: dict[int, _IntegerMembershipEntry] = {}
+
+    def contains(
+        self,
+        version_range: Range[VersionType] | RangeProtocol[VersionType],
+        value: VersionType,
+    ) -> bool:
+        """Test membership, caching only exact integer point representations."""
+        if (
+            not isinstance(version_range, Range)
+            or type(version_range) is not Range
+            or type(value) is not int
+        ):
+            return value in version_range
+
+        key = id(version_range)
+        entry = self._entries.get(key)
+        # Copies can preserve identity keys while reconstructing their owners.
+        if entry is None or entry.owner is not version_range:
+            # Retaining the owner prevents reuse of its identity before clear().
+            entry = _IntegerMembershipEntry(
+                version_range,
+                _integer_points(version_range._intervals),  # noqa: SLF001 - this module owns the range representation
+            )
+            self._entries[key] = entry
+
+        points = entry.points
+        if points is None:
+            return value in version_range
+
+        return value in points
+
+    def clear(self) -> None:
+        """Release every retained range and derived lookup."""
+        self._entries.clear()
+
+
+def _integer_points(intervals: tuple[Interval, ...]) -> frozenset[int] | None:
+    """Return inclusive integer point values, or None for other intervals."""
+    points: set[int] = set()
+    for lower, lower_inclusive, upper, upper_inclusive in intervals:
+        if (
+            type(lower) is not int
+            or type(upper) is not int
+            or lower != upper
+            or lower_inclusive is not True
+            or upper_inclusive is not True
+        ):
+            return None
+
+        points.add(lower)
+
+    return frozenset(points)
