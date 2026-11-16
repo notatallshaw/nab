@@ -91,6 +91,14 @@ class MetadataProxy(HashableRecord):
         self.candidate = candidate
 
     @override
+    def __hash__(self) -> int:
+        """Hash the candidate tuple, retaining subclass comparison overrides."""
+        if type(self) is not MetadataProxy:
+            return super().__hash__()
+
+        return hash((self.candidate,))
+
+    @override
     def _comparison_values(self) -> tuple[object, ...]:
         """Return fixed identity fields, honoring subclass comparison declarations."""
         if type(self) is not MetadataProxy:
