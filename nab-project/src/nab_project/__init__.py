@@ -2,6 +2,7 @@
 
 Supported imports:
 
+    nab_project.pyproject_files  MissingProjectTableError
     nab_project.input_source  InputFormat, ScriptMetadataError, read_input_document
     nab_project.script_metadata  ScriptMetadata, read_script_metadata
     nab_project.build_backend  project_metadata

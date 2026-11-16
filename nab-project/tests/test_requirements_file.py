@@ -9,6 +9,7 @@ import pytest
 
 from nab_markersets._compat import get_int_max_str_digits
 from nab_project.pyproject_files import (
+    MissingProjectTableError,
     build_system_requires,
     read_pyproject_build_requires,
     read_pyproject_dependencies,
@@ -169,11 +170,13 @@ class TestReadPyprojectDependencies:
             read_pyproject_dependencies(p)
 
     def test_missing_project_section_raises(self, tmp_path: object) -> None:
-        """Raise KeyError when [project] section is missing."""
+        """Keep missing-table errors distinguishable from other lookup failures."""
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text("[build-system]\n")
-        with pytest.raises(KeyError):
+        with pytest.raises(MissingProjectTableError) as caught:
             read_pyproject_dependencies(p)
+        assert isinstance(caught.value, KeyError)
+        assert caught.value.args == ("project",)
 
     def test_missing_dependencies_key_returns_empty(self, tmp_path: object) -> None:
         """An absent dependencies key reads as no base deps (PEP 621 optional)."""

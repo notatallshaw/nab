@@ -44,6 +44,7 @@ from nab_index.transport import prefetch_settings_for_backend
 from nab_project.input_source import InputFormat, ScriptMetadataError
 from nab_project.lockfile import MissingHashError, MissingSdistError
 from nab_project.pyproject_files import (
+    MissingProjectTableError,
     read_pyproject_groups,
     read_pyproject_optional_dependencies,
 )
@@ -396,8 +397,8 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     except InvalidUploadTimeError as e:
         printer().error(e)
         sys.exit(1)
-    except KeyError:
-        printer().error(f"{path} has no [project].dependencies")
+    except MissingProjectTableError:
+        printer().error(f"{path} has no [project] table")
         sys.exit(1)
     except InvalidProjectTableError as e:
         printer().error(e, prefix=f"in {path}: ")
