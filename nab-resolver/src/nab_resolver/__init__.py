@@ -9,7 +9,7 @@ renamed or relocated in any release.
     nab_resolver.errors     ResolutionError, ResolutionInvariantError,
                             ResolutionLimitError,
                             ResolutionStalledError, ResolutionTerminatedError
-    nab_resolver.ranges     Range
+    nab_resolver.ranges     IntegerRangeMembership, Range
     nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,
                             ResolverObserver, ResolverProvider, Solution
     nab_resolver.root       ROOT

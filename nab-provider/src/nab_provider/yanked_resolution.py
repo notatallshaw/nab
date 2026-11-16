@@ -17,7 +17,7 @@ __lazy_modules__ = (
 from typing import TYPE_CHECKING, Final
 
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
-from nab_resolver.ranges import Range
+from nab_resolver.ranges import IntegerRangeMembership, Range
 from nab_resolver.resolver import (
     DEFAULT_MAX_ITERATIONS,
     BaseProvider,
@@ -161,6 +161,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
         self._trial_pins = self.input_pins
         self._full_version_range = VersionRange.full()
         self._full_integer_range: Range[int] = Range.full()
+        self._integer_membership = IntegerRangeMembership()
         self.stats: ResolverStats[Package] = preference.stats
 
     def identify(self, candidate: Candidate) -> int:
@@ -338,22 +339,13 @@ class YankProxyProvider(BaseProvider[Package, int]):
             self.block_context(package)
             return None
         if isinstance(package, str):
-            # Cached dependencies need incompatibilities before excluding candidates.
-            allowed = self.constraints.get(package, self._full_version_range)
-            return next(
-                (
-                    self.identify(c)
-                    for c in self.catalogue.ordered(package, allowed)
-                    if self.eligible(c) and self.identify(c) in version_range
-                ),
-                None,
-            )
+            return self._choose_candidate(package, version_range)
         if isinstance(package, PermissionProxy):
             return next(
                 (
                     v
                     for v in self.proofs.get(package, {}).values()
-                    if v in version_range
+                    if self._integer_membership.contains(version_range, v)
                 ),
                 None,
             )
@@ -375,7 +367,23 @@ class YankProxyProvider(BaseProvider[Package, int]):
             if candidate in self.catalogue.unavailable:
                 self.incomplete = True
             return None
-        return 0 if 0 in version_range else None
+        return 0 if self._integer_membership.contains(version_range, 0) else None
+
+    def _choose_candidate(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
+        """Choose an eligible package candidate within the encoded range."""
+        # Cached dependencies need incompatibilities before excluding candidates.
+        allowed = self.constraints.get(package, self._full_version_range)
+        for candidate in self.catalogue.ordered(package, allowed):
+            if not self.eligible(candidate):
+                continue
+
+            token = self.identify(candidate)
+            if self._integer_membership.contains(version_range, token):
+                return token
+
+        return None
 
     def has_satisfying_version(
         self, package: Package, version_range: RangeProtocol[int]
@@ -434,6 +442,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
         )
         query.items = self.items
         query.identities = self.identities
+        query._integer_membership = self._integer_membership
         return query
 
     def run_query(
@@ -560,5 +569,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
             error.verbose_message = message.render(verbose=True)
             raise error from exc
         finally:
+            self._integer_membership.clear()
+
             merge_stats(self.catalogue.provider.stats, self.catalogue.child_stats)
         return self.preference.adopt(selected)

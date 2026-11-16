@@ -10,7 +10,7 @@ import pytest
 
 from nab_resolver._compat import override
 from nab_resolver.errors import ResolutionError
-from nab_resolver.ranges import Range
+from nab_resolver.ranges import IntegerRangeMembership, Range
 from nab_resolver.resolver import BaseProvider, ResolverProvider
 from nab_resolver.root import ROOT
 from nab_resolver.testing import (
@@ -566,3 +566,11 @@ def test_scenarios_detect_harmful_widening_in_both_choice_orders(
             versions=(1, 2),
             range_type=Range,
         )
+
+
+def test_integer_membership_delegates_to_an_independent_range() -> None:
+    version_range = IntegerRange(Range.from_versions((1, 3)))
+    lookup = IntegerRangeMembership()
+
+    assert lookup.contains(version_range, 1)
+    assert not lookup.contains(version_range, 2)

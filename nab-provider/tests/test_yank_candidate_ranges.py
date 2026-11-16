@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import gc
+import weakref
+
 import pytest
 
 from nab_provider._vendor.packaging.requirements import Requirement
@@ -11,6 +14,11 @@ from nab_provider.testing import make_coordinator
 from nab_provider.yank_candidates import Candidate
 from nab_provider.yank_preference import PreferenceScope
 from nab_provider.yanked_resolution import YankProxyProvider
+from nab_resolver.ranges import Range
+
+
+class _TrackedFloat(float):
+    """Expose whether a completed proxy search retains a range bound."""
 
 
 @pytest.mark.parametrize(
@@ -52,3 +60,24 @@ def test_encoding_keeps_sparse_candidate_identities(
     assert [search.identify(candidate) for candidate in candidates] == [1, 2, 3, 4]
     assert not search.catalogue.facts
     assert not search.catalogue.provider.coordinator.calls_to("request_metadata")
+
+
+def test_completed_search_releases_membership_owners() -> None:
+    provider = Provider(make_coordinator())
+    search = YankProxyProvider(provider, lambda: provider, [], [], {}, preferences={})
+    candidate = Candidate("dep", Version("1"), withdrawn=False)
+    search.catalogue.candidates["dep"] = (candidate,)
+    bound = _TrackedFloat(0.5)
+    allowed: Range[float] = Range.between(bound, 1.5)
+    reference = weakref.ref(bound)
+    query = search.new_query(PreferenceScope())
+    assert query.choose_version("dep", allowed) == search.identify(candidate)
+
+    del query, bound, allowed
+    gc.collect()
+    assert reference() is not None
+
+    pins, _provider = search.resolve()
+    assert pins == {}
+    gc.collect()
+    assert reference() is None
