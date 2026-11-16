@@ -35,8 +35,8 @@ class _MetadataWithOrigin(MetadataProxy):
     __record_compare_fields__ = ("origin",)
     origin: Final[int]
 
-    def __init__(self, origin: int) -> None:
-        super().__init__(1)
+    def __init__(self, origin: int, *, candidate: int = 1) -> None:
+        super().__init__(candidate)
         self.origin = origin
 
 
@@ -123,3 +123,12 @@ def test_subclasses_can_select_comparison_fields(
         first: "same",
         other: "other",
     }
+
+
+def test_metadata_subclass_hash_uses_selected_fields() -> None:
+    first = _MetadataWithOrigin(1, candidate=1)
+    same = _MetadataWithOrigin(1, candidate=2)
+
+    assert first == same
+    assert hash(first) == hash(same)
+    assert {first: "original"}[same] == "original"
