@@ -14,5 +14,7 @@ Supported imports:
     nab_project.lock_preferences  LockPreferences, read_lock_preferences
     nab_project.lockfile  resolve_dependency_references
     nab_project.resolve  plan_project_inputs
+    nab_project.dependency_inputs  dependency_input_requirements
+    nab_project.dependency_sources  DependencySourceReader
     nab_project.toml_writer  dumps, dumps_value
 """
