@@ -412,6 +412,7 @@ def read_pyproject_config(
             "conflicts",
             "workspace",
             "plans",
+            "input-sources",
         )
     ):
         message = (

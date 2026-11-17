@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any
 
+from nab_index.urls import strip_userinfo
 from nab_project.dependency_inputs import input_table
 from nab_project.prepared_input import PreparedProjectInput
 from nab_project.resolve import complete_project_requirements
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
+    from nab_project.dependency_sources import DependencySourceReader
+
     from .config.lock_plans import LockPlan
 
 
@@ -23,6 +26,8 @@ def prepare_lock_input(
     document: Mapping[str, Any],
     plan: LockPlan,
     *,
+    sources: Mapping[str, Any],
+    reader: DependencySourceReader,
     workspace_discovery: bool,
     project_overrides: Mapping[str, object],
 ) -> PreparedProjectInput:
@@ -44,7 +49,18 @@ def prepare_lock_input(
         build_requirements=plan.build_requirements,
     )
     requirements = {str(req) for req in roots}
-    local_inputs: dict[Path, str | None] = {}
+    identities = {}
+    for name, selection in plan.imports.items():
+        if name not in sources:
+            msg = f"unknown input source {name!r} in plan {plan.name!r}"
+            raise ValueError(msg)
+        source = dict(sources[name])
+        requirements.update(reader.requirements(source, selection))
+        if "url" in source:
+            source["url"] = strip_userinfo(source["url"])
+        identities[name] = source
+
+    local_inputs: dict[Path, str | None] = dict(reader.local_inputs)
     configuration = path.parent / "nab.toml"
     try:
         local_inputs[configuration] = configuration.read_text(encoding="utf-8")
@@ -58,6 +74,6 @@ def prepare_lock_input(
         path,
         document,
         view,
-        identity={"plan": plan.name},
+        identity={"plan": plan.name, "sources": identities},
         local_inputs=local_inputs,
     )

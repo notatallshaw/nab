@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
+import tarfile
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -84,6 +87,29 @@ def test_project_policy_and_cli_table_subflags_keep_their_precedence(
     assert any('sys_platform == "linux"' in env for env in doc["environments"])
 
 
+def test_local_source_groups_are_prepared_without_rebinding_relative_sources(
+    named: Registry,
+) -> None:
+    source = named.project.parent / "upstream"
+    source.mkdir()
+    (source / "pyproject.toml").write_text(
+        '[project]\nname="upstream"\ndependencies=["a"]\n'
+        '[project.optional-dependencies]\ntesting=["b"]\n'
+        '[dependency-groups]\ntest=["upstream[testing]"]\n'
+        "[build-system]\nrequires=[]\n"
+    )
+    with named.project.open("a") as file:
+        file.write(
+            '[tool.nab.input-sources.test]\npath="upstream"\n[tool.nab.plans.dev.inputs.test]\nprojects=[{groups=["test"],dependencies=true}]\n'
+        )
+    assert command(named, "--plan", "dev") == 0
+    assert command(named, "--plan", "dev", "--locked") == 0
+    (source / "pyproject.toml").write_text(
+        '[project]\nname="upstream"\ndependencies=["missing"]\n[build-system]\nrequires=[]\n[dependency-groups]\ntest=[]\n'
+    )
+    assert command(named, "--plan", "dev", "--locked") == 1
+
+
 @pytest.mark.parametrize("format_name", ["pylock", "requirements-without-hashes"])
 def test_source_change_during_resolution_preserves_the_previous_lock(
     named: Registry,
@@ -110,6 +136,45 @@ def test_source_change_during_resolution_preserves_the_previous_lock(
     assert command(named, *args) == 1
     assert output.read_bytes() == previous
     assert "inputs changed" in capsys.readouterr().err
+
+
+def test_archive_inputs_follow_offline_cache_and_backend_controls(
+    named: Registry, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    buffer = io.BytesIO()
+    metadata = (
+        b'[project]\nname="upstream"\ndependencies=["a"]\n[build-system]\nrequires=[]\n'
+    )
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        info = tarfile.TarInfo("release/pyproject.toml")
+        info.size = len(metadata)
+        archive.addfile(info, io.BytesIO(metadata))
+    data = buffer.getvalue()
+    with named.project.open("a") as file:
+        file.write(
+            '[tool.nab.input-sources.test]\nurl="https://source.example/release.tar.gz"\n'
+            f'sha256="{hashlib.sha256(data).hexdigest()}"\n'
+            "[tool.nab.plans.dev.inputs.test]\n"
+        )
+    calls = []
+
+    def fetch(url: str, backend: str) -> bytes:
+        calls.append((url, backend))
+        return data
+
+    monkeypatch.setattr("nab._lock._download_input", fetch)
+    cache = named.project.parent / "input-cache"
+    args = ("--plan", "dev", "--cache-dir", str(cache), "--http-backend", "httpx")
+    assert command(named, *args, "--offline") == 1
+    assert not calls
+    assert "not cached" in capsys.readouterr().err
+
+    assert command(named, *args) == 0
+    assert calls == [("https://source.example/release.tar.gz", "httpx")]
+    assert command(named, *args, "--locked", "--offline") == 0
+    assert len(calls) == 1
+    assert command(named, *args, "--offline", "--no-cache") == 1
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize(
@@ -141,6 +206,23 @@ def test_batch_output_collisions_fail_before_writing(named: Registry) -> None:
     assert command(named, "--all-plans") == 1
     assert not named.ports
     assert not named.project.with_name("pylock.shared.toml").exists()
+
+
+def test_plain_group_selection_ignores_foreign_inputs(
+    named: Registry,
+) -> None:
+    source = named.project.parent / "source"
+    source.mkdir()
+    (source / "pyproject.toml").write_text(
+        '[project]\nname="source"\ndependencies=["b"]\n[build-system]\nrequires=[]\n'
+    )
+    with named.project.open("a") as file:
+        file.write('[tool.nab.input-sources.test]\npath="absent"\n')
+    assert command(named, "--groups", "test", "--output", str(named.output)) == 0
+    assert (
+        command(named, "--groups", "test", "--locked", "--output", str(named.output))
+        == 0
+    )
 
 
 def test_named_lock_rejects_an_override_before_replacing_the_file(
@@ -197,6 +279,33 @@ def test_a_script_cannot_select_a_plan(named: Registry) -> None:
     script.write_text("# /// script\n# dependencies=[]\n# ///\n")
     assert run(("lock", "--script", str(script), "--plan", "dev")) == 1
     assert command(named, "--plan", "dev", "--build-requirements") == 1
+
+
+def test_configured_http_download_uses_the_selected_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from nab._lock import _download_input
+    from nab_index.httpx_async_transport import _HttpxResponse
+
+    calls = []
+
+    class Transport:
+        async def get(self, url: str, **kwargs: object) -> _HttpxResponse:
+            calls.append(url)
+            return _HttpxResponse(
+                httpx.Response(200, request=httpx.Request("GET", url)), b"archive"
+            )
+
+        async def aclose(self) -> None:
+            calls.append("closed")
+
+    monkeypatch.setattr(
+        "nab._lock._make_resolve_transport", lambda backend: Transport()
+    )
+    assert _download_input("https://source.example/a.tar.gz", "urllib3") == b"archive"
+    assert calls == ["https://source.example/a.tar.gz", "closed"]
 
 
 def test_batch_provenance_replays_each_individual_plan(
@@ -274,6 +383,46 @@ def test_named_plans_refuse_conflicting_explicit_selection_controls(
 ) -> None:
     assert command(named, "--plan", "dev", *arguments) == 1
     assert not named.ports
+
+
+def test_a_shared_docs_group_works_without_runtime_or_backend_metadata(
+    named: Registry,
+) -> None:
+    named.declarations["sphinx"] = {"1": ()}
+    source = named.project.parent / "shared-tools"
+    source.mkdir()
+    (source / "pyproject.toml").write_text(
+        '[project]\nname="tools"\ndynamic=["dependencies"]\n'
+        '[build-system]\nrequires="unselected backend metadata"\n'
+        '[dependency-groups]\ndocs=["sphinx"]\n'
+    )
+    with named.project.open("a") as file:
+        file.write(
+            '[tool.nab.input-sources.docs]\npath="shared-tools"\n'
+            '[tool.nab.plans.docs]\ninputs.docs={groups=["docs"]}\n'
+        )
+    assert command(named, "--plan", "docs") == 0
+    document = toml_io.load_path(named.project.with_name("pylock.docs.toml"))
+    assert [package["name"] for package in document["packages"]] == ["sphinx"]
+    assert command(named, "--plan", "docs", "--locked") == 0
+
+
+def test_plain_requirements_can_supply_a_group_without_a_source_project(
+    named: Registry,
+) -> None:
+    named.declarations["rich"] = {"1": ()}
+    source = named.project.parent / "shared-config"
+    source.mkdir()
+    (source / "requirements.txt").write_text("rich\n")
+    with named.project.open("a") as file:
+        file.write(
+            '[tool.nab.input-sources.tools]\npath="shared-config"\n'
+            '[tool.nab.plans.tools]\ninputs.tools={requirements-files=["requirements.txt"]}\n'
+        )
+    assert command(named, "--plan", "tools") == 0
+    document = toml_io.load_path(named.project.with_name("pylock.tools.toml"))
+    assert [package["name"] for package in document["packages"]] == ["rich"]
+    assert command(named, "--plan", "tools", "--locked") == 0
 
 
 def test_plan_names_in_nab_toml_select_the_same_cli_plan(features: Registry) -> None:
@@ -470,3 +619,13 @@ def test_complete_plan_selects_extras_independently_of_runtime(
         {"httpx", "rich"} if build else {"httpx"}
     )
     assert command(features, "--plan", "http", "--locked") == 0
+
+
+def test_unknown_input_leaves_existing_lock_in_place(named: Registry) -> None:
+    assert command(named, "--plan", "dev") == 0
+    path = named.project.with_name("pylock.dev.toml")
+    saved = path.read_bytes()
+    with named.project.open("a") as file:
+        file.write('[tool.nab.plans.dev.inputs.missing]\ngroups=["test"]\n')
+    assert command(named, "--plan", "dev") == 1
+    assert path.read_bytes() == saved

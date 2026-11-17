@@ -8,6 +8,7 @@ from nab_project.dependency_inputs import input_table
 from nab_provider.requirements_file import require_string_list
 
 from .ladder import Layer, plan_settings_layer
+from .values import parse_input_tables
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -22,6 +23,7 @@ class LockPlan(NamedTuple):
     extras: tuple[str, ...]
     dependencies: bool
     build_requirements: bool
+    imports: Mapping[str, Any]
     settings: dict[str, Any]
     output: str
 
@@ -37,6 +39,7 @@ class LockPlan(NamedTuple):
             "extras",
             "dependencies",
             "build-requirements",
+            "inputs",
             "settings",
             "output",
         }
@@ -64,6 +67,7 @@ class LockPlan(NamedTuple):
             tuple(require_string_list(table.get("extras", []), "plan extras")),
             dependencies,
             build,
+            parse_input_tables(table.get("inputs", {}), "plan inputs"),
             input_table(table.get("settings", {}), "plan settings"),
             output,
         )

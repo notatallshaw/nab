@@ -153,6 +153,7 @@ def plan_settings_layer(
                 or key
                 in {
                     "plans",
+                    "input-sources",
                     "default-groups",
                     "base-group",
                     "build-group",

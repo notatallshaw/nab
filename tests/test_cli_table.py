@@ -66,6 +66,7 @@ _PAGES = (
     ("vcs", "how-to/vcs.md"),
     ("workspace", "how-to/workspaces.md"),
     ("plans", "reference/lock-plans.md"),
+    ("input-sources", "reference/lock-plans.md"),
     ("indexes", "how-to/multi-index.md"),
     ("local-sources", "how-to/local-sources.md"),
     ("vcs-sources", "how-to/vcs.md"),
@@ -125,6 +126,7 @@ _WRITTEN_LABELS = {
     "vcs": "table(vcs-policy)",
     "workspace": "table(members)",
     "plans": "table(lock-plan)",
+    "input-sources": "table(input-source)",
     "indexes": "array-of-tables(name,url,serialization)",
     "local-sources": "array-of-tables(name,path)",
     "vcs-sources": "array-of-tables(name,url)",
@@ -192,14 +194,14 @@ class TestTheDeclaredTable:
         command = [row for row in ALL if row.commands and not row.is_global]
         file_only = [row for row in ALL if not row.commands]
 
-        assert (len(root), len(command), len(file_only)) == (7, 55, 14)
-        assert len(root) + len(command) + len(file_only) == len(ALL) == 76
+        assert (len(root), len(command), len(file_only)) == (7, 55, 15)
+        assert len(root) + len(command) + len(file_only) == len(ALL) == 77
 
         keyed = [row for row in ALL if row.key]
 
-        assert len(keyed) == 45
+        assert len(keyed) == 46
         assert sum(1 for row in keyed if row.cli_flag) == 31
-        assert sum(1 for row in keyed if not row.commands) == 14
+        assert sum(1 for row in keyed if not row.commands) == 15
 
     def test_the_sub_rows_spell_the_two_tables(self) -> None:
         """A sub-row carries no key, so only ``under`` says which one it spells."""
@@ -226,7 +228,7 @@ class TestTheDeclaredTable:
     def test_the_layered_rows_split_by_scope_as_the_registry_does(self) -> None:
         keyed = [row for row in ALL if row.key]
 
-        assert sum(row.scope is Scope.PROJECT for row in keyed) == 30
+        assert sum(row.scope is Scope.PROJECT for row in keyed) == 31
         assert sum(row.scope is Scope.USER for row in keyed) == 15
 
     def test_the_environment_names_are_the_user_keys(self) -> None:

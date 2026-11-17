@@ -31,6 +31,7 @@ from .test_prefer_existing_cli import Registry
 
 _STRUCTURED = (
     ("plans", '{dev={groups=["test"]}}'),
+    ("input-sources", '{test={path="../source"}}'),
     ("environment", '{python="3.12", platform="linux_x86_64"}'),
     ("marker-environment", '{os_name="posix"}'),
     ("vcs", '{policy="block"}'),

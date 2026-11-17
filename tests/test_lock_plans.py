@@ -12,6 +12,8 @@ from nab.config.values import SourceConfigError, parse_input_tables
         {"unknown": []},
         {"groups": "lint"},
         {"extras": "extra"},
+        {"inputs": "docs"},
+        {"inputs": [3]},
         {"build-requirements": 1},
         {"settings": []},
     ],

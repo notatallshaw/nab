@@ -592,6 +592,7 @@ class TestConfigRefusalSeverity:
 _STRUCTURED_PROJECT_TABLES = frozenset(
     {
         "plans",
+        "input-sources",
         "archive-sources",
         "conflicts",
         "environment",

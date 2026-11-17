@@ -23,6 +23,7 @@ __lazy_modules__ = (
     "nab.config.model",
     "nab.config.lock_plans",
     "nab.lock_inputs",
+    "nab_project.dependency_sources",
     "nab.flagtypes",
     "nab.output",
     "nab_project",
@@ -107,6 +108,7 @@ from nab_project.resolve import (
     build_lock_input,
     inputs_for_build_requirements,
 )
+from nab_provider.errors import IndexAccessError, SdistHashMismatchError
 from nab_provider.policy import ResolutionStrategy
 from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
@@ -418,6 +420,9 @@ def _prepare_lock_configuration(
     if plan_name is None:
         return _LockConfiguration(ladder, None, None, output)
 
+    # Ordinary locks do not load archive or plan readers.
+    from nab_project.dependency_sources import DependencySourceReader  # noqa: PLC0415
+
     from .config.lock_plans import LockPlan  # noqa: PLC0415
     from .lock_inputs import prepare_lock_input  # noqa: PLC0415 - named plans only
 
@@ -440,11 +445,19 @@ def _prepare_lock_configuration(
         raise ValueError(msg)
     settings = _layered_run_settings(ladder)
     plan = LockPlan.read(plan_name, ladder["plans"].value, settings.format)
+    reader = DependencySourceReader(
+        path.parent,
+        _resolve_effective_cache_dir(settings.cache_dir, cache=settings.cache),
+        lambda url: _download_input(url, settings.http_backend),
+        offline=settings.offline,
+    )
     document = read_input_document(path)
     prepared = prepare_lock_input(
         path,
         document,
         plan,
+        sources=ladder["input-sources"].value,
+        reader=reader,
         workspace_discovery=settings.workspace_discovery,
         project_overrides=project_config_overrides(overrides),
     )
@@ -491,6 +504,8 @@ def _lock_one(
         ValueError,
         LookupError,
         TypeError,
+        SdistHashMismatchError,
+        IndexAccessError,
     ) as exc:
         printer().error(exc, prefix="input error: ")
         raise SystemExit(1) from None
@@ -666,6 +681,19 @@ def _lock_one(
             previous_lock=previous_lock,
         )
     )
+
+
+def _download_input(url: str, backend: str) -> bytes:
+    """Download an input with the same HTTP backend as dependency resolution."""
+    import asyncio  # noqa: PLC0415 - used only for configured source inputs
+
+    from nab_index.client import AsyncSimpleClient  # noqa: PLC0415
+
+    async def download() -> bytes:
+        async with AsyncSimpleClient(_make_resolve_transport(backend)) as client:
+            return await client.download(url)
+
+    return asyncio.run(download())
 
 
 def _lock_output(

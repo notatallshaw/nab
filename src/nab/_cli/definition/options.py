@@ -345,6 +345,17 @@ class ProjectKeys(
         docs="reference/lock-plans.md",
     )
 
+    input_sources = Key(
+        Layer[Mapping[str, Any]](
+            rdefault=_EMPTY_MAPPING,
+            parse=values.parse_input_tables,
+            render=hooks.render_input_tables,
+            label="table(input-source)",
+        ),
+        help="named sources of dependency declarations",
+        docs="reference/lock-plans.md",
+    )
+
     indexes = Key(
         Layer[tuple[IndexConfig, ...]](
             rdefault=(IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),),

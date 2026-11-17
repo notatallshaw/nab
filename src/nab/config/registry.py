@@ -362,6 +362,17 @@ OPTIONS: tuple[Opt, ...] = (
         generated=True,
     ),
     Opt(
+        "input-sources",
+        scope=Scope.PROJECT,
+        rdefault=MappingProxyType({}),
+        parse=values.parse_input_tables,
+        render=hooks.render_input_tables,
+        type_label="table(input-source)",
+        help="named sources of dependency declarations",
+        docs="reference/lock-plans.md",
+        generated=True,
+    ),
+    Opt(
         "indexes",
         scope=Scope.PROJECT,
         rdefault=(IndexConfig(name="pypi", url="https://pypi.org/simple/"),),

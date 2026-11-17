@@ -56,3 +56,27 @@ default output is `pylock.NAME.toml` or `NAME.requirements.txt` for a requiremen
 Use `nab lock --all-plans` to refresh every declared plan and `nab lock --all-plans --locked` to
 check the files. Both the individual and batch commands support `--upgrade` and `--reproduce`. To
 select a default plan in user configuration, set `plan = "ci"` or `NAB_PLAN=ci`.
+
+## Import requirements from another project
+
+Give each source directory or hash-pinned archive a name. Each plan chooses the declarations to read
+from it. This example adds another project's test group alongside local tools:
+
+```toml
+[tool.nab.input-sources.shared]
+path = "../shared-tools"
+
+[tool.nab.plans.checks]
+groups = ["tools"]
+inputs.shared = { groups = ["test"] }
+```
+
+A different plan can select other groups from `shared`. For an archive, use `url` and `sha256` in
+place of `path`. Local paths start beside the project file. Each input accepts `groups`, `extras`,
+`dependencies`, `build-requirements` and `requirements-files`. To select several projects from a
+single source tree, use its `projects` array.
+
+The source contributes requirements. Install its distribution separately if the session runs its
+code. A saved-lock check rereads local declarations. For remote declarations it needs the verified
+files from the cache or access to the pinned archive. See
+[dependency inputs](../how-to/dependency-inputs.md) for the supported formats.

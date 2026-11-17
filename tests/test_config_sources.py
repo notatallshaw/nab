@@ -1538,6 +1538,7 @@ class TestParserFoldHelpers:
             {
                 "resolution",
                 "plans",
+                "input-sources",
                 "decision-order",
                 "base-group",
                 "build-group",
