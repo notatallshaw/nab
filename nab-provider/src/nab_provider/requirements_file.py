@@ -223,6 +223,8 @@ def expand_extra_requirements(
     optional_deps: Mapping[str, Sequence[str]],
     project_name: str | None,
     selected: Sequence[str],
+    *,
+    bind_extra_markers: bool = False,
 ) -> list[Requirement]:
     """Flatten ``selected`` extras to requirements, propagating self-ref markers.
 
@@ -236,7 +238,8 @@ def expand_extra_requirements(
 
     Each activation path is walked separately, so a dep reachable through
     two markers is required under their disjunction.  Unknown extras
-    raise ``LookupError``.
+    raise ``LookupError``. With ``bind_extra_markers``, reduce each dependency marker
+    against the extra that selected it, retaining its environment conditions.
     """
     if not selected:
         return []
@@ -260,17 +263,27 @@ def expand_extra_requirements(
                 f" [project.optional-dependencies]; defined: {sorted(canonical_deps)!r}"
             )
             raise LookupError(msg)
-        for req in parse_requirements(
-            canonical_deps[extra],
-            f"[project.optional-dependencies] extra {extra!r}",
-        ):
+        children = (
+            _project_extra_requirements(
+                canonical_deps, project_name or "project", extra, gates
+            )
+            if bind_extra_markers
+            else [
+                (req, gates)
+                for req in parse_requirements(
+                    canonical_deps[extra],
+                    f"[project.optional-dependencies] extra {extra!r}",
+                )
+            ]
+        )
+        for req, conditions in children:
             if canonical_project is not None and (
                 canonicalize_name(req.name) == canonical_project
             ):
-                worklist.extend(_self_ref_edges(req, extra, gates))
+                worklist.extend(_self_ref_edges(req, extra, conditions))
                 continue
-            if gates:
-                req.marker = _and_markers(req.marker, gates)
+            if conditions:
+                req.marker = _and_markers(req.marker, conditions)
             out.append(req)
     return out
 

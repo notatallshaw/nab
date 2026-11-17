@@ -84,7 +84,7 @@ def _config_command() -> None:
 
 
 def _lock() -> None:
-    """``nab lock``: 46 parameters."""
+    """``nab lock``: 48 parameters."""
     lock(
         ConfigWords.path,
         project_resolution=ProjectKeys.resolution,
@@ -118,6 +118,7 @@ def _lock() -> None:
         lock_policy=UserKeys.lock_policy,
         format=UserKeys.format,
         cache=UserKeys.cache,
+        plan=UserKeys.plan,
         groups=UserKeys.groups,
         all_groups=UserKeys.all_groups,
         extras=UserKeys.extras,
@@ -127,6 +128,7 @@ def _lock() -> None:
         no_emit_workspace=UserKeys.no_emit_workspace,
         output=CacheWords.output,
         script=RunFlags.script,
+        all_plans=RunFlags.all_plans,
         python=RunFlags.python,
         upgrade=RunFlags.upgrade,
         locked=RunFlags.locked,

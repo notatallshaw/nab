@@ -61,6 +61,8 @@ from .values import CliTableError, MatrixConfig, SourceConfigError, matrix_from_
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
+    from nab_project.prepared_input import PreparedProjectInput
+
 __all__ = [
     "BY_KEY",
     "OPTIONS",
@@ -108,6 +110,7 @@ class SourceKind(enum.Enum):
     PYPROJECT = "pyproject"
     SCRIPT = "script"
     PROJECT_TOML = "project"
+    LOCK_PLAN = "plan"
     ENV = "env"
     CLI = "cli"
 
@@ -123,6 +126,7 @@ PRECEDENCE: dict[SourceKind, int] = {
     SourceKind.SCRIPT: 3,
     SourceKind.PROJECT_TOML: 3,
     SourceKind.ENV: 4,
+    SourceKind.LOCK_PLAN: 4,
     SourceKind.CLI: 5,
 }
 
@@ -132,6 +136,36 @@ BY_KEY: dict[str, Opt] = {row.name: row for row in OPTIONS}
 def project_key_path(key: str, kind: SourceKind) -> str:
     """Return a project's TOML path for ``key``."""
     return key if kind is SourceKind.PROJECT_TOML else f"tool.nab.{key}"
+
+
+def plan_settings_layer(
+    name: str, settings: Mapping[str, Any], directory: Path
+) -> Layer:
+    """Parse a lock plan's project settings above files and below CLI overrides."""
+    values = {}
+    label = f"plan {name!r}"
+    with declaring_dir(directory), key_prefix(f"tool.nab.plans.{name}.settings"):
+        for key, value in settings.items():
+            spec = BY_KEY.get(key)
+            if (
+                spec is None
+                or not spec.allowed_in_toml(SourceKind.PYPROJECT)
+                or key
+                in {
+                    "plans",
+                    "default-groups",
+                    "base-group",
+                    "build-group",
+                }
+            ):
+                msg = f"{label}: {key!r} cannot be set in plan settings"
+                raise SourceConfigError(msg)
+            values[key] = spec.parse(value, f"{label}: {key}")
+    return Layer(
+        Origin(SourceKind.LOCK_PLAN, label),
+        values,
+        {key: value for key, value in settings.items() if key in BY_PARENT},
+    )
 
 
 def pyproject_registry_keys() -> frozenset[str]:
@@ -344,9 +378,10 @@ def _load_toml_layer(
     kind: SourceKind,
     *,
     rejections: list[RejectedLayer] | None = None,
+    project_input: PreparedProjectInput | None = None,
 ) -> Layer:
     """Read a TOML source, collecting or raising scope errors."""
-    raw = _read_raw_table(path, kind)
+    raw = _read_raw_table(path, kind, project_input=project_input)
     origin = Origin(kind, str(path))
     values: dict[str, Any] = {}
     raw_tables: dict[str, Any] = {}
@@ -395,11 +430,17 @@ def _gate_reason(spec: Opt, kind: SourceKind) -> str:
     )
 
 
-def _read_raw_table(path: Path, kind: SourceKind) -> Mapping[str, Any]:
+def _read_raw_table(
+    path: Path, kind: SourceKind, *, project_input: PreparedProjectInput | None = None
+) -> Mapping[str, Any]:
     # TOML is UTF-8, so a file that will not decode is invalid TOML.
     try:
-        if kind is SourceKind.SCRIPT:
-            data = read_input_document(path, input_format=InputFormat.SCRIPT)
+        if kind is SourceKind.PYPROJECT and project_input is not None:
+            data = read_input_document(path, project_input=project_input)
+        elif kind is SourceKind.SCRIPT:
+            data = read_input_document(
+                path, input_format=InputFormat.SCRIPT, project_input=project_input
+            )
         else:
             with path.open("rb") as f:
                 data = toml_io.load(f)
@@ -586,6 +627,7 @@ def discover_layers(
     *,
     rejections: list[RejectedLayer] | None = None,
     read_pyproject: bool = True,
+    project_input: PreparedProjectInput | None = None,
 ) -> list[Layer]:
     """Read every present TOML source into ordered layers (low -> high).
 
@@ -634,7 +676,11 @@ def discover_layers(
             # names the errno.
             msg = f"{path} exists but is not a regular file"
             raise SourceConfigError(msg)
-        layers.append(_load_toml_layer(path, kind, rejections=rejections))
+        layers.append(
+            _load_toml_layer(
+                path, kind, rejections=rejections, project_input=project_input
+            )
+        )
     return layers
 
 

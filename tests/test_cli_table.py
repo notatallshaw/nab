@@ -65,6 +65,7 @@ _PAGES = (
     ("marker-environment", "reference/target-environment.md"),
     ("vcs", "how-to/vcs.md"),
     ("workspace", "how-to/workspaces.md"),
+    ("plans", "reference/lock-plans.md"),
     ("indexes", "how-to/multi-index.md"),
     ("local-sources", "how-to/local-sources.md"),
     ("vcs-sources", "how-to/vcs.md"),
@@ -90,6 +91,7 @@ _PAGES = (
     ("lock-policy", "reference/cli.md"),
     ("format", "reference/formats.md"),
     ("cache", "reference/cache.md"),
+    ("plan", "reference/lock-plans.md"),
     ("groups", "reference/selection.md"),
     ("all-groups", "reference/selection.md"),
     ("extras", "reference/selection.md"),
@@ -104,6 +106,7 @@ _PAGES = (
     ("path", "reference/cli.md"),
     ("output", "reference/formats.md"),
     ("script", "how-to/scripts.md"),
+    ("all-plans", "reference/lock-plans.md"),
     ("output", "reference/cli.md"),
     ("python", "reference/cli.md"),
     ("upgrade", "reference/cli.md"),
@@ -121,6 +124,7 @@ _WRITTEN_LABELS = {
     "marker-environment": "table(marker-var=str)",
     "vcs": "table(vcs-policy)",
     "workspace": "table(members)",
+    "plans": "table(lock-plan)",
     "indexes": "array-of-tables(name,url,serialization)",
     "local-sources": "array-of-tables(name,path)",
     "vcs-sources": "array-of-tables(name,url)",
@@ -188,14 +192,14 @@ class TestTheDeclaredTable:
         command = [row for row in ALL if row.commands and not row.is_global]
         file_only = [row for row in ALL if not row.commands]
 
-        assert (len(root), len(command), len(file_only)) == (7, 53, 13)
-        assert len(root) + len(command) + len(file_only) == len(ALL) == 73
+        assert (len(root), len(command), len(file_only)) == (7, 55, 14)
+        assert len(root) + len(command) + len(file_only) == len(ALL) == 76
 
         keyed = [row for row in ALL if row.key]
 
-        assert len(keyed) == 43
-        assert sum(1 for row in keyed if row.cli_flag) == 30
-        assert sum(1 for row in keyed if not row.commands) == 13
+        assert len(keyed) == 45
+        assert sum(1 for row in keyed if row.cli_flag) == 31
+        assert sum(1 for row in keyed if not row.commands) == 14
 
     def test_the_sub_rows_spell_the_two_tables(self) -> None:
         """A sub-row carries no key, so only ``under`` says which one it spells."""
@@ -222,8 +226,8 @@ class TestTheDeclaredTable:
     def test_the_layered_rows_split_by_scope_as_the_registry_does(self) -> None:
         keyed = [row for row in ALL if row.key]
 
-        assert sum(row.scope is Scope.PROJECT for row in keyed) == 29
-        assert sum(row.scope is Scope.USER for row in keyed) == 14
+        assert sum(row.scope is Scope.PROJECT for row in keyed) == 30
+        assert sum(row.scope is Scope.USER for row in keyed) == 15
 
     def test_the_environment_names_are_the_user_keys(self) -> None:
         assert [row.env_var for row in ALL if row.env_var] == [
@@ -234,6 +238,7 @@ class TestTheDeclaredTable:
             "NAB_LOCK_POLICY",
             "NAB_FORMAT",
             "NAB_CACHE",
+            "NAB_PLAN",
             "NAB_GROUPS",
             "NAB_ALL_GROUPS",
             "NAB_EXTRAS",
@@ -305,7 +310,7 @@ class TestTheDeclaredTable:
         """
         negatable = [row for row in ALL if row.kind in _BOOL_KINDS]
 
-        assert len(negatable) == 16
+        assert len(negatable) == 17
 
         for row in negatable:
             assert row.negatable is not row.name.startswith("no-"), row.name

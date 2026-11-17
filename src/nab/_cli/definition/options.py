@@ -334,6 +334,17 @@ class ProjectKeys(
         docs="how-to/workspaces.md",
     )
 
+    plans = Key(
+        Layer[Mapping[str, Any]](
+            rdefault=_EMPTY_MAPPING,
+            parse=values.parse_input_tables,
+            render=hooks.render_input_tables,
+            label="table(lock-plan)",
+        ),
+        help="named lock plans with selections and project settings",
+        docs="reference/lock-plans.md",
+    )
+
     indexes = Key(
         Layer[tuple[IndexConfig, ...]](
             rdefault=(IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),),
@@ -587,6 +598,19 @@ class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
         docs="reference/cache.md",
     )
 
+    plan = Value[str | None](
+        key=Layer[str | None](
+            rdefault=None,
+            parse=values.parse_base_group,
+            render=hooks.render_optional_text,
+            sample="dev",
+        ),
+        env=True,
+        help="use a named lock plan (saved selections and settings)",
+        on=("lock",),
+        docs="reference/lock-plans.md",
+    )
+
     groups = Star[str](
         key=Layer[tuple[str, ...]](
             rdefault=(),
@@ -731,6 +755,15 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
         docs="how-to/scripts.md",
         on=_LAYERED,
         action=True,
+    )
+
+    all_plans = Switch(
+        default=False,
+        negatable=True,
+        help="run every declared lock plan",
+        on=("lock",),
+        action=True,
+        docs="reference/lock-plans.md",
     )
 
     output = Value[Path](

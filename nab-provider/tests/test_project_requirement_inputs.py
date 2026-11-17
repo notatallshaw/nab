@@ -3,7 +3,10 @@
 import pytest
 
 from nab_provider.pep508 import parse_requirement
-from nab_provider.requirements_file import expand_project_requirements
+from nab_provider.requirements_file import (
+    expand_extra_requirements,
+    expand_project_requirements,
+)
 
 
 def test_cross_project_extras_keep_marker_gates_and_terminate_cycles() -> None:
@@ -67,3 +70,48 @@ def test_direct_url_cannot_silently_select_a_different_local_source() -> None:
         expand_project_requirements(
             [parse_requirement("local @ https://example.org/local.whl")], {"local": {}}
         )
+
+
+@pytest.mark.parametrize("name", ["app", None])
+def test_bound_extras_reduce_leaf_markers_without_losing_environment_conditions(
+    name: str | None,
+) -> None:
+    optional = {
+        "test": [
+            "pytest; extra == 'test'",
+            "wrong; extra != 'test'",
+            "linux-tool; extra == 'test' and sys_platform == 'linux'",
+        ]
+    }
+    result = expand_extra_requirements(
+        optional, name, ["test"], bind_extra_markers=True
+    )
+    assert {requirement.name for requirement in result} == {"pytest", "linux-tool"}
+    for platform in ["linux", "win32"]:
+        selected = {
+            r.name
+            for r in result
+            if r.marker is None or r.marker.evaluate({"sys_platform": platform})
+        }
+        assert selected == (
+            {"pytest", "linux-tool"} if platform == "linux" else {"pytest"}
+        )
+    assert optional["test"][0] == "pytest; extra == 'test'"
+
+
+def test_bound_extras_follow_conditional_self_references_and_cycles() -> None:
+    result = expand_extra_requirements(
+        {
+            "all": ["app[test]; extra == 'all' and sys_platform == 'linux'"],
+            "test": ["app[all]", "pytest; extra == 'test'"],
+        },
+        "app",
+        ["all"],
+        bind_extra_markers=True,
+    )
+    assert len(result) == 1
+    requirement = result[0]
+    assert requirement.name == "pytest"
+    assert requirement.marker is not None
+    assert requirement.marker.evaluate({"sys_platform": "linux"})
+    assert not requirement.marker.evaluate({"sys_platform": "win32"})

@@ -21,6 +21,8 @@ __lazy_modules__ = (
     "nab._run",
     "nab._version",
     "nab.config.model",
+    "nab.config.lock_plans",
+    "nab.lock_inputs",
     "nab.flagtypes",
     "nab.output",
     "nab_project",
@@ -56,6 +58,7 @@ import tomli
 from nab._version import __version__
 from nab_project import toml_io
 from nab_project.input_source import (
+    InputChangedError,
     InputFormat,
     ScriptMetadataError,
     read_input_document,
@@ -127,19 +130,23 @@ from ._resolve import (
 from ._run import (
     ConfigLadder,
     _cli_overrides,
+    _layered_run_settings,
     _layered_run_settings_or_exit,
     _project_cli_overrides_or_exit,
     _reject_python_flag_in_universal,
     _resolve_effective_cache_dir,
     check_script_options,
     config_override_arguments,
+    exit_config_error,
     lock_anchor,
     project_config_overrides,
     read_config_ladder,
     require_pyproject_file,
     select_input,
 )
+from .config.hooks import resolve_anchor
 from .config.model import NabProjectConfig, ResolveMode, plan_targets
+from .config.values import SourceConfigError
 from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,
     DecisionOrderFlag,
@@ -160,9 +167,12 @@ if TYPE_CHECKING:
 
     from nab_project.inputs import ResolveInputs
     from nab_project.lock_preferences import LockPreferences
+    from nab_project.prepared_input import PreparedProjectInput
     from nab_provider.target import ResolveTarget
 
     from ._run import RunSettings
+    from .config.ladder import EffectiveValue, Layer
+    from .config.lock_plans import LockPlan
 
 
 _DEFAULT_PROJECT_PATH = Path("pyproject.toml")
@@ -202,6 +212,8 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     path: Path = _DEFAULT_PROJECT_PATH,
     *,
     script: Path | None = None,
+    plan: str | None = None,
+    all_plans: bool = False,
     output: Path | None = None,
     format: LockFormat | None = None,  # noqa: A002 - shadows builtin by convention
     http_backend: HttpBackend | None = None,
@@ -285,6 +297,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         cli_cache_dir=cache_dir,
         cli_http_backend=http_backend,
         cli_settings=setting,
+        cli_plan=plan,
         cli_format=format,
         cli_cache=cache,
         cli_groups=groups,
@@ -321,11 +334,172 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         cli_environment_platform=project_environment_platform,
         cli_environment_implementation=project_environment_implementation,
     )
-    project_overrides = project_config_overrides(overrides)
-    _project_cli_overrides_or_exit(project_overrides)
+    if plan is not None and all_plans:
+        printer().error("--plan and --all-plans are mutually exclusive")
+        raise SystemExit(1)
+    ladder = _checked_ladder(
+        read_config_ladder(path, overrides, input_format=input_format)
+    )
+    settings = _layered_run_settings(ladder)
+    selected_plan = settings.plan
+    if input_format is InputFormat.SCRIPT and (selected_plan is not None or all_plans):
+        printer().error("lock plans require a project, not a script")
+        raise SystemExit(1)
+    names = tuple(ladder["plans"].value) if all_plans else (selected_plan,)
+    if all_plans and (not names or output is not None):
+        printer().error("--all-plans needs declared plans and cannot use --output")
+        raise SystemExit(1)
+    if all_plans:
+        from .config.lock_plans import validate_plan_outputs  # noqa: PLC0415
 
-    ladder = read_config_ladder(path, overrides, input_format=input_format)
-    _reject_python_flag_in_universal(ladder, python)
+        try:
+            validate_plan_outputs(
+                path,
+                ladder["plans"].value,
+                settings.format,
+            )
+        except (ValueError, TypeError) as exc:
+            printer().error(exc)
+            raise SystemExit(1) from None
+    actions = _LockActions(python, upgrade, locked, reproduce)
+    for name in names:
+        _lock_one(
+            path,
+            overrides,
+            actions,
+            output=output,
+            input_format=input_format,
+            plan_name=name,
+            initial_ladder=ladder,
+        )
+
+
+def _checked_ladder(ladder: ConfigLadder) -> dict[str, EffectiveValue]:
+    """Require a valid configuration before selecting named declarations."""
+    if isinstance(ladder, SourceConfigError):
+        exit_config_error(ladder)
+    return ladder
+
+
+class _LockActions(NamedTuple):
+    """Invocation controls shared by the lock plans in one command."""
+
+    python: str | None
+    upgrade: bool
+    locked: bool
+    reproduce: bool
+
+
+class _LockConfiguration(NamedTuple):
+    """Effective declarations and source policy for one selected plan."""
+
+    ladder: dict[str, EffectiveValue]
+    project_input: PreparedProjectInput | None
+    plan: LockPlan | None
+    output: Path | None
+
+    def anchored_settings(self, path: Path, anchor: datetime) -> Layer | None:
+        """Resolve relative cutoffs against the saved lock's timestamp."""
+        if self.plan is None:
+            return None
+        with resolve_anchor(anchor):
+            return self.plan.settings_layer(path)
+
+
+def _prepare_lock_configuration(
+    path: Path,
+    overrides: Mapping[str, object],
+    *,
+    output: Path | None,
+    plan_name: str | None,
+    ladder: dict[str, EffectiveValue],
+) -> _LockConfiguration:
+    """Prepare configured sources before entering the ordinary resolution phases."""
+    if plan_name is None:
+        return _LockConfiguration(ladder, None, None, output)
+
+    from .config.lock_plans import LockPlan  # noqa: PLC0415
+    from .lock_inputs import prepare_lock_input  # noqa: PLC0415 - named plans only
+
+    # Named locks always install their declared selection.
+    selection = {
+        "groups",
+        "all-groups",
+        "extras",
+        "all-extras",
+        "build-requirements",
+        "default-groups",
+        "base-group",
+        "build-group",
+    }
+    if changed := selection.intersection(overrides):
+        msg = (
+            f"cannot override a lock plan's selection ({', '.join(sorted(changed))}); "
+            "edit the plan or lock without --plan"
+        )
+        raise ValueError(msg)
+    settings = _layered_run_settings(ladder)
+    plan = LockPlan.read(plan_name, ladder["plans"].value, settings.format)
+    document = read_input_document(path)
+    prepared = prepare_lock_input(
+        path,
+        document,
+        plan,
+        workspace_discovery=settings.workspace_discovery,
+        project_overrides=project_config_overrides(overrides),
+    )
+    layer = plan.settings_layer(path)
+    effective = {
+        **overrides,
+        "groups": (),
+        "extras": (),
+        "all-groups": False,
+        "all-extras": False,
+        "build-requirements": False,
+    }
+    ladder = _checked_ladder(
+        read_config_ladder(path, effective, project_input=prepared, plan_settings=layer)
+    )
+    return _LockConfiguration(
+        ladder, prepared, plan, output or path.parent / plan.output
+    )
+
+
+def _lock_one(
+    path: Path,
+    overrides: Mapping[str, object],
+    actions: _LockActions,
+    *,
+    output: Path | None,
+    input_format: InputFormat,
+    plan_name: str | None,
+    initial_ladder: dict[str, EffectiveValue],
+) -> None:
+    """Run one effective project selection using the normal resolver and writer."""
+    _project_cli_overrides_or_exit(project_config_overrides(overrides))
+
+    try:
+        source = _prepare_lock_configuration(
+            path,
+            overrides,
+            output=output,
+            plan_name=plan_name,
+            ladder=initial_ladder,
+        )
+    except (
+        OSError,
+        ValueError,
+        LookupError,
+        TypeError,
+    ) as exc:
+        printer().error(exc, prefix="input error: ")
+        raise SystemExit(1) from None
+
+    project_overrides = project_config_overrides(overrides)
+    ladder = source.ladder
+    project_input = source.project_input
+    output = source.output
+    _reject_python_flag_in_universal(ladder, actions.python)
     settings = _layered_run_settings_or_exit(ladder)
     output = _lock_output(
         path,
@@ -333,16 +507,16 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         output=output,
         settings=settings,
         project_overrides=project_overrides,
-        locked=locked,
-        reproduce=reproduce,
-        upgrade=upgrade,
+        locked=actions.locked,
+        reproduce=actions.reproduce,
+        upgrade=actions.upgrade,
     )
     anchor = _determine_lock_anchor(
         ladder,
         output=output,
         format=settings.format,
         build_requirements=settings.build_requirements,
-        upgrade=upgrade,
+        upgrade=actions.upgrade,
     )
 
     config = _load_config(
@@ -351,6 +525,8 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         anchor=anchor,
         cli_overrides=project_overrides,
         input_format=input_format,
+        project_input=project_input,
+        plan_settings=source.anchored_settings(path, anchor),
     )
     inputs = config.resolve_inputs()
 
@@ -362,18 +538,15 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         settings.cache_dir, cache=settings.cache
     )
 
-    provenance = _build_provenance(
-        path,
-        config=config,
-        anchor=anchor,
-        cli_project_overrides=settings.cli_project_overrides,
-    )
-
     selected_groups = resolve_group_selection(
-        path, groups=settings.groups, all_groups=settings.all_groups
+        path,
+        groups=settings.groups,
+        all_groups=settings.all_groups,
     )
     selected_extras = resolve_extra_selection(
-        path, extras=settings.extras, all_extras=settings.all_extras
+        path,
+        extras=settings.extras,
+        all_extras=settings.all_extras,
     )
 
     workspace_to_drop = (
@@ -393,31 +566,41 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         all_groups=settings.all_groups,
         extras=selected_extras,
         all_extras=settings.all_extras,
-        offline=offline,
+        offline=settings.offline,
         build_requirements=settings.build_requirements,
         workspace_discovery=settings.workspace_discovery,
         no_emit_workspace=settings.no_emit_workspace,
         cli_overrides=overrides,
-        upgrade=upgrade,
+        upgrade=actions.upgrade,
         input_format=input_format,
         lock_policy=settings.lock_policy,
+        project_input=project_input,
+        plan_name=plan_name,
+    )
+
+    provenance = _build_provenance(
+        path,
+        config=config,
+        anchor=anchor,
+        cli_project_overrides=settings.cli_project_overrides,
+        command_line=run.refresh_arguments() if project_input is not None else None,
     )
 
     strategy = inputs.resolution if settings.resolution is None else settings.resolution
     _validate_lock_strategy(run, strategy)
 
-    if locked:
+    if actions.locked:
         _check_saved(run, config=config, inputs=inputs, exclude=workspace_to_drop)
         return
 
-    if reproduce:
+    if actions.reproduce:
         _fast_fail_reproduction(
             run, config=config, inputs=inputs, workspace_to_drop=workspace_to_drop
         )
 
     validation = (
         _lock_snapshot(run, config, inputs, workspace_to_drop)
-        if settings.format == "pylock" and not reproduce
+        if settings.format == "pylock" and not actions.reproduce
         else None
     )
 
@@ -443,6 +626,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         extras=selected_extras,
         build_requirements=settings.build_requirements,
         input_format=input_format,
+        project_input=project_input,
         resolution_strategy=settings.resolution,
         lock_preferences=previous_lock,
         reconcile_build_variants=settings.format == "pylock",
@@ -469,7 +653,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         exclude=workspace_to_drop,
     )
 
-    if reproduce:
+    if actions.reproduce:
         _check_reproduction(lock_input, run=run)
         return
 
@@ -670,6 +854,8 @@ class _LockRun(Record):
         "upgrade",
         "input_format",
         "lock_policy",
+        "project_input",
+        "plan_name",
     )
 
     path: Path
@@ -686,6 +872,8 @@ class _LockRun(Record):
     upgrade: bool
     input_format: InputFormat
     lock_policy: LockPolicy
+    project_input: PreparedProjectInput | None
+    plan_name: str | None
 
     def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
@@ -704,6 +892,8 @@ class _LockRun(Record):
         upgrade: bool,
         lock_policy: LockPolicy,
         input_format: InputFormat = InputFormat.PROJECT,
+        project_input: PreparedProjectInput | None = None,
+        plan_name: str | None = None,
     ) -> None:
         self.path = path
         self.output = output
@@ -719,11 +909,17 @@ class _LockRun(Record):
         self.upgrade = upgrade
         self.input_format = input_format
         self.lock_policy = lock_policy
+        self.project_input = project_input
+        self.plan_name = plan_name
 
     def refresh_command(self) -> str:
         """Render this run without ``--locked``, ready to paste into a shell."""
+        return _join_command(self.refresh_arguments())
+
+    def refresh_arguments(self) -> tuple[str, ...]:
+        """Return a replayable invocation for this individual lock."""
         options = [*self._output_arguments(), *self._content_arguments()]
-        return _join_command(["nab", "lock", *self._with_project_path(options)])
+        return ("nab", "lock", *self._with_project_path(options))
 
     def _with_project_path(self, options: list[str]) -> list[str]:
         """Return ``options`` with the project path placed where nab reads it.
@@ -749,7 +945,10 @@ class _LockRun(Record):
 
     def _content_arguments(self) -> list[str]:
         """Replay explicit settings while retaining the one-run upgrade action."""
-        arguments = config_override_arguments(self.cli_overrides)
+        overrides = self.cli_overrides
+        if self.plan_name is not None:
+            overrides = {**overrides, "plan": self.plan_name}
+        arguments = config_override_arguments(overrides)
         if self.upgrade:
             arguments.append("--upgrade")
         return arguments
@@ -820,6 +1019,7 @@ def _reuse_consistent_lock(
         extras=run.extras,
         build_requirements=run.build_requirements,
         input_format=run.input_format,
+        project_input=run.project_input,
     ):
         return False
 
@@ -861,6 +1061,7 @@ def _check_saved(
             build_requirements=run.build_requirements,
             exclude=exclude,
             input_format=run.input_format,
+            project_input=run.project_input,
         )
         check_saved_lock(
             target,
@@ -872,6 +1073,7 @@ def _check_saved(
             extras=run.extras,
             build_requirements=run.build_requirements,
             input_format=run.input_format,
+            project_input=run.project_input,
         )
     except (OSError, ValueError, LookupError, RecursionError) as exc:
         printer().error(
@@ -918,10 +1120,12 @@ def _fast_fail_reproduction(
             base_group=inputs.base_group,
             build_requirements=run.build_requirements,
             input_format=run.input_format,
+            project_input=run.project_input,
             build_group=inputs.build_group,
         )
     except (
         ScriptMetadataError,
+        InputChangedError,
         InvalidProjectTableError,
         InvalidProjectRequirementError,
         LookupError,
@@ -1015,9 +1219,11 @@ def _lock_snapshot(
             build_requirements=run.build_requirements,
             exclude=exclude,
             input_format=run.input_format,
+            project_input=run.project_input,
         )
     except (
         ScriptMetadataError,
+        InputChangedError,
         InvalidProjectTableError,
         InvalidProjectRequirementError,
         LookupError,
@@ -1043,6 +1249,12 @@ def _attach_validation_inputs(
 ) -> None:
     """Refuse evidence from a resolve whose project inputs changed."""
     if snapshot is None:
+        if run.project_input is not None:
+            try:
+                run.project_input.read(run.path)
+            except (OSError, ValueError) as exc:
+                printer().error(exc)
+                raise SystemExit(1) from None
         return
     current, _ = _lock_snapshot(run, config, inputs, exclude) or (None, ())
     if current != snapshot:
@@ -1052,7 +1264,7 @@ def _attach_validation_inputs(
     lock_input.validation_inputs = snapshot
 
 
-def _active_root_requirements(
+def _active_root_requirements(  # noqa: PLR0913 - independent root sources and selection controls
     path: Path,
     *,
     extras: tuple[str, ...],
@@ -1062,6 +1274,7 @@ def _active_root_requirements(
     build_requirements: bool = False,
     build_group: str | None = None,
     input_format: InputFormat = InputFormat.PROJECT,
+    project_input: PreparedProjectInput | None = None,
 ) -> list[RootRequirement]:
     """Collect this run's active direct requirements with their source clause.
 
@@ -1076,7 +1289,9 @@ def _active_root_requirements(
     appended as their own source rather than routed through the group
     table, which does not hold the configured name.
     """
-    document = read_input_document(path, input_format=input_format)
+    document = read_input_document(
+        path, input_format=input_format, project_input=project_input
+    )
     if build_requirements:
         return [
             RootRequirement(requirement=req, source="[build-system].requires")
@@ -1547,6 +1762,7 @@ def _build_provenance(
     config: NabProjectConfig,
     anchor: datetime,
     cli_project_overrides: tuple[tuple[str, str], ...] = (),
+    command_line: tuple[str, ...] | None = None,
 ) -> Provenance:
     """Capture the inputs that produced this run for the lockfile.
 
@@ -1571,7 +1787,7 @@ def _build_provenance(
         nab_version=__version__,
         created_at=anchor,
         # argv[0] is a path into the checkout or venv, not the program name.
-        command_line=("nab", *sys.argv[1:]),
+        command_line=("nab", *sys.argv[1:]) if command_line is None else command_line,
         input_path=str(path),
         mode=config.mode.value,
         python_specifier=python_specifier,

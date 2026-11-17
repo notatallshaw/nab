@@ -30,6 +30,7 @@ from nab_provider.errors import ConfigError
 from .test_prefer_existing_cli import Registry
 
 _STRUCTURED = (
+    ("plans", '{dev={groups=["test"]}}'),
     ("environment", '{python="3.12", platform="linux_x86_64"}'),
     ("marker-environment", '{os_name="posix"}'),
     ("vcs", '{policy="block"}'),
@@ -252,6 +253,8 @@ def test_every_user_setting_reaches_the_run_controls(spec: Opt, tmp_path: Path) 
         )
     elif spec.vtype is VType.PATH:
         raw = str(tmp_path / "alternate-cache")
+    elif spec.vtype is VType.STR:
+        raw = spec.sample
     else:
         raw = spec.rdefault + 1
 

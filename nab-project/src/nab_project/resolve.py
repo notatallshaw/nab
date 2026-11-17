@@ -133,6 +133,7 @@ if TYPE_CHECKING:
     from nab_provider.resolver_inputs import MarkerHolds
 
     from .lock_preferences import LockPreferences
+    from .prepared_input import PreparedProjectInput
 
 
 __all__ = [
@@ -191,6 +192,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     prefetch_settings: PrefetchSettings | None = None,
     build_transport_factory: Callable[[], AsyncHttpTransport] | None = None,
+    project_input: PreparedProjectInput | None = None,
 ) -> ResolveResult:
     """Resolve the project at ``path`` for each of ``targets``.
 
@@ -235,6 +237,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
             extras=extras,
             build_requirements=build_requirements,
             input_format=input_format,
+            project_input=project_input,
         )
 
         coordinator_context = FetchCoordinator(
@@ -290,6 +293,7 @@ def plan_project_inputs(
     extras: Sequence[str] = (),
     build_requirements: bool = False,
     input_format: InputFormat = InputFormat.PROJECT,
+    project_input: PreparedProjectInput | None = None,
 ) -> tuple[list[ResolveFork], list[Requirement] | None]:
     """Plan the same project contexts for resolution and saved-solution checks."""
     if input_format is InputFormat.SCRIPT and (
@@ -311,6 +315,7 @@ def plan_project_inputs(
         build_group=inputs.build_group,
         build_requirements=build_requirements,
         input_format=input_format,
+        project_input=project_input,
     )
     effective_groups = active_group_names(
         groups, inputs.default_groups, inputs.base_group, inputs.build_group
@@ -654,13 +659,16 @@ def _project_tables(
     build_group: str | None,
     build_requirements: bool,
     input_format: InputFormat = InputFormat.PROJECT,
+    project_input: PreparedProjectInput | None = None,
 ) -> _ProjectTables:
     """Read every table the resolve needs off one parse of ``path``.
 
     The document is not returned, so the resolve holds the tables it reads
     rather than the whole file.
     """
-    document = read_input_document(path, input_format=input_format)
+    document = read_input_document(
+        path, input_format=input_format, project_input=project_input
+    )
     if build_requirements:
         return _tables_for_build_requires(document, path)
     return _ProjectTables(
@@ -674,6 +682,50 @@ def _project_tables(
             else []
         ),
     )
+
+
+def complete_project_requirements(
+    path: Path,
+    document: Mapping[str, Any],
+    inputs: ResolveInputs,
+    targets: Sequence[ResolveTarget],
+    *,
+    groups: tuple[str, ...],
+    extras: tuple[str, ...],
+    dependencies: bool,
+    build_requirements: bool,
+) -> list[Requirement]:
+    """Return the unconditional installation roots for one complete environment."""
+    roots = (
+        pyproject_files.project_dependencies(document)
+        if dependencies and "project" in document
+        else []
+    )
+    if build_requirements:
+        roots.extend(pyproject_files.build_system_requires(document, path))
+
+    # Bind each requested extra before its name disappears from the install context.
+    name = pyproject_files.project_name(document)
+    optional = pyproject_files.project_optional_dependencies(document)
+    bound: dict[str, Sequence[str]] = {
+        canonicalize_name(key): value for key, value in optional.items()
+    }
+    for extra in extras:
+        selected = expand_extra_requirements(
+            optional, name, [extra], bind_extra_markers=True
+        )
+        bound[canonicalize_name(extra)] = [str(req) for req in selected]
+
+    tables = _ProjectTables(
+        roots, pyproject_files.dependency_groups(document), bound, name
+    )
+    forks, _ = _plan_forks(path, tables, inputs, targets, extras=extras, groups=groups)
+    if len(forks) > 1:
+        msg = (
+            "this plan selects mutually exclusive dependencies; use separate lock plans"
+        )
+        raise ValueError(msg)
+    return list(forks[0].requirements)
 
 
 def _tables_for_build_requires(

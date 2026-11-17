@@ -295,6 +295,28 @@ def parse_default_groups(value: object, where: str) -> tuple[str, ...]:
     return parse_string_list(value, where)
 
 
+def parse_input_tables(value: object, where: str) -> Mapping[str, Any]:
+    """Read named declaration tables; their selected contents are checked on use."""
+    if not isinstance(value, dict):
+        msg = f"{where} must contain named tables"
+        raise SourceConfigError(msg)
+    result = {}
+    for name, item in value.items():
+        if not isinstance(name, str) or not isinstance(item, dict):
+            msg = f"{where} must contain named tables"
+            raise SourceConfigError(msg)
+        try:
+            canonical = str(canonicalize_name(name, validate=True))
+        except InvalidName as exc:
+            msg = f"{where}: invalid name {name!r}"
+            raise SourceConfigError(msg) from exc
+        if canonical in result:
+            msg = f"{where}: duplicate name {canonical!r}"
+            raise SourceConfigError(msg)
+        result[canonical] = item
+    return result
+
+
 def _reject_duplicates(where: str, items: tuple[str, ...]) -> None:
     seen: set[str] = set()
     for item in items:
