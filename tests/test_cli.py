@@ -396,6 +396,26 @@ def _make_pyproject(tmp_path: Path, body: str = "") -> Path:
     return pyproject
 
 
+@pytest.mark.parametrize("command", [lock, download])
+@pytest.mark.parametrize("key", ["sys_platform", "project"])
+def test_resolver_lookup_error_keeps_its_key(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    command: Callable[..., object],
+    key: str,
+) -> None:
+    pyproject = _make_pyproject(tmp_path)
+    with (
+        patch("nab._resolve.resolve_for_targets", side_effect=KeyError(key)),
+        pytest.raises(SystemExit, match="1"),
+    ):
+        command(pyproject, offline=True, cache=False)
+    err = capsys.readouterr().err
+    assert key in err
+    assert "has no [project] table" not in err
+    assert "has no [project].dependencies" not in err
+
+
 @pytest.mark.parametrize("full", ["3.13.2+", "3.15.0a8+", "3.15.0a8+dev"])
 @pytest.mark.parametrize("declared_platform", [False, True])
 def test_source_build_python_lock(
@@ -1337,18 +1357,13 @@ class TestLockCommandSpecific:
             lock(pyproject)
         assert "Constraints cannot have extras" in capsys.readouterr().err
 
-    def test_missing_dependencies_exits(
+    def test_missing_project_table_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        pyproject = _make_pyproject(tmp_path)
-        with (
-            patch(
-                "nab._resolve.resolve_for_targets", side_effect=KeyError("dependencies")
-            ),
-            pytest.raises(SystemExit, match="1"),
-        ):
-            lock(pyproject)
-        assert "no [project].dependencies" in capsys.readouterr().err
+        pyproject = _make_pyproject(tmp_path, "[build-system]\nrequires = []\n")
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, offline=True, cache=False)
+        assert "has no [project] table" in capsys.readouterr().err
 
     def test_string_project_table_exits_cleanly(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1913,13 +1928,7 @@ class TestLockCommandSpecific:
     def test_local_source_constants_only_marker_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A marker with two constant operands exits 1, naming the marker.
-
-        Packaging reads the right-hand literal as a variable name and raises
-        ``UndefinedEnvironmentName``, a ``KeyError``.  The CLI's ``KeyError``
-        clause blames a missing ``[project].dependencies``, so the error must
-        not reach it.
-        """
+        """A marker with two constant operands exits 1, naming the marker."""
         member = tmp_path / "mylocal"
         member.mkdir()
         (member / "pyproject.toml").write_text(
@@ -3959,20 +3968,22 @@ class TestLockCommandUniversal:
         assert "resolution failed: conflict" in err
         assert "FAILED" not in err
 
-    def test_missing_dependencies_exits(
+    def test_missing_project_table_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """KeyError surfaces as the standard missing-deps message."""
         pyproject = _universal_pyproject(tmp_path)
-        with (
-            patch(
-                "nab._resolve.resolve_for_targets",
-                side_effect=KeyError("dependencies"),
-            ),
-            pytest.raises(SystemExit, match="1"),
-        ):
-            lock(pyproject, format="requirements-without-hashes")
-        assert "no [project].dependencies" in capsys.readouterr().err
+        pyproject.write_text(
+            '[tool.nab]\nmode = "universal"\n[tool.nab.matrix]\n'
+            'python = ">=3.13,<3.14"\nplatforms = ["linux_x86_64"]\n'
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(
+                pyproject,
+                format="requirements-without-hashes",
+                offline=True,
+                cache=False,
+            )
+        assert "has no [project] table" in capsys.readouterr().err
 
     def test_lookup_error_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -8478,18 +8489,13 @@ class TestDownloadCommand:
         assert "does not provide extra 'nonexistent'" in err
         assert "Traceback" not in err
 
-    def test_missing_dependencies_exits(
+    def test_missing_project_table_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        pyproject = _make_pyproject(tmp_path)
-        with (
-            patch(
-                "nab._resolve.resolve_for_targets", side_effect=KeyError("dependencies")
-            ),
-            pytest.raises(SystemExit, match="1"),
-        ):
-            download(pyproject)
-        assert "no [project].dependencies" in capsys.readouterr().err
+        pyproject = _make_pyproject(tmp_path, "[build-system]\nrequires = []\n")
+        with pytest.raises(SystemExit, match="1"):
+            download(pyproject, offline=True, cache=False)
+        assert "has no [project] table" in capsys.readouterr().err
 
     def test_missing_hash_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

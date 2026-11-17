@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from nab_provider._vendor.packaging.requirements import Requirement
 
 __all__ = [
+    "MissingProjectTableError",
     "build_system_requires",
     "dependency_groups",
     "project_dependencies",
@@ -46,6 +47,10 @@ __all__ = [
     "read_pyproject_name",
     "read_pyproject_optional_dependencies",
 ]
+
+
+class MissingProjectTableError(KeyError):
+    """The root project file has no ``[project]`` table."""
 
 
 def _project_table(document: Mapping[str, Any]) -> Mapping[str, object]:
@@ -66,12 +71,15 @@ def project_dependencies(document: Mapping[str, Any]) -> list[Requirement]:
     """Read [project].dependencies from a parsed pyproject.
 
     PEP 621 makes the key optional, so an absent ``dependencies`` reads as an
-    empty list.  A missing ``[project]`` raises :class:`KeyError` and one that
-    is not a table :class:`InvalidProjectTableError`.  A malformed dependency
-    string raises :class:`InvalidProjectRequirementError`, as does a dynamic
+    empty list. A missing ``[project]`` raises :class:`MissingProjectTableError`;
+    one that is not a table raises :class:`InvalidProjectTableError`. A malformed
+    dependency string raises :class:`InvalidProjectRequirementError`, as does a dynamic
     ``dependencies``.
     """
-    project = document["project"]
+    try:
+        project = document["project"]
+    except KeyError as exc:
+        raise MissingProjectTableError(*exc.args) from exc
     if not isinstance(project, dict):
         msg = f"[project] must be a table, got {type(project).__name__}"
         raise InvalidProjectTableError(msg)
