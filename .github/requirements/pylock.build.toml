@@ -212,7 +212,7 @@ sha256 = "8b1ff4f9c191b1040b71c37f1e445ab99732911e3cd91de52838453a854d7a17"
 
 [tool.nab]
 nab-version = "0.0.31.dev0"
-created-at = 2026-11-12T21:16:14.450009+00:00
+created-at = 2026-11-16T13:51:40.757363+00:00
 command-line = [
     "nab",
     "lock",
@@ -220,6 +220,9 @@ command-line = [
     "--no-emit-workspace",
     "--output",
     ".github/requirements/pylock.build.toml",
+    "--lock-policy",
+    "resolve",
+    "--upgrade",
 ]
 input-path = "pyproject.toml"
 mode = "universal"
@@ -234,6 +237,6 @@ platforms = [
 
 [tool.nab.validation]
 version = 1
-all-inputs-sha256 = "79a2acbe4427da644e68f2251da252dcbbef55f7887ecf8965d047223b0969db"
-selection-inputs-sha256 = "f7d219a4924c260be8c7ba310e5597e0906dc4c142ad9c75b5cfa868063972d4"
+all-inputs-sha256 = "580cc84edf8dd170338df86809b70587df7f5e4e5bf2d6fc1739083c99fbd76c"
+selection-inputs-sha256 = "38fb54b85a28a2d84e3f10fef33fc6ecd96a80139addef5049f610f5e154e0b5"
 contents-sha256 = "f40241d6df9fe373636721080a9a3c2729fa58547c040776baa10e1a2cbc54fd"
