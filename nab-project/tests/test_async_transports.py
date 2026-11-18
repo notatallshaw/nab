@@ -36,7 +36,7 @@ from nab_index.client import (
     _extract_sdist_files,
 )
 from nab_index.httpx2_async_transport import Httpx2AsyncTransport
-from nab_index.httpx_async_transport import HttpxAsyncTransport, _HttpxResponse
+from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.retry import GET_RETRY, next_delay
 from nab_index.retry_limits import MAX_REDIRECTS, MAX_RETRIES, RETRY_STATUSES
 from nab_index.transport import (
@@ -617,7 +617,7 @@ class TestHttpxAsyncTransport:
             return_value=httpx.Response(200, json={"a": 1}, headers={"etag": "abc"})
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 resp = await transport.get("https://example.com/")
@@ -627,7 +627,6 @@ class TestHttpxAsyncTransport:
                 await transport.aclose()
 
         resp = asyncio.run(go())
-        assert isinstance(resp, _HttpxResponse)
         assert resp.status_code == 200
         assert resp.headers["etag"] == "abc"
         assert resp.json() == {"a": 1}
@@ -661,7 +660,7 @@ class TestHttpxAsyncTransport:
             return_value=httpx.Response(200, json={"ok": True})
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 resp = await transport.get("https://example.com/simple/pkg")
@@ -686,7 +685,7 @@ class TestHttpxAsyncTransport:
             return_value=httpx.Response(200)
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/r/0")
@@ -796,7 +795,7 @@ class TestHttpxAsyncTransport:
             side_effect=[httpx.Response(status), httpx.Response(200, json={"ok": True})]
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -819,7 +818,7 @@ class TestHttpxAsyncTransport:
             side_effect=[httpx.Response(status), httpx.Response(200, json={"ok": True})]
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -839,7 +838,7 @@ class TestHttpxAsyncTransport:
             side_effect=[httpx.Response(408), httpx.Response(200, json={"ok": True})]
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -859,7 +858,7 @@ class TestHttpxAsyncTransport:
             side_effect=[httpx.ConnectError("boom"), httpx.Response(200)]
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -879,7 +878,7 @@ class TestHttpxAsyncTransport:
             ]
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -901,7 +900,7 @@ class TestHttpxAsyncTransport:
             * (MAX_RETRIES + 1)
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -923,7 +922,7 @@ class TestHttpxAsyncTransport:
             side_effect=[httpx.Response(503)] * (MAX_RETRIES + 1)
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -998,7 +997,7 @@ class TestHttpxAsyncTransport:
             return_value=httpx.Response(404)
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/missing")
@@ -1017,7 +1016,7 @@ class TestHttpxAsyncTransport:
             )
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -1038,7 +1037,7 @@ class TestHttpxAsyncTransport:
             )
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -1063,7 +1062,7 @@ class TestHttpxAsyncTransport:
             ]
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")

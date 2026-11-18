@@ -287,14 +287,14 @@ def test_configured_http_download_uses_the_selected_transport(
     import httpx
 
     from nab._lock import _download_input
-    from nab_index.httpx_async_transport import _HttpxResponse
+    from nab_index.response import HttpxResponse
 
     calls = []
 
     class Transport:
-        async def get(self, url: str, **kwargs: object) -> _HttpxResponse:
+        async def get(self, url: str, **kwargs: object) -> HttpxResponse:
             calls.append(url)
-            return _HttpxResponse(
+            return HttpxResponse(
                 httpx.Response(200, request=httpx.Request("GET", url)), b"archive"
             )
 

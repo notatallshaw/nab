@@ -17,11 +17,12 @@ __lazy_modules__ = (
 
 import gzip
 import zlib
-from typing import TYPE_CHECKING, Any, Final, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Final, Protocol, runtime_checkable
 
 from nab_provider.errors import HttpError, UnserveableUrlError
 from nab_provider.fetch_port import PrefetchSettings
 
+from ._json_decode import JsonValue
 from ._version import __version__
 from .retry_limits import RETRY_STATUSES
 
@@ -37,6 +38,7 @@ __all__ = [
     "HttpError",
     "HttpResponse",
     "IdleClosableTransport",
+    "JsonValue",
     "TunedHttpTransport",
     "UnserveableUrlError",
     "accepts_gzip",
@@ -171,7 +173,7 @@ class HttpResponse(Protocol):
         """Response body as text."""
         ...
 
-    def json(self) -> Any:
+    def json(self) -> JsonValue:
         """Response body parsed as JSON."""
         ...
 
