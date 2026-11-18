@@ -1,7 +1,6 @@
 # Universal-resolution benchmark scenarios.
 #
-# Each entry exercises the matrix-based universal resolver in
-# ``examples/universal/``.  Scenarios are sourced from real-world
+# Each entry exercises the multi-target resolver in nab-project.  Scenarios are sourced from real-world
 # reports of slow or problematic universal locks in uv, Poetry, and PEX,
 # plus a few explicitly labeled real-world stress cases.
 #
@@ -54,6 +53,9 @@ requirements = [
     "python-rapidjson<=1.20,>=1.4",
     "sentry-kafka-schemas<=0.1.113,>=0.1.50",
 ]
+# All 36 wheels for 1.8 declare no runtime dependencies. Its sdist predates
+# static dependency metadata, and only Python 3.10 has a matching Linux wheel.
+assume_universal_deps = { python-rapidjson = "==1.8" }
 datetime = "2025-01-01 00:00:00"
 
 # ---------------------------------------------------------------------------

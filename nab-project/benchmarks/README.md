@@ -120,6 +120,10 @@ The result schema and source identity invalidate stale caches.
 A full run writes `_manifest.json` with the current scenario set. The summary follows that set,
 ignores removed result files, and accepts only complete runs from a clean source tree.
 
+If a release's wheels and source distribution have the same dependencies on every target, add
+`assume_universal_deps = { package = "==1.2" }` to the scenario. Nab can then read those
+dependencies from a wheel. The report records the package and version selector.
+
 Selected diagnostics are isolated under `universal-selected/` and are never treated as a full-suite
 baseline.
 

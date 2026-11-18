@@ -7,17 +7,20 @@ import json
 import shutil
 import subprocess
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 from typing_extensions import Self
 
+from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.lockfile import IndexPin, TargetLock, WheelArtifact
 from nab_project.resolve import ResolveResult, TargetResult
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
+from nab_provider.testing import make_metadata, make_sdist, make_wheel
 
 # universal_scenarios.py and universal_summary.py import their siblings by bare name.
 pytestmark = [
@@ -741,6 +744,72 @@ def test_cached_result_must_match_the_shape_and_source(
     assert calls == 5
     data = json.loads(result_path.read_text())
     assert data["input"]["source"] == unknown_source
+
+
+def test_wheel_metadata_for_one_release_changes_the_cached_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _harness()
+    wheel = make_wheel(
+        "1.0", tag="cp310-cp310-win_amd64", hashes=(("sha256", "a" * 64),)
+    )
+    sdist = make_sdist("1.0", hashes=(("sha256", "b" * 64),))
+    dependency = make_wheel("2.0", package="dep", hashes=(("sha256", "c" * 64),))
+
+    def fetch(*_args: object, **_kwargs: object) -> nullcontext[FakeFetchPort]:
+        return nullcontext(
+            make_coordinator(
+                listings={"pkg": [wheel, sdist], "dep": [dependency]},
+                metadata_by_url={
+                    wheel.url + ".metadata": make_metadata("pkg", "1.0", "dep==2"),
+                    dependency.url + ".metadata": make_metadata("dep", "2.0"),
+                },
+                sdist_pkg_info="Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n",
+            )
+        )
+
+    monkeypatch.setattr(module, "FetchCoordinator", fetch)
+    monkeypatch.setattr(module, "Urllib3AsyncTransport", object)
+    scenario = {**_universal_scenario("linux_x86_64"), "requirements": ["pkg"]}
+
+    def run() -> bool:
+        return module.process_scenario(
+            "case",
+            scenario,
+            "run",
+            force=False,
+            output_dir=tmp_path,
+            source=_CLEAN_SOURCE,
+        )
+
+    assert not run()
+    scenario["assume_universal_deps"] = {"Pkg": "==1.0"}
+    assert run()
+    report = json.loads((tmp_path / "case.json").read_text())
+    assert report["per_tuple"][0]["pins"] == {"pkg": "1.0", "dep": "2.0"}
+    assert report["result"]["lock_consistent"]
+    assert report["input"]["assume_universal_deps"] == {"pkg": "==1.0"}
+
+    scenario["assume_universal_deps"] = {"pkg": ">=2"}
+    assert not run()
+
+
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        (["pkg"], TypeError),
+        ({"pkg": False}, TypeError),
+        ({"bad name": "==1"}, ValueError),
+        ({"pkg": "one"}, ValueError),
+        ({"my_pkg": "==1", "my-pkg": "==2"}, ValueError),
+    ],
+)
+def test_invalid_wheel_metadata_override_fails_preflight(
+    value: object, error: type[Exception]
+) -> None:
+    scenario = {**_universal_scenario("linux_x86_64"), "assume_universal_deps": value}
+    with pytest.raises(error, match="example: .*assume_universal_deps"):
+        _harness().validate_scenario("example", scenario)
 
 
 def test_unknown_universal_setting_is_rejected() -> None:

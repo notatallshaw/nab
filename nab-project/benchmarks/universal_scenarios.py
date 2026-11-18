@@ -40,6 +40,7 @@ from benchmark_datetime import parse_datetime
 from universal_result import (
     MANIFEST_FILENAME,
     RESULT_SCHEMA_VERSION,
+    is_package_specifier_table,
     is_portable_scenario_name,
     result_is_accepted,
     result_is_well_formed,
@@ -56,7 +57,9 @@ from nab_project.resolve import (
     resolve_with_coordinator,
 )
 from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider.overrides import PackageOverride
 from nab_provider.provider import ResolutionStrategy
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix
@@ -75,6 +78,7 @@ SCENARIO_WALL_TIMEOUT_SECONDS = 300
 UNIVERSAL_SCENARIO_KEYS = frozenset(
     {
         "align_across_tuples",
+        "assume_universal_deps",
         "constraints",
         "datetime",
         "platforms",
@@ -260,8 +264,46 @@ def _validate_scenario_names(names: list[str]) -> None:
         raise ValueError(msg)
 
 
-def validate_scenario(scenario_name: str, scenario: dict) -> None:
-    """Reject invalid settings before running a universal scenario."""
+def _metadata_overrides(
+    scenario_name: str, value: object
+) -> tuple[PackageOverride, ...]:
+    """Allow wheel dependencies to supply sdist metadata for selected releases."""
+    if not is_package_specifier_table(value):
+        msg = (
+            f"{scenario_name}: assume_universal_deps must map package names"
+            " to version specifiers"
+        )
+        raise TypeError(msg)
+
+    overrides: dict[str, PackageOverride] = {}
+    for package, specifier in value.items():
+        try:
+            name = canonicalize_name(package, validate=True)
+            versions = SpecifierSet(specifier)
+            requirement = Requirement(f"{name}{versions}")
+            version_range = versions.to_range()
+        except ValueError as exc:
+            msg = (
+                f"{scenario_name}: invalid assume_universal_deps entry"
+                f" {package!r} = {specifier!r}"
+            )
+            raise ValueError(msg) from exc
+
+        if name in overrides:
+            msg = f"{scenario_name}: duplicate assume_universal_deps package {name!r}"
+            raise ValueError(msg)
+
+        overrides[name] = PackageOverride(
+            requirement=requirement,
+            name=name,
+            version_range=version_range,
+            assume_universal_deps=True,
+        )
+    return tuple(overrides.values())
+
+
+def validate_scenario(scenario_name: str, scenario: dict) -> ResolveInputs:
+    """Validate a universal scenario and prepare its resolver inputs."""
     _validate_scenario_names([scenario_name])
     unknown = sorted(set(scenario) - UNIVERSAL_SCENARIO_KEYS)
     if unknown:
@@ -309,6 +351,15 @@ def validate_scenario(scenario_name: str, scenario: dict) -> None:
         msg = f"{scenario_name}: unknown resolution_strategy {resolution!r}"
         raise ValueError(msg) from exc
 
+    cutoff = scenario.get("datetime")
+    return ResolveInputs(
+        constraints=tuple(scenario.get("constraints", ())),
+        uploaded_prior_to=parse_datetime(cutoff) if cutoff else None,
+        package_overrides=_metadata_overrides(
+            scenario_name, scenario.get("assume_universal_deps", {})
+        ),
+    )
+
 
 def write_manifest(
     path: Path,
@@ -345,7 +396,7 @@ def process_scenario(
     source: dict[str, str | bool | None] | None = None,
 ) -> bool:
     """Resolve one universal scenario and save results."""
-    validate_scenario(scenario_name, scenario)
+    config = validate_scenario(scenario_name, scenario)
     python_spec: str = scenario["python"]
     platforms: tuple[str, ...] = tuple(scenario["platforms"])
     python_order: str = scenario.get("python_order", "asc")
@@ -357,17 +408,12 @@ def process_scenario(
     reason: str = scenario.get("reason", "")
     skip_on_fail: bool = scenario.get("skip_on_fail", False)
 
-    uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None
     matrix = Matrix(
         python=python_spec,
         platforms=tuple(PlatformSpec(p) for p in platforms),
         python_order=python_order,
     )
     targets = matrix.expand()
-    config = ResolveInputs(
-        constraints=tuple(constraint_strings),
-        uploaded_prior_to=uploaded_prior_to,
-    )
     build_policy = enforce_build_policy_for_targets(
         targets=targets,
         build_policy=config.build_policy,
@@ -397,6 +443,11 @@ def process_scenario(
         "skip_on_fail": skip_on_fail,
         "reason": reason,
     }
+    if config.package_overrides:
+        expected_input["assume_universal_deps"] = {
+            rule.name: str(rule.requirement.specifier)
+            for rule in config.package_overrides
+        }
     if constraint_strings:
         expected_input["constraints"] = constraint_strings
     if datetime_str:

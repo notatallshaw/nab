@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from typing import TypeGuard
 
 from benchmark_datetime import is_valid_datetime
 
@@ -48,7 +49,7 @@ _REQUIRED_INPUT_FIELDS = frozenset(
         "trust_unverified_sdist_deps",
     }
 )
-_OPTIONAL_INPUT_FIELDS = frozenset({"constraints", "datetime"})
+_OPTIONAL_INPUT_FIELDS = frozenset({"assume_universal_deps", "constraints", "datetime"})
 _SOURCE_FIELDS = frozenset({"commit", "diff_hash", "dirty"})
 _RESOLUTION_STRATEGIES = frozenset({"highest", "lowest", "lowest-direct"})
 _DIST_POLICIES = frozenset(
@@ -187,6 +188,14 @@ def _valid_string_list(value: object, *, unique: bool = False) -> bool:
     )
 
 
+def is_package_specifier_table(value: object) -> TypeGuard[dict[str, str]]:
+    """Recognize a TOML package-to-specifier table and its JSON representation."""
+    return isinstance(value, dict) and all(
+        isinstance(name, str) and bool(name) and isinstance(specifier, str)
+        for name, specifier in value.items()
+    )
+
+
 def _valid_input(value: object, reason: object) -> bool:
     if not isinstance(value, dict):
         return False
@@ -218,6 +227,10 @@ def _valid_input(value: object, reason: object) -> bool:
         and type(value["skip_on_fail"]) is bool
         and isinstance(value["reason"], str)
         and reason == value["reason"]
+        and (
+            "assume_universal_deps" not in value
+            or is_package_specifier_table(value["assume_universal_deps"])
+        )
         and ("constraints" not in value or _valid_string_list(value["constraints"]))
         and ("datetime" not in value or is_valid_datetime(value["datetime"]))
     )
