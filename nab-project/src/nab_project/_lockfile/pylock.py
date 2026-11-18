@@ -95,6 +95,8 @@ if TYPE_CHECKING:
     )
     from .disjointness import PackageIdentity
 
+    _PinGroup: TypeAlias = tuple[PinShape, list[str]]
+
     class _ArtifactFields(TypedDict):
         """Validated artifact constructor fields in PEP 751 field order."""
 
@@ -1338,7 +1340,7 @@ def _build_packages(
     )
 
     pin_groups = {
-        canonical_name: _group_pins_by_pin(per_target)
+        canonical_name: _group_pins(per_target)
         for canonical_name, per_target in by_name.items()
     }
 
@@ -1374,7 +1376,7 @@ def _build_packages(
             base_names,
         )
 
-        for pins, labels in groups:
+        for pin, labels in groups:
             parts = _build_marker(
                 canonical_name,
                 labels,
@@ -1409,7 +1411,7 @@ def _build_packages(
                 )
             out.append(
                 package_output(
-                    _merge_pins_in_group(pins),
+                    pin,
                     marker,
                     lock_dir=lock_dir,
                     dependencies=dependencies,
@@ -1432,10 +1434,10 @@ def _group_by_name(
     return out
 
 
-def _group_pins_by_pin(
+def _group_pins(
     per_target: dict[str, PinShape],
-) -> list[tuple[list[PinShape], list[str]]]:
-    """Group mergeable pins in sorted target-label order, keeping every pin."""
+) -> list[_PinGroup]:
+    """Return one pin and its sorted target labels for each lock row."""
     from ..lockfile import IndexPin
 
     sdists: defaultdict[tuple[object, ...], set[SdistArtifact]] = defaultdict(set)
@@ -1443,20 +1445,24 @@ def _group_pins_by_pin(
         if isinstance(pin, IndexPin) and pin.sdist is not None:
             sdists[_pin_discriminator(pin)].add(pin.sdist)
 
-    by_key: dict[tuple[object, ...], tuple[list[PinShape], list[str]]] = {}
+    labels_by_key: defaultdict[tuple[object, ...], list[str]] = defaultdict(list)
+    index_pins: defaultdict[tuple[object, ...], list[IndexPin]] = defaultdict(list)
     for label in sorted(per_target):
         pin = per_target[label]
         key = _pin_discriminator(pin)
-        # PEP 751 allows one sdist per row; split only when archives disagree.
-        if isinstance(pin, IndexPin) and len(sdists[key]) > 1:
-            key = (*key, pin.sdist)
+        if isinstance(pin, IndexPin):
+            # PEP 751 allows one sdist per row. Split when archives disagree.
+            if len(sdists.get(key, ())) > 1:
+                key = (*key, pin.sdist)
+            index_pins[key].append(pin)
+        labels_by_key[key].append(label)
 
-        if key not in by_key:
-            by_key[key] = ([], [])
-        by_key[key][0].append(pin)
-        by_key[key][1].append(label)
-
-    return list(by_key.values())
+    groups = []
+    for key, labels in labels_by_key.items():
+        pins = index_pins.get(key)
+        pin = _merge_index_pins(pins) if pins is not None else per_target[labels[0]]
+        groups.append((pin, labels))
+    return groups
 
 
 def _pin_discriminator(pin: PinShape) -> tuple[object, ...]:
@@ -1491,41 +1497,22 @@ def _pin_discriminator(pin: PinShape) -> tuple[object, ...]:
     raise TypeError(msg)
 
 
-def _merge_pins_in_group(pins: list[PinShape]) -> PinShape:
-    """Combine pins sharing a discriminator into one with unioned artefacts.
-
-    For :class:`IndexPin`, accumulates every distinct wheel filename
-    across the contributing targets and keeps the first non-``None``
-    sdist.  ``requires_python`` survives only when every target carried
-    the same value and none was unconstrained, matching
-    :func:`_common_requires_python`'s rule.
-    Non-IndexPin shapes are already fully discriminated, so the first
-    pin is returned unchanged.
-    """
+def _merge_index_pins(pins: Sequence[IndexPin]) -> IndexPin:
+    """Union artifacts and keep Requires-Python only when all targets agree."""
     from ..lockfile import IndexPin
 
     head = pins[0]
-    if not isinstance(head, IndexPin):
-        return head
     seen_wheels: dict[str, WheelArtifact] = {}
     sdist = head.sdist
-    requires_python_set: set[str] = set()
-    any_unconstrained = False
+    requires_python = head.requires_python
     for pin in pins:
-        assert isinstance(pin, IndexPin)
         for wheel in pin.wheels:
             seen_wheels.setdefault(wheel.filename, wheel)
-        if sdist is None and pin.sdist is not None:
+        if sdist is None:
             sdist = pin.sdist
-        if pin.requires_python is None:
-            any_unconstrained = True
-        else:
-            requires_python_set.add(pin.requires_python)
-    requires_python = (
-        next(iter(requires_python_set))
-        if not any_unconstrained and len(requires_python_set) == 1
-        else None
-    )
+        if pin.requires_python != requires_python:
+            requires_python = None
+
     return IndexPin(
         name=head.name,
         version=head.version,
@@ -1614,7 +1601,7 @@ def _shared_fork_edges(
 def _check_base_fork_agreement(
     name: str,
     per_target: Mapping[str, PinShape],
-    groups: list[tuple[list[PinShape], list[str]]],
+    groups: list[_PinGroup],
     env_signatures: Mapping[str, tuple[tuple[str, str], ...]],
     env_fork_counts: Mapping[tuple[tuple[str, str], ...], int],
     env_base_names: Mapping[tuple[tuple[str, str], ...], frozenset[str]],
@@ -1792,7 +1779,7 @@ def _fork_contributions(
 
 def _fork_projections(
     axes: _ForkAxes,
-    pin_groups: Mapping[str, Sequence[tuple[list[PinShape], list[str]]]],
+    pin_groups: Mapping[str, Sequence[_PinGroup]],
     env_fork_counts: Mapping[_EnvSignature, int],
     env_base_names: Mapping[_EnvSignature, frozenset[str]],
 ) -> dict[tuple[str, str], _Projection]:
