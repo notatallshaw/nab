@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from asyncio import run
 from typing import TYPE_CHECKING
 
 import pytest
 from packaging.utils import canonicalize_name
 
-from nab_index.cache import OfflineError, OnDiskCache
+from nab_index.cache import CachePolicy, OfflineError, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import SdistFile, WheelFile
 from nab_index.lazy_wheel import RangeMetadataResult, RangeOutcome
@@ -256,18 +257,32 @@ class TestOfflinePresenceWalk:
 
         with pytest.raises(OfflineError):
             run(client.get_files("foo"))
-        assert client.route_for("foo") == "a"
+        assert client.route_for("foo") is None
 
-    def test_answering_index_does_not_mask_a_cold_one(self, tmp_path: Path) -> None:
-        """One index answering absent does not settle it while another is cold."""
-        client = MultiIndexClient(
-            {"answers": FakeClient({}), "cold": _offline_client(tmp_path, "cold")},
-            ["answers", "cold"],
-            {},
+    def test_unanswered_index_is_consulted_on_retry(self, tmp_path: Path) -> None:
+        index_url = "https://cold.example/simple/"
+        cache = OnDiskCache(tmp_path / "cache", index_url)
+        cold = CachedAsyncSimpleClient(
+            _NoNetworkTransport(), cache, index_url, offline=True
         )
+        local = LocalIndexClient(tmp_path.as_uri())
+        client = MultiIndexClient({"local": local, "cold": cold}, ["local", "cold"], {})
 
-        with pytest.raises(OfflineError):
-            run(client.get_files("foo"))
+        for name in ("demo_pkg", "DEMO.PKG"):
+            with pytest.raises(OfflineError):
+                run(client.get_files(name))
+            assert client.route_for(name) is None
+
+        wheel = make_wheel(package="demo_pkg", has_metadata=False)
+        listing = {"files": [{"filename": wheel.filename, "url": wheel.url}]}
+        cache.put_simple(
+            "demo-pkg",
+            json.dumps(listing).encode(),
+            CachePolicy(fetched_at=0, max_age=0, etag=None),
+        )
+        files = run(client.get_files("demo-pkg"))
+        assert [file.url for file in files] == [wheel.url]
+        assert client.route_for("demo_pkg") == "cold"
 
     def test_override_pin_to_cold_offline_index_raises(self, tmp_path: Path) -> None:
         wheelhouse = tmp_path / "wheelhouse"
