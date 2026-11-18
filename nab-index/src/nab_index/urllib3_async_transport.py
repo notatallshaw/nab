@@ -225,7 +225,7 @@ class Urllib3AsyncTransport:
         self._maxsize = maxsize
         self._timeout = timeout
         self._local = threading.local()
-        self._pools: list[urllib3.PoolManager] = []
+        self._pools: set[urllib3.PoolManager] = set()
         self._pools_lock = threading.Lock()
 
     def _pool(self) -> urllib3.PoolManager:
@@ -245,9 +245,9 @@ class Urllib3AsyncTransport:
                 "https": _HTTPSConnectionPool,
             }
             pool.pool_classes_by_scheme = classes  # ty: ignore[invalid-assignment]
-            self._local.pool = pool
             with self._pools_lock:
-                self._pools.append(pool)
+                self._local.pool = pool
+                self._pools.add(pool)
         return pool
 
     def _request(self, url: str, headers: dict[str, str]) -> _Urllib3Response:
@@ -312,8 +312,14 @@ class Urllib3AsyncTransport:
             raise HttpError(msg) from exc
 
     async def aclose(self) -> None:
-        """Close every per-thread pool."""
+        """Release this run's pools so a later run starts with fresh connections."""
         with self._pools_lock:
-            pools = list(self._pools)
+            pools = self._pools.copy()
+            self._local = threading.local()
+
         for pool in pools:
             await asyncio.to_thread(pool.clear)
+
+        # Keep failed cleanups available for retry and leave newly created pools alone.
+        with self._pools_lock:
+            self._pools.difference_update(pools)

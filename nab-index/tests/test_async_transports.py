@@ -16,7 +16,7 @@ from functools import partial
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from typing import Any, TypeVar
 from unittest.mock import MagicMock, patch
 from urllib.parse import urljoin
@@ -1674,6 +1674,39 @@ class TestUrllib3AsyncTransport:
         # Distinct worker threads -> distinct pools; all tracked for aclose.
         assert pools[0] is not pools[1]
         assert set(map(id, pools)) <= set(map(id, transport._pools))
+
+    def test_closing_releases_old_pools_and_keeps_a_new_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        transport = Urllib3AsyncTransport()
+        first = transport._pool()
+        clearing = Event()
+        release = Event()
+        clear = first.clear
+
+        def wait_then_clear() -> None:
+            clearing.set()
+            assert release.wait(timeout=10)
+            clear()
+
+        monkeypatch.setattr(first, "clear", wait_then_clear)
+
+        async def close_and_reuse() -> None:
+            closing = asyncio.create_task(transport.aclose())
+            try:
+                assert await asyncio.to_thread(clearing.wait, 5)
+                second = transport._pool()
+                assert second is not first
+            finally:
+                release.set()
+
+            await closing
+            assert transport._pools == {second}
+            assert transport._pool() is second
+            await transport.aclose()
+            assert not transport._pools
+
+        asyncio.run(close_and_reuse())
 
     def test_ssl_context_satisfies_urllib3_cert_check(self) -> None:
         """``_SSLContext`` returns a non-empty CA count for urllib3-future.
