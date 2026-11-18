@@ -62,7 +62,7 @@ def test_localhost_file_index_keeps_query_and_fragment(
         "demo", "1.0", make_metadata("demo", "1.0"), "py3-none-any"
     )
     publish_artifacts(index, "demo", {"demo-1.0-py3-none-any.whl": wheel})
-    url = index.as_uri().replace("file://", "file://localhost", 1) + suffix
+    url = index.as_uri().replace("file://", "file://LocalHost", 1) + suffix
     path = _project(tmp_path, url, ("demo==1.0",))
     lock = tmp_path / "pylock.toml"
     assert run(("lock", str(path), "--offline", "--output", str(lock))) == 0

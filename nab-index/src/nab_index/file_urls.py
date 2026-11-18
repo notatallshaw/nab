@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from urllib.parse import ParseResult, unquote, urlparse, urlsplit
 
-__all__ = ["is_file_url", "parse_file_url"]
+__all__ = ["is_file_url", "is_local_file_authority", "parse_file_url"]
 
 
 def is_file_url(url: str) -> bool:
@@ -25,6 +25,11 @@ def is_file_url(url: str) -> bool:
         return urlsplit(url).scheme == "file"
     except ValueError:
         return False
+
+
+def is_local_file_authority(authority: str) -> bool:
+    """Recognize an empty authority or the case-insensitive localhost name."""
+    return not authority or authority.lower() == "localhost"
 
 
 def parse_file_url(url: str) -> Path:
@@ -50,13 +55,10 @@ def _parsed_file_url_path(parsed: ParseResult, url: str) -> Path:
         msg = f"expected file:// URL, got {url!r}"
         raise ValueError(msg)
 
-    # Deferred to keep urllib.request off the CLI's import path.
-    from urllib.request import url2pathname  # noqa: PLC0415
-
     netloc = parsed.netloc
     url_path = parsed.path
 
-    if not netloc or netloc == "localhost":
+    if is_local_file_authority(netloc):
         netloc = ""
         if url_path.startswith("//") and not _is_windows_drive_root(url_path):
             # Preserve the path root through url2pathname's authority parsing.
@@ -69,6 +71,8 @@ def _parsed_file_url_path(parsed: ParseResult, url: str) -> Path:
 
     try:
         if sys.platform == "win32":
+            from urllib.request import url2pathname  # noqa: PLC0415 - Windows paths only
+
             path = url2pathname(netloc + url_path)
         else:
             path = unquote(
