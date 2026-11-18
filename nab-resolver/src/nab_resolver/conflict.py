@@ -20,7 +20,7 @@ __lazy_modules__ = (
 
 from typing import TYPE_CHECKING, Any
 
-from .errors import ResolutionError, ResolutionStalledError
+from .errors import ResolutionError, ResolutionInvariantError, ResolutionStalledError
 from .incompat_index import add_incompatibility
 from .partial_solution import PartialSolution
 from .report import format_error
@@ -103,7 +103,9 @@ def conflict_resolution(
                 incompatibility=current_incompatibility,
             )
 
-        satisfier_result = find_most_recent_satisfier(resolver, current_incompatibility)
+        satisfier_result = find_most_recent_satisfier(
+            resolver.solution, current_incompatibility
+        )
         most_recent_satisfier = satisfier_result[0]
         most_recent_satisfier_term = satisfier_result[1]
         previous_satisfier_level = satisfier_result[2]
@@ -188,12 +190,18 @@ def conflict_resolution(
             return current_incompatibility
 
         # Can't backjump yet: resolve with the satisfier's cause.
-        assert most_recent_satisfier.cause is not None
+        cause = most_recent_satisfier.cause
+        if cause is None:
+            msg = (
+                f"missing derivation cause for {most_recent_satisfier.package!r} "
+                f"at trail index {most_recent_satisfier.trail_index}"
+            )
+            raise ResolutionInvariantError(msg, incompatibility=current_incompatibility)
         is_derived = True
 
         resolved_terms = _prior_cause(
             current_incompatibility,
-            most_recent_satisfier.cause,
+            cause,
             most_recent_satisfier_term.package,
         )
 
@@ -201,7 +209,7 @@ def conflict_resolution(
             resolved_terms,
             cause=IncompatibilityCause.DERIVED,
             cause_left=current_incompatibility,
-            cause_right=most_recent_satisfier.cause,
+            cause_right=cause,
         )
 
     stalled_message = (
@@ -258,7 +266,9 @@ def update_culprit_counts(
             resolver.pending_targeted_backtrack.append(package)
 
 
-def conflict_credit_target(satisfier: Assignment[Any, Any]) -> Any:
+def conflict_credit_target(
+    satisfier: Assignment[PackageType, VersionType],
+) -> PackageType:
     """Return the package whose decision receives the conflict credit.
 
     A positive term over a decided package used to be satisfied only by the
@@ -314,7 +324,7 @@ def iterate_force_resolution(
             satisfier,
             satisfier_term,
             previous_satisfier_level,
-        ) = find_most_recent_satisfier(resolver, forced)
+        ) = find_most_recent_satisfier(resolver.solution, forced)
 
     return (
         incompatibility,
@@ -361,7 +371,9 @@ def try_force_resolution_step(
         cause_right=satisfier.cause,
     )
 
-    forced_recent, _, forced_prev_level = find_most_recent_satisfier(resolver, forced)
+    forced_recent, _, forced_prev_level = find_most_recent_satisfier(
+        resolver.solution, forced
+    )
     forced_can_backjump = (
         forced_recent.is_decision or forced_prev_level != forced_recent.decision_level
     )
@@ -415,8 +427,9 @@ def _prior_cause(
 
 
 def find_most_recent_satisfier(
-    resolver: Resolver[Any, Any], incompatibility: Incompatibility[Any, Any]
-) -> tuple[Assignment[Any, Any], Term[Any, Any], int]:
+    solution: PartialSolution[PackageType, VersionType],
+    incompatibility: Incompatibility[PackageType, VersionType],
+) -> tuple[Assignment[PackageType, VersionType], Term[PackageType, VersionType], int]:
     """Find the most recently assigned satisfier across all terms.
 
     Returns ``(satisfier, term, previous_satisfier_level)``.  The previous
@@ -424,42 +437,38 @@ def find_most_recent_satisfier(
     far back the resolver can jump.  Refined when the satisfier is partial
     (earlier assignments also contributed).
     """
-    most_recent: Assignment[Any, Any] | None = None
-    most_recent_term: Term[Any, Any] | None = None
+    latest: (
+        tuple[Assignment[PackageType, VersionType], Term[PackageType, VersionType]]
+        | None
+    ) = None
     previous_level = 1  # root's level
 
     for term in incompatibility.terms:
-        satisfier = resolver.solution.satisfier(term)
-        if satisfier is None:  # pragma: no cover
-            unreachable = (
-                f"Bug: no satisfier for {term!r} in a satisfied incompatibility"
-            )
-            raise RuntimeError(unreachable)
-        satisfier_index = satisfier.trail_index
-        if most_recent is None or (satisfier_index > most_recent.trail_index):
-            if most_recent is not None:
-                previous_level = max(previous_level, most_recent.decision_level)
-            most_recent = satisfier
-            most_recent_term = term
+        satisfier = solution.satisfier(term)
+        if satisfier is None:
+            msg = f"no trail assignment satisfies {term!r} in the reported conflict"
+            raise ResolutionInvariantError(msg, incompatibility=incompatibility)
+
+        if latest is None or satisfier.trail_index > latest[0].trail_index:
+            if latest is not None:
+                previous_level = max(previous_level, latest[0].decision_level)
+            latest = satisfier, term
         else:
             previous_level = max(previous_level, satisfier.decision_level)
 
-    if most_recent is None:  # pragma: no cover
-        unreachable = "Bug: no satisfiers in a satisfied incompatibility"
-        raise RuntimeError(unreachable)
-    assert most_recent_term is not None
+    if latest is None:
+        msg = "cannot find a trail assignment for an empty incompatibility"
+        raise ResolutionInvariantError(msg, incompatibility=incompatibility)
 
-    previous_level = recompute_previous_level(
-        resolver, most_recent, most_recent_term, previous_level
-    )
-
-    return most_recent, most_recent_term, previous_level
+    satisfier, term = latest
+    previous_level = recompute_previous_level(solution, satisfier, term, previous_level)
+    return satisfier, term, previous_level
 
 
 def recompute_previous_level(
-    resolver: Resolver[Any, Any],
-    satisfier: Assignment[Any, Any],
-    satisfier_term: Term[Any, Any],
+    solution: PartialSolution[PackageType, VersionType],
+    satisfier: Assignment[PackageType, VersionType],
+    satisfier_term: Term[PackageType, VersionType],
     current_previous_level: int,
 ) -> int:
     """Refine previous_level when the satisfier is partial.
@@ -485,20 +494,24 @@ def recompute_previous_level(
     if difference.constraint.is_empty:
         return current_previous_level
 
-    difference_satisfier = resolver.solution.satisfier(difference.negate())
+    difference_satisfier = solution.satisfier(difference.negate())
     if difference_satisfier is not None:
         return max(current_previous_level, difference_satisfier.decision_level)
     return current_previous_level
 
 
-def is_terminal_incompatibility(incompatibility: Incompatibility[Any, Any]) -> bool:
+def is_terminal_incompatibility(
+    incompatibility: Incompatibility[PackageType, VersionType],
+) -> bool:
     """Check whether this incompatibility proves resolution is impossible."""
     if not incompatibility.terms:
         return True
     return all(term.package is ROOT for term in incompatibility.terms)
 
 
-def maybe_targeted_backtrack(resolver: Resolver[Any, Any]) -> Any | None:
+def maybe_targeted_backtrack(
+    resolver: Resolver[PackageType, VersionType],
+) -> PackageType | None:
     """Run :func:`apply_targeted_backtrack` when its conditions hold.
 
     Pending must be non-empty and total conflicts must reach
@@ -513,7 +526,7 @@ def maybe_targeted_backtrack(resolver: Resolver[Any, Any]) -> Any | None:
 
 
 def maybe_restart(
-    resolver: Resolver[Any, Any],
+    resolver: Resolver[PackageType, VersionType],
     restart_threshold: int,
     restarts_remaining: int,
 ) -> tuple[int, int, bool]:
@@ -543,8 +556,8 @@ def maybe_restart(
 
 
 def force_targeted_backtrack(
-    resolver: Resolver[Any, Any], packages: list[Any]
-) -> Any | None:
+    resolver: Resolver[PackageType, VersionType], packages: list[PackageType]
+) -> PackageType | None:
     """Apply a targeted back-track before the normal threshold.
 
     Used when the provider supplies direct evidence that the named
@@ -569,7 +582,9 @@ def force_targeted_backtrack(
     return apply_targeted_backtrack(resolver)
 
 
-def apply_targeted_backtrack(resolver: Resolver[Any, Any]) -> Any | None:
+def apply_targeted_backtrack(
+    resolver: Resolver[PackageType, VersionType],
+) -> PackageType | None:
     """Backtrack to before the earliest pending-culprit assignment.
 
     Picks the smallest decision-level among queued culprits' first assignments
@@ -584,7 +599,7 @@ def apply_targeted_backtrack(resolver: Resolver[Any, Any]) -> Any | None:
         return None
 
     target_level = resolver.solution.decision_level
-    triggering_package: Any | None = None
+    triggering_package: PackageType | None = None
 
     for package in resolver.pending_targeted_backtrack:
         package_entries = resolver.solution.assignments_for(package)

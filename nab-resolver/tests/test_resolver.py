@@ -24,6 +24,7 @@ from nab_resolver.conflict import (
     update_culprit_counts,
 )
 from nab_resolver.errors import (
+    ResolutionInvariantError,
     ResolutionLimitError,
     ResolutionStalledError,
     ResolutionTerminatedError,
@@ -1205,6 +1206,33 @@ class TestResolverInternals:
         with pytest.raises(ResolutionError):
             conflict_resolution(resolver, conflict)
 
+    @pytest.mark.parametrize("terms", [[], [Term("absent", Range.singleton(1))]])
+    def test_missing_satisfier_reports_the_conflict(
+        self, terms: list[Term[str, int]]
+    ) -> None:
+        resolver = Resolver(DictProvider({}))
+        conflict = Incompatibility(terms, cause=IncompatibilityCause.DERIVED)
+        with pytest.raises(ResolutionInvariantError) as caught:
+            find_most_recent_satisfier(resolver.solution, conflict)
+        assert caught.value.incompatibility is conflict
+
+    def test_missing_derivation_cause_reports_the_trail_entry(self) -> None:
+        resolver = Resolver(DictProvider({}))
+        resolver.solution.decide("root", 1)
+        conflict = Incompatibility[str, int](
+            [Term("app", Range.singleton(1))], cause=IncompatibilityCause.DERIVED
+        )
+        resolver.solution.derive(
+            "app", Range.singleton(1), positive=True, cause=conflict
+        )
+        resolver.solution.assignments_for("app")[0].cause = None
+
+        with pytest.raises(
+            ResolutionInvariantError, match="derivation cause for 'app'"
+        ) as caught:
+            conflict_resolution(resolver, conflict)
+        assert caught.value.incompatibility is conflict
+
     def test_terminal_clause_raises_before_the_satisfier_search(self) -> None:
         """A clause holding only ROOT terms ends conflict resolution.
 
@@ -1228,7 +1256,7 @@ class TestResolverInternals:
         assignment = satisfier.assignments_for("x")[0]
         # Decisions have cause=None, so recompute should return as-is.
         term = Term("x", Range.singleton(1))
-        result = recompute_previous_level(resolver, assignment, term, 5)
+        result = recompute_previous_level(resolver.solution, assignment, term, 5)
         assert result == 5
 
     def test_recompute_previous_level_no_matching_cause_term(self) -> None:
@@ -1244,7 +1272,7 @@ class TestResolverInternals:
         solution.derive("x", Range.at_least(1), positive=True, cause=cause)
         assignment = solution.assignments_for("x")[0]
         term = Term("x", Range.at_least(1))
-        result = recompute_previous_level(resolver, assignment, term, 3)
+        result = recompute_previous_level(resolver.solution, assignment, term, 3)
         assert result == 3
 
     def test_recompute_previous_level_no_difference_satisfier(self) -> None:
@@ -1266,7 +1294,7 @@ class TestResolverInternals:
         term = Term("x", Range.between(1, 5))
         assignment = solution.assignments_for("x")[-1]
         resolver.solution = solution
-        result = recompute_previous_level(resolver, assignment, term, 7)
+        result = recompute_previous_level(resolver.solution, assignment, term, 7)
         assert result == 7
 
     def test_recompute_previous_level_partial_positive_satisfier(self) -> None:
@@ -1295,7 +1323,7 @@ class TestResolverInternals:
         resolver.solution = solution
         # The satisfier's own [3,9) leaves [7,9) outside the term; the
         # level-1 derivation [1,6) is what excludes it.
-        result = recompute_previous_level(resolver, assignment, term, 0)
+        result = recompute_previous_level(resolver.solution, assignment, term, 0)
         assert result == 1
 
     def test_recompute_previous_level_partial_negative_satisfier(self) -> None:
@@ -1322,7 +1350,7 @@ class TestResolverInternals:
         term = Term("x", Range.between(1, 5))
         assignment = solution.assignments_for("x")[-1]
         resolver.solution = solution
-        result = recompute_previous_level(resolver, assignment, term, 0)
+        result = recompute_previous_level(resolver.solution, assignment, term, 0)
         assert result == 1
 
     def test_recompute_previous_level_sole_satisfier(self) -> None:
@@ -1346,7 +1374,7 @@ class TestResolverInternals:
         term = Term("x", Range.between(2, 6))
         assignment = solution.assignments_for("x")[-1]
         resolver.solution = solution
-        result = recompute_previous_level(resolver, assignment, term, 0)
+        result = recompute_previous_level(resolver.solution, assignment, term, 0)
         assert result == 0
 
     def test_previous_level_includes_partial_satisfier_contribution(self) -> None:
@@ -1383,7 +1411,9 @@ class TestResolverInternals:
             [Term("r", Range.singleton(1)), Term("x", Range.between(3, 7))],
             cause=IncompatibilityCause.DEPENDENCY,
         )
-        satisfier, term, previous_level = find_most_recent_satisfier(resolver, conflict)
+        satisfier, term, previous_level = find_most_recent_satisfier(
+            resolver.solution, conflict
+        )
         assert satisfier.decision_level == 3
         assert term.package == "x"
         assert previous_level == 2
