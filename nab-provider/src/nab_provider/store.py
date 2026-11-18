@@ -16,15 +16,14 @@ from contextlib import contextmanager
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
-from nab_provider._vendor.packaging.utils import canonicalize_version
-from nab_provider.metadata import metadata_header_block, metadata_without_description
+from ._vendor.packaging.utils import canonicalize_version
+from .metadata import metadata_header_block, metadata_without_description
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping, Sequence
 
-    from nab_provider.records import RangeOutcome, SdistFile, WheelFile
-
     from .metadata import WheelMetadata
+    from .records import RangeOutcome, SdistFile, WheelFile
 
 __all__ = [
     "InMemoryIndex",

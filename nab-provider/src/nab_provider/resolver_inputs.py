@@ -23,13 +23,13 @@ from collections import defaultdict
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, NamedTuple
 
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 from nab_resolver.errors import ResolutionError
 from nab_resolver.types import RootRequirement
 
 from ._compat import override
+from ._vendor.packaging.ranges import VersionRange
+from ._vendor.packaging.utils import canonicalize_name
 from .conflict_kind import (
     KIND_EXTRA,
     MARKER_VARIABLE_FOR_KIND,
@@ -42,11 +42,11 @@ from .vcs_admission import admit_vcs_url
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
 
-    from nab_provider._vendor.packaging.markers import Marker
-    from nab_provider._vendor.packaging.requirements import Requirement
-    from nab_provider._vendor.packaging.version import Version
     from nab_resolver.types import RangeProtocol
 
+    from ._vendor.packaging.markers import Marker
+    from ._vendor.packaging.requirements import Requirement
+    from ._vendor.packaging.version import Version
     from .vcs_admission import VcsConfig
 
     # Whether a dependency marker holds for one environment.

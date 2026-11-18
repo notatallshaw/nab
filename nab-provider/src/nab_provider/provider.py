@@ -37,8 +37,6 @@ from itertools import chain
 from types import MappingProxyType
 from typing import TYPE_CHECKING, TypeVar, cast
 
-from nab_provider._vendor.packaging.markers import prepare_environment
-from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_resolver import priority as decision_priority
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 from nab_resolver.types import IncompatibilityCause
@@ -51,7 +49,9 @@ from ._provider import metadata_resolver as _metadata_resolver
 from ._provider import priority as _priority
 from ._provider import sources as _sources
 from ._provider.candidate_views import CandidatePreparation, CandidateView
+from ._vendor.packaging.markers import prepare_environment
 from ._vendor.packaging.specifiers import SpecifierSet
+from ._vendor.packaging.utils import canonicalize_name
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS
 from .declarations import DependencyDeclaration
 from .environment import host_environment
@@ -111,11 +111,11 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
-    from nab_provider._vendor.packaging.markers import Marker
-    from nab_provider._vendor.packaging.requirements import Requirement
-    from nab_provider._vendor.packaging.version import Version
     from nab_resolver.types import Incompatibility, RangeProtocol
 
+    from ._vendor.packaging.markers import Marker
+    from ._vendor.packaging.requirements import Requirement
+    from ._vendor.packaging.version import Version
     from .diagnostics import Diagnostic
     from .fetch_port import FetchPort, Waitable
     from .overrides import IndexOverride, PackageOverride

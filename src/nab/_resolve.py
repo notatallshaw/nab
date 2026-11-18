@@ -90,7 +90,6 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
-    from nab.config.ladder import Layer
     from nab_index.transport import AsyncHttpTransport, HttpResponse
     from nab_project.declarations import DependencyDeclaration
     from nab_project.lock_preferences import LockPreferences
@@ -98,6 +97,7 @@ if TYPE_CHECKING:
     from nab_project.resolve import ResolveResult
     from nab_provider.provider import ResolutionStrategy
 
+    from .config.ladder import Layer
     from .output import ProgressReporter
 
 

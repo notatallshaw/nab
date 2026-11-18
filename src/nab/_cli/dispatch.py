@@ -16,12 +16,12 @@ from os.path import basename
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from nab import output
+from .. import output
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from nab._cli.parse import Parsed
+    from .parse import Parsed
 
 __all__ = ["dispatch"]
 

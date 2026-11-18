@@ -49,7 +49,6 @@ from urllib.parse import urlsplit
 
 import tomli
 
-from nab.policy_migrations import DIST_POLICY_REPLACEMENTS
 from nab_index.file_urls import is_file_url
 from nab_markersets.python_versions import validate_python_version
 from nab_project import toml_io
@@ -100,6 +99,8 @@ from nab_provider.target import (
 )
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
+
+from ..policy_migrations import DIST_POLICY_REPLACEMENTS
 
 if TYPE_CHECKING:
     import enum

@@ -22,12 +22,13 @@ __lazy_modules__ = (
 from typing import TYPE_CHECKING, Any
 
 from nab_index.local_index import read_wheel_metadata
-from nab_project._build_remote import build_remote_sdist
-from nab_project._sources import materialize_source
-from nab_project._toml import parse_pyproject_table
 from nab_provider.errors import UnsupportedWheelError
 from nab_provider.testing import FakeFetchPort
 from nab_provider.testing import make_coordinator as _make_coordinator
+
+from .._build_remote import build_remote_sdist
+from .._sources import materialize_source
+from .._toml import parse_pyproject_table
 
 if TYPE_CHECKING:
     from pathlib import Path

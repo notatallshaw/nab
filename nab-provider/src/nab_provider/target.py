@@ -37,16 +37,16 @@ from typing import TYPE_CHECKING, ClassVar, Final, NamedTuple
 
 from nab_markersets.markersets import variable_names
 from nab_markersets.python_versions import validate_python_version
-from nab_provider._vendor.packaging import tags as ptags
-from nab_provider._vendor.packaging.markers import Marker, default_environment
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.specifiers import (
+
+from ._vendor.packaging import tags as ptags
+from ._vendor.packaging.markers import Marker, default_environment
+from ._vendor.packaging.ranges import VersionRange
+from ._vendor.packaging.specifiers import (
     InvalidSpecifier,
     Specifier,
     SpecifierSet,
 )
-from nab_provider._vendor.packaging.version import InvalidVersion, Version
-
+from ._vendor.packaging.version import InvalidVersion, Version
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS, MARKER_VARIABLE_FOR_KIND
 from .environment import (
     EnvironmentSource,

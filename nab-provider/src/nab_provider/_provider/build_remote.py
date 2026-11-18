@@ -25,16 +25,14 @@ __lazy_modules__ = (
 
 from typing import TYPE_CHECKING
 
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.utils import canonicalize_name
-
+from .._vendor.packaging.specifiers import SpecifierSet
+from .._vendor.packaging.utils import canonicalize_name
 from ..errors import UnsupportedSdistError
 from ..store import sdist_artifact_key
 from .metadata_resolver import find_sdist
 
 if TYPE_CHECKING:
-    from nab_provider._vendor.packaging.version import Version
-
+    from .._vendor.packaging.version import Version
     from ..metadata import WheelMetadata
     from ..provider import Provider
 

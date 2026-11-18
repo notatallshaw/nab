@@ -139,6 +139,9 @@ hatch run lint:check
 hatch run lint:fmt
 ```
 
+Use relative imports inside a package, such as `from .ranges import Range` inside `nab_resolver`.
+Other distributions and their tests import the installed package by name.
+
 Type-check through nox, which installs the selected checker group from the shared lock and runs it
 over its own scope:
 

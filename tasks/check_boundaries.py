@@ -3,7 +3,11 @@
 The packages checked are the ones ``tasks/build_dists.py`` builds for a release,
 so a distribution cannot join the release without also joining this check.
 
-Four rules:
+Five rules:
+
+``relative``
+    Use relative imports for modules in the importing package. A bare
+    ``import pkg`` can bind the package itself.
 
 ``declared``
     A package may import a sibling only when it depends on it. The allowed
@@ -74,7 +78,8 @@ _spec.loader.exec_module(build_dists)
 REPO_ROOT = build_dists.REPO_ROOT
 
 REMEDY = (
-    "Use the sibling's public API, or promote the helper in the same change: "
+    "Use relative imports inside a package. For sibling imports, use the public "
+    "API or promote the helper in the same change: "
     "drop the underscore, add it to that module's __all__, and update its "
     "existing callers."
 )
@@ -257,7 +262,18 @@ def violations(package: Package, modules: dict[str, Package]) -> list[str]:
             continue
         tree = ast.parse(path.read_text("utf-8"), str(path))
         location = path.relative_to(REPO_ROOT)
-        for dotted, lineno in sorted(set(imported_paths(tree))):
+        imports = set(imported_paths(tree))
+        local_lines = {
+            lineno
+            for dotted, lineno in imports
+            if dotted.startswith(package.module + ".")
+        }
+        found.extend(
+            f"{location}:{lineno}: use a relative import within {package.module}"
+            for lineno in sorted(local_lines)
+        )
+
+        for dotted, lineno in sorted(imports):
             head, _, rest = dotted.partition(".")
             if head not in modules or head == package.module:
                 continue

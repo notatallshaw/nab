@@ -74,11 +74,11 @@ from .output import printer
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from nab.config.ladder import Layer
     from nab_project.prepared_input import PreparedProjectInput
     from nab_provider.provider import ResolutionStrategy
 
     from ._cli.definition.model import Opt
+    from .config.ladder import Layer
     from .flagtypes import LockFormat
 
 

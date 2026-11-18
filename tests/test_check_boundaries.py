@@ -226,6 +226,29 @@ def test_undeclared_sibling_import_is_reported(
     )
 
 
+@pytest.mark.parametrize(
+    ("statement", "status"),
+    [
+        ("from pkg_a.api import FIRST, SECOND", 1),
+        ("from pkg_a import api", 1),
+        ("import pkg_a.api as api", 1),
+        ("from .api import FIRST, SECOND", 0),
+        ("from . import api", 0),
+        ("import pkg_a", 0),
+    ],
+)
+def test_imports_within_one_package(
+    workspace: FakeWorkspace,
+    capsys: pytest.CaptureFixture[str],
+    statement: str,
+    status: int,
+) -> None:
+    workspace.add("pkg-a", api="FIRST = 1\nSECOND = 2\n", use=statement)
+
+    assert check_boundaries.main() == status
+    assert capsys.readouterr().err.count("use a relative import within pkg_a") == status
+
+
 def test_private_sibling_import_is_reported(
     workspace: FakeWorkspace, capsys: pytest.CaptureFixture[str]
 ) -> None:

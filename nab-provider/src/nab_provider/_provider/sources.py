@@ -20,19 +20,18 @@ __lazy_modules__ = (
 
 from typing import TYPE_CHECKING
 
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider.archive import ArchiveRequest
-from nab_provider.records import SdistFile
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
+from .._vendor.packaging.utils import canonicalize_name
+from ..archive import ArchiveRequest
 from ..errors import SourceNameMismatchError
+from ..records import SdistFile
 from ..vcs_admission import VcsPolicy, admit_vcs_url
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nab_provider._vendor.packaging.version import Version
-
+    from .._vendor.packaging.version import Version
     from ..metadata import WheelMetadata
     from ..policy import ArchiveSource, LocalSource, VcsSource
     from ..provider import Provider

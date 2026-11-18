@@ -24,11 +24,11 @@ from typing import TYPE_CHECKING
 from nab_markersets.conversions import MarkerSetCache
 from nab_markersets.errors import IntractableMarkerSet
 from nab_markersets.markersets import MarkerSet
-from nab_provider._vendor.packaging.markers import (
+
+from ._vendor.packaging.markers import (
     Marker,
     UndefinedComparison,
 )
-
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS
 from .environment import (
     UnevaluableMarkerError,

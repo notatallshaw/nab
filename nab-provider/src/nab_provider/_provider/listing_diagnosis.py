@@ -31,13 +31,13 @@ __lazy_modules__ = (
 import re
 from typing import TYPE_CHECKING, Final
 
-from nab_provider._vendor.packaging.version import Version
-from nab_provider.diagnostics import Diagnostic
-from nab_provider.records import SdistFile, WheelFile
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion, error_message
 
+from .._vendor.packaging.version import Version
+from ..diagnostics import Diagnostic
 from ..errors import InvalidUploadTimeError, MetadataError, MissingExtraError
 from ..policy import DistPolicy
+from ..records import SdistFile, WheelFile
 from . import listing as _listing
 from .listing import DropCause
 
@@ -46,9 +46,9 @@ if TYPE_CHECKING:
     from datetime import datetime
     from typing import Literal, TypeAlias
 
-    from nab_provider._vendor.packaging.ranges import VersionRange
     from nab_resolver.types import RangeProtocol
 
+    from .._vendor.packaging.ranges import VersionRange
     from ..provider import DistFile, Provider
     from .listing import Cause, ListingPolicy
 

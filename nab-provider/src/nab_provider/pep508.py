@@ -9,7 +9,7 @@ from __future__ import annotations
 
 __lazy_modules__ = ("nab_provider._vendor.packaging.requirements",)
 
-from nab_provider._vendor.packaging.requirements import InvalidRequirement, Requirement
+from ._vendor.packaging.requirements import InvalidRequirement, Requirement
 
 __all__ = ["NESTED_MARKER_MESSAGE", "parse_requirement"]
 

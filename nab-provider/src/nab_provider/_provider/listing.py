@@ -24,10 +24,8 @@ __lazy_modules__ = (
 from functools import partial
 from typing import TYPE_CHECKING, Final, TypeGuard
 
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import InvalidVersion, Version
-from nab_provider.records import SdistFile, WheelFile, release_wheel_payload
-
+from .._vendor.packaging.specifiers import SpecifierSet
+from .._vendor.packaging.version import InvalidVersion, Version
 from ..errors import (
     ForeignMetadataError,
     IncompatiblePythonError,
@@ -37,6 +35,7 @@ from ..errors import (
 from ..iso8601 import fast_iso_parser, parse_iso_datetime
 from ..metadata import intern_version as _intern_version
 from ..policy import DistPolicy, MetadataPolicy
+from ..records import SdistFile, WheelFile, release_wheel_payload
 from ..tags import TagSet
 from ..value import HashableRecord
 from ..vcs_admission import UnsupportedVcsError
@@ -51,9 +50,9 @@ if TYPE_CHECKING:
     from datetime import datetime
     from typing import Literal, TypeAlias
 
-    from nab_provider._vendor.packaging.ranges import VersionRange
     from nab_resolver.types import RangeProtocol
 
+    from .._vendor.packaging.ranges import VersionRange
     from ..fetch_port import Waitable
     from ..policy import ArchiveSource, LocalSource, VcsSource
     from ..provider import DistFile, ListingFilterCache, Provider, ProviderStats

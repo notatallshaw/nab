@@ -10,15 +10,14 @@ __lazy_modules__ = (
 
 from typing import TYPE_CHECKING
 
-from nab_provider._vendor.packaging.utils import canonicalize_name
-
+from ._vendor.packaging.utils import canonicalize_name
 from .metadata import validate_specifier_versions
 from .pep508 import parse_requirement
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from nab_provider._vendor.packaging.requirements import Requirement
+    from ._vendor.packaging.requirements import Requirement
 
 __all__ = [
     "InvalidProjectRequirementError",

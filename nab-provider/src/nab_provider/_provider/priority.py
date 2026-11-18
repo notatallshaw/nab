@@ -24,9 +24,9 @@ from ..ranges import require_version_range
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from nab_provider._vendor.packaging.version import Version
     from nab_resolver.types import RangeProtocol
 
+    from .._vendor.packaging.version import Version
     from ..provider import Provider
     from ..ranges import VersionRange
 

@@ -56,7 +56,6 @@ from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
 
 import tomli
 
-from nab._version import __version__
 from nab_project import toml_io
 from nab_project.input_source import (
     InputChangedError,
@@ -146,6 +145,7 @@ from ._run import (
     require_pyproject_file,
     select_input,
 )
+from ._version import __version__
 from .config.hooks import resolve_anchor
 from .config.model import NabProjectConfig, ResolveMode, plan_targets
 from .config.values import SourceConfigError

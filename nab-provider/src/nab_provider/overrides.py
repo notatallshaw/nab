@@ -14,9 +14,8 @@ from .value import SlottedValue
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from nab_provider._vendor.packaging.ranges import VersionRange
-    from nab_provider._vendor.packaging.requirements import Requirement
-
+    from ._vendor.packaging.ranges import VersionRange
+    from ._vendor.packaging.requirements import Requirement
     from .policy import BuildPolicy, DistPolicy, MetadataPolicy
 
 __all__ = ["IndexOverride", "PackageOverride"]

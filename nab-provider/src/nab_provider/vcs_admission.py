@@ -27,10 +27,10 @@ import re
 from typing import Final
 from urllib.parse import unquote, urlsplit
 
-from nab_provider.vcs_request import FULL_GIT_SHA_RE
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .value import HashableRecord
+from .vcs_request import FULL_GIT_SHA_RE
 
 __all__ = [
     "UnsupportedVcsError",

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import builtins
 import gc
 import importlib
 import os
@@ -10,7 +9,6 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import pytest
 import tomli
@@ -29,29 +27,25 @@ assert "typing" not in sys.modules, "importing nab._entry loaded typing"
 
 
 @pytest.mark.usefixtures("restored_gc_state", "stubbed_gc_freeze")
-def test_imports_the_cli_while_the_collector_is_off(
+def test_cli_import_pauses_the_collector_and_restores_it_on_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The collector is off at the moment the ``nab.cli`` import runs.
+    class RefuseCli:
+        @staticmethod
+        def find_spec(fullname: str, *_args: object) -> None:
+            if fullname == "nab.cli":
+                assert not gc.isenabled()
+                raise ImportError(fullname)
 
-    The saving is the import running with the collector off, so the state is
-    read from inside the import: an import hoisted out of the disabled window
-    has to turn this test red.
-    """
-    enabled_at_import: list[bool] = []
-    real_import = builtins.__import__
+    # Force the real import to reach the finder even if another test loaded the CLI.
+    monkeypatch.delitem(sys.modules, "nab.cli", raising=False)
+    monkeypatch.delattr(sys.modules["nab"], "cli", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [RefuseCli(), *sys.meta_path])
 
-    def record_import(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name == "nab.cli":
-            enabled_at_import.append(gc.isenabled())
-        return real_import(name, *args, **kwargs)
+    with pytest.raises(ImportError, match=r"^nab\.cli$"):
+        console_entry()
 
-    monkeypatch.setattr("nab.cli.console_entry", lambda _resume: None)
-    monkeypatch.setattr(builtins, "__import__", record_import)
-
-    console_entry()
-
-    assert enabled_at_import == [False]
+    assert gc.isenabled()
 
 
 @pytest.mark.usefixtures("restored_gc_state")
@@ -124,26 +118,6 @@ def test_without_gc_freeze_still_reenables_the_collector(
     console_entry()
 
     assert enabled_after == [True]
-
-
-@pytest.mark.usefixtures("restored_gc_state", "stubbed_gc_freeze")
-def test_a_cli_that_cannot_be_imported_leaves_the_collector_on(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A broken install raises out of here rather than out of a paused process."""
-    real_import = builtins.__import__
-
-    def refuse_cli(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name == "nab.cli":
-            raise ImportError(name)
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", refuse_cli)
-
-    with pytest.raises(ImportError):
-        console_entry()
-
-    assert gc.isenabled()
 
 
 def test_console_script_runs_the_collector_off_entry() -> None:

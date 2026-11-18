@@ -32,19 +32,19 @@ __lazy_modules__ = (
 from collections import defaultdict
 from typing import TYPE_CHECKING, NamedTuple
 
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
+from .._vendor.packaging.ranges import VersionRange
+from .._vendor.packaging.utils import canonicalize_name
 from ..errors import MetadataError
 from .listing_diagnosis import MetadataBlock
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-    from nab_provider._vendor.packaging.version import Version
     from nab_resolver.types import RangeProtocol
 
+    from .._vendor.packaging.version import Version
     from ..provider import Provider
 
 

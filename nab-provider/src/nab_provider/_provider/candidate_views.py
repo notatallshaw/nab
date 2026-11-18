@@ -14,10 +14,9 @@ from ..tags import parse_wheel_tag_set
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from nab_provider._vendor.packaging.ranges import VersionRange
-    from nab_provider._vendor.packaging.tags import Tag
-    from nab_provider._vendor.packaging.version import Version
-
+    from .._vendor.packaging.ranges import VersionRange
+    from .._vendor.packaging.tags import Tag
+    from .._vendor.packaging.version import Version
     from ..records import DistFile
     from ..tags import TagSet
 

@@ -30,14 +30,13 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeGuard
 from urllib.parse import urlsplit
 
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import InvalidVersion, Version
-from nab_provider.records import RangeOutcome, SdistFile, WheelFile
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .._compat import override
+from .._vendor.packaging.ranges import VersionRange
+from .._vendor.packaging.specifiers import SpecifierSet
+from .._vendor.packaging.utils import canonicalize_name
+from .._vendor.packaging.version import InvalidVersion, Version
 from ..environment import UnevaluableMarkerError, classify_dependency, evaluate_prepared
 from ..errors import (
     ForeignMetadataError,
@@ -62,6 +61,7 @@ from ..project_requirements import (
     parse_requirements,
     require_string_list,
 )
+from ..records import RangeOutcome, SdistFile, WheelFile
 from ..store import sdist_artifact_key
 from ..tags import python_axis_accepts
 from ..vcs_admission import admit_vcs_url
@@ -69,9 +69,8 @@ from ..vcs_admission import admit_vcs_url
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
-    from nab_provider._vendor.packaging.markers import Marker
-    from nab_provider._vendor.packaging.requirements import Requirement
-
+    from .._vendor.packaging.markers import Marker
+    from .._vendor.packaging.requirements import Requirement
     from ..provider import DistFile, Provider
     from ..store import InMemoryIndex, WheelMetadataContext
     from ..tags import TagSet

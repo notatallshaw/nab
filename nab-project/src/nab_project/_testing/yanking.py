@@ -15,11 +15,12 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.pep508 import parse_requirement
 from nab_provider.records import WheelFile
 from nab_provider.yanking import mark_yanked
+
+from .coordinator_fake import make_coordinator
 
 if TYPE_CHECKING:
     from nab_provider.testing import FakeFetchPort
