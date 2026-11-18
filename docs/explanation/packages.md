@@ -251,8 +251,13 @@ for target_result in result.target_results:
     requirements = target_result.dependency_requirements()
 ```
 
-The map is keyed by canonical parent and dependency names. It raises for a failed target or omitted
-collection; an empty graph returns `{}`. Root requirements and user constraints are separate.
+Read `requirements[parent][dependency]` to get the declarations for that dependency. Both keys are
+canonical package names. An empty graph returns `{}`. If the target failed, the method raises its
+resolution error. If declarations were never collected, resolve with
+`include_dependency_requirements=True`. Root requirements and user constraints are separate.
+
+For a single target, `target_result.require_lock()` returns its lock or raises its resolution error.
+Use the optional `lock` attribute when collecting just the successful targets.
 
 | Record field                     | Contains                                                                |
 | -------------------------------- | ----------------------------------------------------------------------- |
