@@ -457,6 +457,7 @@ def test_result_contract_validates_optional_input_fields() -> None:
 
     for field, value in (
         ("constraints", []),
+        ("dependency_metadata", {"pkg==1": [False]}),
         ("datetime", "not-a-date"),
         ("datetime", "2025-W22-7T00:00:00Z"),
         ("datetime", "20250601T000000Z"),
@@ -889,6 +890,74 @@ def test_wheel_metadata_for_one_release_changes_the_cached_outcome(
 
     scenario["assume_universal_deps"] = {"pkg": ">=2"}
     assert not run()
+
+
+@pytest.mark.parametrize(
+    ("version", "other_version"), [("1.0", "1.1"), ("1.0+build", "1.0")]
+)
+def test_declared_dependencies_change_the_lock_and_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str, other_version: str
+) -> None:
+    module = _harness()
+    sdist = make_sdist(version, hashes=(("sha256", "a" * 64),))
+    wheel = make_wheel("2.0", package="dep", hashes=(("sha256", "b" * 64),))
+
+    def fetch(*_args: object, **_kwargs: object) -> nullcontext[FakeFetchPort]:
+        return nullcontext(
+            make_coordinator(
+                listings={"pkg": [sdist], "dep": [wheel]},
+                metadata_by_url={wheel.url + ".metadata": make_metadata("dep", "2.0")},
+                sdist_pkg_info=f"Metadata-Version: 1.1\nName: pkg\nVersion: {version}\n",
+            )
+        )
+
+    monkeypatch.setattr(module, "FetchCoordinator", fetch)
+    monkeypatch.setattr(module, "Urllib3AsyncTransport", object)
+    scenario = {**_universal_scenario("linux_x86_64"), "requirements": ["pkg"]}
+
+    def run() -> bool:
+        return module.process_scenario(
+            "case",
+            scenario,
+            "run",
+            force=False,
+            output_dir=tmp_path,
+            source=_CLEAN_SOURCE,
+        )
+
+    assert not run()
+    scenario["dependency_metadata"] = {f"Pkg=={version}": ["dep>=2"]}
+    assert run()
+    path = tmp_path / "case.json"
+    report = json.loads(path.read_text())
+    assert report["input"]["dependency_metadata"] == {f"pkg=={version}": ["dep>=2"]}
+    assert report["per_tuple"][0]["pins"] == {"pkg": version, "dep": "2.0"}
+    assert report["result"]["lock_consistent"]
+
+    scenario["dependency_metadata"] = {f"pkg=={version}": []}
+    assert run()
+    assert json.loads(path.read_text())["per_tuple"][0]["pins"] == {"pkg": version}
+    scenario["dependency_metadata"] = {f"pkg=={other_version}": []}
+    assert not run()
+
+
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        (["pkg"], TypeError),
+        ({"pkg==1": "dep"}, TypeError),
+        ({"pkg>=1": []}, ValueError),
+        ({"pkg==1.*": []}, ValueError),
+        ({"pkg==1": ["dep="]}, ValueError),
+        ({"My-Pkg==1.0": [], "my_pkg==1": []}, ValueError),
+    ],
+)
+def test_invalid_dependency_metadata_fails_preflight(
+    value: object, error: type[Exception]
+) -> None:
+    scenario = {**_universal_scenario("linux_x86_64"), "dependency_metadata": value}
+    with pytest.raises(error, match="example: .*dependency_metadata"):
+        _harness().validate_scenario("example", scenario)
 
 
 @pytest.mark.parametrize(

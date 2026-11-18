@@ -50,7 +50,13 @@ _REQUIRED_INPUT_FIELDS = frozenset(
     }
 )
 _OPTIONAL_INPUT_FIELDS = frozenset(
-    {"assume_universal_deps", "constraints", "datetime", "expect_conflict"}
+    {
+        "assume_universal_deps",
+        "constraints",
+        "datetime",
+        "dependency_metadata",
+        "expect_conflict",
+    }
 )
 _SOURCE_FIELDS = frozenset({"commit", "diff_hash", "dirty"})
 _RESOLUTION_STRATEGIES = frozenset({"highest", "lowest", "lowest-direct"})
@@ -198,6 +204,17 @@ def is_package_specifier_table(value: object) -> TypeGuard[dict[str, str]]:
     )
 
 
+def is_dependency_table(value: object) -> TypeGuard[dict[str, list[str]]]:
+    """Read a release-to-dependencies table, including releases with no dependencies."""
+    return isinstance(value, dict) and all(
+        isinstance(release, str)
+        and bool(release)
+        and isinstance(dependencies, list)
+        and all(isinstance(item, str) and bool(item) for item in dependencies)
+        for release, dependencies in value.items()
+    )
+
+
 def _valid_input(value: object, reason: object) -> bool:
     if not isinstance(value, dict):
         return False
@@ -233,6 +250,10 @@ def _valid_input(value: object, reason: object) -> bool:
         and (
             "assume_universal_deps" not in value
             or is_package_specifier_table(value["assume_universal_deps"])
+        )
+        and (
+            "dependency_metadata" not in value
+            or is_dependency_table(value["dependency_metadata"])
         )
         and ("constraints" not in value or _valid_string_list(value["constraints"]))
         and ("datetime" not in value or is_valid_datetime(value["datetime"]))

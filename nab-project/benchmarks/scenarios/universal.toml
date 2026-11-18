@@ -10,6 +10,7 @@
 #   python_order = "asc"                 # asc (default) or desc
 #   requirements = ["pkg>=1.0", ...]
 #   constraints = ["pkg<2.0", ...]
+#   dependency_metadata."pkg==1.2" = ["dep>=3"]  # dependencies declared by this release
 #   assume_universal_deps = { pkg = "==1.2" }  # reuse wheel dependencies for an sdist
 #   datetime = "2025-06-01 14:00:00"     # exclude-newer-style cap
 #   align_across_tuples = false          # disable cross-target alignment
@@ -28,6 +29,9 @@ python = ">=3.10, <3.13"
 platforms = ["linux_x86_64"]
 requirements = ["apache-airflow"]
 datetime = "2024-08-08 00:00:00"
+# These source releases predate static dependency metadata.
+dependency_metadata."unicodecsv==0.14.1" = []
+dependency_metadata."python-nvd3==0.15.0" = ["python-slugify>=1.2.5", "Jinja2>=2.8"]
 
 # ---------------------------------------------------------------------------
 # The available Numba wheels through 0.60 require NumPy below 2.1.
@@ -115,6 +119,10 @@ requirements = [
     "apache-beam<=2.49.0",
 ]
 datetime = "2024-08-08 00:00:00"
+# Runtime dependencies from the source releases on the Linux target.
+dependency_metadata."dill==0.3.1.1" = ["objgraph>=1.7.2; extra == 'graph'"]
+dependency_metadata."crcmod==1.7" = []
+dependency_metadata."docopt==0.6.2" = []
 
 # ---------------------------------------------------------------------------
 # Sourced from poetry #4924, mirosval.sk blog post on poetry slowness:
@@ -264,6 +272,8 @@ platforms = ["linux_x86_64"]
 requirements = ["apache-airflow"]
 datetime = "2024-08-08 00:00:00"
 align_across_tuples = false
+dependency_metadata."unicodecsv==0.14.1" = []
+dependency_metadata."python-nvd3==0.15.0" = ["python-slugify>=1.2.5", "Jinja2>=2.8"]
 
 # ---------------------------------------------------------------------------
 # Comparison: the legacy local 36-root workload without cross-tuple
@@ -309,6 +319,8 @@ python = ">=3.11, <3.12"
 platforms = ["linux_x86_64"]
 requirements = ["apache-airflow-providers-amazon", "numpy"]
 datetime = "2024-09-01 00:00:00"
+dependency_metadata."unicodecsv==0.14.1" = []
+dependency_metadata."python-nvd3==0.15.0" = ["python-slugify>=1.2.5", "Jinja2>=2.8"]
 
 [numpy-wide-python-diverge]
 reason = "py-minor version-floor divergence; tests matrix divergence path"

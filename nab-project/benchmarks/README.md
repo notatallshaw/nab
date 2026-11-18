@@ -124,6 +124,10 @@ If a release's wheels and source distribution have the same dependencies on ever
 `assume_universal_deps = { package = "==1.2" }` to the scenario. Nab can then read those
 dependencies from a wheel. The report records the package and version selector.
 
+For older source releases that lack static metadata, record the release's declared requirements with
+`dependency_metadata."name==1.2" = ["dep>=3"]`. Use an empty list for a release with no runtime
+dependencies. The benchmark records these declarations alongside its other inputs.
+
 Selected diagnostics are isolated under `universal-selected/` and are never treated as a full-suite
 baseline.
 

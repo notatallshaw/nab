@@ -41,6 +41,7 @@ from universal_result import (
     MANIFEST_FILENAME,
     RESULT_SCHEMA_VERSION,
     expected_conflict,
+    is_dependency_table,
     is_package_specifier_table,
     is_portable_scenario_name,
     result_is_accepted,
@@ -60,8 +61,10 @@ from nab_project.resolve import (
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.version import Version
 from nab_provider.overrides import PackageOverride
 from nab_provider.provider import ResolutionStrategy
+from nab_provider.ranges import VersionRange
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix
 from nab_resolver.errors import ResolutionTerminatedError
@@ -85,6 +88,7 @@ UNIVERSAL_SCENARIO_KEYS = frozenset(
         "assume_universal_deps",
         "constraints",
         "datetime",
+        "dependency_metadata",
         "expect_conflict",
         "platforms",
         "python",
@@ -307,6 +311,41 @@ def _metadata_overrides(
     return tuple(overrides.values())
 
 
+def _dependency_overrides(
+    scenario_name: str, value: object
+) -> tuple[PackageOverride, ...]:
+    """Use dependency declarations from a specific package release."""
+    if not is_dependency_table(value):
+        msg = f"{scenario_name}: dependency_metadata must map pins to requirement lists"
+        raise TypeError(msg)
+
+    overrides: dict[tuple[str, Version], PackageOverride] = {}
+    for pin, dependencies in value.items():
+        package, _, raw_version = pin.partition("==")
+        try:
+            name = canonicalize_name(package, validate=True)
+            version = Version(raw_version)
+            requirement = Requirement(f"{name}=={version}")
+            parsed_dependencies = tuple(map(Requirement, dependencies))
+        except ValueError as exc:
+            msg = f"{scenario_name}: invalid dependency_metadata for {pin!r}: {exc}"
+            raise ValueError(msg) from exc
+
+        key = (name, version)
+        if key in overrides:
+            msg = f"{scenario_name}: duplicate dependency_metadata for {pin!r}"
+            raise ValueError(msg)
+
+        overrides[key] = PackageOverride(
+            name=name,
+            requirement=requirement,
+            # Local builds can declare different dependencies from the public release.
+            version_range=VersionRange.singleton(version),
+            dependencies=parsed_dependencies,
+        )
+    return tuple(overrides.values())
+
+
 def validate_scenario(scenario_name: str, scenario: dict) -> ResolveInputs:
     """Validate a universal scenario and prepare its resolver inputs."""
     _validate_scenario_names([scenario_name])
@@ -360,8 +399,13 @@ def validate_scenario(scenario_name: str, scenario: dict) -> ResolveInputs:
     return ResolveInputs(
         constraints=tuple(scenario.get("constraints", ())),
         uploaded_prior_to=parse_datetime(cutoff) if cutoff else None,
-        package_overrides=_metadata_overrides(
-            scenario_name, scenario.get("assume_universal_deps", {})
+        package_overrides=(
+            *_metadata_overrides(
+                scenario_name, scenario.get("assume_universal_deps", {})
+            ),
+            *_dependency_overrides(
+                scenario_name, scenario.get("dependency_metadata", {})
+            ),
         ),
     )
 
@@ -480,10 +524,17 @@ def process_scenario(
     }
     if scenario.get("expect_conflict"):
         expected_input["expect_conflict"] = True
-    if config.package_overrides:
+    if scenario.get("assume_universal_deps"):
         expected_input["assume_universal_deps"] = {
             rule.name: str(rule.requirement.specifier)
             for rule in config.package_overrides
+            if rule.assume_universal_deps
+        }
+    if scenario.get("dependency_metadata"):
+        expected_input["dependency_metadata"] = {
+            str(rule.requirement): [str(dep) for dep in rule.dependencies]
+            for rule in config.package_overrides
+            if rule.dependencies is not None
         }
     if constraint_strings:
         expected_input["constraints"] = constraint_strings
