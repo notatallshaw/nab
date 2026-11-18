@@ -13,7 +13,6 @@ __lazy_modules__ = (
     "itertools",
     "nab_provider._provider.candidate_views",
     "nab_provider._vendor.packaging.markers",
-    "nab_provider._vendor.packaging.ranges",
     "nab_provider._vendor.packaging.specifiers",
     "nab_provider._vendor.packaging.utils",
     "nab_provider.conflict_kind",
@@ -23,6 +22,7 @@ __lazy_modules__ = (
     "nab_provider.extra_keys",
     "nab_provider.fetch_port",
     "nab_provider.metadata",
+    "nab_provider.ranges",
     "nab_provider.records",
     "nab_provider.vcs_admission",
     "nab_resolver.diagnostics",
@@ -38,8 +38,6 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, TypeVar, cast
 
 from nab_provider._vendor.packaging.markers import prepare_environment
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 from nab_resolver.types import IncompatibilityCause
@@ -53,6 +51,7 @@ from ._provider import metadata_resolver as _metadata_resolver
 from ._provider import priority as _priority
 from ._provider import sources as _sources
 from ._provider.candidate_views import CandidatePreparation, CandidateView
+from ._vendor.packaging.specifiers import SpecifierSet
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS
 from .declarations import DependencyDeclaration
 from .environment import host_environment
@@ -98,6 +97,7 @@ from .policy import (
 from .policy import (
     ResolveMode as ResolveMode,  # noqa: PLC0414  (re-export, importable from here)
 )
+from .ranges import VersionRange, narrow_over_listing, require_version_range
 from .records import DistFile, SdistFile, WheelFile
 from .value import Record, field_names
 from .vcs_admission import (
@@ -572,10 +572,6 @@ _EXTRA_KINDS = frozenset(
 )
 
 
-# Past this many exclusions the requirement reads worse than the range it states.
-_MAX_EXCLUSIONS = 3
-
-
 def _declared_ranges(
     recorded: _lookahead.DepRangeUnion,
 ) -> tuple[RangeProtocol[Version], ...]:
@@ -585,54 +581,6 @@ def _declared_ranges(
     not; a group that recorded no range falls back to its union.
     """
     return recorded.declared or (recorded.union,)
-
-
-def _requirement_over_listing(
-    constraint: VersionRange,
-    universe: Sequence[Version],
-    selected: Sequence[Version],
-) -> VersionRange | None:
-    """Return the requirement admitting exactly ``selected`` out of ``universe``.
-
-    Bounds ``selected`` on each side ``constraint`` is bounded, then excludes
-    by name every other listed version those bounds admit.  Built out of
-    specifiers, so it has a text form to render.
-
-    ``None`` when a bound carries a local segment, which an ordering specifier
-    does not accept, when the span holds more than ``_MAX_EXCLUSIONS`` versions
-    to exclude, or when excluding one by name would take a selected version
-    with it.
-    """
-    clauses: list[str] = []
-    if not VersionRange.from_bounds(None, selected[0]).is_subset(constraint):
-        clauses.append(f">={selected[0]}")
-    if not VersionRange.from_bounds(selected[-1], None).is_subset(constraint):
-        clauses.append(f"<={selected[-1]}")
-
-    try:
-        bounded = SpecifierSet(",".join(clauses)).to_range()
-    except InvalidSpecifier:
-        return None
-
-    chosen = set(selected)
-    holes: list[Version] = []
-    for version in universe:
-        if version in bounded and version not in chosen:
-            holes.append(version)
-            if len(holes) > _MAX_EXCLUSIONS:
-                return None
-
-    if not holes:
-        return bounded
-
-    clauses.extend(f"!={hole}" for hole in holes)
-    stated = SpecifierSet(",".join(clauses)).to_range()
-
-    # ``!=1.0`` also excludes ``1.0+cu118``: PEP 440 ignores a candidate's
-    # local label when the specifier carries none.
-    if any(version not in stated for version in selected):
-        return None
-    return stated
 
 
 class Provider:
@@ -949,7 +897,7 @@ class Provider:
 
         # Nested matching cache: prioritize is called many times per resolve
         # so the per-call (normalized, range) tuple alloc is worth avoiding.
-        self.matching_cache: dict[str, dict[RangeProtocol[Version], int]] = {}
+        self.matching_cache: dict[str, dict[VersionRange, int]] = {}
         # Stable scans retain fatal conflicts until deterministic selection.
         self.priority_override_errors: dict[str, str] = {}
 
@@ -989,7 +937,7 @@ class Provider:
         # priority) per package string.  Range identity is sound because
         # solution.get returns the same object until it changes.
         self.priority_cache: dict[
-            str, tuple[RangeProtocol[Version], str, int, tuple[int, int, bool]]
+            str, tuple[VersionRange, str, int, tuple[int, int, bool]]
         ] = {}
 
         # What the speculative prefetch has already seen: the names it
@@ -1890,7 +1838,7 @@ class Provider:
         A preference another resolve decided wins when it is in range and
         usable here; otherwise the strategy picks.
         """
-        assert isinstance(version_range, VersionRange)
+        version_range = require_version_range(package, version_range)
         self.stats.choose_version_calls += 1
 
         base, extra, normalized = self.split_and_normalize(package)
@@ -3157,28 +3105,17 @@ class Provider:
 
         Render-time only and cache-only: the ROOT sentinel (a non-str
         package) and packages whose listing is not cached return
-        ``constraint`` unchanged, and nothing is ever fetched.
+        ``constraint`` unchanged, as do other range backends. Nothing is fetched.
         """
-        if not isinstance(package, str):
+        if not isinstance(package, str) or not isinstance(constraint, VersionRange):
             return constraint
         _, _, normalized = self.split_and_normalize(package)
         version_list = self.versions_cache.get(normalized)
         if version_list is None:
             return constraint
-        assert isinstance(constraint, VersionRange)
 
         universe = self._ascending_versions(normalized, version_list)
-        selected = [version for version in universe if version in constraint]
-        if not selected:
-            return constraint
-        if len(selected) == len(universe):
-            return VersionRange.full(admit_arbitrary=False)
-
-        spelled = _requirement_over_listing(constraint, universe, selected)
-        if spelled is not None:
-            return spelled
-        has_spelling = constraint.to_specifier_set() is not None
-        return constraint if has_spelling else constraint.snap_bounds(universe)
+        return narrow_over_listing(constraint, universe)
 
     def format_range(self, constraint: RangeProtocol[Version]) -> str:
         """Render ``constraint`` for a failure report.
@@ -3191,9 +3128,11 @@ class Provider:
         An unconstrained range renders as nothing, leaving the package name to
         carry the line, and the empty range gets a phrase rather than the
         ``<0`` from a specifier set. A range without a specifier-set
-        form, such as a disjunction, keeps the range's own rendering.
+        form, such as a disjunction, keeps the range's own rendering. Other
+        backends also supply their own rendering.
         """
-        assert isinstance(constraint, VersionRange)
+        if not isinstance(constraint, VersionRange):
+            return str(constraint)
         if constraint.is_empty:
             return "no version"
         if (~constraint).is_empty:

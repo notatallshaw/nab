@@ -17,6 +17,9 @@ Use `nab-provider` to embed nab's resolution in a host that already owns its net
 keeping [`nab-index`](https://pypi.org/project/nab-index/) out of the import graph. Most users want
 [`nab`](https://pypi.org/project/nab/) instead.
 
+Use `nab_provider.ranges.VersionRange` for root constraints and as the resolver's `range_type`. Pass
+`root_version="0"` and `format_range=provider.format_range` when constructing the resolver.
+
 The API is experimental. Pin an exact version when embedding it.
 
 ## Wheel tags

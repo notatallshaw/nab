@@ -16,11 +16,11 @@ __lazy_modules__ = (
     "itertools",
     "nab_index.cache",
     "nab_project.lockfile",
-    "nab_provider._vendor.packaging.ranges",
     "nab_provider._vendor.packaging.utils",
     "nab_provider.errors",
     "nab_provider.policy",
     "nab_provider.provider",
+    "nab_provider.ranges",
     "nab_provider.resolver_inputs",
     "nab_provider.target",
     "nab_provider.yanked_resolution",
@@ -37,7 +37,6 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypedDict
 
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
-from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.errors import (
     MetadataError,
@@ -46,6 +45,7 @@ from nab_provider.errors import (
 )
 from nab_provider.policy import BuildPolicy, ResolutionStrategy
 from nab_provider.provider import ListingFilterCache, Provider, join_extra, split_extra
+from nab_provider.ranges import VersionRange
 from nab_provider.resolver_inputs import ProxyConstraints, build_resolver_inputs
 from nab_provider.target import micro_boundary_points, slices_from_points
 from nab_provider.value import FACTORY, FactoryDefault, Record, factory_value, replace

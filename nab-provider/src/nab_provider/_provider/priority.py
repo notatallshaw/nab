@@ -10,16 +10,15 @@ Retained fatal override conflicts get tier -1.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_provider._vendor.packaging.ranges",
     "nab_provider.errors",
+    "nab_provider.ranges",
 )
 
 from typing import TYPE_CHECKING
 
-from nab_provider._vendor.packaging.ranges import VersionRange
-
 from ..errors import OverrideConflictError
 from ..priority import CULPRIT_DEMOTE_THRESHOLD, compute_tier
+from ..ranges import require_version_range
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -28,6 +27,7 @@ if TYPE_CHECKING:
     from nab_resolver.types import RangeProtocol
 
     from ..provider import Provider
+    from ..ranges import VersionRange
 
 
 TIER_FATAL = -1
@@ -40,7 +40,7 @@ _NO_LISTING_PRIOR = 1000
 def compute_matching(
     provider: Provider,
     normalized: str,
-    version_range: RangeProtocol[Version],
+    version_range: VersionRange,
 ) -> int:
     """Count cached artifact records matching ``version_range`` for ``normalized``.
 
@@ -82,11 +82,9 @@ def compute_matching(
                 return 0
             provider.versions_cache[normalized] = versions
             provider.stats.listings_fetched += 1
-            assert isinstance(version_range, VersionRange)
             provider.prefetch_in_range(normalized, versions, version_range)
 
     if normalized in provider.versions_cache:
-        assert isinstance(version_range, VersionRange)
         versions = provider.versions_cache[normalized]
 
         matching = provider.count_matching_records(normalized, version_range, versions)
@@ -156,7 +154,8 @@ def prioritize(
         culprit_counts,
         force_backtracked=force_backtracked,
     )
-    matching = compute_matching(provider, normalized, version_range)
+    native_range = require_version_range(package, version_range)
+    matching = compute_matching(provider, normalized, native_range)
     if normalized in provider.priority_override_errors:
         # Fatal errors precede every ordinary decision, with no base/extra bias.
         return (TIER_FATAL, 0, False)
@@ -166,7 +165,7 @@ def prioritize(
     # side effect (speculative prefetch) lives in the cache-miss branch.
     if cacheable and normalized in provider.versions_cache:
         provider.priority_cache[package] = (
-            version_range,
+            native_range,
             normalized,
             affected_count,
             priority,

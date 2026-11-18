@@ -4,10 +4,10 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "nab_provider._provider.listing_diagnosis",
-    "nab_provider._vendor.packaging.ranges",
     "nab_provider._vendor.packaging.utils",
     "nab_provider.diagnostics",
     "nab_provider.extra_keys",
+    "nab_provider.ranges",
     "nab_provider.yank_candidates",
     "nab_resolver.errors",
     "nab_resolver.ranges",
@@ -28,11 +28,11 @@ from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 from ._compat import override
 from ._provider.listing_diagnosis import MetadataBlock, metadata_diagnostic
-from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.utils import canonicalize_name
 from .diagnostics import ResolutionMessage
 from .extra_keys import split_extra
 from .priority import compute_tier
+from .ranges import VersionRange, require_version_range
 from .value import HashableRecord
 from .yank_candidates import Candidate, YankCandidates, add_range, is_pin, merge_stats
 from .yank_preference import (
@@ -132,8 +132,8 @@ class YankProxyProvider(BaseProvider[Package, int]):
             catalogue = YankCandidates(provider, factory, preferences=preferences)
             root_ranges: dict[str, VersionRange] = {}
             for root in roots:
-                assert isinstance(root.constraint, VersionRange)
-                add_range(root_ranges, root.package, root.constraint)
+                constraint = require_version_range(root.package, root.constraint)
+                add_range(root_ranges, root.package, constraint)
             pins = tuple(req for req in requirements if is_pin(req))
             preference = YankPreference(
                 catalogue,

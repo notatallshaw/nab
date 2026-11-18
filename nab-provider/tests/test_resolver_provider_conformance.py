@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nab_provider._vendor.packaging.ranges import VersionRange
+import pytest
+
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import Provider
+from nab_provider.ranges import VersionRange
 from nab_provider.testing import make_coordinator, make_metadata, make_wheel
+from nab_resolver.ranges import Range
+from nab_resolver.resolver import Resolver
 from nab_resolver.testing import ProviderScenario, check_provider_scenarios
 
 if TYPE_CHECKING:
@@ -58,3 +62,26 @@ def test_wheel_provider_satisfies_generic_contracts() -> None:
         versions=_VERSIONS,
         range_type=VersionRange,
     )
+
+
+def test_generic_range_reports_the_required_python_backend() -> None:
+    provider = Provider(make_coordinator([make_wheel()], auto_metadata=True))
+    foreign: Range[Version] = Range.full()
+    with pytest.raises(TypeError) as caught:
+        Resolver(provider).resolve({"pkg": foreign})
+    message = str(caught.value)
+    assert "'pkg'" in message
+    assert "nab_resolver.ranges.Range" in message
+    assert "nab_provider.ranges.VersionRange" in message
+    assert "range_type=VersionRange" in message
+
+    resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+    assert resolver.resolve({"pkg": VersionRange.full()}) == {"pkg": Version("1.0")}
+
+
+def test_foreign_display_range_keeps_its_own_rendering() -> None:
+    provider = Provider(make_coordinator([make_wheel()], auto_metadata=True))
+    provider.fetch_versions("pkg")
+    foreign = Range.singleton(Version("2"))
+    assert provider.narrow_for_display("pkg", foreign) is foreign
+    assert provider.format_range(foreign) == str(foreign)

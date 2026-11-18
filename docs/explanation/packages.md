@@ -209,7 +209,7 @@ The CLI selects the policy and reports whether the saved lock was reused.
 from nab_provider.provider import Provider
 from nab_provider.records import WheelFile
 from nab_provider.testing import make_coordinator
-from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider.ranges import VersionRange
 from nab_resolver.resolver import Resolver
 
 
@@ -232,7 +232,12 @@ port = make_coordinator(
     },
 )
 provider = Provider(port)
-resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+resolver = Resolver(
+    provider,
+    range_type=VersionRange,
+    root_version="0",
+    format_range=provider.format_range,
+)
 print(resolver.resolve({"app": VersionRange.full()}))
 ```
 
