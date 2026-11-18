@@ -18,19 +18,15 @@ is a worked example in the docs:
 
 The following import paths are supported and will remain available until a major version change.
 
-```text
-nab_resolver.diagnostics  DiagnosticMessage, Suggestion, error_message, suggestion_lines
-nab_resolver.errors       ResolutionError, ResolutionInvariantError, ResolutionLimitError,
-                          ResolutionStalledError, ResolutionTerminatedError
-nab_resolver.ranges       IntegerRangeMembership, Range
-nab_resolver.resolver     BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,
-                          ResolverObserver, ResolverProvider, Solution
-nab_resolver.root         ROOT
-nab_resolver.testing      ProviderConformanceError, ProviderScenario, check_provider,
-                          check_provider_scenarios
-nab_resolver.types        Incompatibility, IncompatibilityCause, RangeProtocol,
-                          RootRequirement, Term
-```
+| Module                     | Supported names                                                                                                              |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `nab_resolver.resolver`    | `Resolver`, `ResolverProvider`, `BaseProvider`, `ResolverObserver`, `Solution`, `DEFAULT_MAX_ITERATIONS`                     |
+| `nab_resolver.root`        | `ROOT`                                                                                                                       |
+| `nab_resolver.ranges`      | `Range`, `IntegerRangeMembership`                                                                                            |
+| `nab_resolver.types`       | `RootRequirement`, `Term`, `Incompatibility`, `IncompatibilityCause`, `RangeProtocol`                                        |
+| `nab_resolver.errors`      | `ResolutionError`, `ResolutionTerminatedError`, `ResolutionLimitError`, `ResolutionInvariantError`, `ResolutionStalledError` |
+| `nab_resolver.diagnostics` | `DiagnosticMessage`, `Suggestion`, `error_message`, `suggestion_lines`                                                       |
+| `nab_resolver.testing`     | `ProviderScenario`, `ProviderConformanceError`, `check_provider`, `check_provider_scenarios`                                 |
 
 Import the names you need from their modules. Importing `nab_resolver` alone loads no submodules.
 Other module paths are internal and may change in any release.

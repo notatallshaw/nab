@@ -218,12 +218,17 @@ final result and diagnostics.
 
 ## The supported API
 
-```{include} ../../nab-resolver/README.md
----
-start-after: '## The public API'
-end-before: '## Checking preferred versions'
----
-```
+Import these names from their modules. The paths will remain available until a major version change.
+
+| Module                     | Supported names                                                                                                              |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `nab_resolver.resolver`    | `Resolver`, `ResolverProvider`, `BaseProvider`, `ResolverObserver`, `Solution`, `DEFAULT_MAX_ITERATIONS`                     |
+| `nab_resolver.root`        | `ROOT`                                                                                                                       |
+| `nab_resolver.ranges`      | `Range`, `IntegerRangeMembership`                                                                                            |
+| `nab_resolver.types`       | `RootRequirement`, `Term`, `Incompatibility`, `IncompatibilityCause`, `RangeProtocol`                                        |
+| `nab_resolver.errors`      | `ResolutionError`, `ResolutionTerminatedError`, `ResolutionLimitError`, `ResolutionInvariantError`, `ResolutionStalledError` |
+| `nab_resolver.diagnostics` | `DiagnosticMessage`, `Suggestion`, `error_message`, `suggestion_lines`                                                       |
+| `nab_resolver.testing`     | `ProviderScenario`, `ProviderConformanceError`, `check_provider`, `check_provider_scenarios`                                 |
 
 ## Checking a provider
 
