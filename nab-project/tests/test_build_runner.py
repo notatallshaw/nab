@@ -77,7 +77,7 @@ from nab_project.lockfile import (
 )
 from nab_project.resolve import ResolveResult, TargetResult, resolve_for_targets
 from nab_provider._provider.metadata_resolver import pick_dist
-from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.requirements import InvalidRequirement, Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.overrides import IndexOverride, PackageOverride
@@ -1288,20 +1288,22 @@ class TestParseMetadata:
         with pytest.raises(BuildBackendError, match="invalid Requires-Dist"):
             _parse_metadata(path)
 
-    def test_over_nested_requires_dist_marker_raises(
-        self, tmp_path: Path, over_nested_marker: str
-    ) -> None:
-        """A marker the parser cannot recurse through is malformed METADATA."""
-        from nab_project._build.runner import _parse_metadata
-
+    def test_requires_dist_parser_recursion_error(self, tmp_path: Path) -> None:
         path = tmp_path / "METADATA"
         path.write_text(
-            "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
-            f"Requires-Dist: click ; {over_nested_marker}\n",
+            "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\nRequires-Dist: click>=8\n",
             encoding="utf-8",
         )
-        with pytest.raises(BuildBackendError, match="invalid Requires-Dist"):
-            _parse_metadata(path)
+
+        failure = RecursionError()
+        with (
+            patch("nab_provider.pep508.Requirement", side_effect=failure),
+            pytest.raises(BuildBackendError, match="invalid Requires-Dist") as caught,
+        ):
+            runner_mod._parse_metadata(path)
+
+        assert isinstance(caught.value.__cause__, InvalidRequirement)
+        assert caught.value.__cause__.__cause__ is failure
 
     @requires_int_limit
     def test_oversized_requires_python_raises(self, tmp_path: Path) -> None:
