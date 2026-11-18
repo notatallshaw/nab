@@ -102,6 +102,29 @@ def render(diagnostic: Diagnostic) -> str:
     return "\n".join(diagnostic.lines(verbose=True))
 
 
+@pytest.mark.parametrize("package", ["pkg", "pkg[feature]"])
+def test_absent_package_remembers_which_index_was_asked(package: str) -> None:
+    port = make_coordinator(listings={"pkg": []})
+    port.index.store_listing_index("pkg", "internal", pinned=True)
+    first = Provider(port)
+    allowed = SpecifierSet("").to_range()
+    assert first.choose_version(package, allowed) is None
+
+    port.index.store_listing_index("pkg", "public", pinned=False)
+    second = Provider(port)
+    assert second.choose_version(package, allowed) is None
+
+    old = first.get_no_versions_reason(package)
+    current = second.get_no_versions_reason(package)
+    assert old is not None
+    assert current is not None
+    assert (
+        old.short
+        == "not found on index 'internal', the only index this package is routed to"
+    )
+    assert current.short == "package not found on any configured index"
+
+
 def diagnostic_for(
     files: Sequence[WheelFile | SdistFile], *, spec: str = "", **kwargs: object
 ) -> Diagnostic:

@@ -2421,13 +2421,9 @@ class Provider:
         )
 
     def record_extra_base_empty(self, package: str) -> None:
-        """Record that ``package``'s base has no version to offer at all.
-
-        Which listing-level situation the base is in is left to the render.
-        This runs during the resolve, where an ask that finds nothing is
-        ordinary backtracking rather than a failure.
-        """
-        self._no_versions_reasons[package] = _diagnosis.EXTRA_BASE_EMPTY
+        """Keep the base listing's reason when an extras proxy has no candidates."""
+        _, _, normalized = self.split_and_normalize(package)
+        self._no_versions_reasons[package] = self._empty_listing_marker(normalized)
 
     def _empty_listing_marker(self, normalized: str) -> _diagnosis.NoVersionsReason:
         """Classify a package the filter left with nothing, without walking it.
@@ -2473,8 +2469,9 @@ class Provider:
         A pin routes the ask to one index, so missing there is not missing
         from the configured set.
         """
-        if self.coordinator.index.is_pinned_listing(normalized):
-            return _diagnosis.PINNED_ABSENT
+        index_name = self.coordinator.index.pinned_listing_index(normalized)
+        if index_name is not None:
+            return _diagnosis.PinnedIndexMiss(index_name)
         return _diagnosis.ABSENT
 
     def _capture_lookahead_blockers(
@@ -2676,7 +2673,6 @@ class Provider:
             in (
                 _diagnosis.ReasonKind.NO_MATCH,
                 _diagnosis.ReasonKind.FILTERED_EMPTY,
-                _diagnosis.ReasonKind.EXTRA_BASE_EMPTY,
             )
         ):
             versions = self.versions_cache.get(normalized)
@@ -2710,38 +2706,11 @@ class Provider:
             return _diagnosis.blockers_diagnostic(
                 self, normalized, recorded.blockers, recorded.metadata
             )
-        if recorded.kind == _diagnosis.ReasonKind.PINNED_ABSENT:
-            return self._render_pinned_absent_reason(package)
-        if recorded.kind == _diagnosis.ReasonKind.EXTRA_BASE_EMPTY:
-            return self._render_extra_base_reason(package)
+        if isinstance(recorded, _diagnosis.PinnedIndexMiss):
+            return _diagnosis.pinned_index_diagnostic(recorded.index_name)
         if recorded.kind in _EXTRA_KINDS:
             return self._render_extra_reason(package, recorded)
         return self._render_listing_reason(package, recorded)
-
-    def _render_pinned_absent_reason(self, package: str) -> Diagnostic:
-        """Render a package routed to an index that does not carry it.
-
-        The name is read back from the store, which recorded it in the call
-        that marked the pin, so the marker carries nothing and the record
-        path stays allocation-free.
-        """
-        _, _, normalized = self.split_and_normalize(package)
-        index_name = self.serving_index(normalized)
-        assert index_name is not None
-        return _diagnosis.pinned_index_diagnostic(index_name)
-
-    def _render_extra_base_reason(self, package: str) -> Diagnostic:
-        """Render an extras proxy whose base package ran out of versions.
-
-        The extra plays no part: nothing read a ``Provides-Extra`` before
-        the base came back empty.  So the entry is the base package's own,
-        remedy included, since ``packages."foo"`` is the entry a user edits
-        to admit files for ``foo[bar]``.
-        """
-        _, _, normalized = self.split_and_normalize(package)
-        return self._render_no_versions_reason(
-            package, self._empty_listing_marker(normalized)
-        )
 
     def _render_extra_reason(
         self, package: str, recorded: _diagnosis.NoVersionsReason

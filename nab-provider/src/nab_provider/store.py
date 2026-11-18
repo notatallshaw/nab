@@ -94,10 +94,8 @@ class InMemoryIndex:
 
         self._listings: dict[str, list[WheelFile | SdistFile]] = {}
         self._listing_errors: dict[str, BaseException] = {}
-        self._listing_indexes: dict[str, str] = {}
-        # Packages a routing override sent to one index, which left the
-        # other configured indexes unasked.
-        self._pinned_listings: set[str] = set()
+        # Publish the index name and whether the route was pinned together.
+        self._listing_indexes: dict[str, tuple[str, bool]] = {}
         # Packages whose empty listing stands for an index skipped offline.
         self._offline_listing_misses: set[str] = set()
         # Packages whose empty listing stands for a page of formats nab cannot read.
@@ -282,20 +280,23 @@ class InMemoryIndex:
         chose, which left the other configured indexes unasked.
         """
         with self._lock:
-            if self._listing_indexes.get(package) != index_name:
+            if self.get_listing_index(package) != index_name:
                 self._consistent_wheel_metadata.pop(package, None)
                 self._consistent_metadata_contexts.pop(package, None)
-            self._listing_indexes[package] = index_name
-            if pinned:
-                self._pinned_listings.add(package)
+            self._listing_indexes[package] = (index_name, pinned)
 
     def get_listing_index(self, package: str) -> str | None:
-        """Return the configured index name that served ``package``, or ``None``."""
-        return self._listing_indexes.get(package)
+        """Return the configured index name that served ``package``."""
+        route = self._listing_indexes.get(package)
+        return route[0] if route is not None else None
 
-    def is_pinned_listing(self, package: str) -> bool:
-        """Whether a routing override kept other indexes from serving ``package``."""
-        return package in self._pinned_listings
+    def pinned_listing_index(self, package: str) -> str | None:
+        """Return the index name when a routing override excluded the other indexes."""
+        route = self._listing_indexes.get(package)
+        if route is None:
+            return None
+        name, pinned = route
+        return name if pinned else None
 
     def _read_metadata(
         self, package: str, version: str, metadata_url: str | None

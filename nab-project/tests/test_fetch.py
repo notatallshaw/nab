@@ -592,8 +592,15 @@ class TestInMemoryIndex:
         """
         idx = InMemoryIndex()
         assert idx.get_listing_index("foo") is None
+        assert idx.pinned_listing_index("foo") is None
+
+        idx.store_listing_index("foo", "primary", pinned=True)
+        assert idx.get_listing_index("foo") == "primary"
+        assert idx.pinned_listing_index("foo") == "primary"
+
         idx.store_listing_index("foo", "primary")
         assert idx.get_listing_index("foo") == "primary"
+        assert idx.pinned_listing_index("foo") is None
 
 
 LISTING_JSON = {

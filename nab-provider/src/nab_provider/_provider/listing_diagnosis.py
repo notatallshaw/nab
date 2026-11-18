@@ -84,7 +84,6 @@ if TYPE_CHECKING:
         "extra-undeclared",
         "extra-metadata",
         "extra-narrowed",
-        "extra-base-empty",
         "no-match",
     ]
     Blocked: TypeAlias = Literal["decided", "held", "root"]
@@ -160,7 +159,6 @@ class ReasonKind:
     EXTRA_UNDECLARED: Final = "extra-undeclared"
     EXTRA_METADATA: Final = "extra-metadata"
     EXTRA_NARROWED: Final = "extra-narrowed"
-    EXTRA_BASE_EMPTY: Final = "extra-base-empty"
     NO_MATCH: Final = "no-match"
 
 
@@ -414,6 +412,16 @@ class NoVersionsReason:
         return self.kind == ReasonKind.NO_MATCH
 
 
+class PinnedIndexMiss(NoVersionsReason):
+    """The only index queried for a missing package."""
+
+    __slots__ = ("index_name",)
+
+    def __init__(self, index_name: str) -> None:
+        super().__init__(ReasonKind.PINNED_ABSENT)
+        self.index_name = index_name
+
+
 # The situations that carry nothing beyond their kind, built once so the
 # record path allocates nothing for them.
 OFFLINE_MISS = NoVersionsReason(ReasonKind.OFFLINE_MISS)
@@ -422,9 +430,7 @@ UNREACHABLE_ONLY = NoVersionsReason(ReasonKind.UNREACHABLE_ONLY)
 NONE_USABLE = NoVersionsReason(ReasonKind.NONE_USABLE)
 YANKED_ONLY = NoVersionsReason(ReasonKind.YANKED_ONLY)
 ABSENT = NoVersionsReason(ReasonKind.ABSENT)
-PINNED_ABSENT = NoVersionsReason(ReasonKind.PINNED_ABSENT)
 FILTERED_EMPTY = NoVersionsReason(ReasonKind.FILTERED_EMPTY)
-EXTRA_BASE_EMPTY = NoVersionsReason(ReasonKind.EXTRA_BASE_EMPTY)
 
 
 NO_MATCH = Diagnostic("no version matches the requirement")
