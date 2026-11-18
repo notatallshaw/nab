@@ -154,14 +154,10 @@ def encode(
 
 
 def decode(blob: bytes, policy: CachePolicy) -> ParsedListing | None:
-    """Decode a cache blob back to a parsed listing, or ``None`` to force a miss.
+    """Restore records when the build, response digest and page URL match.
 
-    Returns ``None`` (treat as a cache miss and rebuild from the raw body) when
-    the blob does not decode, is the wrong shape, was written by a different
-    build (``format`` / ``codec`` / ``key_scheme``), or is not bound to
-    ``policy``'s body and page URL.  Otherwise rehydrates the records,
-    re-interning ``requires_python`` and hash-algorithm names so string identity
-    matches a fresh parse.
+    Return ``None`` for a stale or malformed entry so the caller can rebuild
+    it from the cached Simple API response.
     """
     try:
         loaded = decode_json(blob)
@@ -193,16 +189,11 @@ def decode(blob: bytes, policy: CachePolicy) -> ParsedListing | None:
 
 
 def corruption_reason(blob: bytes) -> str | None:
-    """Return a reason if ``blob`` is structurally corrupt, else ``None``.
+    """Explain a malformed cache entry, or return ``None`` when it is valid.
 
-    Distinguishes genuine corruption (garbage or truncated bytes, or a
-    same-build blob whose rows are the wrong shape) from a benign miss, where
-    the header names a different build or binds a different body. The read path
-    warns only on the former. Every check past the build cells runs only once
-    the header names this exact build, since a foreign build may have written a
-    shape this one never did; checking earlier would misreport version skew as
-    corruption. This second pass decides whether to emit that warning;
-    :func:`decode` returns ``None`` for every miss reason alike.
+    A different build may have written different fields after its build ID.
+    Check those fields and the rows only for this build. The cache reader
+    separately compares the digest and page URL with its cache policy.
     """
     try:
         loaded = decode_json(blob)
@@ -261,7 +252,7 @@ def parse_body_digest(value: JsonValue) -> str | None:
     return None
 
 
-def _decode_zip_sdists(value: object) -> frozenset[str]:
+def _decode_zip_sdists(value: JsonValue) -> frozenset[str]:
     """Rehydrate the header cell naming the releases served as a ``.zip`` sdist."""
     if not isinstance(value, list):
         raise _InvalidRecordError
@@ -269,7 +260,7 @@ def _decode_zip_sdists(value: object) -> frozenset[str]:
 
 
 def _restore_yanks(
-    files: list[WheelFile | SdistFile], value: object
+    files: list[WheelFile | SdistFile], value: JsonValue
 ) -> list[WheelFile | SdistFile]:
     """Reattach sparse withdrawal metadata after validating its row references."""
     if not isinstance(value, dict):
@@ -282,7 +273,7 @@ def _restore_yanks(
     )
 
     for key, reason in value.items():
-        if not isinstance(key, str) or not key.isascii() or not key.isdigit():
+        if not key.isascii() or not key.isdigit():
             raise _InvalidRecordError
         index = int(key)
         if str(index) != key or index >= len(files):
@@ -295,7 +286,7 @@ def _restore_yanks(
     )
 
 
-def _decode_rows(rows: object) -> list[WheelFile | SdistFile]:
+def _decode_rows(rows: JsonValue) -> list[WheelFile | SdistFile]:
     """Restore the wheel and sdist rows in listing order."""
     if not isinstance(rows, list):
         raise _InvalidRecordError
@@ -320,7 +311,7 @@ def _decode_rows(rows: object) -> list[WheelFile | SdistFile]:
     return decoded
 
 
-def _decode_wheel(row: Sequence[object], previous_version: str | None) -> WheelFile:
+def _decode_wheel(row: Sequence[JsonValue], previous_version: str | None) -> WheelFile:
     """Rehydrate a wheel row, whose ``null`` version means ``previous_version``.
 
     A ``null`` on the first row leaves the version ``None``, which the field
@@ -354,7 +345,7 @@ def _decode_wheel(row: Sequence[object], previous_version: str | None) -> WheelF
         or type(has_metadata) is not bool
         or (requires_python is not None and type(requires_python) is not str)
         or (upload_time is not None and type(upload_time) is not str)
-        or (size is not None and type(size) is not int)
+        or (size is not None and (type(size) is not int or size < 0))
     ):
         raise _InvalidRecordError
 
@@ -373,7 +364,7 @@ def _decode_wheel(row: Sequence[object], previous_version: str | None) -> WheelF
     )
 
 
-def _decode_sdist(row: Sequence[object], previous_version: str | None) -> SdistFile:
+def _decode_sdist(row: Sequence[JsonValue], previous_version: str | None) -> SdistFile:
     """Rehydrate a source-distribution row; see :func:`_decode_wheel`."""
     _, filename, url, version, requires_python, upload_time, hashes, size = row
 
@@ -386,7 +377,7 @@ def _decode_sdist(row: Sequence[object], previous_version: str | None) -> SdistF
         or type(version) is not str
         or (requires_python is not None and type(requires_python) is not str)
         or (upload_time is not None and type(upload_time) is not str)
-        or (size is not None and type(size) is not int)
+        or (size is not None and (type(size) is not int or size < 0))
     ):
         raise _InvalidRecordError
 
@@ -403,23 +394,23 @@ def _decode_sdist(row: Sequence[object], previous_version: str | None) -> SdistF
 
 # JSON hands back only its own types, so an exact type check is enough to keep a
 # hand-written or corrupt blob from reaching a record's fields.
-def _text(value: object) -> str:
+def _text(value: JsonValue) -> str:
     if type(value) is not str:
         raise _InvalidRecordError
     return value
 
 
-def _pair(value: object) -> tuple[str, str]:
+def _pair(value: JsonValue) -> tuple[str, str]:
     if not isinstance(value, list) or len(value) != _PAIR_LEN:
         raise _InvalidRecordError
     return (_text(value[0]), _text(value[1]))
 
 
-def _pair_or_none(value: object) -> tuple[str, str] | None:
+def _pair_or_none(value: JsonValue) -> tuple[str, str] | None:
     return None if value is None else _pair(value)
 
 
-def _hashes(value: object) -> tuple[tuple[str, str], ...]:
+def _hashes(value: JsonValue) -> tuple[tuple[str, str], ...]:
     """Return the hash pairs with algorithm names interned."""
     if not isinstance(value, list):
         raise _InvalidRecordError

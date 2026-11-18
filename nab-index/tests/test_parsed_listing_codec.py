@@ -343,6 +343,7 @@ def test_unknown_tag_on_a_well_formed_row_is_miss(tag: object) -> None:
         (_W_HAS_METADATA, 1),
         (_W_UPLOAD_TIME, 20230101),
         (_W_SIZE, "1024"),
+        (_W_SIZE, -1),
         # ... nor a bool as a count.
         (_W_SIZE, True),
         (_W_HASHES, True),
@@ -353,8 +354,7 @@ def test_unknown_tag_on_a_well_formed_row_is_miss(tag: object) -> None:
         (_W_METADATA_HASH, ["sha256", "dead", "extra"]),
     ],
 )
-def test_wrong_field_type_is_miss(index: int, value: object) -> None:
-    """A field JSON allows but the record does not never reaches a record."""
+def test_invalid_wheel_field_is_miss(index: int, value: object) -> None:
     assert decode(_wheel_row_with(index, value), _policy()) is None
 
 
@@ -368,13 +368,13 @@ def test_wrong_field_type_is_miss(index: int, value: object) -> None:
         (_S_REQUIRES_PYTHON, 3),
         (_S_UPLOAD_TIME, 20230101),
         (_S_SIZE, "10"),
+        (_S_SIZE, -1),
         # bool is a subclass of int here too.
         (_S_SIZE, True),
         (_S_SIZE, 1.5),
     ],
 )
-def test_wrong_sdist_field_type_is_miss(index: int, value: object) -> None:
-    """An sdist row is checked on its own fields, not through the wheel's."""
+def test_invalid_sdist_field_is_miss(index: int, value: object) -> None:
     assert decode(_sdist_row_with(index, value), _policy()) is None
 
 
