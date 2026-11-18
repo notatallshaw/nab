@@ -3290,9 +3290,14 @@ class TestBuildResolverInputs:
         )
         assert [root.package for root in inputs.roots] == ["foo", "foo[dev]", "foo"]
 
-    def test_root_extra_marker_warns(self, caplog: pytest.LogCaptureFixture) -> None:
-        """A root requirement gated on ``extra ==`` is dropped with a warning."""
-        reqs = [Requirement('foo ; extra == "test"')]
+    @pytest.mark.parametrize(
+        "marker", ['extra == "test"', '"test" == extra', '"test" == "extra"']
+    )
+    def test_root_extra_marker_warns(
+        self, marker: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Warn about a dropped root requirement with the extra on either side."""
+        reqs = [Requirement(f"foo; {marker}")]
         with caplog.at_level("WARNING", logger="nab_provider.resolver_inputs"):
             resolver_requirements = build_resolver_inputs(
                 reqs,
@@ -3362,10 +3367,26 @@ class TestBuildResolverInputs:
         assert "foo" in resolver_requirements
         assert not caplog.records
 
-    def test_env_gated_drop_is_silent(self, caplog: pytest.LogCaptureFixture) -> None:
+    @pytest.mark.parametrize(
+        "marker",
+        [
+            'python_version < "3.0"',
+            'sys_platform == "extras"',
+            'sys_platform == "dependency_groups"',
+            'sys_platform == "extra == debug"',
+            '"extras" == sys_platform',
+        ],
+    )
+    def test_env_gated_drop_is_silent(
+        self, marker: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """A requirement dropped by a plain env marker stays silent."""
-        reqs = [Requirement('foo ; python_version < "3.0"')]
-        env = {"python_version": "3.11", "python_full_version": "3.11.2"}
+        reqs = [Requirement(f"foo; {marker}")]
+        env = {
+            "python_version": "3.11",
+            "python_full_version": "3.11.2",
+            "sys_platform": "linux",
+        }
         with caplog.at_level("WARNING", logger="nab_provider.resolver_inputs"):
             resolver_requirements = build_resolver_inputs(
                 reqs,
@@ -3417,7 +3438,8 @@ class TestBuildResolverInputs:
 
         (record,) = caplog.records
         assert (
-            "folded into the requirements rather than the environment" in record.message
+            "Selecting an extra or group adds its requirements directly"
+            in record.message
         )
         assert "no extra or dependency group is active" not in record.message
 

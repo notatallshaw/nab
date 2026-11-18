@@ -30,13 +30,10 @@ from nab_resolver.types import RootRequirement
 from ._compat import override
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.utils import canonicalize_name
-from .conflict_kind import (
-    KIND_EXTRA,
-    MARKER_VARIABLE_FOR_KIND,
-    membership_set_in_marker,
-)
+from .conflict_kind import EMPTY_MEMBERSHIP_SETS, KIND_EXTRA, MARKER_VARIABLE_FOR_KIND
 from .errors import ConfigError
 from .extra_keys import join_extra, split_extra
+from .pep508 import MARKER_COMPARISON
 from .vcs_admission import admit_vcs_url
 
 if TYPE_CHECKING:
@@ -103,20 +100,36 @@ def _repair_advice(*, kind: str, tests_extra: bool) -> Suggestion:
     return Suggestion("use pkg[extra] to select an extra")
 
 
+def _membership_variables(marker_text: str) -> set[str]:
+    """Find lockfile-only set variables and equality tests on a root extra."""
+    variables: set[str] = set()
+    if "extra" not in marker_text and "dependency_groups" not in marker_text:
+        return variables
+
+    for comparison in MARKER_COMPARISON.finditer(marker_text):
+        lhs, operator, rhs = comparison.group("lhs", "op", "rhs")
+        # Packaging reads the right operand as the variable when the left is a literal.
+        variable = lhs
+        if lhs.startswith(('"', "'")):
+            variable = rhs[1:-1] if rhs.startswith(('"', "'")) else rhs
+        if variable in EMPTY_MEMBERSHIP_SETS or (
+            variable == "extra" and operator == "=="
+        ):
+            variables.add(variable)
+    return variables
+
+
 def _warn_dropped_membership_marker(
     req: Requirement, warned: set[tuple[str, str]], *, kind: str
 ) -> None:
     """Warn when a dropped top-level entry tests an extra or group membership.
 
-    A selected extra or group is folded into the requirements rather than the
-    environment, so ``extra``, ``extras`` and ``dependency_groups`` are empty
-    whatever the run selects and a membership test never holds.  ``kind`` names
-    the entry in the message and picks the repair.  ``warned`` holds the
-    ``(kind, text)`` pairs already reported, so one mistake warns once per kind.
+    Selected extras and groups add requirements directly. The root marker
+    environment leaves these variables empty. Report each entry once per kind,
+    so a constraint can receive different advice from a root requirement.
     """
-    marker_text = str(req.marker)
-    membership_set = membership_set_in_marker(marker_text)
-    if "extra ==" not in marker_text and membership_set is None:
+    membership = _membership_variables(str(req.marker))
+    if not membership:
         return
 
     text = str(req)
@@ -124,15 +137,13 @@ def _warn_dropped_membership_marker(
         return
     warned.add((kind, text))
 
-    tests_extra = "extra ==" in marker_text or membership_set == _EXTRAS_VARIABLE
+    tests_extra = "extra" in membership or _EXTRAS_VARIABLE in membership
     _logger.warning(
         DiagnosticMessage(
             (
                 f"{_DROPPED_MARKER_SUBJECT.get(kind, kind.capitalize())} {text!r} "
-                "tests an extra or dependency-group membership marker; it is dropped "
-                "because a selected extra or group is folded into the requirements "
-                "rather than the environment, so extra, extras and dependency_groups "
-                "are empty at resolve time."
+                "was dropped. Its membership marker sees no extras or dependency "
+                "groups. Selecting an extra or group adds its requirements directly."
             ),
             suggestions=(_repair_advice(kind=kind, tests_extra=tests_extra),),
         )

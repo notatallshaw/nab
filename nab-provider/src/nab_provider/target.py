@@ -31,7 +31,6 @@ __lazy_modules__ = (
     "nab_provider.tags",
 )
 
-import re
 from functools import lru_cache
 from typing import TYPE_CHECKING, ClassVar, Final, NamedTuple
 
@@ -53,6 +52,7 @@ from .environment import (
     host_environment,
 )
 from .marker_holds import IntractableMarkerError, UnevaluableMarkerError
+from .pep508 import MARKER_COMPARISON
 from .tags import (
     FREE_THREADED_MIN_PYTHON,
     PlatformSpec,
@@ -62,6 +62,7 @@ from .tags import (
 from .value import HashableRecord, Record, replace
 
 if TYPE_CHECKING:
+    import re
     from collections.abc import Iterable, Mapping, Sequence
 
     from .tags import TagsSource
@@ -266,19 +267,6 @@ _ALWAYS_DECLARED: tuple[str, ...] = (
 # consulted marker on one splits the minor at its boundary instead, and each
 # slice emits the bounds that fence it off; an unsplit minor emits neither.
 _BY_CONSTRAINT = ("python_full_version", "implementation_version")
-
-# One ``lhs op rhs`` comparison of a marker, matched against the string form
-# :func:`Marker.__str__` normalises to: an operand is either a quoted literal
-# or a bare variable token, which is what tells the two apart.  Both quote
-# styles are matched, since packaging emits a value holding a double quote
-# single-quoted.  Ordered so the two-character operators win over their
-# prefixes.
-_MARKER_OPERAND = r'"[^"]*"|\'[^\']*\'|[A-Za-z_][A-Za-z0-9_]*'
-_MARKER_CLAUSE_RE = re.compile(
-    rf"(?P<lhs>{_MARKER_OPERAND})\s*"
-    r"(?P<op>===|==|!=|<=|>=|~=|<|>|not\s+in|in)\s*"
-    rf"(?P<rhs>{_MARKER_OPERAND})"
-)
 
 
 @lru_cache(maxsize=8192)
@@ -548,7 +536,7 @@ def micro_boundary_points(
 
     points: set[Version] = set()
     for marker in sorted(consulted, key=str):
-        for atom in _MARKER_CLAUSE_RE.finditer(str(marker)):
+        for atom in MARKER_COMPARISON.finditer(str(marker)):
             points.update(
                 _clause_boundary_points(
                     _clause_parts(atom), scanned, minor_release, floor, target
@@ -999,7 +987,7 @@ class ResolveTarget(HashableRecord):
         if self.is_minor_interval:
             constraints = [f">={self.python_version}.0", f"=={self.python_version}.*"]
             for clause in self.micro_clauses:
-                atom = _MARKER_CLAUSE_RE.fullmatch(clause)
+                atom = MARKER_COMPARISON.fullmatch(clause)
                 if atom is None:
                     return False
                 parsed = _clause_interval_literal(
