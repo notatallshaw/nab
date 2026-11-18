@@ -797,9 +797,7 @@ def resolve_dynamic_sdist(
     index = provider.coordinator.index
     source_key = sdist_metadata_key(provider, canonical, version)
 
-    cached: WheelMetadata | None = index.get_resolved_sdist_metadata(
-        canonical, source_key
-    )
+    cached = index.get_resolved_sdist_metadata(canonical, source_key)
     if cached is not None:
         return cached
 

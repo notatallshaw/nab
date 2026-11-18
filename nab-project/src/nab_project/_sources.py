@@ -6,7 +6,7 @@ and the policy permits it.  :mod:`nab_provider._provider.sources` validates the
 declarations and turns one materialised tree into a synthetic listing.
 
 Reached only through
-:meth:`~nab_provider.fetch_port.FetchPort.request_source_listing`.
+:meth:`~nab_provider.fetch_port.FetchPort.materialize_source`.
 """
 
 from __future__ import annotations

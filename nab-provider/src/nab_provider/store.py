@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from nab_provider.records import RangeOutcome, SdistFile, WheelFile
 
-    from .policy import SourceMaterialization
+    from .metadata import WheelMetadata
 
 __all__ = [
     "InMemoryIndex",
@@ -136,14 +136,11 @@ class InMemoryIndex:
         self._consistent_wheel_metadata: dict[str, dict[str, tuple[str, str]]] = {}
         self._consistent_metadata_contexts: dict[str, object] = {}
 
-        # Sdist metadata after PEP 643 dynamic deps have been resolved from the
-        # bundled pyproject.toml or a PEP 517 backend.  Shared across targets so
-        # a matrix does not rebuild one sdist per tuple.
-        self._resolved_sdist_metadata: dict[tuple[str, str], Any] = {}
+        # Sdist metadata reconciled with declarations from its bundled pyproject.toml.
+        self._resolved_sdist_metadata: dict[tuple[str, str], WheelMetadata] = {}
 
-        # What a host made of a declared source, and of a remote sdist build.
-        self._sources: dict[str, SourceMaterialization] = {}
-        self._built_metadata: dict[tuple[str, str], Any] = {}
+        # Raw build output is checked against each target before use.
+        self._built_metadata: dict[tuple[str, str], WheelMetadata] = {}
 
     @contextmanager
     def _publishing(self, key: str) -> Generator[None, None, None]:
@@ -703,40 +700,32 @@ class InMemoryIndex:
             entries = self._parsed_metadata.get(key, ())
             self._parsed_metadata[key] = (*entries, (source_text, metadata))
 
-    def get_resolved_sdist_metadata(self, package: str, version: str) -> Any | None:
-        """Return cached post-reconciliation sdist metadata or ``None``.
-
-        The cached value is what
-        :func:`nab_provider._provider.metadata_resolver.resolve_dynamic_sdist`
-        returned.
-        """
+    def get_resolved_sdist_metadata(
+        self, package: str, version: str
+    ) -> WheelMetadata | None:
+        """Return sdist metadata reconciled with its bundled project declarations."""
         return self._resolved_sdist_metadata.get((package, version))
 
     def store_resolved_sdist_metadata(
-        self, package: str, version: str, metadata: Any
+        self, package: str, version: str, metadata: WheelMetadata
     ) -> None:
         """Cache reconciled sdist metadata for cross-tuple reuse."""
         with self._lock:
             self._resolved_sdist_metadata[(package, version)] = metadata
 
-    def store_source(self, package: str, result: SourceMaterialization) -> None:
-        """Record what a host made of ``package``'s declared source."""
-        with self._lock:
-            self._sources[package] = result
-
-    def get_source(self, package: str) -> SourceMaterialization | None:
-        """Return ``package``'s materialised source, or ``None``."""
-        return self._sources.get(package)
-
-    def store_built_metadata(self, package: str, version: str, metadata: Any) -> None:
+    def store_built_metadata(
+        self, package: str, artifact_key: str, metadata: WheelMetadata
+    ) -> None:
         """Record the METADATA a host's :pep:`517` build produced."""
         with self._lock:
-            self._built_metadata[(package, version)] = metadata
+            self._built_metadata[(package, artifact_key)] = metadata
 
-    def get_built_metadata(self, package: str, version: str) -> Any | None:
-        """Return built METADATA for ``(package, version)``, or ``None``.
+    def get_built_metadata(
+        self, package: str, artifact_key: str
+    ) -> WheelMetadata | None:
+        """Return built METADATA for ``(package, artifact_key)``, or ``None``.
 
         Unlike :meth:`get_resolved_sdist_metadata`, this is what the build
         declared, before the provider checks it against the candidate.
         """
-        return self._built_metadata.get((package, version))
+        return self._built_metadata.get((package, artifact_key))

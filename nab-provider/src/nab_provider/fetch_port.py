@@ -11,10 +11,10 @@ The source, build and two archive requests are reached only through a declared
 source or a remote sdist build, so a host that offers neither may raise
 :class:`NotImplementedError` from them.
 
-The store is :class:`~nab_provider.store.InMemoryIndex` itself, not a protocol:
-the provider reads its slots, a host's fetcher writes them.
+Queued fetches publish their results in :class:`~nab_provider.store.InMemoryIndex`.
+Declared sources and build metadata are returned directly to the caller.
 
-A request registers its waiter under a pending key.
+A queued request registers its waiter under a pending key.
 :func:`~nab_provider.store.metadata_pending_key` and
 :func:`~nab_provider.store.range_pending_key` build the ``metadata:`` and
 ``range:`` keys; the ``listing:``, ``sdist:`` and ``sdist-archive:`` keys have
@@ -28,7 +28,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from .policy import SourceRequest
+    from .metadata import WheelMetadata
+    from .policy import SourceMaterialization, SourceRequest
     from .records import WheelFile
     from .store import InMemoryIndex
 
@@ -126,10 +127,9 @@ class Waitable(Protocol):
 class FetchPort(Protocol):
     """The fetch handle the provider holds.
 
-    A request writes its result into :attr:`index` under the matching
-    ``store_`` method, then releases its waitable.  A failed fetch records the
-    error there rather than raising; only :meth:`request_source_listing` and
-    :meth:`request_built_metadata` raise.
+    Queued requests publish a result or fetch error in :attr:`index` before
+    releasing the waiter. :meth:`materialize_source` and :meth:`build_sdist_metadata`
+    return a result or raise on the calling thread.
 
     ``indexes`` is not here: nab's coordinator carries it, to label each
     package's serving index in a lock file.
@@ -215,37 +215,21 @@ class FetchPort(Protocol):
         """Request the bytes of an archive named by URL rather than by an index."""
         ...
 
-    def request_source_listing(self, request: SourceRequest) -> Waitable:
-        """Materialise a declared local, VCS or archive source into a listing.
+    def materialize_source(self, request: SourceRequest) -> SourceMaterialization:
+        """Return the tree and metadata for this declared local, VCS or archive source.
 
-        The host reads the directory, clones the repo or downloads and extracts
-        the archive, reads the metadata it declares (running a :pep:`517`
-        backend when ``request.build_policy`` permits it and the static read
-        yields nothing), and stores the result under
-        :meth:`~nab_provider.store.InMemoryIndex.store_source`.
-
-        Answered inline: a failure raises
-        :class:`~nab_provider.errors.UnsupportedSdistError`, or
-        :class:`~nab_provider.errors.SourceBuildPolicyError` when the policy
-        refused the build.
+        The host reads, clones or downloads the source and may run a :pep:`517`
+        backend if its policy permits. A build refusal raises
+        :class:`~nab_provider.errors.SourceBuildPolicyError`.
         """
         ...
 
-    def request_built_metadata(
+    def build_sdist_metadata(
         self,
         package: str,
         version: str,
         url: str,
         sdist_hashes: tuple[tuple[str, str], ...],
-    ) -> Waitable:
-        """Build the sdist at ``url`` and store the METADATA it produced.
-
-        The result lands under
-        :meth:`~nab_provider.store.InMemoryIndex.store_built_metadata`, keyed by
-        :func:`~nab_provider.store.sdist_artifact_key` on ``version`` and ``url``.
-
-        Answered inline: a failure raises
-        :class:`~nab_provider.errors.UnsupportedSdistError`, or the integrity
-        error the sdist fetch recorded.
-        """
+    ) -> WheelMetadata:
+        """Return the built metadata, propagating build and integrity errors."""
         ...

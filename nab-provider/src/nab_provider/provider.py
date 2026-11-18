@@ -1633,15 +1633,10 @@ class Provider:
         )
 
         try:
-            event = self.coordinator.request_source_listing(request)
+            materialized = self.coordinator.materialize_source(request)
         except SourceBuildPolicyError:
             self.stats.excluded_by_build_policy += 1
             raise
-        event.wait()
-
-        # The port raises on failure, so a request that returned left a result.
-        materialized = self.coordinator.index.get_source(normalized)
-        assert materialized is not None
 
         if materialized.commit_sha is not None:
             self.vcs_pins[normalized] = materialized.commit_sha

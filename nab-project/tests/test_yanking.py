@@ -552,7 +552,7 @@ def test_unpinned_sdist_is_never_downloaded_or_built() -> None:
         port, [ResolveTarget.for_host()], [Requirement("dep")]
     )
     assert not result.success
-    for request in ("request_sdist", "request_sdist_archive", "request_built_metadata"):
+    for request in ("request_sdist", "request_sdist_archive", "build_sdist_metadata"):
         assert not port.calls_to(request)
 
 
@@ -674,7 +674,7 @@ def test_yanked_source_uses_preferred_wheel_metadata_without_building(
         assert pin.sdist.url == "https://example.test/dep-2.tar.gz"
         assert not pin.wheels
 
-    assert not port.calls_to("request_built_metadata")
+    assert not port.calls_to("build_sdist_metadata")
 
 
 def test_rejected_live_metadata_still_splits_the_universal_lock() -> None:

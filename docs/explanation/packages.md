@@ -237,8 +237,11 @@ print(resolver.resolve({"app": VersionRange.full()}))
 ```
 
 `nab_provider.testing` supplies the in-memory `FetchPort`. A real host implements that interface
-over its own session and download path. The provider has no project path; use
-`nab_project.resolve.resolve_for_targets` when resolving a project.
+using its own HTTP session and download code. The fetcher stores queued results in the shared index.
+`materialize_source(request)` returns the source tree and its metadata directly.
+`build_sdist_metadata(...)` returns the built metadata. The provider caches it by sdist version and
+URL and checks it for each target. Use `nab_project.resolve.resolve_for_targets` when resolving a
+project.
 
 ### Collect active dependency declarations
 

@@ -574,7 +574,7 @@ def test_dynamic_sdist_hint_recovers_missing_wheel_metadata(
     assert ("assume-universal-deps = true" in failure.err) is (
         mode == "universal" and not assumed
     )
-    assert ports[-1].calls_to("request_built_metadata") == []
+    assert ports[-1].calls_to("build_sdist_metadata") == []
 
     edits = re.findall(
         r"add a (\[\[tool.nab.package-rules\]\]) entry with"
@@ -587,7 +587,7 @@ def test_dynamic_sdist_hint_recovers_missing_wheel_metadata(
         project.write_text(body + "\n" + "\n".join(edits[0]) + "\n", encoding="utf-8")
         assert run(args) == 1
         assert 'build-policy = "build-remote"' in capsys.readouterr().err
-        assert ports[-1].calls_to("request_built_metadata") == []
+        assert ports[-1].calls_to("build_sdist_metadata") == []
 
     project.write_text(
         body + "\n" + "\n\n".join("\n".join(edit) for edit in edits) + "\n",
@@ -599,4 +599,4 @@ def test_dynamic_sdist_hint_recovers_missing_wheel_metadata(
     pylock.validate()
     assert [str(package.version) for package in pylock.packages] == ["6.0.0"]
     assert pylock.packages[0].sdist is not None
-    assert len(ports[-1].calls_to("request_built_metadata")) == 1
+    assert len(ports[-1].calls_to("build_sdist_metadata")) == 1

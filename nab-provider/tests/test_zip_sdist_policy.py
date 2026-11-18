@@ -338,7 +338,7 @@ def test_zip_admission_and_foreign_dependency_metadata_require_separate_opt_ins(
         assert provider.choose_version("pkg", SpecifierSet().to_range()) is None
         assert coordinator.calls_to("request_metadata") == []
 
-    assert coordinator.calls_to("request_built_metadata") == []
+    assert coordinator.calls_to("build_sdist_metadata") == []
 
 
 def test_zip_siblings_keep_the_first_metadata_source() -> None:

@@ -2,7 +2,7 @@
 
 A declared source becomes the only candidate for its package: PyPI is not
 consulted.  The clone, the download and the directory read are the host's,
-behind :meth:`~nab_provider.fetch_port.FetchPort.request_source_listing`; what
+behind :meth:`~nab_provider.fetch_port.FetchPort.materialize_source`; what
 comes back becomes one synthetic ``SdistFile`` whose version the host read
 from ``[project].version`` or took from the build backend.
 """

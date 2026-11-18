@@ -52,12 +52,18 @@ from nab_project.fetch import (
 )
 from nab_project.inputs import ResolveInputs
 from nab_provider._vendor.packaging.version import Version
-from nab_provider.metadata import WheelMetadata
+from nab_provider.metadata import WheelMetadata, parse_metadata
 from nab_provider.overrides import IndexOverride
-from nab_provider.policy import BuildPolicy
+from nab_provider.policy import (
+    BuildPolicy,
+    LocalSource,
+    SourceMaterialization,
+    SourceRequest,
+)
+from nab_provider.provider import Provider
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.store import metadata_pending_key, sdist_artifact_key
-from nab_provider.testing import make_wheel, pkg_override
+from nab_provider.testing import make_metadata, make_wheel, pkg_override
 
 
 @pytest.fixture
@@ -552,10 +558,10 @@ class TestInMemoryIndex:
     def test_resolved_sdist_metadata_roundtrip(self) -> None:
         """``store_resolved_sdist_metadata`` round-trips through ``get``."""
         idx = InMemoryIndex()
-        sentinel = object()
+        metadata = parse_metadata(make_metadata("foo", "1.0"))
         assert idx.get_resolved_sdist_metadata("foo", "1.0") is None
-        idx.store_resolved_sdist_metadata("foo", "1.0", sentinel)
-        assert idx.get_resolved_sdist_metadata("foo", "1.0") is sentinel
+        idx.store_resolved_sdist_metadata("foo", "1.0", metadata)
+        assert idx.get_resolved_sdist_metadata("foo", "1.0") is metadata
 
     def test_metadata_rewrite_drops_the_reconciled_sdist_view(self) -> None:
         """Replacing the raw text drops the post-reconciliation entry too.
@@ -565,7 +571,8 @@ class TestInMemoryIndex:
         """
         idx = InMemoryIndex()
         idx.store_sdist_metadata("foo", "1.0", "PKG-INFO")
-        idx.store_resolved_sdist_metadata("foo", "1.0", "resolved")
+        metadata = parse_metadata(make_metadata("foo", "1.0"))
+        idx.store_resolved_sdist_metadata("foo", "1.0", metadata)
         idx.store_metadata("foo", "1.0", "METADATA")
         assert idx.get_resolved_sdist_metadata("foo", "1.0") is None
 
@@ -573,9 +580,10 @@ class TestInMemoryIndex:
         """Re-storing identical text is not a rewrite, so the entry survives."""
         idx = InMemoryIndex()
         idx.store_sdist_metadata("foo", "1.0", "PKG-INFO")
-        idx.store_resolved_sdist_metadata("foo", "1.0", "resolved")
+        metadata = parse_metadata(make_metadata("foo", "1.0"))
+        idx.store_resolved_sdist_metadata("foo", "1.0", metadata)
         idx.store_sdist_metadata("foo", "1.0", "PKG-INFO")
-        assert idx.get_resolved_sdist_metadata("foo", "1.0") == "resolved"
+        assert idx.get_resolved_sdist_metadata("foo", "1.0") is metadata
 
     def test_listing_index_roundtrip(self) -> None:
         """``store_listing_index`` records the serving index name, and
@@ -2006,18 +2014,55 @@ class TestFetchCoordinator:
             )
             assert isinstance(error, HttpError)
 
+    def test_overlapping_source_requests_keep_their_own_results(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        versions = ("1", "2")
+        for version in versions:
+            tree = tmp_path / version
+            tree.mkdir()
+            (tree / "pyproject.toml").write_text(
+                f'[project]\nname = "shared"\nversion = "{version}"\n', encoding="utf-8"
+            )
+
+        with _coord(start_on_demand=True) as coordinator:
+            materialize = coordinator.materialize_source
+            both_complete = threading.Barrier(2)
+
+            def synchronized(request: SourceRequest) -> SourceMaterialization:
+                result = materialize(request)
+                both_complete.wait(timeout=10)
+                return result
+
+            monkeypatch.setattr(coordinator, "materialize_source", synchronized)
+
+            def resolve_source(version: str) -> tuple[Version, Path | None]:
+                provider = Provider(
+                    coordinator,
+                    local_sources=[LocalSource("shared", str(tmp_path / version))],
+                )
+                (entry,) = provider.fetch_versions("shared")
+                return entry[0], entry[1].local_path
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(resolve_source, versions))
+
+        assert results == [
+            (Version(version), tmp_path / version) for version in versions
+        ]
+
     @respx.mock
     @pytest.mark.skipif(
         not hasattr(tarfile, "data_filter"),
         reason="sdist extraction requires the tar data filter (PEP 706)",
     )
     @pytest.mark.parametrize("transport_factory", [None, HttpxAsyncTransport])
-    def test_request_built_metadata_builds_the_downloaded_sdist(
+    def test_build_sdist_metadata_builds_the_downloaded_sdist(
         self,
         monkeypatch: pytest.MonkeyPatch,
         transport_factory: Callable[[], AsyncHttpTransport] | None,
     ) -> None:
-        """The build rung downloads, extracts, and stores what the backend said.
+        """The build returns the metadata from the downloaded and extracted sdist.
 
         Only the backend invocation is faked: the archive is really fetched
         through the transport and really extracted, so the member is exercised
@@ -2051,19 +2096,10 @@ class TestFetchCoordinator:
         with _coord(
             build_config=config, build_transport_factory=transport_factory
         ) as coord:
-            event = coord.request_built_metadata(
+            result = coord.build_sdist_metadata(
                 "pkg", "1.0", "https://files.example.com/pkg-1.0.tar.gz", ()
             )
-            assert event.wait(timeout=5)
-            assert (
-                coord.index.get_built_metadata(
-                    "pkg",
-                    sdist_artifact_key(
-                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
-                    ),
-                )
-                is built
-            )
+            assert result is built
         assert seen == {
             "config": config,
             "offline": False,

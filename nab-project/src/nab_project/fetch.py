@@ -123,7 +123,7 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport
     from nab_provider.metadata import WheelMetadata
-    from nab_provider.policy import SourceRequest
+    from nab_provider.policy import SourceMaterialization, SourceRequest
 
     from .inputs import ResolveInputs
 
@@ -911,40 +911,34 @@ class FetchCoordinator:
             )
         return event
 
-    def request_source_listing(self, request: SourceRequest) -> threading.Event:
-        """Materialise a declared source and store what it declared.
+    def materialize_source(self, request: SourceRequest) -> SourceMaterialization:
+        """Return this source's result on the caller's thread.
 
-        Run inline rather than on the fetcher thread: an archive source waits
-        on :meth:`request_direct_archive`, which the fetcher thread serves, and
-        a dynamic source runs a build backend.
+        An archive source waits for work served by the fetcher thread.
         """
         self._check_alive()
-        self.index.store_source(
-            request.package,
-            materialize_source(
-                self,
-                request,
-                self._build_config,
-                transport_factory=self._build_transport_factory,
-            ),
+        return materialize_source(
+            self,
+            request,
+            self._build_config,
+            transport_factory=self._build_transport_factory,
         )
-        return _done_event()
 
-    def request_built_metadata(
+    def build_sdist_metadata(
         self,
         package: str,
         version: str,
         url: str,
         sdist_hashes: tuple[tuple[str, str], ...],
-    ) -> threading.Event:  # pragma: no cover (tar data filter)
-        """Build the sdist at ``url`` and store the METADATA it produced.
+    ) -> WheelMetadata:  # pragma: no cover (tar data filter)
+        """Return the metadata produced by building the sdist at ``url``.
 
-        Run inline, for the same reason as :meth:`request_source_listing`: the
+        Run inline, for the same reason as :meth:`materialize_source`: the
         build waits on :meth:`request_sdist_archive`, which the fetcher thread
         serves.
         """
         self._check_alive()
-        built: WheelMetadata = build_remote_sdist(
+        return build_remote_sdist(
             self,
             package,
             version,
@@ -953,10 +947,6 @@ class FetchCoordinator:
             self._build_config,
             transport_factory=self._build_transport_factory,
         )
-        self.index.store_built_metadata(
-            package, sdist_artifact_key(version, url), built
-        )
-        return _done_event()
 
     def request_metadata_batch(
         self, items: list[tuple[str, str, str, tuple[str, str] | None]]

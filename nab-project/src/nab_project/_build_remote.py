@@ -5,7 +5,7 @@ The provider picks the sdist and checks what the build declared;
 over a tree in scratch space.
 
 Reached only through
-:meth:`~nab_provider.fetch_port.FetchPort.request_built_metadata`.
+:meth:`~nab_provider.fetch_port.FetchPort.build_sdist_metadata`.
 """
 
 from __future__ import annotations
@@ -50,9 +50,8 @@ def build_remote_sdist(
 ) -> WheelMetadata:
     """Download the sdist at ``url``, extract it, and build it.
 
-    ``package`` is the canonical package name and ``version`` its string form,
-    which together key the archive slot in the store.  An integrity failure the
-    fetch recorded is re-raised; every other failure raises
+    The archive slot is keyed by package, version and URL. An integrity failure
+    recorded by the fetch propagates; other build failures raise
     :class:`~nab_provider.errors.UnsupportedSdistError`.
     """
     # Imported in-function so tests can patch the module attribute, and to keep
@@ -64,13 +63,12 @@ def build_remote_sdist(
     event = port.request_sdist_archive(package, version, url, sdist_hashes)
     event.wait()
 
-    integrity_error = port.index.get_sdist_archive_error(
-        package, sdist_artifact_key(version, url)
-    )
+    source_key = sdist_artifact_key(version, url)
+    integrity_error = port.index.get_sdist_archive_error(package, source_key)
     if integrity_error is not None:
         raise integrity_error
 
-    data = port.index.get_sdist_archive(package, sdist_artifact_key(version, url))
+    data = port.index.get_sdist_archive(package, source_key)
     if data is None:
         msg = (
             f"{package}=={version} build-remote requested but sdist archive"

@@ -82,8 +82,8 @@ REQUESTS = (
     "request_sdist",
     "request_sdist_archive",
     "request_direct_archive",
-    "request_source_listing",
-    "request_built_metadata",
+    "materialize_source",
+    "build_sdist_metadata",
 )
 """The port's request methods, and the names :meth:`FakeFetchPort.calls_to`
 and :meth:`FakeFetchPort.override` accept."""
@@ -484,24 +484,22 @@ class FakeFetchPort:
             "request_direct_archive", (package, version, url), self._direct_archive
         )
 
-    def request_source_listing(self, request: SourceRequest) -> threading.Event:
+    def materialize_source(self, request: SourceRequest) -> SourceMaterialization:
         """Materialise the declared source through the host's handler."""
-        return self._handle(
-            "request_source_listing", (request,), self._materialize_source
-        )
+        return self._handle("materialize_source", (request,), self._materialize_source)
 
-    def request_built_metadata(
+    def build_sdist_metadata(
         self,
         package: str,
         version: str,
         url: str,
         sdist_hashes: tuple[tuple[str, str], ...],
-    ) -> threading.Event:
+    ) -> WheelMetadata:
         """Build the sdist through the host's handler."""
         return self._handle(
-            "request_built_metadata",
+            "build_sdist_metadata",
             (package, version, url, sdist_hashes),
-            self._store_built_metadata,
+            self._built_metadata,
         )
 
     def _listing(self, package: str, _speculative: bool) -> threading.Event:  # noqa: FBT001 - _handle calls this positionally
@@ -602,27 +600,19 @@ class FakeFetchPort:
         self._serve_archive(package, version)
         return _done_event()
 
-    def _materialize_source(self, request: SourceRequest) -> threading.Event:
+    def _materialize_source(self, request: SourceRequest) -> SourceMaterialization:
         """Materialise one declared source, as the coordinator does."""
         if self._materialize is None:
-            raise NotImplementedError(_UNSERVED.format(name="request_source_listing"))
-        self.index.store_source(
-            request.package, self._materialize(self, request, self.build_config)
-        )
-        return _done_event()
+            raise NotImplementedError(_UNSERVED.format(name="materialize_source"))
+        return self._materialize(self, request, self.build_config)
 
-    def _store_built_metadata(
-        self, pkg: str, ver: str, url: str, hashes: tuple[tuple[str, str], ...]
-    ) -> threading.Event:
+    def _built_metadata(
+        self, package: str, version: str, url: str, hashes: tuple[tuple[str, str], ...]
+    ) -> WheelMetadata:
         """Build one sdist, as the coordinator does."""
         if self._build_sdist is None:
-            raise NotImplementedError(_UNSERVED.format(name="request_built_metadata"))
-        self.index.store_built_metadata(
-            pkg,
-            sdist_artifact_key(ver, url),
-            self._build_sdist(self, pkg, ver, url, hashes, self.build_config),
-        )
-        return _done_event()
+            raise NotImplementedError(_UNSERVED.format(name="build_sdist_metadata"))
+        return self._build_sdist(self, package, version, url, hashes, self.build_config)
 
 
 def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-loads
@@ -678,7 +668,7 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
     * ``request_sdist_archive`` and ``request_direct_archive`` write
       ``sdist_archive_error``, or ``sdist_archive`` as the fetched bytes.  With
       neither they write nothing, leaving whatever the test stored.
-    * ``request_source_listing`` and ``request_built_metadata`` run
+    * ``materialize_source`` and ``build_sdist_metadata`` run
       ``materialize`` and ``build_sdist`` under ``build_config``, and raise
       :class:`NotImplementedError` without them.  ``read_wheel`` opens a wheel
       the listing serves off disk; without it the metadata keywords answer
