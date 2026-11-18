@@ -8,12 +8,14 @@ import shutil
 import subprocess
 import sys
 from contextlib import nullcontext
+from functools import partial
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 from typing_extensions import Self
 
+from nab_project._resolve import engine
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.lockfile import IndexPin, TargetLock, WheelArtifact
 from nab_project.resolve import ResolveResult, TargetResult
@@ -153,6 +155,7 @@ def _result_data(result: dict, *, schema: int = 3) -> dict:
                 "platform_id": "linux_x86_64",
                 "success": False,
                 "error": "resolution failed",
+                "proved_conflict": True,
                 "decisions": 0,
                 "rounds": 0,
                 "conflicts": 0,
@@ -643,6 +646,89 @@ def test_lock_inconsistency_fails_and_pins_are_retained(
         is False
     )
     assert "example CACHED FAILURE" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("requirements", "max_iterations", "proofs"),
+    [
+        (["pkg==2"], None, [True, True]),
+        (["pkg"], 1, [False, False]),
+        (
+            ["pkg==2; sys_platform == 'linux'", "pkg; sys_platform == 'darwin'"],
+            2,
+            [True, False],
+        ),
+    ],
+    ids=["proved-conflict", "work-limit", "conflict-and-work-limit"],
+)
+def test_skip_on_fail_requires_conflict_proofs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    requirements: list[str],
+    max_iterations: int | None,
+    proofs: list[bool],
+) -> None:
+    module = _harness()
+    calls = 0
+    wheel = make_wheel("1", hashes=(("sha256", "a" * 64),))
+    dependency = make_wheel("1", package="dep", hashes=(("sha256", "b" * 64),))
+
+    def fetch(*_args: object, **_kwargs: object) -> nullcontext[FakeFetchPort]:
+        nonlocal calls
+        calls += 1
+        return nullcontext(
+            make_coordinator(
+                listings={"pkg": [wheel], "dep": [dependency]},
+                metadata_by_url={
+                    wheel.url + ".metadata": make_metadata("pkg", "1", "dep")
+                },
+                auto_metadata=True,
+            )
+        )
+
+    monkeypatch.setattr(module, "FetchCoordinator", fetch)
+    monkeypatch.setattr(module, "Urllib3AsyncTransport", object)
+    monkeypatch.setattr(module, "CACHE_DIR", tmp_path / "cache")
+    if max_iterations is not None:
+        monkeypatch.setattr(
+            engine, "Resolver", partial(engine.Resolver, max_iterations=max_iterations)
+        )
+
+    scenario = {
+        **_universal_scenario("linux_x86_64", "macos_arm64"),
+        "requirements": requirements,
+        "skip_on_fail": True,
+    }
+
+    def run() -> bool:
+        return module.process_scenario(
+            "case",
+            scenario,
+            "run",
+            force=False,
+            output_dir=tmp_path,
+            source=_CLEAN_SOURCE,
+        )
+
+    expected_failure = all(proofs)
+    assert run() is expected_failure
+    path = tmp_path / "case.json"
+    report = json.loads(path.read_text())
+    assert [target.get("proved_conflict") for target in report["per_tuple"]] == proofs
+    assert report["result"]["resolution_success"] is False
+    assert report["result"]["expected_failure"] is expected_failure
+    assert _summary_harness().result_is_accepted(report) is expected_failure
+    assert run() is expected_failure
+    assert calls == 1
+
+    # Older reports treated any resolver failure as an expected conflict.
+    for target in report["per_tuple"]:
+        del target["proved_conflict"]
+    report["result"]["expected_failure"] = True
+    path.write_text(json.dumps(report))
+    assert not _summary_harness().result_is_accepted(report)
+    assert run() is expected_failure
+    assert calls == 2
 
 
 def test_skip_on_fail_does_not_accept_post_resolution_errors(

@@ -268,11 +268,15 @@ def _valid_stats(value: object) -> bool:
 
 
 def _valid_tuple(value: object) -> bool:
-    if not isinstance(value, dict) or set(value) != _TUPLE_FIELDS:
+    if not isinstance(value, dict) or set(value) - {"proved_conflict"} != _TUPLE_FIELDS:
         return False
     if not all(
         isinstance(value[field], str) and bool(value[field])
         for field in ("label", "platform_id", "python_version")
+    ):
+        return False
+    if "proved_conflict" in value and (
+        value["success"] is not False or type(value["proved_conflict"]) is not bool
     ):
         return False
     pins = value["pins"]
@@ -372,6 +376,16 @@ def _valid_merged_pins(value: object, stats: dict, per_tuple: list[dict]) -> boo
     return actual == expected and stats["diverging_packages"] == diverging
 
 
+def expected_conflict(per_tuple: list[dict], *, skip_on_fail: bool) -> bool:
+    """Accept a failed resolution only if every failed target has a conflict proof."""
+    if not skip_on_fail:
+        return False
+    failures = [target for target in per_tuple if not target["success"]]
+    return bool(failures) and all(
+        target.get("proved_conflict") is True for target in failures
+    )
+
+
 def _valid_outcome(
     result: dict, stats: dict, per_tuple: list, merged_pins: dict
 ) -> bool:
@@ -394,7 +408,7 @@ def _valid_outcome(
         or result["success"]
         is not (resolution_success is True and result["lock_consistent"] is True)
         or result["expected_failure"]
-        is not (result["skip_on_fail"] is True and resolution_success is False)
+        is not expected_conflict(per_tuple, skip_on_fail=result["skip_on_fail"])
     ):
         return False
     if resolution_success is False:

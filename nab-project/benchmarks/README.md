@@ -162,6 +162,10 @@ Universal scenarios require `python`, `platforms`, and `requirements`. They may 
 constraints, a cutoff, Python ordering, alignment, resolution strategy, an explanatory reason, and
 expected-failure handling.
 
+With `skip_on_fail = true`, a failed resolution counts as expected only if the solver proved a
+conflict on every failed target. A work limit or solver error fails the benchmark. Rerun older
+expected-failure reports to record the proof status.
+
 ## What the suites cover
 
 - Tight version-cluster cases (e.g. boto3, awscli).

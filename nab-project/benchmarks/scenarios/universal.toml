@@ -15,7 +15,7 @@
 #   align_across_tuples = false          # disable cross-target alignment
 #   resolution_strategy = "lowest"       # uv --resolution
 #   reason = "uv issue #1560"            # reference for the case
-#   skip_on_fail = false                 # if true, treat resolution failure as expected
+#   skip_on_fail = false                 # allow proved dependency conflicts
 
 # ---------------------------------------------------------------------------
 # uv #1560 reported a slow apache-airflow[all] resolve. This scenario uses

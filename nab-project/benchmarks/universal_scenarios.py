@@ -40,6 +40,7 @@ from benchmark_datetime import parse_datetime
 from universal_result import (
     MANIFEST_FILENAME,
     RESULT_SCHEMA_VERSION,
+    expected_conflict,
     is_package_specifier_table,
     is_portable_scenario_name,
     result_is_accepted,
@@ -63,9 +64,12 @@ from nab_provider.overrides import PackageOverride
 from nab_provider.provider import ResolutionStrategy
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix
+from nab_resolver.errors import ResolutionTerminatedError
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+
+    from nab_project.resolve import TargetResult
 
 BENCHMARKS_DIR = Path(__file__).parent
 SCENARIOS_DIR = BENCHMARKS_DIR / "scenarios"
@@ -386,6 +390,36 @@ def write_manifest(
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+def _target_record(target_result: TargetResult) -> dict:
+    """Record the target result while the error and its proof are still available."""
+    record = {
+        "label": target_result.target.label,
+        "python_version": target_result.target.python_version,
+        "platform_id": target_result.target.platform_id,
+        "success": target_result.success,
+        "error": str(target_result.error) if target_result.error is not None else None,
+        "decisions": target_result.decisions,
+        "rounds": target_result.rounds,
+        "conflicts": target_result.conflicts,
+        "backjumps": target_result.backjumps,
+        "metadata_fetched": target_result.metadata_fetched,
+        "distributions_seen": target_result.distributions_seen,
+        "wall_time_seconds": round(target_result.wall_time, 3),
+        "package_count": len(target_result.pins),
+        "pins": {
+            canonicalize_name(name): str(version)
+            for name, version in sorted(target_result.pins.items())
+        },
+    }
+    error = target_result.error
+    if error is not None:
+        record["proved_conflict"] = (
+            not isinstance(error, ResolutionTerminatedError)
+            and error.incompatibility is not None
+        )
+    return record
+
+
 def process_scenario(
     scenario_name: str,
     scenario: dict,
@@ -506,28 +540,7 @@ def process_scenario(
             )
         resolution_success = result.success
         elapsed = time.monotonic() - start
-        per_tuple = [
-            {
-                "label": tr.target.label,
-                "python_version": tr.target.python_version,
-                "platform_id": tr.target.platform_id,
-                "success": tr.success,
-                "error": str(tr.error) if tr.error is not None else None,
-                "decisions": tr.decisions,
-                "rounds": tr.rounds,
-                "conflicts": tr.conflicts,
-                "backjumps": tr.backjumps,
-                "metadata_fetched": tr.metadata_fetched,
-                "distributions_seen": tr.distributions_seen,
-                "wall_time_seconds": round(tr.wall_time, 3),
-                "package_count": len(tr.pins),
-                "pins": {
-                    canonicalize_name(name): str(version)
-                    for name, version in sorted(tr.pins.items())
-                },
-            }
-            for tr in result.target_results
-        ]
+        per_tuple = [_target_record(tr) for tr in result.target_results]
         merged = result.merged_pins()
         diverging_packages = sum(
             1 for pins in merged.values() if len({version for version, _ in pins}) > 1
@@ -546,7 +559,9 @@ def process_scenario(
         harness_error = f"{type(exc).__name__}: {exc}"[:200]
 
     scenario_success = resolution_success is True and lock_consistent is True
-    expected_failure = skip_on_fail and completed and resolution_success is False
+    expected_failure = completed and expected_conflict(
+        per_tuple, skip_on_fail=skip_on_fail
+    )
     data = {
         "input": expected_input,
         "reason": reason,
