@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Hashable
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 
 from ._compat import override
 
@@ -321,13 +321,13 @@ class RootRequirement(Generic[PackageType, VersionType]):
 
     package: PackageType
     constraint: RangeProtocol[VersionType]
-    origin: Any
+    origin: object
 
     def __init__(
         self,
         package: PackageType,
         constraint: RangeProtocol[VersionType],
-        origin: Any = None,
+        origin: object = None,
     ) -> None:
         """Record one requirement on ``package``."""
         object.__setattr__(self, "package", package)
@@ -460,7 +460,7 @@ class Incompatibility(Generic[PackageType, VersionType]):
         cause_left: Incompatibility[PackageType, VersionType] | None = None,
         cause_right: Incompatibility[PackageType, VersionType] | None = None,
         constraint_range: RangeProtocol[VersionType] | None = None,
-        origin: Any = None,
+        origin: object = None,
         dependency_range: RangeProtocol[VersionType] | None = None,
     ) -> None:
         """Create an incompatibility with terms and a cause."""

@@ -33,7 +33,7 @@ __lazy_modules__ = (
 
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Final, Generic, Protocol
+from typing import Any, Final, Generic, Protocol
 
 from . import conflict, decide, incompat_index, propagate
 from ._compat import override
@@ -54,9 +54,6 @@ from .types import (
     Term,
     VersionType,
 )
-
-if TYPE_CHECKING:
-    from typing_extensions import TypeIs
 
 __all__ = [
     "DEFAULT_MAX_ITERATIONS",
@@ -564,32 +561,13 @@ class ResolverObserver(Generic[PackageType, VersionType]):
         """Handle one iteration of the conflict resolution loop."""
 
 
-def _is_root_sequence(
-    requirements: Mapping[PackageType, RangeProtocol[VersionType]]
-    | Sequence[RootRequirement[PackageType, VersionType]],
-) -> TypeIs[Sequence[RootRequirement[PackageType, VersionType]]]:
-    """Return whether the caller passed the one-clause-per-requirement form.
-
-    A ``TypeIs`` rather than a bare ``isinstance``: one type can satisfy both
-    members of the union, so plain narrowing can leave an intersection that
-    has lost the mapping's value type.  ty needs the sequence rather than the
-    mapping as the narrowed side to keep those parameters, while the test
-    itself stays on ``Mapping`` so every non-mapping iterable is still taken
-    as the sequence form.
-    """
-    return not isinstance(requirements, Mapping)
-
-
 def _as_root_requirements(
     requirements: Mapping[PackageType, RangeProtocol[VersionType]]
     | Sequence[RootRequirement[PackageType, VersionType]],
 ) -> Sequence[RootRequirement[PackageType, VersionType]]:
     """Accept either shape ``Resolver.resolve`` takes and return the sequence."""
-    if _is_root_sequence(requirements):
+    if not isinstance(requirements, Mapping):
         return requirements
-    if TYPE_CHECKING:
-        # Older checkers do not narrow the negative branch of a generic TypeIs.
-        assert isinstance(requirements, Mapping)
 
     # The parameters are spelled out because ``constraint`` is a contravariant
     # protocol, which gives the version parameter no inference site.

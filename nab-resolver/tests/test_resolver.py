@@ -2492,14 +2492,15 @@ class TestRootRequirements:
         """The caller's opaque origin is readable off the clause it produced."""
         provider = DictProvider({"pkg": {1: {}}})
         resolver = Resolver(provider)
-        resolver.resolve([RootRequirement("pkg", Range.full(), "pkg>=1 (line 3)")])
+        origin = {"requirement": "pkg>=1", "line": 3}
+        resolver.resolve([RootRequirement("pkg", Range.full(), origin)])
 
-        origins = [
+        (recorded,) = [
             incompatibility.origin
             for incompatibility in resolver.incompatibilities
             if incompatibility.cause is IncompatibilityCause.ROOT
         ]
-        assert origins == ["pkg>=1 (line 3)"]
+        assert recorded is origin
 
     def test_mapping_form_leaves_the_origin_unset(self) -> None:
         """A mapping caller keeps working and sets no origin."""
