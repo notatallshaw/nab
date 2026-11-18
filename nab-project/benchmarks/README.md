@@ -166,6 +166,9 @@ With `skip_on_fail = true`, a failed resolution counts as expected only if the s
 conflict on every failed target. A work limit or solver error fails the benchmark. Rerun older
 expected-failure reports to record the proof status.
 
+Use `expect_conflict = true` when the requirements must conflict on every target. Any target that
+resolves or hits a work limit makes the benchmark fail.
+
 ## What the suites cover
 
 - Tight version-cluster cases (e.g. boto3, awscli).

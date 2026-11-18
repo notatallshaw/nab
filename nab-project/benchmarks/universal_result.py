@@ -49,7 +49,9 @@ _REQUIRED_INPUT_FIELDS = frozenset(
         "trust_unverified_sdist_deps",
     }
 )
-_OPTIONAL_INPUT_FIELDS = frozenset({"assume_universal_deps", "constraints", "datetime"})
+_OPTIONAL_INPUT_FIELDS = frozenset(
+    {"assume_universal_deps", "constraints", "datetime", "expect_conflict"}
+)
 _SOURCE_FIELDS = frozenset({"commit", "diff_hash", "dirty"})
 _RESOLUTION_STRATEGIES = frozenset({"highest", "lowest", "lowest-direct"})
 _DIST_POLICIES = frozenset(
@@ -225,6 +227,7 @@ def _valid_input(value: object, reason: object) -> bool:
         and value["build_policy"] in _BUILD_POLICIES
         and type(value["trust_unverified_sdist_deps"]) is bool
         and type(value["skip_on_fail"]) is bool
+        and type(value.get("expect_conflict", False)) is bool
         and isinstance(value["reason"], str)
         and reason == value["reason"]
         and (
@@ -376,9 +379,13 @@ def _valid_merged_pins(value: object, stats: dict, per_tuple: list[dict]) -> boo
     return actual == expected and stats["diverging_packages"] == diverging
 
 
-def expected_conflict(per_tuple: list[dict], *, skip_on_fail: bool) -> bool:
-    """Accept a failed resolution only if every failed target has a conflict proof."""
-    if not skip_on_fail:
+def expected_conflict(per_tuple: list[dict], settings: dict) -> bool:
+    """Check which targets must prove a conflict for this scenario."""
+    if settings.get("expect_conflict"):
+        return bool(per_tuple) and all(
+            target.get("proved_conflict") is True for target in per_tuple
+        )
+    if not settings["skip_on_fail"]:
         return False
     failures = [target for target in per_tuple if not target["success"]]
     return bool(failures) and all(
@@ -386,9 +393,10 @@ def expected_conflict(per_tuple: list[dict], *, skip_on_fail: bool) -> bool:
     )
 
 
-def _valid_outcome(
-    result: dict, stats: dict, per_tuple: list, merged_pins: dict
-) -> bool:
+def _valid_outcome(data: dict) -> bool:
+    result = data["result"]
+    stats = data["stats"]
+    per_tuple = data["per_tuple"]
     resolution_success = result["resolution_success"]
     if resolution_success is None:
         zero_fields = _STATS_FIELDS - {"tuples_total"}
@@ -400,15 +408,14 @@ def _valid_outcome(
             and isinstance(result["error"], str)
             and all(stats[field] == 0 for field in zero_fields)
             and not per_tuple
-            and not merged_pins
+            and not data["merged_pins"]
         )
     if (
         stats["tuples_recorded"] < stats["tuples_total"]
         or result["timed_out"] is True
         or result["success"]
         is not (resolution_success is True and result["lock_consistent"] is True)
-        or result["expected_failure"]
-        is not expected_conflict(per_tuple, skip_on_fail=result["skip_on_fail"])
+        or result["expected_failure"] is not expected_conflict(per_tuple, data["input"])
     ):
         return False
     if resolution_success is False:
@@ -443,27 +450,6 @@ def _valid_successful_resolution_outcome(result: dict, stats: dict) -> bool:
     )
 
 
-def _result_outcome_is_accepted(result: dict) -> bool:
-    successful_lock = (
-        result["success"] is True
-        and result["resolution_success"] is True
-        and result["expected_failure"] is False
-        and result["lock_consistent"] is True
-        and result["timed_out"] is False
-        and result["error"] is None
-    )
-    expected_resolution_failure = (
-        result["success"] is False
-        and result["resolution_success"] is False
-        and result["expected_failure"] is True
-        and result["skip_on_fail"] is True
-        and result["lock_consistent"] is None
-        and result["timed_out"] is False
-        and result["error"] is None
-    )
-    return successful_lock or expected_resolution_failure
-
-
 def result_is_well_formed(data: object) -> bool:
     """Whether a persisted result could have been emitted by the runner."""
     if not isinstance(data, dict) or set(data) != _TOP_LEVEL_FIELDS:
@@ -479,14 +465,15 @@ def result_is_well_formed(data: object) -> bool:
         and _valid_stats(stats)
         and _valid_per_tuple(per_tuple, stats, input_data)
         and _valid_merged_pins(merged_pins, stats, per_tuple)
-        and _valid_outcome(result, stats, per_tuple, merged_pins)
+        and _valid_outcome(data)
     )
 
 
 def result_is_accepted(data: object) -> bool:
     """Whether a persisted scenario result satisfies the benchmark contract."""
-    return (
-        result_is_well_formed(data)
-        and isinstance(data, dict)
-        and _result_outcome_is_accepted(data["result"])
+    if not isinstance(data, dict) or not result_is_well_formed(data):
+        return False
+    result = data["result"]
+    return result["expected_failure"] or (
+        result["success"] and not data["input"].get("expect_conflict", False)
     )

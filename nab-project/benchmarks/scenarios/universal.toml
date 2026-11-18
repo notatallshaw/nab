@@ -15,6 +15,7 @@
 #   align_across_tuples = false          # disable cross-target alignment
 #   resolution_strategy = "lowest"       # uv --resolution
 #   reason = "uv issue #1560"            # reference for the case
+#   expect_conflict = true               # require a conflict on every target
 #   skip_on_fail = false                 # allow proved dependency conflicts
 
 # ---------------------------------------------------------------------------
@@ -29,15 +30,22 @@ requirements = ["apache-airflow"]
 datetime = "2024-08-08 00:00:00"
 
 # ---------------------------------------------------------------------------
-# Sourced from uv issue #8157 (numba / numpy / llvmlite):
-# uv backtracks numba to an ancient version, which picks an ancient
-# llvmlite that fails to build.  Universal version of this case.
+# The available Numba wheels through 0.60 require NumPy below 2.1.
+# Compare the conflict with a lock on the same targets using NumPy 2.0.
 # ---------------------------------------------------------------------------
 [numpy-numba-universal]
-reason = "uv #8157: numba+numpy backtracks to ancient llvmlite"
+reason = "Numba through 0.60 conflicts with NumPy 2.1"
 python = ">=3.11, <3.13"
 platforms = ["linux_x86_64", "macos_arm64"]
 requirements = ["numpy>=2.1,<2.2", "numba<=0.60,>0.1"]
+datetime = "2025-06-01 00:00:00"
+expect_conflict = true
+
+[numpy-numba-compatible]
+reason = "Numba 0.60 resolves with NumPy 2.0"
+python = ">=3.11, <3.13"
+platforms = ["linux_x86_64", "macos_arm64"]
+requirements = ["numpy>=2.0,<2.1", "numba<=0.60,>0.1"]
 datetime = "2025-06-01 00:00:00"
 
 # ---------------------------------------------------------------------------

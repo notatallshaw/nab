@@ -85,6 +85,7 @@ UNIVERSAL_SCENARIO_KEYS = frozenset(
         "assume_universal_deps",
         "constraints",
         "datetime",
+        "expect_conflict",
         "platforms",
         "python",
         "python_order",
@@ -336,7 +337,7 @@ def validate_scenario(scenario_name: str, scenario: dict) -> ResolveInputs:
             msg = f"{scenario_name}: platforms has duplicate entry: {platform!r}"
             raise ValueError(msg)
         seen_platforms.add(platform)
-    for key in ("align_across_tuples", "skip_on_fail"):
+    for key in ("align_across_tuples", "skip_on_fail", "expect_conflict"):
         if key in scenario and type(scenario[key]) is not bool:
             msg = f"{scenario_name}: {key} must be a boolean"
             raise TypeError(msg)
@@ -477,6 +478,8 @@ def process_scenario(
         "skip_on_fail": skip_on_fail,
         "reason": reason,
     }
+    if scenario.get("expect_conflict"):
+        expected_input["expect_conflict"] = True
     if config.package_overrides:
         expected_input["assume_universal_deps"] = {
             rule.name: str(rule.requirement.specifier)
@@ -559,9 +562,7 @@ def process_scenario(
         harness_error = f"{type(exc).__name__}: {exc}"[:200]
 
     scenario_success = resolution_success is True and lock_consistent is True
-    expected_failure = completed and expected_conflict(
-        per_tuple, skip_on_fail=skip_on_fail
-    )
+    expected_failure = completed and expected_conflict(per_tuple, expected_input)
     data = {
         "input": expected_input,
         "reason": reason,
@@ -606,6 +607,13 @@ def process_scenario(
     stats = data["stats"]
     if timed_out:
         print(f"TIMEOUT after {elapsed:.1f}s ({stats['tuples_total']} tuples)")
+    elif harness_error:
+        print(f"FAILED ({harness_error})")
+    elif scenario.get("expect_conflict") and stats["tuples_ok"]:
+        print(
+            f"FAILED ({stats['tuples_ok']}/{stats['tuples_total']} targets resolved, "
+            "expected a conflict on every target)"
+        )
     elif scenario_success:
         print(
             f"ok ({stats['tuples_total']} tuples, "
@@ -614,8 +622,6 @@ def process_scenario(
             f"{stats['decisions_total']} decisions, "
             f"{stats['wall_time_seconds']}s)"
         )
-    elif harness_error:
-        print(f"FAILED ({harness_error})")
     elif resolution_success is True:
         print(
             "FAILED (resolved, but the emitted lock does not reproduce every tuple; "
@@ -623,7 +629,7 @@ def process_scenario(
         )
     else:
         failures = [t for t in per_tuple if not t["success"]]
-        label = "skipped (expected to fail)" if expected_failure else "FAILED"
+        label = "expected conflict" if expected_failure else "FAILED"
         first_fail = failures[0]["error"] if failures else harness_error or "?"
         print(
             f"{label} ({stats['tuples_fail']}/{stats['tuples_total']} tuples; "

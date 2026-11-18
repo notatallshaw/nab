@@ -415,6 +415,7 @@ def test_result_contract_requires_the_complete_input_shape() -> None:
         ("build_policy", "always"),
         ("trust_unverified_sdist_deps", "false"),
         ("skip_on_fail", "false"),
+        ("expect_conflict", "true"),
     ],
 )
 def test_result_contract_validates_input_fields(field: str, value: object) -> None:
@@ -649,24 +650,33 @@ def test_lock_inconsistency_fails_and_pins_are_retained(
 
 
 @pytest.mark.parametrize(
-    ("requirements", "max_iterations", "proofs"),
+    ("requirements", "max_iterations", "proofs", "accepted_settings"),
     [
-        (["pkg==2"], None, [True, True]),
-        (["pkg"], 1, [False, False]),
+        (["pkg==2"], None, [True, True], ("expect_conflict", "skip_on_fail")),
+        (["pkg"], None, [None, None], ("skip_on_fail",)),
+        (
+            ["pkg", "pkg==2; sys_platform == 'linux'"],
+            None,
+            [True, None],
+            ("skip_on_fail",),
+        ),
+        (["pkg"], 1, [False, False], ()),
         (
             ["pkg==2; sys_platform == 'linux'", "pkg; sys_platform == 'darwin'"],
             2,
             [True, False],
+            (),
         ),
     ],
-    ids=["proved-conflict", "work-limit", "conflict-and-work-limit"],
+    ids=["conflicts", "locks", "conflict-and-lock", "limits", "conflict-and-limit"],
 )
-def test_skip_on_fail_requires_conflict_proofs(
+def test_conflict_expectations(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     requirements: list[str],
     max_iterations: int | None,
-    proofs: list[bool],
+    proofs: list[bool | None],
+    accepted_settings: tuple[str, ...],
 ) -> None:
     module = _harness()
     calls = 0
@@ -680,9 +690,9 @@ def test_skip_on_fail_requires_conflict_proofs(
             make_coordinator(
                 listings={"pkg": [wheel], "dep": [dependency]},
                 metadata_by_url={
-                    wheel.url + ".metadata": make_metadata("pkg", "1", "dep")
+                    wheel.url + ".metadata": make_metadata("pkg", "1", "dep"),
+                    dependency.url + ".metadata": make_metadata("dep", "1"),
                 },
-                auto_metadata=True,
             )
         )
 
@@ -697,38 +707,39 @@ def test_skip_on_fail_requires_conflict_proofs(
     scenario = {
         **_universal_scenario("linux_x86_64", "macos_arm64"),
         "requirements": requirements,
-        "skip_on_fail": True,
     }
 
-    def run() -> bool:
+    def run(setting: str) -> bool:
         return module.process_scenario(
             "case",
-            scenario,
+            {**scenario, setting: True},
             "run",
             force=False,
             output_dir=tmp_path,
             source=_CLEAN_SOURCE,
         )
 
-    expected_failure = all(proofs)
-    assert run() is expected_failure
     path = tmp_path / "case.json"
-    report = json.loads(path.read_text())
-    assert [target.get("proved_conflict") for target in report["per_tuple"]] == proofs
-    assert report["result"]["resolution_success"] is False
-    assert report["result"]["expected_failure"] is expected_failure
-    assert _summary_harness().result_is_accepted(report) is expected_failure
-    assert run() is expected_failure
-    assert calls == 1
+    for setting in ("expect_conflict", "skip_on_fail"):
+        accepted = setting in accepted_settings
+        assert run(setting) is accepted
+        report = json.loads(path.read_text())
+        assert [
+            target.get("proved_conflict") for target in report["per_tuple"]
+        ] == proofs
+        assert _summary_harness().result_is_accepted(report) is accepted
+        assert run(setting) is accepted
+    assert calls == 2
 
     # Older reports treated any resolver failure as an expected conflict.
-    for target in report["per_tuple"]:
-        del target["proved_conflict"]
-    report["result"]["expected_failure"] = True
-    path.write_text(json.dumps(report))
-    assert not _summary_harness().result_is_accepted(report)
-    assert run() is expected_failure
-    assert calls == 2
+    if report["result"]["resolution_success"] is False:
+        for target in report["per_tuple"]:
+            target.pop("proved_conflict", None)
+        report["result"]["expected_failure"] = True
+        path.write_text(json.dumps(report))
+        assert not _summary_harness().result_is_accepted(report)
+        assert run("skip_on_fail") is ("skip_on_fail" in accepted_settings)
+        assert calls == 3
 
 
 def test_skip_on_fail_does_not_accept_post_resolution_errors(
@@ -1240,7 +1251,10 @@ def test_main_records_the_complete_full_scenario_set(
     assert manifest["available_scenarios"] == manifest["selected_scenarios"]
     assert manifest["available_scenarios"] == manifest["completed_scenarios"]
     assert manifest["source"] == _CLEAN_SOURCE
-    assert len(manifest["available_scenarios"]) == 18
+    configured = module.tomllib.loads(
+        (module.SCENARIOS_DIR / "universal.toml").read_text()
+    )
+    assert manifest["available_scenarios"] == sorted(configured)
 
 
 def test_universal_scenarios_only_override_alignment_for_noalign_cases() -> None:
