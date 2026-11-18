@@ -330,6 +330,10 @@ def build_target_lock(
     it does not stand in for ``None``: omitting it while passing selector
     roots raises.
 
+    When indexes are supplied, each index pin must name its serving index.
+    A missing or unknown index raises LookupError. Without configured indexes,
+    index pins use the default index URL.
+
     Artifacts follow each release's distribution policy.
     ``artifacts`` is the :class:`ArtifactMemo` the
     run's targets share; a call without one gets a memo of its own.
@@ -346,6 +350,7 @@ def build_target_lock(
         )
         raise ValueError(msg)
 
+    index_urls = {index.name: index.url for index in indexes}
     lock_pins: dict[str, PinShape] = {}
     normalized_names: dict[str, NormalizedName] = {}
     for raw_name, version in pins.items():
@@ -388,7 +393,7 @@ def build_target_lock(
             continue
 
         lock_pins[canonical] = _index_pin_from_listing(
-            provider, target, canonical, version, indexes, artifacts
+            provider, target, canonical, version, index_urls, artifacts
         )
 
     dependencies, base_dependencies = _forward_dependency_graph(
@@ -614,7 +619,7 @@ def _index_pin_from_listing(
     target: ResolveTarget,
     canonical: str,
     version: Version,
-    indexes: Sequence[IndexConfig],
+    index_urls: Mapping[str, str],
     artifacts: ArtifactMemo,
 ) -> IndexPin:
     """Build a pin with its serving index and effective Python requirement.
@@ -680,20 +685,19 @@ def _index_pin_from_listing(
         override_rp if override_rp is not None else _common_requires_python(files)
     )
 
-    serving_name = provider.coordinator.index.get_listing_index(canonical)
-    by_name = {ix.name: ix.url for ix in indexes}
-    index_url = by_name.get(serving_name) if serving_name is not None else None
-    if index_url is None:
-        if by_name:
-            # Can't happen for a real pin (the serving index is always
-            # recorded and configured); raise, don't guess.
+    index_url = DEFAULT_INDEX_URL
+    if index_urls:
+        if serving is None:
+            msg = f"cannot lock {canonical}=={version}: no serving index was recorded"
+            raise LookupError(msg)
+        try:
+            index_url = index_urls[serving]
+        except KeyError as exc:
             msg = (
-                f"{canonical}: recorded serving index {serving_name!r} is "
-                "not one of the configured indexes"
+                f"cannot lock {canonical}=={version}: serving index {serving!r} "
+                f"is missing from the configured indexes {tuple(index_urls)!r}"
             )
-            raise AssertionError(msg)
-        # No indexes configured (unit tests only); use the default root.
-        index_url = DEFAULT_INDEX_URL
+            raise LookupError(msg) from exc
     return IndexPin(
         name=canonical,
         version=str(version),
