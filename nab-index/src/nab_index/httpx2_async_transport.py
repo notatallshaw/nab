@@ -28,11 +28,11 @@ import truststore
 from .retry import is_certificate_error, next_delay
 from .retry_limits import MAX_REDIRECTS, MAX_RETRIES, RETRY_STATUSES
 from .transport import (
-    DEFAULT_HEADERS,
     ContentDecodingError,
     HttpError,
     accepts_gzip,
     decode_body,
+    merge_request_headers,
     prefetch_settings_for_backend,
     raise_for_error_status,
 )
@@ -126,9 +126,7 @@ class Httpx2AsyncTransport:
 
         Pass :data:`~nab_index.transport.IDENTITY_HEADERS` for undecoded bytes.
         """
-        request_headers = dict(DEFAULT_HEADERS)
-        if headers is not None:
-            request_headers.update(headers)
+        request_headers = merge_request_headers(headers)
 
         decode = accepts_gzip(request_headers)
         failures = 0

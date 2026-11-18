@@ -37,11 +37,11 @@ from ._compat import override
 from .retry import GET_RETRY, next_delay
 from .retry_limits import MAX_RETRIES
 from .transport import (
-    DEFAULT_HEADERS,
     ContentDecodingError,
     HttpError,
     accepts_gzip,
     decode_body,
+    merge_request_headers,
     prefetch_settings_for_backend,
     raise_for_error_status,
 )
@@ -313,9 +313,7 @@ class Urllib3AsyncTransport:
         The defaults go on the request rather than on the pool because urllib3
         replaces the pool's headers with a request's own instead of merging.
         """
-        request_headers = dict(DEFAULT_HEADERS)
-        if headers is not None:
-            request_headers.update(headers)
+        request_headers = merge_request_headers(headers)
         try:
             return await asyncio.to_thread(self._request, url, request_headers)
         except Exception as exc:

@@ -210,13 +210,15 @@ def _artifact_stub_index(body: bytes) -> AbstractContextManager[_ArtifactStubInd
 class _UserAgentStubIndex(ThreadingHTTPServer):
     """Loopback index that records each request's User-Agent."""
 
-    user_agents: list[str | None]
+    user_agents: list[str]
+    encodings: list[str]
 
 
 class _UserAgentStubIndexHandler(_QuietHandler):
     def do_GET(self) -> None:
         assert isinstance(self.server, _UserAgentStubIndex)
-        self.server.user_agents.append(self.headers.get("User-Agent"))
+        self.server.user_agents.extend(self.headers.get_all("User-Agent", []))
+        self.server.encodings.extend(self.headers.get_all("Accept-Encoding", []))
 
         body = b"ok"
         self.send_response(200)
@@ -228,6 +230,7 @@ class _UserAgentStubIndexHandler(_QuietHandler):
 def _user_agent_stub_index() -> AbstractContextManager[_UserAgentStubIndex]:
     server = _UserAgentStubIndex(("127.0.0.1", 0), _UserAgentStubIndexHandler)
     server.user_agents = []
+    server.encodings = []
     return running_server(server)
 
 
@@ -2057,8 +2060,18 @@ class TestUserAgentAcrossBackends:
         assert index.user_agents == [USER_AGENT]
 
     @pytest.mark.parametrize("make_transport", TRANSPORTS)
-    def test_accept_encoding_override_keeps_the_user_agent(
-        self, make_transport: Callable[[], AsyncHttpTransport]
+    @pytest.mark.parametrize(
+        ("headers", "user_agent"),
+        [
+            (IDENTITY_HEADERS, USER_AGENT),
+            ({"user-agent": "my-client", "accept-encoding": "identity"}, "my-client"),
+        ],
+    )
+    def test_header_overrides_reach_the_server_once(
+        self,
+        make_transport: Callable[[], AsyncHttpTransport],
+        headers: dict[str, str],
+        user_agent: str,
     ) -> None:
         with _user_agent_stub_index() as index:
             url = f"http://127.0.0.1:{index.server_port}/files/pkg-1.0.whl"
@@ -2066,13 +2079,14 @@ class TestUserAgentAcrossBackends:
             async def go() -> None:
                 transport = make_transport()
                 try:
-                    await transport.get(url, headers=IDENTITY_HEADERS)
+                    await transport.get(url, headers=headers)
                 finally:
                     await transport.aclose()
 
             asyncio.run(go())
 
-        assert index.user_agents == [USER_AGENT]
+        assert index.user_agents == [user_agent]
+        assert index.encodings == ["identity"]
 
 
 class TestInformationalResponseAcrossBackends:

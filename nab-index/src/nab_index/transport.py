@@ -41,6 +41,7 @@ __all__ = [
     "UnserveableUrlError",
     "accepts_gzip",
     "decode_body",
+    "merge_request_headers",
     "prefetch_settings_for_backend",
     "raise_for_error_status",
     "raise_unless_ok",
@@ -68,6 +69,17 @@ _GZIP_CODINGS: Final[frozenset[str]] = frozenset({"gzip", "x-gzip"})
 
 class ContentDecodingError(Exception):
     """A response body did not decode as its Content-Encoding promised."""
+
+
+def merge_request_headers(overrides: Mapping[str, str] | None) -> dict[str, str]:
+    """Merge HTTP fields case-insensitively, keeping each caller-supplied name."""
+    if not overrides:
+        return dict(DEFAULT_HEADERS)
+
+    fields = {name.lower(): (name, value) for name, value in DEFAULT_HEADERS.items()}
+    for name, value in overrides.items():
+        fields[name.lower()] = (name, value)
+    return dict(fields.values())
 
 
 def _quality(params: str) -> float:
