@@ -3443,20 +3443,29 @@ class Provider:
         return self.vcs_pins.get(canonicalize_name(canonical_name))
 
     def has_withdrawn_alternative(self) -> bool:
-        """Whether an attempted live release also offers a withdrawn artifact."""
-        return any(
-            file.yanked
-            and (
-                (package, version) in self.metadata_cache
-                or self.invalid_metadata_reason(package, version) is not None
-                or any(
-                    other_version == version and other.version != str(version)
-                    for other_version, other in versions
-                )
-            )
-            for package, versions in self.versions_cache.items()
-            for version, file in versions
-        )
+        """Check whether metadata or a version alias warrants a withdrawn-file trial."""
+        for package, versions in self.versions_cache.items():
+            checked_version_text = None
+            for version, file in versions:
+                if not file.yanked:
+                    continue
+                if (
+                    package,
+                    version,
+                ) in self.metadata_cache or self.invalid_metadata_reason(
+                    package, version
+                ) is not None:
+                    return True
+
+                # Equal releases are adjacent, but 1 and 1.0 have different text.
+                version_text = str(version)
+                if version_text == checked_version_text:
+                    continue
+                checked_version_text = version_text
+                siblings = _metadata_resolver.dists_at_version(versions, version)
+                if any(sibling.version != version_text for sibling in siblings):
+                    return True
+        return False
 
     def dist_files_for(self, canonical_name: str, version: Version) -> list[DistFile]:
         """Return every distribution file the resolver saw at ``version``.
