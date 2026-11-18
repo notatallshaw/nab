@@ -1,8 +1,7 @@
 # Universal-resolution benchmark scenarios.
 #
-# Each entry exercises the multi-target resolver in nab-project.  Scenarios are sourced from real-world
-# reports of slow or problematic universal locks in uv, Poetry, and PEX,
-# plus a few explicitly labeled real-world stress cases.
+# The nab-project runner uses these inputs for multi-target resolves. They include
+# adaptations of uv and Poetry reports and local stress cases.
 #
 # Schema (all optional except python, platforms, and requirements):
 #
@@ -10,7 +9,8 @@
 #   platforms = ["linux_x86_64", ...]    # known platform ids
 #   python_order = "asc"                 # asc (default) or desc
 #   requirements = ["pkg>=1.0", ...]
-#   constraints = ["pkg<2.0", ...]       # optional
+#   constraints = ["pkg<2.0", ...]
+#   assume_universal_deps = { pkg = "==1.2" }  # reuse wheel dependencies for an sdist
 #   datetime = "2025-06-01 14:00:00"     # exclude-newer-style cap
 #   align_across_tuples = false          # disable cross-target alignment
 #   resolution_strategy = "lowest"       # uv --resolution
@@ -18,9 +18,8 @@
 #   skip_on_fail = false                 # if true, treat resolution failure as expected
 
 # ---------------------------------------------------------------------------
-# Sourced from uv issue #1560 / #5962:
-# apache-airflow has long been the canary for resolver pathologies
-# under universal/exclude-newer.  This is the smaller "all" subset.
+# uv #1560 reported a slow apache-airflow[all] resolve. This scenario uses
+# core Airflow and the later of the two index cutoffs compared in uv #5962.
 # ---------------------------------------------------------------------------
 [apache-airflow-universal]
 reason = "uv #5962: airflow benchmark regression"
@@ -42,8 +41,8 @@ requirements = ["numpy>=2.1,<2.2", "numba<=0.60,>0.1"]
 datetime = "2025-06-01 00:00:00"
 
 # ---------------------------------------------------------------------------
-# Sourced from uv issue #8157 (sentry/python-rapidjson/sentry-kafka-schemas):
-# locks wrong RapidJSON, requires 62+ metadata fetches.
+# uv #8157 reported trying many schema releases after selecting a newer
+# RapidJSON. The dated schema wheels in this workload all require 1.8.
 # ---------------------------------------------------------------------------
 [sentry-rapidjson-universal]
 reason = "uv #8157: 62+ metadata fetches for kafka-schemas"
@@ -59,12 +58,12 @@ assume_universal_deps = { python-rapidjson = "==1.8" }
 datetime = "2025-01-01 00:00:00"
 
 # ---------------------------------------------------------------------------
-# Sourced from uv issue #1398:
-# urllib3 2.0 pinned early, then boto3/botocore upper bounds force
-# backtracking through hundreds of versions.  Universal magnifies.
+# uv #1398 supplied these six requirements and the October 2023 cutoff.
+# It proposed boto3 backtracking as an explanation. Nab's successful 3.10
+# and 3.11 locks select dandi 0.35.0, which brings in neither boto3 nor botocore.
 # ---------------------------------------------------------------------------
 [boto3-urllib3-universal]
-reason = "uv #1398, poetry #7937: urllib3/boto3 lockstep"
+reason = "Dandi and Selenium at the October 2023 cutoff (uv #1398)"
 python = ">=3.10, <3.13"
 platforms = ["linux_x86_64"]
 requirements = [
@@ -93,9 +92,8 @@ requirements = [
 datetime = "2024-12-01 00:00:00"
 
 # ---------------------------------------------------------------------------
-# Sourced from uv issue #1560:
-# apache-beam<=2.49.0 + dill<0.3.9,>=0.2.2 forces ancient apache-beam
-# under py3.10.
+# uv #8157 reduced the Airflow report in uv #3078 to these two roots.
+# Beam 2.49.0 requires an older dill release available as an sdist on Linux 3.10.
 # ---------------------------------------------------------------------------
 [airflow-beam-dill]
 reason = "uv #3078: dill+apache-beam backtrack on py3.10"
@@ -126,12 +124,11 @@ requirements = [
 datetime = "2024-01-01 00:00:00"
 
 # ---------------------------------------------------------------------------
-# Real-world scenario: PyTorch CPU-only + transformers across 3 Pythons.
-# Exercises mid-size ML graph; many wheels have markers; typical for
-# inference-only setups.  No torch CUDA index needed.
+# The PyTorch wheels come from PyPI. At this cutoff the Linux locks include
+# NVIDIA libraries, despite the historical "cpu" scenario identifier.
 # ---------------------------------------------------------------------------
 [transformers-cpu-multi-python]
-reason = "common ML inference setup; torch + transformers"
+reason = "PyPI PyTorch and Transformers on Linux and macOS"
 python = ">=3.10, <3.13"
 platforms = ["linux_x86_64", "macos_arm64"]
 requirements = [
