@@ -89,15 +89,15 @@ def test_interleaved_changes_restore_each_affected_package_once(
     assert solution.trail_length == 4
 
 
-class CountingCache(UserDict[str, RangeProtocol[int] | None]):
+class CountingCache(UserDict[str, RangeProtocol[int]]):
     """Count cache probes, including misses during invalidation."""
 
-    def __init__(self, entries: dict[str, RangeProtocol[int] | None]) -> None:
+    def __init__(self, entries: dict[str, RangeProtocol[int]]) -> None:
         super().__init__(entries)
         self.probes: list[str] = []
 
     @override
-    def __getitem__(self, package: str) -> RangeProtocol[int] | None:
+    def __getitem__(self, package: str) -> RangeProtocol[int]:
         """Record a probe before returning the cached range."""
         self.probes.append(package)
         return super().__getitem__(package)

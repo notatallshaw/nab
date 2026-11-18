@@ -42,9 +42,9 @@ def test_propagation_does_not_reread_the_derived_range(
     monkeypatch.setattr(resolver.solution, "get", record_get)
 
     assert propagate.unit_propagation(resolver, "foo") is None
-    # Evaluate before/after, read the old range, and compute the new range.
-    # Fetching that result again after derive() would add a fifth lookup.
-    assert lookups == ["foo"] * 4
+    # Two evaluations and the old range lookup. The new trail entry supplies
+    # the result of derive() directly.
+    assert lookups == ["foo"] * 3
     assert resolver.stats.derivations == 1
     assert get("foo") == (constraint if positive else ~constraint)
 

@@ -6,11 +6,13 @@ import gc
 from collections import UserDict
 from collections.abc import Iterator
 from typing import Any
+from weakref import ref
 
 import pytest
 
 from nab_resolver import partial_solution
 from nab_resolver._compat import override
+from nab_resolver.errors import ResolutionInvariantError
 from nab_resolver.partial_solution import Assignment, PartialSolution
 from nab_resolver.ranges import Range
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
@@ -42,6 +44,28 @@ class TestAssignments:
         ps = PartialSolution()
         assert ps.decision_level == 0
         assert ps.get("foo") is None
+
+    def test_lookup_releases_an_unassigned_package(self) -> None:
+        class Package:
+            pass
+
+        solution: PartialSolution[Package, int] = PartialSolution()
+        package = Package()
+        reference = ref(package)
+        assert solution.get(package) is None
+
+        del package
+        gc.collect()
+        assert reference() is None
+
+    def test_missing_trail_ranges_report_the_assignment(self) -> None:
+        solution: PartialSolution[str, int] = PartialSolution()
+        solution.decide("app", 1)
+        assignment = solution.assignments_for("app")[0]
+        assignment.cum_positive = None
+
+        with pytest.raises(ResolutionInvariantError, match="assignment 0 for 'app'"):
+            solution.satisfier(Term("app", Range.empty(), positive=False))
 
     def test_trail_length_counts_assignments(self) -> None:
         ps = PartialSolution()
