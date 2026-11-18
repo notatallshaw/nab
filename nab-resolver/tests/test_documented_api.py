@@ -23,6 +23,12 @@ assert loaded == [], f"imported submodules: {loaded}"
 
 
 SUPPORTED_API = {
+    "nab_resolver.diagnostics": {
+        "DiagnosticMessage",
+        "Suggestion",
+        "error_message",
+        "suggestion_lines",
+    },
     "nab_resolver.testing": {
         "ProviderConformanceError",
         "ProviderScenario",

@@ -218,23 +218,12 @@ final result and diagnostics.
 
 ## The supported API
 
-These module paths will not move without a major version bump:
-
-```text
-nab_resolver.errors     ResolutionError, ResolutionInvariantError,
-                        ResolutionLimitError,
-                        ResolutionStalledError, ResolutionTerminatedError
-nab_resolver.ranges     Range
-nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,
-                        ResolverObserver, ResolverProvider, Solution
-nab_resolver.root       ROOT
-nab_resolver.testing    ProviderConformanceError, ProviderScenario, check_provider, check_provider_scenarios
-nab_resolver.types      Incompatibility, IncompatibilityCause,
-                        RangeProtocol, RootRequirement, Term
+```{include} ../../nab-resolver/README.md
+---
+start-after: '## The public API'
+end-before: '## Checking preferred versions'
+---
 ```
-
-The package root binds no names, so importing `nab_resolver` pulls in no submodules. Anything else
-is internal and may move in any release.
 
 ## Checking a provider
 

@@ -5,7 +5,8 @@ internal and may be renamed or relocated in any release.
 
     nab_markersets.conversions  MarkerSetCache, PreparedMarkerSets
     nab_markersets.errors       IntractableMarkerSet, UnserializableMarkerSet
-    nab_markersets.markersets   DecisionStore, MarkerSet, variable_names
+    nab_markersets.markersets   DecisionStore, MarkerSet, factor_membership_marker,
+                                variable_names
 
 The package root binds no names, so importing ``nab_markersets`` pulls in no
 submodules.
