@@ -45,7 +45,6 @@ from urllib.parse import urlsplit
 
 from nab_provider.errors import WheelHashMismatchError
 from nab_provider.records import RangeMetadataResult, RangeOutcome
-from nab_provider.value import Record
 
 from .client import MalformedSimpleResponseError
 from .local_index import UnsupportedWheelError, wheel_metadata_member
@@ -233,41 +232,12 @@ class _SparseFile:
         return bytes(result)
 
 
-class _SuffixOutcome(Record):
-    """The result of one suffix-range attempt."""
-
-    __slots__ = __match_args__ = ("kind", "total", "low", "body")
-
-    kind: str  # "suffix", "full", or "downgrade"
-    total: int
-    low: int
-    body: bytes
-
-    def __init__(
-        self, kind: str, total: int = 0, low: int = 0, body: bytes = b""
-    ) -> None:
-        self.kind = kind
-        self.total = total
-        self.low = low
-        self.body = body
-
-
-class _AcqKind(enum.Enum):
-    """Which shape of bytes an acquisition handed back."""
-
-    SPARSE = "sparse"
-    FULL_BODY = "full-body"
-    NONE = "none"
-
-
-# The bytes an acquisition carries, read according to its _AcqKind: a whole
-# body, a tail window plus the offset it starts at, or nothing.
-_AcqPayload = bytes | tuple[_SparseFile, int] | None
+# A whole wheel, a sparse tail and its starting offset, or no usable bytes.
+_WheelPayload = bytes | tuple[_SparseFile, int] | None
 
 # A netloc that cannot serve usable ranges and volunteered no full body.
-_UNSUPPORTED_NONE: tuple[RangeCapability, _AcqKind, _AcqPayload] = (
+_UNSUPPORTED_NONE: tuple[RangeCapability, _WheelPayload] = (
     RangeCapability.UNSUPPORTED,
-    _AcqKind.NONE,
     None,
 )
 
@@ -314,7 +284,7 @@ async def _range_get(
 
 async def _suffix_attempt(
     transport: AsyncHttpTransport, url: str, tail_size: int
-) -> _SuffixOutcome:
+) -> _WheelPayload:
     """Try a suffix range, classifying the server's answer.
 
     A 206 whose Content-Range is absent, unparseable, or of unknown length
@@ -326,28 +296,30 @@ async def _suffix_attempt(
     response = await _range_get(transport, url, f"bytes=-{tail_size}")
     status = response.status_code
     if status == _HTTP_OK and not _non_identity(response):
-        return _SuffixOutcome("full", body=response.content)
+        return response.content
     if status == _HTTP_PARTIAL and not _non_identity(response):
         body = response.content
         parsed = _parse_content_range(response.headers.get("content-range"))
         if parsed is None:
-            return _SuffixOutcome("downgrade")
+            return None
         start, end, total = parsed
         width = end - start + 1
         if width > 0 and end == total - 1 and width == len(body):
-            return _SuffixOutcome("suffix", total=total, low=start, body=body)
-        return _SuffixOutcome("downgrade")
+            sparse = _SparseFile(total)
+            sparse.add_span(start, body)
+            return sparse, start
+        return None
     if status not in _RANGE_REJECT_STATUSES and status not in (
         _HTTP_OK,
         _HTTP_PARTIAL,
     ):
         response.raise_for_status()
-    return _SuffixOutcome("downgrade")
+    return None
 
 
 async def _absolute_attempt(
     transport: AsyncHttpTransport, url: str, tail_size: int
-) -> tuple[RangeCapability, _AcqKind, _AcqPayload]:
+) -> tuple[RangeCapability, _WheelPayload]:
     """Learn the length with ``bytes=0-0``, then read the tail absolutely.
 
     A probe that is refused, or that reports no usable total, steps down to
@@ -361,7 +333,7 @@ async def _absolute_attempt(
             transport, url, latch=probe.status_code != _HTTP_RANGE_NOT_SATISFIABLE
         )
     if probe.status_code == _HTTP_OK and not _non_identity(probe):
-        return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, probe.content)
+        return (RangeCapability.FULL_BODY_ONLY, probe.content)
     if probe.status_code != _HTTP_PARTIAL or _non_identity(probe):
         probe.raise_for_status()
         return _UNSUPPORTED_NONE
@@ -376,7 +348,7 @@ async def _absolute_attempt(
 
 async def _absolute_tail(
     transport: AsyncHttpTransport, url: str, total: int, tail_size: int
-) -> tuple[RangeCapability, _AcqKind, _AcqPayload]:
+) -> tuple[RangeCapability, _WheelPayload]:
     """Read the tail window with an absolute range once the length is known.
 
     A tail refused after an honoured probe still steps down to the plain GET,
@@ -390,13 +362,13 @@ async def _absolute_tail(
             transport, url, latch=tail.status_code != _HTTP_RANGE_NOT_SATISFIABLE
         )
     if tail.status_code == _HTTP_OK and not _non_identity(tail):
-        return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, tail.content)
+        return (RangeCapability.FULL_BODY_ONLY, tail.content)
     if tail.status_code != _HTTP_PARTIAL or _non_identity(tail):
         tail.raise_for_status()
         return _UNSUPPORTED_NONE
     sparse = _SparseFile(total)
     sparse.add_span(low, tail.content)
-    return (RangeCapability.ABSOLUTE_ONLY, _AcqKind.SPARSE, (sparse, low))
+    return (RangeCapability.ABSOLUTE_ONLY, (sparse, low))
 
 
 async def _full_body_fetch(transport: AsyncHttpTransport, url: str) -> bytes | None:
@@ -418,7 +390,7 @@ async def _full_body_fetch(transport: AsyncHttpTransport, url: str) -> bytes | N
 
 async def _fallback_full_body(
     transport: AsyncHttpTransport, url: str, *, latch: bool
-) -> tuple[RangeCapability, _AcqKind, _AcqPayload]:
+) -> tuple[RangeCapability, _WheelPayload]:
     """Step an unusable range down to the plain GET, choosing what it teaches.
 
     ``latch`` records the netloc ``FULL_BODY_ONLY``, so later wheels skip the
@@ -431,8 +403,8 @@ async def _fallback_full_body(
     if body is None:
         return _UNSUPPORTED_NONE
     if latch:
-        return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, body)
-    return (RangeCapability.UNKNOWN, _AcqKind.FULL_BODY, body)
+        return (RangeCapability.FULL_BODY_ONLY, body)
+    return (RangeCapability.UNKNOWN, body)
 
 
 async def _acquire(
@@ -440,7 +412,7 @@ async def _acquire(
     url: str,
     capability: RangeCapability,
     tail_size: int,
-) -> tuple[RangeCapability, _AcqKind, _AcqPayload]:
+) -> tuple[RangeCapability, _WheelPayload]:
     """Fetch bytes per the netloc's known capability, learning it if unknown."""
     if capability is RangeCapability.UNSUPPORTED:
         return _UNSUPPORTED_NONE
@@ -448,16 +420,12 @@ async def _acquire(
         body = await _full_body_fetch(transport, url)
         if body is None:
             return _UNSUPPORTED_NONE
-        return (RangeCapability.FULL_BODY_ONLY, _AcqKind.FULL_BODY, body)
+        return (RangeCapability.FULL_BODY_ONLY, body)
     if capability in (RangeCapability.UNKNOWN, RangeCapability.SUFFIX_OK):
         suffix = await _suffix_attempt(transport, url, tail_size)
-        if suffix.kind == "suffix":
-            sparse = _SparseFile(suffix.total)
-            sparse.add_span(suffix.low, suffix.body)
-            return (RangeCapability.SUFFIX_OK, _AcqKind.SPARSE, (sparse, suffix.low))
-        if suffix.kind == "full":
-            # Not latched to FULL_BODY_ONLY: see RangeCapability.
-            return (RangeCapability.SUFFIX_OK, _AcqKind.FULL_BODY, suffix.body)
+        if suffix is not None:
+            # Hosts that ignore this suffix request may honour the next one.
+            return RangeCapability.SUFFIX_OK, suffix
     return await _absolute_attempt(transport, url, tail_size)
 
 
@@ -676,7 +644,7 @@ async def read_wheel_metadata_over_range(
         owns_probe = await memo.await_probe(netloc)
     try:
         capability = memo.capability(netloc)
-        new_capability, kind, payload = await _acquire(
+        new_capability, payload = await _acquire(
             transport, wheel_url, capability, tail_size
         )
         if new_capability is not RangeCapability.UNKNOWN:
@@ -688,15 +656,14 @@ async def read_wheel_metadata_over_range(
         # member reads below need not keep them parked.
         if owns_probe:
             memo.finish_probe(netloc)
-    if kind is _AcqKind.NONE:
+
+    if payload is None:
         return RangeMetadataResult(None, RangeOutcome.UNSUPPORTED)
-    if kind is _AcqKind.FULL_BODY:
-        assert isinstance(payload, bytes)
+    if isinstance(payload, bytes):
         _verify_full_body(payload, wheel_hash)
         raw = _read_full_body(payload, canonical_name)
         outcome = RangeOutcome.FULL_BODY
     else:
-        assert isinstance(payload, tuple)
         sparse, tail_low = payload
         try:
             raw = await _read_sparse(
