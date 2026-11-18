@@ -74,6 +74,9 @@ requirements = [
     "pyyaml",
     "selenium",
 ]
+# Use h5py's default serial build on all three targets. Its wheels and source
+# declare numpy >=1.17.3. Building with HDF5_MPI=ON also requires mpi4py.
+assume_universal_deps = { h5py = "==3.9.0" }
 datetime = "2023-10-01 00:00:00"
 
 # ---------------------------------------------------------------------------
