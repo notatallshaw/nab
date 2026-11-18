@@ -16,17 +16,17 @@ if TYPE_CHECKING:
 
     from .model import Scope
 
-T = TypeVar("T")
-C = TypeVar("C")
+_ArgumentValue = TypeVar("_ArgumentValue")
+_ConfigValue = TypeVar("_ConfigValue")
 
 # The marker for a field the row does not write.  It is typed Any so an
-# omitted default checks against any T while a written one is checked;
+# omitted default works for every argument type while a written one is checked;
 # nab._cli.definition.build turns it into the Opt sentinel or into None.
 OMITTED: Any = object()
 
 
-class Layer(Generic[C]):
-    """Configuration hooks and a built-in default of type ``C``.
+class Layer(Generic[_ConfigValue]):
+    """Configuration hooks and a built-in default with the same value type.
 
     The type parameter checks the hooks and default; the builder does
     not read it. ``sample`` supplies a token for free-form values, and
@@ -42,9 +42,9 @@ class Layer(Generic[C]):
     def __init__(
         self,
         *,
-        rdefault: C,
-        parse: Callable[[Any, str], C],
-        render: Callable[[C], str],
+        rdefault: _ConfigValue,
+        parse: Callable[[Any, str], _ConfigValue],
+        render: Callable[[_ConfigValue], str],
         label: str = "",
         sample: str = "",
     ) -> None:
@@ -251,7 +251,7 @@ class Toggle(Tri):
     __slots__ = ()
 
 
-class Value(Row, Generic[T]):
+class Value(Row, Generic[_ArgumentValue]):
     """An option that reads one token, of the type parameter's type."""
 
     kind = "value"
@@ -259,7 +259,7 @@ class Value(Row, Generic[T]):
 
     if TYPE_CHECKING:
 
-        def __get__(self, obj: object, owner: type | None = None) -> T:
+        def __get__(self, obj: object, owner: type | None = None) -> _ArgumentValue:
             """Read the value a command receives for this row."""
             ...
 
@@ -267,7 +267,7 @@ class Value(Row, Generic[T]):
         self,
         *,
         help: str,  # noqa: A002
-        default: T = OMITTED,
+        default: _ArgumentValue = OMITTED,
         short: str = "",
         docs: str = "",
         on: tuple[str, ...] = (),
@@ -296,7 +296,7 @@ class Value(Row, Generic[T]):
         )
 
 
-class Many(Row, Generic[T]):
+class Many(Row, Generic[_ArgumentValue]):
     """A repeatable option: one occurrence contributes one value.
 
     The name is plural and the flag is its singular, so ``constraints``
@@ -308,7 +308,9 @@ class Many(Row, Generic[T]):
 
     if TYPE_CHECKING:
 
-        def __get__(self, obj: object, owner: type | None = None) -> tuple[T, ...]:
+        def __get__(
+            self, obj: object, owner: type | None = None
+        ) -> tuple[_ArgumentValue, ...]:
             """Read the value a command receives for this row."""
             ...
 
@@ -325,7 +327,7 @@ class Many(Row, Generic[T]):
         super().__init__(help=help, docs=docs, on=on, key=key, default=(), alias=alias)
 
 
-class Star(Row, Generic[T]):
+class Star(Row, Generic[_ArgumentValue]):
     """An option that takes every token up to the next flag."""
 
     kind = "star"
@@ -333,7 +335,9 @@ class Star(Row, Generic[T]):
 
     if TYPE_CHECKING:
 
-        def __get__(self, obj: object, owner: type | None = None) -> tuple[T, ...]:
+        def __get__(
+            self, obj: object, owner: type | None = None
+        ) -> tuple[_ArgumentValue, ...]:
             """Read the value a command receives for this row."""
             ...
 
@@ -350,7 +354,7 @@ class Star(Row, Generic[T]):
         super().__init__(help=help, docs=docs, on=on, default=(), key=key, env=env)
 
 
-class Items(Star[T]):
+class Items(Star[_ArgumentValue]):
     """A token run read as a list of tables: a bare token opens one.
 
     ``opened_by`` is the item's identifying key, so a bare token is
@@ -374,7 +378,7 @@ class Items(Star[T]):
         self.opened_by = opened_by
 
 
-class Item(Items[T]):
+class Item(Items[_ArgumentValue]):
     """A token run read as one table rather than a list of them.
 
     A second bare token would open a second item on a key that holds one,
@@ -384,13 +388,13 @@ class Item(Items[T]):
     __slots__ = ()
 
 
-class Pairs(Star[T]):
+class Pairs(Star[_ArgumentValue]):
     """A token run read as one free-key table: every token is ``KEY=VALUE``."""
 
     __slots__ = ()
 
 
-class Operand(Row, Generic[T]):
+class Operand(Row, Generic[_ArgumentValue]):
     """A positional word.  It has no flag, so it takes no short name."""
 
     kind = "positional"
@@ -398,7 +402,7 @@ class Operand(Row, Generic[T]):
 
     if TYPE_CHECKING:
 
-        def __get__(self, obj: object, owner: type | None = None) -> T:
+        def __get__(self, obj: object, owner: type | None = None) -> _ArgumentValue:
             """Read the value a command receives for this row."""
             ...
 
@@ -406,7 +410,7 @@ class Operand(Row, Generic[T]):
         self,
         *,
         help: str,  # noqa: A002
-        default: T = OMITTED,
+        default: _ArgumentValue = OMITTED,
         docs: str = "",
         on: tuple[str, ...] = (),
     ) -> None:
@@ -414,7 +418,7 @@ class Operand(Row, Generic[T]):
         super().__init__(help=help, default=default, docs=docs, on=on)
 
 
-class Verb(Row, Generic[T]):
+class Verb(Row, Generic[_ArgumentValue]):
     """A required positional word out of a fixed set."""
 
     kind = "verb"
@@ -422,7 +426,7 @@ class Verb(Row, Generic[T]):
 
     if TYPE_CHECKING:
 
-        def __get__(self, obj: object, owner: type | None = None) -> T:
+        def __get__(self, obj: object, owner: type | None = None) -> _ArgumentValue:
             """Read the value a command receives for this row."""
             ...
 

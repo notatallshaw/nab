@@ -42,10 +42,12 @@ VersionType = TypeVar("VersionType", bound=Hashable)
 
 # Contravariant so packaging.ranges.VersionRange (accepts Version | str)
 # can satisfy RangeProtocol[Version].
-VersionType_contra = TypeVar("VersionType_contra", bound=Hashable, contravariant=True)
+_ContravariantVersion = TypeVar(  # noqa: PLC0105 - spell out contravariance.
+    "_ContravariantVersion", bound=Hashable, contravariant=True
+)
 
 
-class RangeProtocol(Protocol[VersionType_contra]):
+class RangeProtocol(Protocol[_ContravariantVersion]):
     """Contract for version range types used by the resolver.
 
     Beyond the signatures, conflict resolution only terminates while
@@ -84,7 +86,7 @@ class RangeProtocol(Protocol[VersionType_contra]):
         ...
 
     @classmethod
-    def singleton(cls, version: VersionType_contra) -> Self:
+    def singleton(cls, version: _ContravariantVersion) -> Self:
         """Create a range containing exactly one version."""
         ...
 
@@ -93,7 +95,7 @@ class RangeProtocol(Protocol[VersionType_contra]):
         """``True`` if this range contains no versions."""
         ...
 
-    def __contains__(self, version: VersionType_contra, /) -> bool:
+    def __contains__(self, version: _ContravariantVersion, /) -> bool:
         """Test version membership."""
         ...
 

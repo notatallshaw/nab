@@ -513,15 +513,15 @@ def _parse_bool(key: str, value: object, *, default: bool) -> bool:
 
 
 # The bound is a string so ``enum`` can stay a typing-only import.
-_EnumT = TypeVar("_EnumT", bound="enum.Enum")
+_EnumMember = TypeVar("_EnumMember", bound="enum.Enum")
 
 
 def parse_enum(
     value: object,
     where: str,
-    enum_cls: type[_EnumT],
-    default: _EnumT,
-) -> _EnumT:
+    enum_cls: type[_EnumMember],
+    default: _EnumMember,
+) -> _EnumMember:
     """Read ``value`` as one of ``enum_cls``'s values, or ``default`` when unset."""
     if value is None:
         return default

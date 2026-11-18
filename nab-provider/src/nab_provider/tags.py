@@ -590,7 +590,7 @@ class _NamedWheel(Protocol):
         ...
 
 
-_WheelT = TypeVar("_WheelT", bound=_NamedWheel)
+_Wheel = TypeVar("_Wheel", bound=_NamedWheel)
 
 
 # One line of a target's tag order with the platform axis projected out:
@@ -799,7 +799,7 @@ class TagSet(SlottedValue):
             return None
         return (rank_index, _build_tag_sort_key(wheel_filename))
 
-    def pick(self, wheels: Iterable[_WheelT]) -> _WheelT | None:
+    def pick(self, wheels: Iterable[_Wheel]) -> _Wheel | None:
         """Pick the most-specific compatible wheel for the target, or None.
 
         Implements PEP 425 preference: wheels matching earlier
@@ -811,7 +811,7 @@ class TagSet(SlottedValue):
         ``wheels`` is anything carrying a ``filename``: an index
         listing's wheel or a lockfile's wheel artefact.
         """
-        best_wheel: _WheelT | None = None
+        best_wheel: _Wheel | None = None
         best_rank = 0  # ignored until best_wheel is set
         best_build: tuple[int, str] | None = None
 

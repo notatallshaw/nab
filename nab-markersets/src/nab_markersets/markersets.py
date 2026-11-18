@@ -53,11 +53,13 @@ def __dir__() -> list[str]:
     return __all__
 
 
-_P = ParamSpec("_P")
-_R = TypeVar("_R")
+_MethodParameters = ParamSpec("_MethodParameters")
+_MethodResult = TypeVar("_MethodResult")
 
 
-def _bounded(method: Callable[_P, _R]) -> Callable[_P, _R]:
+def _bounded(
+    method: Callable[_MethodParameters, _MethodResult],
+) -> Callable[_MethodParameters, _MethodResult]:
     """Report a walk's :class:`RecursionError` as the algebra's bounded failure.
 
     A tree walk recurses as deep as the marker nests, so pathological input
@@ -65,7 +67,9 @@ def _bounded(method: Callable[_P, _R]) -> Callable[_P, _R]:
     """
 
     @wraps(method)
-    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+    def wrapper(
+        *args: _MethodParameters.args, **kwargs: _MethodParameters.kwargs
+    ) -> _MethodResult:
         try:
             return method(*args, **kwargs)
         except RecursionError as exc:
