@@ -9,14 +9,11 @@ module owns the project side.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab.config.assignments",
-    "nab.config.assignments",
-    "nab_resolver.diagnostics",
     "datetime",
+    "nab.config.assignments",
     "nab.config.hooks",
     "nab.config.ladder",
     "nab.config.values",
-    "nab_project",
     "nab_project.build_policy",
     "nab_project.conflicts",
     "nab_project.inputs",
@@ -26,6 +23,7 @@ __lazy_modules__ = (
     "nab_provider._vendor.packaging.utils",
     "nab_provider._vendor.packaging.version",
     "nab_provider.errors",
+    "nab_resolver.diagnostics",
     "tomli",
 )
 

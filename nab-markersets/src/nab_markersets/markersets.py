@@ -14,9 +14,9 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "functools",
-    "nab_resolver.diagnostics",
     "nab_markersets.errors",
     "nab_markersets.python_versions",
+    "nab_resolver.diagnostics",
 )
 
 from functools import wraps

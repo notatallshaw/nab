@@ -11,10 +11,7 @@ Reached only through
 
 from __future__ import annotations
 
-from nab_resolver.diagnostics import error_message
-
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "nab_index",
     "nab_index.client",
     "nab_project.paths",
@@ -22,6 +19,7 @@ __lazy_modules__ = (
     "nab_provider.errors",
     "nab_provider.policy",
     "nab_provider.vcs_request",
+    "nab_resolver.diagnostics",
     "os",
     "pathlib",
     "shutil",
@@ -48,6 +46,7 @@ from nab_provider.policy import (
     VcsSource,
 )
 from nab_provider.vcs_request import VcsCloneError, VcsRequest
+from nab_resolver.diagnostics import error_message
 
 from .paths import PathState, path_state
 

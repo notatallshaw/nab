@@ -10,10 +10,9 @@ be read directly without a second fetch.  This module also owns the
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_index.urls",
-    "nab_resolver.diagnostics",
     "collections",
     "datetime",
+    "nab_index.urls",
     "nab_project",
     "nab_project._lockfile.groups",
     "nab_project._toml",
@@ -27,6 +26,7 @@ __lazy_modules__ = (
     "nab_provider.metadata",
     "nab_provider.policy",
     "nab_provider.records",
+    "nab_resolver.diagnostics",
     "pathlib",
     "tomli",
     "urllib.parse",

@@ -33,6 +33,11 @@ if TYPE_CHECKING:
         ),
         ("nab_index._json_decode", "json", 'assert module.decode_json(b"[]") == []'),
         (
+            "nab_project._build_remote",
+            "nab_resolver.diagnostics",
+            'assert str(module.error_message(ValueError("build failed"))) == "build failed"',
+        ),
+        (
             "nab_project.pyproject_files",
             "nab_provider.requirements_file",
             'assert module.project_dependencies({"project": {"dependencies": ["foo==1"]}})[0].name == "foo"',

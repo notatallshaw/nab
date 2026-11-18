@@ -9,15 +9,13 @@ names it by, so one wording serves every rung of the ladder: a bad
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "collections",
     "datetime",
     "itertools",
     "nab_index.file_urls",
     "nab_markersets.python_versions",
-    "nab_project.lock_policy",
     "nab_project",
-    "tomli",
+    "nab_project.lock_policy",
     "nab_project.paths",
     "nab_project.workspace",
     "nab_provider._vendor.packaging.specifiers",
@@ -34,7 +32,9 @@ __lazy_modules__ = (
     "nab_provider.tags",
     "nab_provider.target",
     "nab_provider.vcs_admission",
+    "nab_resolver.diagnostics",
     "pathlib",
+    "tomli",
     "urllib.parse",
 )
 

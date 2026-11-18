@@ -18,10 +18,10 @@ __lazy_modules__ = (
     "nab_provider.policy",
     "nab_provider.project_requirements",
     "nab_provider.records",
-    "nab_resolver.diagnostics",
     "nab_provider.store",
     "nab_provider.tags",
     "nab_provider.vcs_admission",
+    "nab_resolver.diagnostics",
     "urllib.parse",
 )
 

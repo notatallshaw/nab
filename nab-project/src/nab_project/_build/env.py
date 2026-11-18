@@ -38,6 +38,7 @@ __lazy_modules__ = (
     "nab_project.download",
     "nab_project.inputs",
     "nab_project.lockfile",
+    "nab_project.toml_writer",
     "nab_provider._vendor.packaging.requirements",
     "nab_provider._vendor.packaging.specifiers",
     "nab_provider._vendor.packaging.utils",
@@ -57,7 +58,6 @@ __lazy_modules__ = (
     "subprocess",
     "sys",
     "tempfile",
-    "nab_project.toml_writer",
     "venv",
 )
 

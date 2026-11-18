@@ -33,6 +33,7 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "nab_project",
+    "nab_project.toml_writer",
     "nab_provider._vendor.packaging.markers",
     "nab_provider._vendor.packaging.pylock",
     "nab_provider._vendor.packaging.specifiers",
@@ -42,7 +43,6 @@ __lazy_modules__ = (
     "nab_provider.pep508",
     "nab_provider.target",
     "tomli",
-    "nab_project.toml_writer",
 )
 
 from typing import TYPE_CHECKING, Final

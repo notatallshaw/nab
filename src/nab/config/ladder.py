@@ -11,16 +11,16 @@ Reports show configured winners. With ``--include-rejected``, ``list`` and
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "nab",
     "nab._cli.definition.model",
-    "nab.config.hooks",
     "nab.config.assignments",
+    "nab.config.hooks",
     "nab.config.subflags",
     "nab.config.values",
     "nab_project",
     "nab_project.paths",
     "nab_provider.policy",
+    "nab_resolver.diagnostics",
     "pathlib",
     "tomli",
 )

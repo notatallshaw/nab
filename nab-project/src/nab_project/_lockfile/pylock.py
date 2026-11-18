@@ -23,6 +23,7 @@ __lazy_modules__ = (
     "nab_project._lockfile.disjointness",
     "nab_project._lockfile.groups",
     "nab_project.conflicts",
+    "nab_project.toml_writer",
     "nab_provider._vendor.packaging.markers",
     "nab_provider._vendor.packaging.pylock",
     "nab_provider._vendor.packaging.specifiers",
@@ -32,7 +33,6 @@ __lazy_modules__ = (
     "nab_provider.marker_holds",
     "os",
     "pathlib",
-    "nab_project.toml_writer",
 )
 
 import os

@@ -20,12 +20,12 @@ message.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "nab_project",
     "nab_project._toml",
     "nab_project.paths",
     "nab_provider._vendor.packaging.utils",
     "nab_provider.policy",
+    "nab_resolver.diagnostics",
     "tomli",
 )
 

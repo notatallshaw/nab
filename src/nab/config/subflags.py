@@ -7,9 +7,9 @@
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "nab._cli.definition.model",
     "nab.config.values",
+    "nab_resolver.diagnostics",
 )
 
 from typing import TYPE_CHECKING, Any

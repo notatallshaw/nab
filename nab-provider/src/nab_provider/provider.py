@@ -8,7 +8,6 @@ into nab-resolver Range types.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "bisect",
     "collections",
     "itertools",
@@ -26,6 +25,7 @@ __lazy_modules__ = (
     "nab_provider.metadata",
     "nab_provider.records",
     "nab_provider.vcs_admission",
+    "nab_resolver.diagnostics",
 )
 
 import bisect

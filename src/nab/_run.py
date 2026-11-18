@@ -12,11 +12,10 @@ resolver.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "datetime",
     "nab",
-    "nab._cli.parse",
     "nab._cli.definition.model",
+    "nab._cli.parse",
     "nab.config.assignments",
     "nab.config.hooks",
     "nab.config.subflags",
@@ -25,6 +24,7 @@ __lazy_modules__ = (
     "nab_project",
     "nab_project.paths",
     "nab_provider.policy",
+    "nab_resolver.diagnostics",
     "pathlib",
     "sys",
     "tomli",

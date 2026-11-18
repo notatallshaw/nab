@@ -15,8 +15,8 @@ after admission lets the URL through.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "nab_provider.vcs_request",
+    "nab_resolver.diagnostics",
     "posixpath",
     "urllib.parse",
 )

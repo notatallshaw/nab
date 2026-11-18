@@ -23,10 +23,7 @@ covered by skipping the prepare step for that combination; see
 
 from __future__ import annotations
 
-from nab_resolver.diagnostics import error_message
-
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "build",
     "email",
     "lzma",
@@ -42,6 +39,7 @@ __lazy_modules__ = (
     "nab_provider.metadata",
     "nab_provider.pep508",
     "nab_provider.requirements_file",
+    "nab_resolver.diagnostics",
     "nab_resolver.errors",
     "os",
     "pathlib",
@@ -78,6 +76,7 @@ from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     require_string_list,
 )
+from nab_resolver.diagnostics import error_message
 from nab_resolver.errors import ResolutionError
 
 from .. import toml_io

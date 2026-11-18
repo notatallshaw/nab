@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_provider.project_requirements",
     "nab_provider._vendor.packaging.specifiers",
+    "nab_provider.project_requirements",
     "tokenize",
     "tomli",
 )

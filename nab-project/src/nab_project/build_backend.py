@@ -11,7 +11,6 @@ settings a resolve runs under.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "nab_project",
     "nab_project._build.errors",
     "nab_project.paths",
@@ -20,6 +19,7 @@ __lazy_modules__ = (
     "nab_provider._vendor.packaging.version",
     "nab_provider.metadata",
     "nab_provider.requirements_file",
+    "nab_resolver.diagnostics",
     "tomli",
 )
 

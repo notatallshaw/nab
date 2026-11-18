@@ -11,7 +11,6 @@ resolver and the lockfile readers off ``nab cache`` and ``nab config``.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "functools",
     "gc",
     "importlib.util",
@@ -26,6 +25,7 @@ __lazy_modules__ = (
     "nab_provider.provider",
     "nab_provider.requirements_file",
     "nab_provider.target",
+    "nab_resolver.diagnostics",
     "nab_resolver.errors",
     "sys",
     "tomli",

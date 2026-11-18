@@ -10,13 +10,11 @@ Reached only through
 
 from __future__ import annotations
 
-from nab_resolver.diagnostics import error_message
-
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "nab_index.client",
     "nab_provider.errors",
     "nab_provider.store",
+    "nab_resolver.diagnostics",
     "pathlib",
     "tempfile",
 )
@@ -28,6 +26,7 @@ from typing import TYPE_CHECKING
 from nab_index.client import extract_sdist_archive
 from nab_provider.errors import UnsupportedSdistError
 from nab_provider.store import sdist_artifact_key
+from nab_resolver.diagnostics import error_message
 
 if TYPE_CHECKING:
     from collections.abc import Callable
