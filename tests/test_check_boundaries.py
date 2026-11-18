@@ -97,6 +97,33 @@ def test_packages_are_the_ones_the_release_builds() -> None:
     assert checked == set(check_boundaries.build_dists.PACKAGES)
 
 
+def test_only_the_project_reader_can_parse_toml(
+    workspace: FakeWorkspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = (
+        "import tomli\n"
+        "from tomli import TOMLDecodeError\n"
+        "import tomli as t\n"
+        "import tomllib\n"
+        "from tomli import loads\n"
+        "from tomllib import load\n"
+        "tomli.loads(text)\n"
+        "tomli.TOMLDecodeError\n"
+        "from tomli import *\n"
+    )
+    workspace.add("nab-project", toml_io=source)
+    workspace.add("pkg-a", toml_io=source)
+
+    assert check_boundaries.main() == 1
+    errors = capsys.readouterr().err
+    lines = [line.strip() for line in errors.splitlines() if "parse TOML" in line]
+    path = Path("pkg-a/src/pkg_a/toml_io.py")
+    assert lines == [
+        f"{path}:{line}: parse TOML through nab_project.toml_io"
+        for line in (3, 4, 5, 6, 7, 9)
+    ]
+
+
 def test_the_packages_that_publish_a_table_are_pinned() -> None:
     """Pin the constant every other test here replaces.
 
