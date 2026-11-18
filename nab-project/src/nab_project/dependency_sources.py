@@ -109,10 +109,10 @@ class DependencySourceReader:
             return _local_reader((self.root / local).resolve(), self.local_inputs)
         request, digest = _archive_input(declaration)
         url = request.url
-        data: bytes | None = None
+        verified_archive: bytes | None = None
 
         def read_archive(relative: str) -> str:
-            nonlocal data
+            nonlocal verified_archive
             relative = source_relative_path(relative)
             key = hashlib.sha256(relative.encode()).hexdigest()
             cache = (
@@ -128,10 +128,12 @@ class DependencySourceReader:
                     f"dependency input {strip_userinfo(url)}: {relative} is not cached"
                 )
                 raise ValueError(msg)
-            if data is None:
+            if verified_archive is None:
                 data = self.fetch(request.url)
                 verify_sdist_hash(data, ("sha256", digest))
-            text = read_archive_files(data, [relative])[relative]
+                verified_archive = data
+
+            text = read_archive_files(verified_archive, [relative])[relative]
             if cache is not None:
                 cache.parent.mkdir(parents=True, exist_ok=True)
                 atomic_write_text(
