@@ -4,6 +4,10 @@ nab ships two live-index benchmark suites that exercise single-environment and u
 against real-world scenarios. It also includes a small, deterministic offline smoke suite for
 repeatable correctness and performance checks.
 
+The Test workflow's benchmark job runs the offline smoke and resolver range suites on Ubuntu with
+Python 3.15. Download the `offline-benchmarks` artifact for the results, search counters and
+timings.
+
 ## Deterministic offline smoke suite
 
 `deterministic_smoke.py` materializes a content-addressed local Simple index and runs seven semantic
