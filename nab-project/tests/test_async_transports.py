@@ -10,9 +10,8 @@ import itertools
 import json
 import ssl
 import tarfile
-import threading
-from collections.abc import Callable, Generator, Mapping, Sequence
-from contextlib import AbstractContextManager, contextmanager
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractContextManager
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -60,13 +59,12 @@ from nab_index.urllib3_async_transport import (
     _Urllib3Response,
 )
 from nab_markersets._compat import get_int_max_str_digits
+from nab_project._testing.loopback import running_server
 from nab_project.fetch import FetchCoordinator
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
 )
-
-_SERVER_POLL_INTERVAL = 0.01
 
 LISTING_JSON = {
     "meta": {"api-version": "1.0"},
@@ -99,6 +97,13 @@ UNPARSEABLE_RETRY_AFTERS = [
 EXPECTED_RETRY_STATUSES = (408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 527)
 
 
+class _QuietHandler(BaseHTTPRequestHandler):
+    """Keep access logs out of captured test output."""
+
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+        pass
+
+
 class _StubIndex(ThreadingHTTPServer):
     """Loopback index that serves each queued status once, then 200.
 
@@ -111,7 +116,7 @@ class _StubIndex(ThreadingHTTPServer):
     retry_after: str | None
 
 
-class _StubIndexHandler(BaseHTTPRequestHandler):
+class _StubIndexHandler(_QuietHandler):
     def do_GET(self) -> None:
         assert isinstance(self.server, _StubIndex)
         self.server.seen.append(self.path)
@@ -127,30 +132,15 @@ class _StubIndexHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
-        """Drop the handler's stderr access log."""
 
-
-@contextmanager
 def _stub_index(
     statuses: list[int], retry_after: str | None = None
-) -> Generator[_StubIndex, None, None]:
+) -> AbstractContextManager[_StubIndex]:
     server = _StubIndex(("127.0.0.1", 0), _StubIndexHandler)
     server.statuses = list(statuses)
     server.seen = []
     server.retry_after = retry_after
-    thread = threading.Thread(
-        target=server.serve_forever,
-        kwargs={"poll_interval": _SERVER_POLL_INTERVAL},
-        daemon=True,
-    )
-    thread.start()
-    try:
-        yield server
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+    return running_server(server)
 
 
 class _GzipStubIndex(ThreadingHTTPServer):
@@ -161,7 +151,7 @@ class _GzipStubIndex(ThreadingHTTPServer):
     seen: list[str]
 
 
-class _GzipStubIndexHandler(BaseHTTPRequestHandler):
+class _GzipStubIndexHandler(_QuietHandler):
     def do_GET(self) -> None:
         assert isinstance(self.server, _GzipStubIndex)
         self.server.seen.append(self.path)
@@ -173,30 +163,15 @@ class _GzipStubIndexHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
-        """Drop the handler's stderr access log."""
 
-
-@contextmanager
 def _gzip_stub_index(
     bodies: list[bytes], encoding: str = "gzip"
-) -> Generator[_GzipStubIndex, None, None]:
+) -> AbstractContextManager[_GzipStubIndex]:
     server = _GzipStubIndex(("127.0.0.1", 0), _GzipStubIndexHandler)
     server.bodies = list(bodies)
     server.encoding = encoding
     server.seen = []
-    thread = threading.Thread(
-        target=server.serve_forever,
-        kwargs={"poll_interval": _SERVER_POLL_INTERVAL},
-        daemon=True,
-    )
-    thread.start()
-    try:
-        yield server
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+    return running_server(server)
 
 
 class _ArtifactStubIndex(ThreadingHTTPServer):
@@ -211,7 +186,7 @@ class _ArtifactStubIndex(ThreadingHTTPServer):
     accept_encoding: list[str | None]
 
 
-class _ArtifactStubIndexHandler(BaseHTTPRequestHandler):
+class _ArtifactStubIndexHandler(_QuietHandler):
     def do_GET(self) -> None:
         assert isinstance(self.server, _ArtifactStubIndex)
         self.server.accept_encoding.append(self.headers.get("Accept-Encoding"))
@@ -224,27 +199,12 @@ class _ArtifactStubIndexHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
-        """Drop the handler's stderr access log."""
 
-
-@contextmanager
-def _artifact_stub_index(body: bytes) -> Generator[_ArtifactStubIndex, None, None]:
+def _artifact_stub_index(body: bytes) -> AbstractContextManager[_ArtifactStubIndex]:
     server = _ArtifactStubIndex(("127.0.0.1", 0), _ArtifactStubIndexHandler)
     server.body = body
     server.accept_encoding = []
-    thread = threading.Thread(
-        target=server.serve_forever,
-        kwargs={"poll_interval": _SERVER_POLL_INTERVAL},
-        daemon=True,
-    )
-    thread.start()
-    try:
-        yield server
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+    return running_server(server)
 
 
 class _UserAgentStubIndex(ThreadingHTTPServer):
@@ -253,7 +213,7 @@ class _UserAgentStubIndex(ThreadingHTTPServer):
     user_agents: list[str | None]
 
 
-class _UserAgentStubIndexHandler(BaseHTTPRequestHandler):
+class _UserAgentStubIndexHandler(_QuietHandler):
     def do_GET(self) -> None:
         assert isinstance(self.server, _UserAgentStubIndex)
         self.server.user_agents.append(self.headers.get("User-Agent"))
@@ -264,26 +224,11 @@ class _UserAgentStubIndexHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
-        """Drop the handler's stderr access log."""
 
-
-@contextmanager
-def _user_agent_stub_index() -> Generator[_UserAgentStubIndex, None, None]:
+def _user_agent_stub_index() -> AbstractContextManager[_UserAgentStubIndex]:
     server = _UserAgentStubIndex(("127.0.0.1", 0), _UserAgentStubIndexHandler)
     server.user_agents = []
-    thread = threading.Thread(
-        target=server.serve_forever,
-        kwargs={"poll_interval": _SERVER_POLL_INTERVAL},
-        daemon=True,
-    )
-    thread.start()
-    try:
-        yield server
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+    return running_server(server)
 
 
 EARLY_HINTS_LISTING = (
@@ -304,7 +249,7 @@ class _EarlyHintsIndex(ThreadingHTTPServer):
     informational: list[int]
 
 
-class _EarlyHintsIndexHandler(BaseHTTPRequestHandler):
+class _EarlyHintsIndexHandler(_QuietHandler):
     def do_GET(self) -> None:
         assert isinstance(self.server, _EarlyHintsIndex)
         for status in self.server.informational:
@@ -320,28 +265,13 @@ class _EarlyHintsIndexHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(EARLY_HINTS_LISTING)
 
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
-        """Drop the handler's stderr access log."""
 
-
-@contextmanager
 def _early_hints_index(
     informational: list[int],
-) -> Generator[_EarlyHintsIndex, None, None]:
+) -> AbstractContextManager[_EarlyHintsIndex]:
     server = _EarlyHintsIndex(("127.0.0.1", 0), _EarlyHintsIndexHandler)
     server.informational = list(informational)
-    thread = threading.Thread(
-        target=server.serve_forever,
-        kwargs={"poll_interval": _SERVER_POLL_INTERVAL},
-        daemon=True,
-    )
-    thread.start()
-    try:
-        yield server
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+    return running_server(server)
 
 
 class _MovedIndex(ThreadingHTTPServer):
@@ -357,7 +287,7 @@ class _MovedIndex(ThreadingHTTPServer):
     transient: list[int]
 
 
-class _MovedIndexHandler(BaseHTTPRequestHandler):
+class _MovedIndexHandler(_QuietHandler):
     def do_GET(self) -> None:
         assert isinstance(self.server, _MovedIndex)
         self.server.seen.append(self.path)
@@ -382,31 +312,16 @@ class _MovedIndexHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
-        """Drop the handler's stderr access log."""
 
-
-@contextmanager
 def _moved_index(
     hops: dict[str, str], body: bytes, transient: Sequence[int] = ()
-) -> Generator[_MovedIndex, None, None]:
+) -> AbstractContextManager[_MovedIndex]:
     server = _MovedIndex(("127.0.0.1", 0), _MovedIndexHandler)
     server.hops = dict(hops)
     server.body = body
     server.seen = []
     server.transient = list(transient)
-    thread = threading.Thread(
-        target=server.serve_forever,
-        kwargs={"poll_interval": _SERVER_POLL_INTERVAL},
-        daemon=True,
-    )
-    thread.start()
-    try:
-        yield server
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+    return running_server(server)
 
 
 @pytest.fixture
