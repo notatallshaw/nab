@@ -692,24 +692,31 @@ def apply_python_axis_overlay(
     level and the two would describe different interpreters. Re-derive both
     from whichever axis key the overlay supplies (``python_full_version``
     wins when both are present), so an overlay of ``python_version`` ``3.8``
-    yields ``python_full_version`` ``3.8.0`` like the universal matrix. On
-    CPython ``implementation_version`` equals ``python_full_version``, so move
-    it with the axis; other implementations version separately and keep their
-    host value unless the overlay sets it. Non-axis keys the overlay sets are
-    kept verbatim; the ``python_version``/``python_full_version`` pair is always
-    the derived one, so a patch-precision ``python_version`` (e.g. ``3.10.5``)
-    normalizes to major.minor.
+    yields ``python_full_version`` ``3.8.0`` like the universal matrix.
+
+    Changing the language version on CPython, or switching to CPython, sets
+    ``implementation_version`` to the resulting ``python_full_version``.
+    Other implementations retain their previous implementation version. An
+    explicit ``implementation_version`` always takes precedence. A patch-level
+    ``python_version`` such as ``3.10.5`` normalizes to major.minor.
     """
-    source = overlay.get("python_full_version") or overlay.get("python_version")
-    if source is None:
-        environment.update(overlay)
+    source = overlay.get("python_full_version", overlay.get("python_version"))
+    axis = python_axis_environment(source) if source is not None else None
+    previous_implementation = environment.get("implementation_name")
+    environment.update(overlay)
+
+    if axis is not None:
+        environment.update(axis)
+    elif environment.get("implementation_name") == previous_implementation:
         return
 
-    axis = python_axis_environment(source)
-    if environment.get("implementation_name") == "cpython":
-        environment["implementation_version"] = axis["python_full_version"]
-    environment.update(overlay)
-    environment.update(axis)
+    # The selected implementation decides whether its version follows Python.
+    if (
+        environment.get("implementation_name") == "cpython"
+        and "implementation_version" not in overlay
+        and "python_full_version" in environment
+    ):
+        environment["implementation_version"] = environment["python_full_version"]
 
 
 def _language_minor(version: Version) -> str:

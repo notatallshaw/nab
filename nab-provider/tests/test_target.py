@@ -670,6 +670,29 @@ class TestEnvWithMembership:
 
 
 class TestWithMarkerOverrides:
+    @pytest.mark.parametrize(
+        ("language", "expected"),
+        [({}, "3.10.8"), ({"python_version": "3.11"}, "3.11.0")],
+    )
+    def test_switch_to_cpython_uses_its_language_version(
+        self, language: dict[str, str], expected: str
+    ) -> None:
+        base = ResolveTarget.for_declared(
+            python_version="3.10",
+            python_full_version="3.10.8",
+            implementation="pypy",
+            spec=PlatformSpec("linux_x86_64"),
+        ).with_marker_overrides({"implementation_version": "7.3.15"})
+        target = base.with_marker_overrides(
+            {"implementation_name": "cpython", **language}
+        )
+        assert (
+            target.marker_env["implementation_version"]
+            == target.python_full_version
+            == expected
+        )
+        assert base.marker_env["implementation_version"] == "7.3.15"
+
     def test_empty_overrides_keep_the_target(self) -> None:
         target = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
         assert target.with_marker_overrides({}) is target
@@ -853,6 +876,28 @@ class TestApplyPythonAxisOverlay:
         apply_python_axis_overlay(env, {"sys_platform": "win32"})
         assert env["sys_platform"] == "win32"
         assert env["python_full_version"] == "3.11.5"
+
+    def test_switch_away_from_cpython_keeps_an_independent_version(self) -> None:
+        env = {"implementation_name": "cpython", "implementation_version": "3.10.8"}
+        apply_python_axis_overlay(
+            env, {"implementation_name": "pypy", "python_version": "3.11"}
+        )
+        assert env["implementation_version"] == "3.10.8"
+        assert env["python_full_version"] == "3.11.0"
+
+    def test_partial_environment_without_a_language_version(self) -> None:
+        env: dict[str, str] = {}
+        apply_python_axis_overlay(env, {"implementation_name": "cpython"})
+        assert env == {"implementation_name": "cpython"}
+
+    def test_invalid_full_version_leaves_the_environment_untouched(self) -> None:
+        env = {"python_full_version": "3.10.8", "python_version": "3.10"}
+        before = env.copy()
+        with pytest.raises(InvalidVersion):
+            apply_python_axis_overlay(
+                env, {"python_full_version": "", "python_version": "3.11"}
+            )
+        assert env == before
 
     def test_explicit_implementation_version_override_wins(self) -> None:
         """An explicit implementation_version override is kept verbatim."""
