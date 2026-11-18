@@ -224,7 +224,7 @@ nab_resolver.ranges     Range
 nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,
                         ResolverObserver, ResolverProvider, Solution
 nab_resolver.root       ROOT
-nab_resolver.testing    ProviderScenario, check_provider, check_provider_scenarios
+nab_resolver.testing    ProviderConformanceError, ProviderScenario, check_provider, check_provider_scenarios
 nab_resolver.types      Incompatibility, IncompatibilityCause,
                         RangeProtocol, RootRequirement, Term
 ```
@@ -253,8 +253,10 @@ changes root order and tries every combination in each small fixture to check bo
 failures.
 
 Supply three distinct package keys, two distinct version keys and your range class. `check_provider`
-accepts custom fixtures and an explicit search budget. The fixture must list all available versions
-and their unchanging dependencies.
+accepts custom fixtures and an explicit search budget. List every available version and its
+dependencies in the fixture. Those dependencies must stay the same throughout the check. If the
+provider gives a different answer, `ProviderConformanceError` names the scenario and explains what
+failed. Read its `scenario` attribute to identify the failing fixture.
 
 Use `probe_state` to return an independent snapshot of decision state around
 `has_satisfying_version`. Exclude caches and diagnostics from that snapshot.

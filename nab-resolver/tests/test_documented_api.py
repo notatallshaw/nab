@@ -24,6 +24,7 @@ assert loaded == [], f"imported submodules: {loaded}"
 
 SUPPORTED_API = {
     "nab_resolver.testing": {
+        "ProviderConformanceError",
         "ProviderScenario",
         "check_provider",
         "check_provider_scenarios",

@@ -13,7 +13,7 @@ renamed or relocated in any release.
     nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,
                             ResolverObserver, ResolverProvider, Solution
     nab_resolver.root       ROOT
-    nab_resolver.testing    ProviderScenario, check_provider,
+    nab_resolver.testing    ProviderConformanceError, ProviderScenario, check_provider,
                             check_provider_scenarios
     nab_resolver.types      Incompatibility, IncompatibilityCause,
                             RangeProtocol, RootRequirement, Term
