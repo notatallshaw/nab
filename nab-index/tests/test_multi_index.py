@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
-from typing import TYPE_CHECKING, TypeVar
+from asyncio import run
+from typing import TYPE_CHECKING
 
 import pytest
 from packaging.utils import canonicalize_name
@@ -17,15 +17,8 @@ from nab_index.multi_index import IndexConfig, MultiIndexClient
 from nab_provider.testing import make_wheel
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine
     from pathlib import Path
-    from typing import Any, NoReturn
-
-_T = TypeVar("_T")
-
-
-def run(coro: Coroutine[Any, Any, _T]) -> _T:
-    return asyncio.run(coro)
+    from typing import NoReturn
 
 
 class FakeClient:
@@ -41,6 +34,8 @@ class FakeClient:
         self.get_files_calls: list[str] = []
         self.metadata_calls: list[tuple[str, str, str]] = []
         self.sdist_calls: list[tuple[str, str, str]] = []
+        self.archive_calls: list[tuple[str, str, str]] = []
+        self.archive_payload = b""
         self.range_calls: list[tuple[str, str, str]] = []
         self.close_count = 0
 
@@ -94,7 +89,8 @@ class FakeClient:
         sdist_url: str,
         sdist_hashes: tuple[tuple[str, str], ...] = (),
     ) -> bytes:
-        return b""
+        self.archive_calls.append((package, version, sdist_url))
+        return self.archive_payload
 
     async def get_range_metadata(
         self,
@@ -486,3 +482,18 @@ def test_zip_only_first_index_owns_package(tmp_path: Path) -> None:
     assert isinstance(files[0], SdistFile)
     assert second.get_files_calls == []
     assert client.served_zip_sdists("foo") == frozenset({"1.0"})
+
+
+def test_get_sdist_archive_forwards_to_routed_client() -> None:
+    empty = FakeClient({})
+    holder = FakeClient({"foo": [make_wheel(package="foo", has_metadata=False)]})
+    holder.archive_payload = b"ARCHIVE"
+    client = MultiIndexClient({"a": empty, "b": holder}, ["a", "b"], {})
+
+    # The archive request follows the index selected by the listing.
+    run(client.get_files("foo"))
+    data = run(client.get_sdist_archive("foo", "1.0", "https://x/s.tar.gz"))
+
+    assert data == b"ARCHIVE"
+    assert holder.archive_calls == [("foo", "1.0", "https://x/s.tar.gz")]
+    assert empty.archive_calls == []
