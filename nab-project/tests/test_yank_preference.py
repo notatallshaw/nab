@@ -492,7 +492,10 @@ def test_missing_selected_metadata_or_required_dependency_is_not_explained(
     selected = {"app": item("app")}
     if prepared:
         assert policy.catalogue.prepare(selected["app"]) is not None
-    with pytest.raises(ResolutionInvariantError, match="missing metadata"):
+    missing = (
+        "no selected candidate for dep" if prepared else "missing metadata for app"
+    )
+    with pytest.raises(ResolutionInvariantError, match=missing):
         policy.explain(selected)
 
 

@@ -21,6 +21,7 @@ from nab_resolver.resolver import BaseProvider, Resolver, ResolverStats
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
     from collections.abc import Set as AbstractSet
+    from typing import TypeGuard
 
     from typing_extensions import override as _override
 
@@ -209,10 +210,6 @@ class IncompletePreferenceError(ResolutionError):
     """An interrupted or unknown query cannot prove that live choices fail."""
 
 
-class _NeedLiveProofError(Exception):
-    pass
-
-
 @dataclass(frozen=True, slots=True)
 class _Context(Generic[CandidateType]):
     """A selected assignment whose known metadata may already establish failure."""
@@ -221,8 +218,38 @@ class _Context(Generic[CandidateType]):
     selected: frozenset[CandidateType]
 
 
-class _NeedContextProofError(Exception):
-    pass
+class _SuspendSearchError(Exception):
+    """Suspend the current resolver callback while a proof is outstanding."""
+
+
+class _ProofRequestError(
+    _SuspendSearchError, Generic[CandidateType, RangeType, PinnedRequirementType]
+):
+    """Return control to the preference search that requested this proof."""
+
+    def __init__(
+        self,
+        search: PreferenceSearch[CandidateType, RangeType, PinnedRequirementType],
+        proof: PreferenceScope[CandidateType] | _Context[CandidateType],
+    ) -> None:
+        super().__init__("a preference proof is required")
+        self.search = search
+        self.proof = proof
+
+    def resume(self, stack: list[PreferenceScope[CandidateType]]) -> None:
+        """Schedule a live scope or check the requesting assignment's context."""
+        if isinstance(self.proof, PreferenceScope):
+            stack.append(self.proof)
+        else:
+            self.search.check_context(self.proof)
+
+
+def _requested_by(
+    error: _SuspendSearchError,
+    search: PreferenceSearch[CandidateType, RangeType, PinnedRequirementType],
+) -> TypeGuard[_ProofRequestError[CandidateType, RangeType, PinnedRequirementType]]:
+    """Narrow the proof to the candidate type of the search that requested it."""
+    return isinstance(error, _ProofRequestError) and error.search is search
 
 
 class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementType]):
@@ -248,10 +275,6 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         self.incomplete_facts: dict[PreferenceScope[CandidateType], int] = {}
         self.refuted: set[_Context[CandidateType]] = set()
         self.possible: dict[_Context[CandidateType], int] = {}
-
-        # These typed requests survive unwinding the active resolver callback.
-        self.requested_scope: PreferenceScope[CandidateType] | None = None
-        self.requested_context: _Context[CandidateType] | None = None
 
     def spend(self, steps: int) -> None:
         """Charge work from any resolver query against the cumulative limit."""
@@ -422,15 +445,13 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
             if not scope.live < query.live:
                 message = "live preference analysis is incomplete: cyclic query"
                 raise ResolutionInvariantError(message)
-            self.requested_scope = query
-            raise _NeedLiveProofError
+            raise _ProofRequestError(self, query)
 
         context = _Context(scope, frozenset(selected.values()))
         if context in self.refuted:
             return PreparationStatus.IMPOSSIBLE
         if self.possible.get(context) != len(self.catalogue.facts):
-            self.requested_context = context
-            raise _NeedContextProofError
+            raise _ProofRequestError(self, context)
         return PreparationStatus.ALLOWED
 
     def run(
@@ -449,12 +470,10 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
             # Unwind the callback before a prerequisite consumes the shared budget.
             try:
                 selected = callback(scope)
-            except _NeedLiveProofError:
-                assert self.requested_scope is not None
-                stack.append(self.requested_scope)
-            except _NeedContextProofError:
-                assert self.requested_context is not None
-                self.check_context(self.requested_context)
+            except _SuspendSearchError as request:
+                if not _requested_by(request, self):
+                    raise
+                request.resume(stack)
             except ResolutionTerminatedError:
                 raise
             except ResolutionError as exc:
@@ -485,6 +504,22 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         if incomplete:
             self.incomplete_facts[scope] = len(self.catalogue.facts)
 
+    def _selected_data(
+        self, package: str, selected: Mapping[str, CandidateType]
+    ) -> tuple[CandidateType, DependencyData[RangeType, PinnedRequirementType]]:
+        """Return the chosen candidate and the dependency facts supporting its proof."""
+        if package not in selected:
+            message = (
+                f"cannot explain yanked admission: no selected candidate for {package}"
+            )
+            raise ResolutionInvariantError(message)
+        candidate = selected[package]
+        data = self.catalogue.facts.get(candidate)
+        if data is None:
+            message = f"cannot explain yanked admission: missing metadata for {package}"
+            raise ResolutionInvariantError(message)
+        return candidate, data
+
     def explain(
         self, selected: Mapping[str, CandidateType]
     ) -> dict[str, tuple[str, ...]]:
@@ -503,17 +538,7 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
 
         while pending:
             package = pending.popleft()
-            candidate = selected.get(package)
-            data = (
-                self.catalogue.facts.get(candidate) if candidate is not None else None
-            )
-            if data is None:
-                message = (
-                    f"cannot explain yanked admission: missing metadata for {package}"
-                )
-                raise ResolutionInvariantError(message)
-
-            assert candidate is not None
+            candidate, data = self._selected_data(package, selected)
             # An unadmitted yanked parent cannot supply pins to its children.
             if self.catalogue.candidate_withdrawn(candidate):
                 source = next(
