@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from nab_project.resolve import TargetResult
     from nab_provider.resolver_inputs import MarkerHolds
-    from nab_provider.testing import FakeFetchPort
 
 import sys
 
@@ -35,7 +34,7 @@ from nab_provider.records import SdistFile
 from nab_provider.resolver_inputs import ProxyConstraints, build_resolver_inputs
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
-from nab_provider.testing import make_sdist, pkg_override
+from nab_provider.testing import FakeFetchPort, make_sdist, pkg_override
 from nab_provider.vcs_admission import VcsConfig
 from nab_provider.yank_preference import IncompletePreferenceError
 from nab_provider.yanked_resolution import MetadataProxy, YankProxyProvider
@@ -747,6 +746,54 @@ def graph_search(
         ProxyConstraints({}),
         preferences={},
     )
+
+
+def test_requested_metadata_proxy_requires_a_prepared_candidate() -> None:
+    search = graph_search([("dep", "2", True, [])], ["dep==2"])
+    candidate = search.catalogue.choices("dep")[0]
+    proxy = MetadataProxy(search.identify(candidate))
+    with pytest.raises(
+        ResolutionInvariantError, match="dep==2 without prepared metadata"
+    ):
+        search.get_dependencies(proxy, 0)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ResolutionError("host could not read the package listing"),
+        ResolutionError(""),
+        ResolutionError(
+            "host dependency conflict",
+            Incompatibility([], cause=IncompatibilityCause.NO_VERSIONS),
+        ),
+        ResolutionLimitError("host work limit"),
+    ],
+    ids=["listing-error", "empty-message", "unrelated-proof", "work-limit"],
+)
+def test_root_listing_failure_cannot_certify_that_no_solution_exists(
+    failure: ResolutionError,
+) -> None:
+    search = graph_search([], ["missing"])
+    port = search.catalogue.provider.coordinator
+    assert isinstance(port, FakeFetchPort)
+
+    def fail_listing(package: str, _speculative: bool) -> None:
+        assert package == "missing"
+        raise failure
+
+    port.override("request_listing", fail_listing)
+    with pytest.raises(ResolutionError) as caught:
+        search.resolve()
+    if isinstance(failure, ResolutionTerminatedError):
+        assert caught.value is failure
+    else:
+        assert isinstance(caught.value, IncompletePreferenceError)
+        expected = "yanked dependency resolution is incomplete"
+        assert str(caught.value) == (
+            f"{expected}: {failure}" if str(failure) else expected
+        )
+        assert caught.value.__cause__ is failure
 
 
 @pytest.mark.parametrize("roots", list(permutations(("leaf", "app", "plugin"))))

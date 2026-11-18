@@ -515,6 +515,17 @@ class YankCandidates:
             )
         return result
 
+    def prepared_data(self, candidate: Candidate) -> CandidateData:
+        """Read the facts required to use a candidate selected by the solver."""
+        data = self.facts.get(candidate)
+        if data is None:
+            msg = (
+                f"cannot use {candidate.package}=={candidate.version}"
+                " without prepared metadata"
+            )
+            raise ResolutionInvariantError(msg)
+        return data
+
     def adopt(
         self, selected: Mapping[str, Candidate], sources: Mapping[str, tuple[str, ...]]
     ) -> tuple[dict[str, Version], Provider]:
@@ -523,13 +534,7 @@ class YankCandidates:
         prepared = []
         admissions = {}
         for package, candidate in selected.items():
-            data = self.facts.get(candidate)
-            if data is None:
-                msg = (
-                    f"cannot adopt {package}=={candidate.version}"
-                    " without prepared metadata"
-                )
-                raise ResolutionInvariantError(msg)
+            data = self.prepared_data(candidate)
             prepared.append((package, candidate, data))
 
             if candidate.withdrawn:
