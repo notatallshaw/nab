@@ -5,9 +5,9 @@ commands are on the [CLI](cli.md) page.
 
 ## The failure message
 
-`nab lock` and `nab download` exit non-zero on resolution failure; the message starts with
-`error: resolution failed:` followed by a derivation tree, and any captured diagnostics are appended
-under a `Diagnostics:` section.
+`nab lock` and `nab download` exit with a nonzero status when resolution fails. For a dependency
+conflict, the text after `error: resolution failed:` explains which requirements cannot be satisfied
+together. When Nab has more information about a package, it adds a `Diagnostics:` section.
 
 ## The `Diagnostics:` section
 
@@ -22,15 +22,16 @@ Diagnostics: (-v for detail)
     try: set packages."foo".uploaded-prior-to = false
 ```
 
-`-v` replaces the `try:` line with the whole record: one clause per cause, and a closing `note:`
-naming the configuration layer that set the key.
+Use `-v` to see which files a filter rejected and why. The suggested fix still appears under `try:`.
+In this example, the line below the fix identifies the project-wide cutoff.
 
 ```
 Diagnostics:
   - foo: uploaded-prior-to excluded every file
     the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 file uploaded at 2030-01-01T00:00:00Z (1.0)
     the files nab read hold no sdist to build from
-    note: the project-level uploaded-prior-to set that cutoff; setting packages."foo".uploaded-prior-to = false lifts it for this package
+    try: set packages."foo".uploaded-prior-to = false
+         The project-wide uploaded-prior-to setting rejected these files.
 ```
 
 ## Interpreting a diagnostic
