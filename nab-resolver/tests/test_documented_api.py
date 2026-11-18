@@ -42,6 +42,7 @@ SUPPORTED_API = {
         "ResolutionStalledError",
         "ResolutionTerminatedError",
     },
+    "nab_resolver.priority": {"compute_tier"},
     "nab_resolver.ranges": {"IntegerRangeMembership", "Range"},
     "nab_resolver.resolver": {
         "BaseProvider",

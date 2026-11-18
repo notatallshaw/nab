@@ -89,6 +89,11 @@ the provider's file records, index configuration and fetch errors. `nab_provider
 shared record behavior; concrete record types belong to their domain package. Fixed fields use
 `Final` annotations without runtime write guards.
 
+The resolver counts discarded decisions for each package and records which earlier packages it
+blames for them. The Python provider uses `nab_resolver.priority.compute_tier` to rank packages by
+those counts. Within a tier it considers the number of candidates, then tries an extra before its
+base package if the counts are equal.
+
 ## Diagnostic suggestions
 
 ```text

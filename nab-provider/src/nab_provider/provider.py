@@ -39,10 +39,10 @@ from typing import TYPE_CHECKING, TypeVar, cast
 
 from nab_provider._vendor.packaging.markers import prepare_environment
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_resolver import priority as decision_priority
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 from nab_resolver.types import IncompatibilityCause
 
-from . import priority as decision_priority
 from ._provider import extras as _extras
 from ._provider import listing as _listing
 from ._provider import listing_diagnosis as _diagnosis

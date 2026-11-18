@@ -104,6 +104,11 @@ package gets decided first. `conflict_counts` tracks a package's own discarded d
 `culprit_counts` the ones it caused elsewhere, for a provider that wants to move either kind to the
 front.
 
+To use these counts, put the integer returned by `nab_resolver.priority.compute_tier` first in your
+priority key. Lower tiers are tried first. The helper moves a package forward when its decisions are
+repeatedly discarded, and moves it back when it is blamed much more often than any other package.
+Your provider chooses how to break ties.
+
 ## Resolving
 
 `solve` takes one range per required package and returns the pins, the dependency edges it crossed,
@@ -224,6 +229,7 @@ Import these names from their modules. The paths will remain available until a m
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `nab_resolver.resolver`    | `Resolver`, `ResolverProvider`, `BaseProvider`, `ResolverObserver`, `Solution`, `DEFAULT_MAX_ITERATIONS`                     |
 | `nab_resolver.root`        | `ROOT`                                                                                                                       |
+| `nab_resolver.priority`    | `compute_tier`                                                                                                               |
 | `nab_resolver.ranges`      | `Range`, `IntegerRangeMembership`                                                                                            |
 | `nab_resolver.types`       | `RootRequirement`, `Term`, `Incompatibility`, `IncompatibilityCause`, `RangeProtocol`                                        |
 | `nab_resolver.errors`      | `ResolutionError`, `ResolutionTerminatedError`, `ResolutionLimitError`, `ResolutionInvariantError`, `ResolutionStalledError` |

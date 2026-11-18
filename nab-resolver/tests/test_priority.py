@@ -10,6 +10,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from nab_resolver.priority import (
+    CONFLICT_THRESHOLD,
+    CULPRIT_DEMOTE_THRESHOLD,
+    TIER_AFFECTED,
+    TIER_CULPRIT,
+    TIER_NORMAL,
+    compute_tier,
+)
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import ResolutionError, Resolver
 from nab_resolver.types import Incompatibility, RangeProtocol
@@ -212,3 +220,20 @@ class TestPromotingProvider:
         # The credit lands on the depending package whose clause pinned D
         # (conflict_credit_target), not on D itself.
         assert resolver.stats.package_conflict_counts.get("E", 0) > 0
+
+
+def test_conflict_tiers_for_opaque_package_keys() -> None:
+    package, peer = object(), object()
+    assert compute_tier(package, 0, 0, None) == TIER_NORMAL
+
+    count = CULPRIT_DEMOTE_THRESHOLD + 1
+    assert compute_tier(package, 0, count, {package: count, peer: 1}) == TIER_CULPRIT
+    assert compute_tier(package, 0, count, {package: count, peer: 2}) == TIER_NORMAL
+
+
+def test_promotion_precedes_forced_culprit_demotion() -> None:
+    assert compute_tier("pkg", 0, 0, None, force_backtracked=True) == TIER_CULPRIT
+    assert (
+        compute_tier("pkg", CONFLICT_THRESHOLD, 0, None, force_backtracked=True)
+        == TIER_AFFECTED
+    )

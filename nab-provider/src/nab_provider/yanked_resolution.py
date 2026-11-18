@@ -17,6 +17,7 @@ __lazy_modules__ = (
 from typing import TYPE_CHECKING, Final
 
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
+from nab_resolver.priority import compute_tier
 from nab_resolver.ranges import IntegerRangeMembership, Range
 from nab_resolver.resolver import (
     DEFAULT_MAX_ITERATIONS,
@@ -31,7 +32,6 @@ from ._provider.listing_diagnosis import MetadataBlock, metadata_diagnostic
 from ._vendor.packaging.utils import canonicalize_name
 from .diagnostics import ResolutionMessage
 from .extra_keys import split_extra
-from .priority import compute_tier
 from .ranges import VersionRange, require_version_range
 from .value import HashableRecord
 from .yank_candidates import Candidate, YankCandidates, add_range, is_pin, merge_stats
