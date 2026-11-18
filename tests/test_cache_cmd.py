@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from nab import _run as nab_run
+from nab._cache_cmd import cache_command
 from nab.cli import run
 from nab.config.ladder import SourceRoots
 from nab_index.cache import (
@@ -498,6 +499,10 @@ class TestCacheSourceTrees:
 
 
 class TestCacheUnknownAction:
+    def test_unknown_action_passed_directly(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="unknown cache action 'frobnicate'"):
+            cache_command("frobnicate", cache_dir=tmp_path)
+
     def test_unknown_action_is_a_usage_refusal(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

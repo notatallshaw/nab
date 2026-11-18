@@ -18,7 +18,7 @@ __lazy_modules__ = (
 
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, get_args
 
 from ._run import (
     _cli_overrides,
@@ -34,8 +34,9 @@ from .config.ladder import (
     render_list,
 )
 from .config.values import SourceConfigError
-from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
+from .flagtypes import (
     BuildPolicyFlag,
+    ConfigAction,
     DecisionOrderFlag,
     DistPolicyFlag,
     HttpBackend,
@@ -54,7 +55,7 @@ if TYPE_CHECKING:
 
 
 def config_command(  # noqa: PLR0913 - one keyword per flag is the public surface
-    action: str,
+    action: ConfigAction,
     key: str = "",
     *,
     path: Path = Path("pyproject.toml"),
@@ -183,9 +184,10 @@ def config_command(  # noqa: PLR0913 - one keyword per flag is the public surfac
     if action == "list":
         printer().data(render_list(effective, rejected=rejected))
         return
-    if action not in {"get", "explain"}:  # pragma: no cover - the parser refuses it
-        msg = f"unreachable config action {action!r}"
-        raise AssertionError(msg)
+    if action not in {"get", "explain"}:
+        choices = ", ".join(get_args(ConfigAction))
+        msg = f"unknown config action {action!r} (choose from {choices})"
+        raise ValueError(msg)
 
     _require_key_arg(key, action)
     try:
