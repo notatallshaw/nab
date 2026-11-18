@@ -1102,8 +1102,10 @@ class FetchCoordinator:
                 if stopping and queue.empty():
                     if not tasks:
                         break
-                    # Running listings can enqueue more work before they finish.
+                    # Accepted listings can enqueue sidecars before they finish.
                     await asyncio.gather(*tasks, return_exceptions=True)
+                    # Already-finished tasks may still have pending discard callbacks.
+                    tasks.clear()
                     continue
 
                 item = await queue.get()

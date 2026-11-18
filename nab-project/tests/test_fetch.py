@@ -625,6 +625,22 @@ LISTING_JSON = {
 METADATA_TEXT = "Metadata-Version: 2.1\nName: testpkg\nVersion: 1.0\n"
 
 
+class ShutdownObserver(FetchCoordinator):
+    """Expose when the real shutdown call has posted the stop marker."""
+
+    def __init__(self) -> None:
+        super().__init__(HttpxAsyncTransport())
+        self.stop_posted = threading.Event()
+
+    def _submit(
+        self,
+        item: fetch_requests.FetchRequest | list[fetch_requests.FetchRequest] | None,
+    ) -> None:
+        super()._submit(item)
+        if item is None:
+            self.stop_posted.set()
+
+
 class TestFetchCoordinator:
     def test_context_manager(self) -> None:
         with _coord() as coord:
@@ -1455,7 +1471,6 @@ class TestFetchCoordinator:
 
     @respx.mock
     def test_shutdown_drains_metadata_from_an_accepted_listing(self) -> None:
-        stopping = threading.Event()
         listing_started = threading.Event()
         late_submission = threading.Event()
         wheel = make_wheel("2.0")
@@ -1473,21 +1488,10 @@ class TestFetchCoordinator:
             return_value=httpx.Response(200, text="metadata")
         )
 
-        class ObservedShutdown(FetchCoordinator):
-            def _submit(
-                self,
-                item: fetch_requests.FetchRequest
-                | list[fetch_requests.FetchRequest]
-                | None,
-            ) -> None:
-                super()._submit(item)
-                if item is None:
-                    stopping.set()
-
-        coord = ObservedShutdown(HttpxAsyncTransport())
+        coord = ShutdownObserver()
 
         def submit_after_stop() -> threading.Event:
-            assert stopping.wait(5)
+            assert coord.stop_posted.wait(5)
             try:
                 return coord.request_listing("late")
             finally:
@@ -1505,6 +1509,30 @@ class TestFetchCoordinator:
         assert isinstance(coord.index.get_listing_error("late"), RuntimeError)
         assert metadata.call_count == 1
         assert coord.index.get_metadata("pkg", "2.0", url) == "metadata"
+
+    @respx.mock
+    def test_shutdown_closes_after_the_final_reply(self) -> None:
+        serving = threading.Event()
+        coord = ShutdownObserver()
+        url = "https://files.example.com/pkg.whl.metadata"
+
+        async def reply(_request: httpx.Request) -> httpx.Response:
+            serving.set()
+            assert coord.stop_posted.wait(5)
+            # Deliver the reply between posting the stop marker and consuming it.
+            await asyncio.sleep(0)
+            return httpx.Response(200, text="metadata")
+
+        respx.get(url).mock(side_effect=reply)
+        with coord:
+            worker = coord._thread
+            assert worker is not None
+            done = coord.request_metadata("pkg", "1", url)
+            assert serving.wait(5)
+
+        assert done.is_set()
+        assert coord.index.get_metadata("pkg", "1", url) == "metadata"
+        assert not worker.is_alive()
 
     @respx.mock
     def test_gather_pending_tasks_on_shutdown(self) -> None:
