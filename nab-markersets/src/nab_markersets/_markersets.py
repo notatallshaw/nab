@@ -47,7 +47,14 @@ from .errors import IntractableMarkerSet, UnserializableMarkerSet
 from .python_versions import supports_python_version, validate_python_environment
 
 if TYPE_CHECKING:
-    from collections.abc import Container, Iterable, Iterator, Mapping, Sequence
+    from collections.abc import (
+        Callable,
+        Container,
+        Iterable,
+        Iterator,
+        Mapping,
+        Sequence,
+    )
     from collections.abc import Set as AbstractSet
     from typing import TypeAlias
 
@@ -1907,42 +1914,41 @@ def _restrict_cover_atom(atom: Atom, env: Mapping[str, object], store: Memo) -> 
     return TRUE if resolved else FALSE
 
 
-def _restrict_atom(leaf: AtomLeaf, env: Mapping[str, object]) -> Formula:
-    resolved = _restrict_value(leaf.atom, env)
-    if resolved is None:
-        return leaf
-    return TRUE if resolved else FALSE
+def _map_leaves(node: Formula, replace: Callable[[AtomLeaf], Formula]) -> Formula:
+    """Substitute predicates and fold the resulting boolean tree."""
+    if isinstance(node, BoolConst):
+        return node
+    if isinstance(node, AtomLeaf):
+        return replace(node)
+    if isinstance(node, NotNode):
+        return make_not(_map_leaves(node.child, replace))
+    if isinstance(node, AndNode):
+        return make_and(_map_leaves(child, replace) for child in node.children)
+    return make_or(_map_leaves(child, replace) for child in node.children)
+
+
+def _substitute_values(node: Formula, lookup: Callable[[Atom], bool | None]) -> Formula:
+    """Keep predicates whose truth is unknown and substitute the rest."""
+
+    def replace(leaf: AtomLeaf) -> Formula:
+        value = lookup(leaf.atom)
+        if value is None:
+            return leaf
+        return TRUE if value else FALSE
+
+    return _map_leaves(node, replace)
 
 
 def restrict_tree(node: Formula, env: Mapping[str, object]) -> Formula:
     """Substitute the variables ``env`` provides, leaving the rest."""
-    if isinstance(node, BoolConst):
-        return node
-    if isinstance(node, AtomLeaf):
-        return _restrict_atom(node, env)
-    if isinstance(node, NotNode):
-        return make_not(restrict_tree(node.child, env))
-    if isinstance(node, AndNode):
-        return make_and(restrict_tree(child, env) for child in node.children)
-    return make_or(restrict_tree(child, env) for child in node.children)
+    return _substitute_values(node, lambda atom: _restrict_value(atom, env))
 
 
 def _restrict_row_tree(
     node: Formula, env: Mapping[str, object], store: Memo
 ) -> Formula:
     """Restrict a row tree through its operation-owned string truths."""
-    if isinstance(node, BoolConst):
-        return node
-    if isinstance(node, AtomLeaf):
-        resolved = _restrict_row_value(node.atom, env, store)
-        return node if resolved is None else (TRUE if resolved else FALSE)
-    if isinstance(node, NotNode):
-        return make_not(_restrict_row_tree(node.child, env, store))
-    if isinstance(node, AndNode):
-        return make_and(
-            _restrict_row_tree(child, env, store) for child in node.children
-        )
-    return make_or(_restrict_row_tree(child, env, store) for child in node.children)
+    return _substitute_values(node, lambda atom: _restrict_row_value(atom, env, store))
 
 
 # ------------------------------------------------------------------- evaluate
@@ -2543,18 +2549,6 @@ def _canonical_cover_atom(atom: Atom) -> Atom:
     return atom if atom.op == op else atom.replaced(op=op)
 
 
-def _replace_cover_atoms(node: Formula, replacements: Mapping[Atom, Atom]) -> Formula:
-    """Replace predicates in a nonconstant NNF tree by equivalent encodings."""
-    if isinstance(node, AtomLeaf):
-        return AtomLeaf(replacements.get(node.atom, node.atom))
-    if isinstance(node, AndNode):
-        return make_and(
-            _replace_cover_atoms(child, replacements) for child in node.children
-        )
-    assert isinstance(node, OrNode)
-    return make_or(_replace_cover_atoms(child, replacements) for child in node.children)
-
-
 def _prepare_cover(node: Formula) -> _CoverInput:
     """Collect canonical predicates and price their traversal and ordering."""
     leaves = collect_atoms(node)
@@ -2567,7 +2561,9 @@ def _prepare_cover(node: Formula) -> _CoverInput:
         if canonical is not atom:
             replacements[atom] = canonical
     if replacements:
-        node = _replace_cover_atoms(node, replacements)
+        node = _map_leaves(
+            node, lambda leaf: AtomLeaf(replacements.get(leaf.atom, leaf.atom))
+        )
         unique = {replacements.get(atom, atom) for atom in unique}
     return _CoverInput(node, tuple(sorted(unique, key=_atom_key)), len(leaves))
 
@@ -3334,19 +3330,6 @@ def _set_assignment_count(atoms: Sequence[Atom], max_cells: int) -> int | None:
     return count if count * (len(atoms) + 1) <= max_cells else None
 
 
-def _replace_observed_atoms(node: Formula, values: Mapping[Atom, bool]) -> Formula:
-    """Substitute observations in a nonconstant NNF tree to obtain a cofactor."""
-    if isinstance(node, AtomLeaf):
-        value = values.get(node.atom)
-        return node if value is None else (TRUE if value else FALSE)
-    if isinstance(node, AndNode):
-        return make_and(
-            _replace_observed_atoms(child, values) for child in node.children
-        )
-    assert isinstance(node, OrNode)
-    return make_or(_replace_observed_atoms(child, values) for child in node.children)
-
-
 def _cofactor_cover(
     node: Formula, patterns: AbstractSet[int] | Sequence[int], atoms: Sequence[Atom]
 ) -> Formula:
@@ -3391,6 +3374,12 @@ def _common_membership_cofactor(
     return _CofactorWitness(selected_members, representative_scalar)
 
 
+def _substitute_pattern(node: Formula, atoms: Sequence[Atom], pattern: int) -> Formula:
+    """Read each predicate's truth from its bit in the observation pattern."""
+    values = {atom: bool(pattern & (1 << index)) for index, atom in enumerate(atoms)}
+    return _substitute_values(node, values.get)
+
+
 def _independent_cover(
     source: _CoverInput, rows: Sequence[_Row], max_cells: int, store: Memo
 ) -> Formula | None:
@@ -3417,20 +3406,8 @@ def _independent_cover(
         (witness.members & -witness.members).bit_length() - 1
     ]
     charge_work(2 * (source.leaf_count + len(source.atoms)))
-    member_tree = _replace_observed_atoms(
-        source.tree,
-        {
-            atom: bool(witness.scalar & (1 << index))
-            for index, atom in enumerate(axis.others)
-        },
-    )
-    scalar_tree = _replace_observed_atoms(
-        source.tree,
-        {
-            atom: bool(representative_member & (1 << index))
-            for index, atom in enumerate(axis.members)
-        },
-    )
+    member_tree = _substitute_pattern(source.tree, axis.others, witness.scalar)
+    scalar_tree = _substitute_pattern(source.tree, axis.members, representative_member)
     return make_and(
         (
             _cofactor_cover(member_tree, member_patterns, axis.members),
