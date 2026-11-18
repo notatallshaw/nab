@@ -20,6 +20,7 @@ from __future__ import annotations
 __lazy_modules__ = (
     "json",
     "nab_index._json_decode",
+    "nab_provider.digest",
     "nab_provider.records",
     "sys",
 )
@@ -28,6 +29,7 @@ import json
 import sys
 from typing import TYPE_CHECKING, NamedTuple
 
+from nab_provider.digest import is_hex_digest
 from nab_provider.records import (
     SdistFile,
     WheelFile,
@@ -40,9 +42,16 @@ from ._json_decode import decode_json
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from ._json_decode import JsonValue
     from .cache import CachePolicy
 
-__all__ = ["ParsedListing", "corruption_reason", "decode", "encode"]
+__all__ = [
+    "ParsedListing",
+    "corruption_reason",
+    "decode",
+    "encode",
+    "parse_body_digest",
+]
 
 # Record version, redundant with the bucket suffix but guards against a stale
 # blob surfacing under the current bucket. Bump it when the header or row shape
@@ -71,7 +80,7 @@ _H_YANKS = 5
 _H_PAGE_URL = 6
 
 
-class _BadRowError(ValueError):
+class _InvalidRecordError(ValueError):
     """A row or header cell whose shape is not what this codec wrote."""
 
 
@@ -160,11 +169,14 @@ def decode(blob: bytes, policy: CachePolicy) -> ParsedListing | None:
         return None
     if not (isinstance(loaded, list) and len(loaded) == _TOP_LEN):
         return None
-    header, rows = loaded
-    if not _names_this_build(header):
+    raw_header, rows = loaded
+    try:
+        header = _current_header(raw_header)
+    except _InvalidRecordError:
         return None
     if (
-        policy.body_digest is None
+        header is None
+        or policy.body_digest is None
         or header[_H_DIGEST] != policy.body_digest
         or header[_H_PAGE_URL] != policy.page_url
     ):
@@ -198,16 +210,13 @@ def corruption_reason(blob: bytes) -> str | None:
         return str(exc)
     if not (isinstance(loaded, list) and len(loaded) == _TOP_LEN):
         return "unexpected top-level shape"
-    header, rows = loaded
-    if _from_another_build(header):
-        return None
-    if (
-        not _names_this_build(header)
-        or _bad_zip_sdists_cell(header)
-        or (
-            header[_H_PAGE_URL] is not None and not isinstance(header[_H_PAGE_URL], str)
-        )
-    ):
+    raw_header, rows = loaded
+    try:
+        header = _current_header(raw_header)
+        if header is None:
+            return None
+        _decode_zip_sdists(header[_H_ZIP_SDISTS])
+    except _InvalidRecordError:
         return "unexpected header shape"
     try:
         _restore_yanks(_decode_rows(rows), header[_H_YANKS])
@@ -216,42 +225,46 @@ def corruption_reason(blob: bytes) -> str | None:
     return None
 
 
-def _names_this_build(header: object) -> bool:
-    """Whether ``header`` has this build's length and names this build."""
-    return (
-        isinstance(header, list)
-        and len(header) == _HEADER_LEN
-        and tuple(header[:_BUILD_CELLS]) == _BUILD_ID
-    )
+def _current_header(value: JsonValue) -> list[JsonValue] | None:
+    """Read this build's header. A different build can have different fields."""
+    if not isinstance(value, list) or len(value) < _BUILD_CELLS:
+        raise _InvalidRecordError
+    version, codec, key_scheme = value[:_BUILD_CELLS]
+    if (
+        type(version) is not int
+        or type(codec) is not int
+        or type(key_scheme) is not int
+    ):
+        raise _InvalidRecordError
+    if (version, codec, key_scheme) != _BUILD_ID:
+        return None
+
+    if len(value) != _HEADER_LEN or parse_body_digest(value[_H_DIGEST]) is None:
+        raise _InvalidRecordError
+    page_url = value[_H_PAGE_URL]
+    if page_url is not None and not isinstance(page_url, str):
+        raise _InvalidRecordError
+    return value
 
 
-def _from_another_build(header: object) -> bool:
-    """Whether ``header`` names a build other than this one.
-
-    Read before any shape check, since another build may write a header shape
-    this one never did, and calling that corruption would warn about every
-    package a cache already holds when nab is upgraded.
-    """
-    return (
-        isinstance(header, list)
-        and len(header) >= _BUILD_CELLS
-        and tuple(header[:_BUILD_CELLS]) != _BUILD_ID
-    )
+_SHA256_HEX_LEN = 64
 
 
-def _bad_zip_sdists_cell(header: Sequence[object]) -> bool:
-    """Whether the header's ``.zip`` cell is not a list of version strings."""
-    try:
-        _decode_zip_sdists(header[_H_ZIP_SDISTS])
-    except ValueError:
-        return True
-    return False
+def parse_body_digest(value: JsonValue) -> str | None:
+    """Return a stored Simple API response's SHA-256 digest when it is valid."""
+    if (
+        isinstance(value, str)
+        and len(value) == _SHA256_HEX_LEN
+        and is_hex_digest(value)
+    ):
+        return value
+    return None
 
 
 def _decode_zip_sdists(value: object) -> frozenset[str]:
     """Rehydrate the header cell naming the releases served as a ``.zip`` sdist."""
     if not isinstance(value, list):
-        raise _BadRowError
+        raise _InvalidRecordError
     return frozenset(map(_text, value))
 
 
@@ -260,7 +273,7 @@ def _restore_yanks(
 ) -> list[WheelFile | SdistFile]:
     """Reattach sparse withdrawal metadata after validating its row references."""
     if not isinstance(value, dict):
-        raise _BadRowError
+        raise _InvalidRecordError
     if not value:
         return files
     from nab_provider.yanking import (  # noqa: PLC0415 - load yank-only records on demand
@@ -270,12 +283,12 @@ def _restore_yanks(
 
     for key, reason in value.items():
         if not isinstance(key, str) or not key.isascii() or not key.isdigit():
-            raise _BadRowError
+            raise _InvalidRecordError
         index = int(key)
         if str(index) != key or index >= len(files):
-            raise _BadRowError
+            raise _InvalidRecordError
         if reason is not True and (not isinstance(reason, str) or not reason):
-            raise _BadRowError
+            raise _InvalidRecordError
         files[index] = mark_yanked(files[index], reason=reason)
     return YankedListing(
         files, withdrawn_versions=(files[int(key)].version for key in value)
@@ -283,25 +296,25 @@ def _restore_yanks(
 
 
 def _decode_rows(rows: object) -> list[WheelFile | SdistFile]:
-    """Rehydrate every row, raising :class:`_BadRowError` on the first bad one."""
+    """Restore the wheel and sdist rows in listing order."""
     if not isinstance(rows, list):
-        raise _BadRowError
+        raise _InvalidRecordError
     decoded: list[WheelFile | SdistFile] = []
     previous_version: str | None = None
     record: WheelFile | SdistFile
     for row in rows:
         if not isinstance(row, list) or not row:
-            raise _BadRowError
+            raise _InvalidRecordError
         tag = row[0]
         # bool is a subclass of int, so ``True == _TAG_SDIST`` without this.
         if type(tag) is not int:
-            raise _BadRowError
+            raise _InvalidRecordError
         if tag == _TAG_WHEEL:
             record = _decode_wheel(row, previous_version)
         elif tag == _TAG_SDIST:
             record = _decode_sdist(row, previous_version)
         else:
-            raise _BadRowError
+            raise _InvalidRecordError
         previous_version = record.version
         decoded.append(record)
     return decoded
@@ -343,7 +356,7 @@ def _decode_wheel(row: Sequence[object], previous_version: str | None) -> WheelF
         or (upload_time is not None and type(upload_time) is not str)
         or (size is not None and type(size) is not int)
     ):
-        raise _BadRowError
+        raise _InvalidRecordError
 
     return rehydrated_wheel(
         filename,
@@ -375,7 +388,7 @@ def _decode_sdist(row: Sequence[object], previous_version: str | None) -> SdistF
         or (upload_time is not None and type(upload_time) is not str)
         or (size is not None and type(size) is not int)
     ):
-        raise _BadRowError
+        raise _InvalidRecordError
 
     return rehydrated_sdist(
         filename,
@@ -392,13 +405,13 @@ def _decode_sdist(row: Sequence[object], previous_version: str | None) -> SdistF
 # hand-written or corrupt blob from reaching a record's fields.
 def _text(value: object) -> str:
     if type(value) is not str:
-        raise _BadRowError
+        raise _InvalidRecordError
     return value
 
 
 def _pair(value: object) -> tuple[str, str]:
     if not isinstance(value, list) or len(value) != _PAIR_LEN:
-        raise _BadRowError
+        raise _InvalidRecordError
     return (_text(value[0]), _text(value[1]))
 
 
@@ -409,5 +422,5 @@ def _pair_or_none(value: object) -> tuple[str, str] | None:
 def _hashes(value: object) -> tuple[tuple[str, str], ...]:
     """Return the hash pairs with algorithm names interned."""
     if not isinstance(value, list):
-        raise _BadRowError
+        raise _InvalidRecordError
     return tuple((sys.intern(algo), digest) for algo, digest in map(_pair, value))

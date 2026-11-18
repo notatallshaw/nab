@@ -41,6 +41,7 @@ RP = sys.intern(">=3.8")
 _H_FORMAT = 0
 _H_CODEC = 1
 _H_KEY_SCHEME = 2
+_H_DIGEST = 3
 _H_ZIP_SDISTS = 4
 
 # An sdist row is tag plus seven fields; the unknown-tag case relies on keeping
@@ -234,6 +235,26 @@ def _sdist_row_with(index: int, value: object) -> bytes:
 
 def test_valid_blob_decodes() -> None:
     assert decode(encode(SAMPLE, DIGEST), _policy()) is not None
+
+
+@pytest.mark.parametrize(
+    ("position", "value"),
+    [
+        (_H_FORMAT, float(FORMAT_VERSION)),
+        (_H_CODEC, True),
+        (_H_KEY_SCHEME, False),
+        (_H_CODEC, "one"),
+        (_H_DIGEST, None),
+        (_H_DIGEST, "short"),
+        (_H_DIGEST, "z" * 64),
+    ],
+)
+def test_malformed_header_is_reported_and_treated_as_a_miss(
+    position: int, value: object
+) -> None:
+    blob = _tamper_header(position, value)
+    assert decode(blob, _policy()) is None
+    assert corruption_reason(blob) == "unexpected header shape"
 
 
 def test_format_mismatch_is_miss() -> None:
