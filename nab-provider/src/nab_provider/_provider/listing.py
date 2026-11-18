@@ -40,8 +40,8 @@ from ..tags import TagSet
 from ..value import HashableRecord
 from ..vcs_admission import UnsupportedVcsError
 from .metadata_resolver import (
-    assumed_wheel_metadata,
     pick_dist_for_metadata,
+    shared_wheel,
     version_dists,
 )
 
@@ -242,10 +242,12 @@ def _has_metadata_override_or_representative(
     provider: Provider, normalized: str, version: Version
 ) -> bool:
     """Whether a declared override or assumed wheel source can answer."""
-    return provider.effective_dependencies(normalized, version) is not None or (
-        provider.consistent_metadata_declared
-        and assumed_wheel_metadata(provider, normalized, version) is not None
-    )
+    if provider.effective_dependencies(normalized, version) is not None:
+        return True
+    if provider.consistent_metadata_contexts is None:
+        return False
+    source = shared_wheel(provider, normalized, version)
+    return source is not None and source.text is not None
 
 
 def prefetch_root_batch(

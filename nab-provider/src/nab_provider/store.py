@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "InMemoryIndex",
+    "WheelMetadataContext",
     "metadata_pending_key",
     "range_pending_key",
     "sdist_artifact_key",
@@ -66,6 +67,12 @@ def _project_table_only(data: Mapping[str, Any]) -> dict[str, Any]:
     """Return ``data`` cut to ``[project]``, empty unless that key holds a table."""
     project = data.get("project")
     return {"project": project} if isinstance(project, dict) else {}
+
+
+class WheelMetadataContext:
+    """Identify one package listing and serving index for wheel metadata sharing."""
+
+    __slots__ = ()
 
 
 class InMemoryIndex:
@@ -134,7 +141,7 @@ class InMemoryIndex:
         # Share each text's parse across the target providers of one resolve.
         self._parsed_metadata: dict[tuple[str, str], tuple[tuple[str, Any], ...]] = {}
         self._consistent_wheel_metadata: dict[str, dict[str, tuple[str, str]]] = {}
-        self._consistent_metadata_contexts: dict[str, object] = {}
+        self._consistent_metadata_contexts: dict[str, WheelMetadataContext] = {}
 
         # Sdist metadata reconciled with declarations from its bundled pyproject.toml.
         self._resolved_sdist_metadata: dict[tuple[str, str], WheelMetadata] = {}
@@ -350,7 +357,7 @@ class InMemoryIndex:
 
     def consistent_metadata_context(
         self, package: str, files: Sequence[WheelFile | SdistFile]
-    ) -> object | None:
+    ) -> WheelMetadataContext | None:
         """Return the sharing token for this raw listing and its serving index."""
         with self._lock:
             if self._listings.get(package) is not files:
@@ -358,12 +365,12 @@ class InMemoryIndex:
 
             context = self._consistent_metadata_contexts.get(package)
             if context is None:
-                context = object()
+                context = WheelMetadataContext()
                 self._consistent_metadata_contexts[package] = context
             return context
 
     def get_consistent_wheel_metadata(
-        self, package: str, version: str, *, context: object | None
+        self, package: str, version: str, *, context: WheelMetadataContext | None
     ) -> str | None:
         """Return shared release metadata while its source is unchanged."""
         with self._lock:
@@ -393,7 +400,13 @@ class InMemoryIndex:
             return text
 
     def store_consistent_wheel_metadata(
-        self, package: str, version: str, url: str, text: str, *, context: object | None
+        self,
+        package: str,
+        version: str,
+        url: str,
+        text: str,
+        *,
+        context: WheelMetadataContext | None,
     ) -> None:
         """Remember the first validated wheel source for an opted-in release."""
         with self._lock:

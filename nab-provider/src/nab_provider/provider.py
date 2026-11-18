@@ -119,6 +119,7 @@ if TYPE_CHECKING:
     from .diagnostics import Diagnostic
     from .fetch_port import FetchPort, Waitable
     from .overrides import IndexOverride, PackageOverride
+    from .store import WheelMetadataContext
     from .tags import TagSet
     from .target import ResolveTarget
 
@@ -810,7 +811,7 @@ class Provider:
         self.assume_consistent_metadata = assume_consistent_metadata
 
         # Keep listing-context tracking off the default path.
-        self.consistent_metadata_declared = (
+        consistency_declared = (
             assume_consistent_metadata
             or any(
                 rule.assume_consistent_metadata is not None
@@ -824,9 +825,9 @@ class Provider:
                 )
             )
         )
-        self.consistent_metadata_contexts: dict[str, object | None] | None = (
-            {} if self.consistent_metadata_declared else None
-        )
+        self.consistent_metadata_contexts: (
+            dict[str, WheelMetadataContext | None] | None
+        ) = {} if consistency_declared else None
 
         self.allow_zip_sdists = allow_zip_sdists
         self._resolution_strategy = resolution_strategy
@@ -3305,20 +3306,16 @@ class Provider:
             self.prefetch_new_deps(self.deps_cache[cache_key])
             return self.deps_cache[cache_key]
 
-        # Preserve the ordinary path when no consistency policy was declared.
-        read_metadata = (
-            _metadata_resolver.resolve_consistent_metadata
-            if self.consistent_metadata_declared
-            else _metadata_resolver.resolve_metadata
+        metadata_text, from_sdist = _metadata_resolver.resolve_metadata(
+            self, versions, package, version
         )
-        metadata_text, from_sdist = read_metadata(self, versions, package, version)
 
         self._parse_and_cache_metadata_guarded(
             cache_key, metadata_text, from_sdist=from_sdist
         )
 
         if (
-            not self.consistent_metadata_declared
+            self.consistent_metadata_contexts is None
             or not self.effective_assume_consistent_metadata(
                 normalized, version, self.serving_index(normalized)
             )
@@ -3396,7 +3393,7 @@ class Provider:
         """See :func:`._provider.metadata_resolver.parse_and_cache_metadata`."""
         parse_metadata = (
             _metadata_resolver.parse_consistent_metadata
-            if self.consistent_metadata_declared
+            if self.consistent_metadata_contexts is not None
             else _metadata_resolver.parse_and_cache_metadata
         )
         parse_metadata(self, cache_key, metadata_text, from_sdist=from_sdist)
