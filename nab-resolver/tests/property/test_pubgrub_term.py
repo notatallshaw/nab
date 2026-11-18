@@ -22,7 +22,6 @@ import pytest
 from hypothesis import given
 
 from nab_resolver.ranges import Range
-from nab_resolver.report import union_terms
 from nab_resolver.types import Term
 
 from .strategies import (
@@ -198,7 +197,6 @@ class TestQuoteTermIntersection:
     ) -> None:
         """If ``v`` is allowed by ``T1 ∩ T2`` then ``T1`` and ``T2`` allow ``v``."""
         result = left.intersect(right)
-        assert result is not None
         for version in VERSION_RANGE:
             if _term_allows(result, version):
                 assert _term_allows(left, version)
@@ -212,8 +210,6 @@ class TestQuoteTermIntersection:
         """``T1 ∩ T2`` and ``T2 ∩ T1`` agree pointwise."""
         ab = left.intersect(right)
         ba = right.intersect(left)
-        assert ab is not None
-        assert ba is not None
         for version in VERSION_RANGE:
             assert _term_allows(ab, version) == _term_allows(ba, version)
 
@@ -222,7 +218,6 @@ class TestQuoteTermIntersection:
     def test_intersection_with_self(self, term: Term[str, int]) -> None:
         """``T ∩ T`` allows the same versions as ``T``."""
         result = term.intersect(term)
-        assert result is not None
         for version in VERSION_RANGE:
             assert _term_allows(result, version) == _term_allows(term, version)
 
@@ -239,7 +234,6 @@ class TestQuoteTermIntersection:
         derivation eventually surfaces a positive term.
         """
         result = left.intersect(right)
-        assert result is not None
         if left.is_positive() or right.is_positive():
             assert result.is_positive()
         else:
@@ -262,7 +256,6 @@ class TestQuoteTermIntersection:
         positive = Term("pkg", constraint, positive=True)
         negative = Term("pkg", constraint, positive=False)
         result = positive.intersect(negative)
-        assert result is not None
         assert result.is_positive()
         assert result.constraint.is_empty
 
@@ -297,7 +290,7 @@ class TestQuoteResolutionIdentity:
 
     The PubGrub conflict-resolution loop merges two incompatibilities
     by computing the union of their term sets for each shared
-    package.  The implementation, :func:`union_terms`, has to satisfy
+    package.  The implementation, :meth:`Term.union`, has to satisfy
     this identity for arbitrary polarities.
 
     Reference:
@@ -310,7 +303,7 @@ class TestQuoteResolutionIdentity:
         self, left: Term[str, int], right: Term[str, int]
     ) -> None:
         """If ``v`` is allowed by ``T1`` or ``T2`` then ``T1 ∪ T2`` allows ``v``."""
-        result = union_terms(left, right)
+        result = left.union(right)
         if result is None:
             return
         for version in VERSION_RANGE:
@@ -323,8 +316,8 @@ class TestQuoteResolutionIdentity:
         self, left: Term[str, int], right: Term[str, int]
     ) -> None:
         """``T1 ∪ T2`` and ``T2 ∪ T1`` agree pointwise."""
-        ab = union_terms(left, right)
-        ba = union_terms(right, left)
+        ab = left.union(right)
+        ba = right.union(left)
         if ab is None:
             assert ba is None
             return
@@ -345,7 +338,7 @@ class TestQuoteResolutionIdentity:
         """
         term_left = Term("pkg", left, positive=True)
         term_right = Term("pkg", right, positive=True)
-        result = union_terms(term_left, term_right)
+        result = term_left.union(term_right)
         range_union = left | right
         assert result is not None
         assert result.is_positive()
@@ -360,7 +353,7 @@ class TestQuoteResolutionIdentity:
         """``negative(A) ∪ negative(B) == negative(A ∩ B)`` (De Morgan)."""
         term_left = Term("pkg", left, positive=False)
         term_right = Term("pkg", right, positive=False)
-        result = union_terms(term_left, term_right)
+        result = term_left.union(term_right)
         range_intersection = left & right
         if range_intersection.is_empty:
             assert result is None
@@ -374,7 +367,7 @@ class TestQuoteResolutionIdentity:
 class TestUnionViaDeMorgan:
     """De Morgan applied to terms: ``T1 ∪ T2 == not(not T1 ∩ not T2)``.
 
-    Used by :func:`union_terms` internally.  The property test verifies
+    Used by :meth:`Term.union` internally.  The property test verifies
     that both formulations agree pointwise for arbitrary polarities.
 
     Reference:
@@ -387,9 +380,8 @@ class TestUnionViaDeMorgan:
         self, left: Term[str, int], right: Term[str, int]
     ) -> None:
         """``T1 ∪ T2 == not(not T1 ∩ not T2)`` for every version pointwise."""
-        union = union_terms(left, right)
+        union = left.union(right)
         de_morgan = left.negate().intersect(right.negate())
-        assert de_morgan is not None
         for version in VERSION_RANGE:
             union_allows = True if union is None else _term_allows(union, version)
             de_morgan_allows = not _term_allows(de_morgan, version)

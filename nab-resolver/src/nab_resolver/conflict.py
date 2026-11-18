@@ -23,14 +23,14 @@ from typing import TYPE_CHECKING, Any
 from .errors import ResolutionError, ResolutionStalledError
 from .incompat_index import add_incompatibility
 from .partial_solution import PartialSolution
-from .report import format_error, prior_cause
+from .report import format_error
 from .root import ROOT
 from .types import Incompatibility, IncompatibilityCause
 
 if TYPE_CHECKING:
     from .partial_solution import Assignment
     from .resolver import Resolver
-    from .types import Term
+    from .types import PackageType, Term, VersionType
 
 
 __all__ = [
@@ -191,7 +191,7 @@ def conflict_resolution(
         assert most_recent_satisfier.cause is not None
         is_derived = True
 
-        resolved_terms = prior_cause(
+        resolved_terms = _prior_cause(
             current_incompatibility,
             most_recent_satisfier.cause,
             most_recent_satisfier_term.package,
@@ -348,7 +348,7 @@ def try_force_resolution_step(
     ):
         return None
 
-    resolved_terms = prior_cause(
+    resolved_terms = _prior_cause(
         incompatibility, satisfier.cause, satisfier_term.package
     )
     if len(resolved_terms) < _MIN_RESOLVED_TERMS:
@@ -369,6 +369,49 @@ def try_force_resolution_step(
         return None
 
     return forced
+
+
+def _prior_cause(
+    incompatibility: Incompatibility[PackageType, VersionType],
+    satisfier_cause: Incompatibility[PackageType, VersionType],
+    shared_package: PackageType,
+) -> list[Term[PackageType, VersionType]]:
+    """Compute the prior cause by resolving two incompatibilities.
+
+    Follows pubgrub-rs's prior_cause: for the shared package, union
+    the terms (and drop if the union is a tautology). For other shared
+    packages, intersect the terms. For packages in only one side,
+    keep as-is.
+
+    Reference: https://github.com/pubgrub-rs/pubgrub
+    """
+    incompat_terms: dict[PackageType, Term[PackageType, VersionType]] = {
+        term.package: term for term in incompatibility.terms
+    }
+    cause_terms: dict[PackageType, Term[PackageType, VersionType]] = {
+        term.package: term for term in satisfier_cause.terms
+    }
+
+    result: list[Term[PackageType, VersionType]] = []
+
+    # Shared package: union, dropping if the result is a tautology.
+    incompat_shared = incompat_terms.pop(shared_package, None)
+    cause_shared = cause_terms.pop(shared_package, None)
+    if incompat_shared is not None and cause_shared is not None:
+        unioned = incompat_shared.union(cause_shared)
+        if unioned is not None:
+            result.append(unioned)
+    elif incompat_shared is not None:
+        result.append(incompat_shared)
+    elif cause_shared is not None:
+        result.append(cause_shared)
+
+    # Retain the left clause's order followed by terms unique to the cause.
+    for package, term in incompat_terms.items():
+        other = cause_terms.pop(package, None)
+        result.append(term if other is None else term.intersect(other))
+    result.extend(cause_terms.values())
+    return result
 
 
 def find_most_recent_satisfier(
@@ -439,7 +482,6 @@ def recompute_previous_level(
 
     own_term = cause_term.negate()
     difference = own_term.intersect(satisfier_term.negate())
-    assert difference is not None
     if difference.constraint.is_empty:
         return current_previous_level
 

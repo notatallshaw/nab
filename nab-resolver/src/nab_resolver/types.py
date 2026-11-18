@@ -186,13 +186,14 @@ class Term(Generic[PackageType, VersionType]):
 
     def intersect(
         self, other: Term[PackageType, VersionType]
-    ) -> Term[PackageType, VersionType] | None:
+    ) -> Term[PackageType, VersionType]:
         """Intersect two terms for the same package.
 
-        Returns None if the packages differ.
+        Raise ValueError if the terms refer to different packages.
         """
         if self.package != other.package:
-            return None
+            msg = f"cannot intersect terms for {self.package!r} and {other.package!r}"
+            raise ValueError(msg)
 
         if self._positive and other._positive:
             return Term(
@@ -214,6 +215,42 @@ class Term(Generic[PackageType, VersionType]):
         negative_term = other if self._positive else self
         difference = positive_term.constraint - negative_term.constraint
         return Term(self.package, difference, positive=True)
+
+    def union(
+        self, other: Term[PackageType, VersionType]
+    ) -> Term[PackageType, VersionType] | None:
+        """Union two terms for the same package.
+
+        Raise ValueError if the terms refer to different packages.
+
+        Returns None when the union is a tautology (the term can be dropped
+        from the resolvent).  Only a negative result can be one: a positive
+        term, even over the full range, still requires the package to be
+        selected, so solutions that omit the package don't satisfy it.
+        """
+        if self.package != other.package:
+            msg = f"cannot union terms for {self.package!r} and {other.package!r}"
+            raise ValueError(msg)
+
+        # Positive | Positive = Positive(R1 | R2); never a tautology.
+        if self.is_positive() and other.is_positive():
+            merged = self.constraint | other.constraint
+            return Term(self.package, merged, positive=True)
+
+        # Negative | Negative = Negative(R1 & R2) by De Morgan.
+        if not self.is_positive() and not other.is_positive():
+            merged = self.constraint & other.constraint
+            if merged.is_empty:
+                return None
+            return Term(self.package, merged, positive=False)
+
+        # Mixed: the negative's range minus the positive's.
+        positive_term = self if self.is_positive() else other
+        negative_term = other if self.is_positive() else self
+        remainder = negative_term.constraint - positive_term.constraint
+        if remainder.is_empty:
+            return None
+        return Term(self.package, remainder, positive=False)
 
     @override
     def __repr__(self) -> str:

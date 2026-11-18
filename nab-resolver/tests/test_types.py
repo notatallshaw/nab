@@ -57,7 +57,6 @@ class TestTerm:
         a = Term("foo", Range.at_least(2))
         b = Term("foo", Range.less_than(5))
         c = a.intersect(b)
-        assert c is not None
         assert 3 in c.constraint
         assert 6 not in c.constraint
 
@@ -66,7 +65,6 @@ class TestTerm:
         a = Term("foo", Range.singleton(2), positive=False)
         b = Term("foo", Range.singleton(3), positive=False)
         result = a.intersect(b)
-        assert result is not None
         assert not result.is_positive()
         # The negative range should be the union: {2} | {3}
         assert 2 in result.constraint
@@ -77,7 +75,6 @@ class TestTerm:
         positive = Term("foo", Range.at_least(1))
         negative = Term("foo", Range.singleton(3), positive=False)
         result = positive.intersect(negative)
-        assert result is not None
         assert result.is_positive()
         assert 2 in result.constraint
         assert 3 not in result.constraint
@@ -87,15 +84,91 @@ class TestTerm:
         negative = Term("foo", Range.singleton(3), positive=False)
         positive = Term("foo", Range.at_least(1))
         result = negative.intersect(positive)
-        assert result is not None
         assert result.is_positive()
         assert 2 in result.constraint
         assert 3 not in result.constraint
 
-    def test_intersect_different_packages_returns_none(self) -> None:
+    def test_operations_reject_different_packages(self) -> None:
         a = Term("foo", Range.at_least(2))
         b = Term("bar", Range.less_than(5))
-        assert a.intersect(b) is None
+        with pytest.raises(ValueError, match="'foo' and 'bar'"):
+            a.intersect(b)
+        with pytest.raises(ValueError, match="'foo' and 'bar'"):
+            a.union(b)
+
+    def test_union_both_positive(self) -> None:
+        a = Term("foo", Range.between(1, 3), positive=True)
+        b = Term("foo", Range.between(5, 7), positive=True)
+        result = a.union(b)
+        assert result is not None
+        assert result.is_positive()
+        assert 2 in result.constraint
+        assert 6 in result.constraint
+
+    def test_union_both_negative_universal(self) -> None:
+        """not({2}) union not({3}) = not({2} & {3}) = not(empty) = universal."""
+        a = Term("foo", Range.singleton(2), positive=False)
+        b = Term("foo", Range.singleton(3), positive=False)
+        result = a.union(b)
+        assert result is None  # universal, every version is not-2 or not-3
+
+    def test_union_both_negative_non_universal(self) -> None:
+        """not([1,3)) union not([2,5)) = not([2,3)) (the intersection)."""
+        a = Term("foo", Range.between(1, 3), positive=False)
+        b = Term("foo", Range.between(2, 5), positive=False)
+        result = a.union(b)
+        assert result is not None
+        assert not result.is_positive()
+        # [1,3) & [2,5) = [2,3), so the result is not([2,3))
+        assert 2 in result.constraint
+        assert 1 not in result.constraint
+
+    def test_union_positive_full_range_is_kept(self) -> None:
+        """A full-range positive union is not a tautology.
+
+        It still requires the package to be selected, so dropping it
+        from a resolvent would make the clause fire for solutions that
+        omit the package entirely.
+        """
+        a = Term("foo", Range.full(), positive=True)
+        b = Term("foo", Range.singleton(1), positive=True)
+        result = a.union(b)
+        assert result is not None
+        assert result.is_positive()
+        assert (~result.constraint).is_empty
+
+    def test_union_negative_empty_intersection_returns_none(self) -> None:
+        """Negative union where intersection is empty is universal."""
+        a = Term("foo", Range.less_than(3), positive=False)
+        b = Term("foo", Range.at_least(3), positive=False)
+        assert a.union(b) is None
+
+    def test_union_mixed_polarity(self) -> None:
+        """Positive union negative produces a negative remainder."""
+        a = Term("foo", Range.at_least(3), positive=True)
+        b = Term("foo", Range.at_least(2), positive=False)
+        result = a.union(b)
+        # pos([3,+inf)) union neg([2,+inf)) = all versions >= 3 OR not >= 2
+        # = all versions >= 3 OR < 2 = everything except [2,3)
+        # As negative: not([2,3))
+        assert result is not None
+        assert not result.is_positive()
+        assert 2 in result.constraint
+        assert 1 not in result.constraint
+        assert 3 not in result.constraint
+
+    def test_union_mixed_returns_negative(self) -> None:
+        """Mixed polarity union that produces a negative term."""
+        # pos([3,5)) union neg([2,6)) = all versions in [3,5) OR not in [2,6)
+        # = everything except [2,3) and [5,6)
+        # As negative: not([2,3) | [5,6))
+        a = Term("foo", Range.between(3, 5), positive=True)
+        b = Term("foo", Range.between(2, 6), positive=False)
+        result = a.union(b)
+        assert result is not None
+        # The remainder is neg.constraint & ~pos.constraint = [2,6) & ~[3,5)
+        # = [2,3) | [5,6), which is non-empty, so we get a negative term
+        assert not result.is_positive()
 
 
 class TestIncompatibility:

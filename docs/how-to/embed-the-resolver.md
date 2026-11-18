@@ -190,6 +190,10 @@ satisfying `RangeProtocol`, a `root_version` to decide the virtual root at, whic
 `range_type.singleton()` has to accept, and a `format_range` unless that type's `str` already reads
 as a constraint. nab drives the resolver this way, with a PEP 440 range type.
 
+Use `left.intersect(right)` or `left.union(right)` to combine terms for the same package. Both raise
+`ValueError` if the packages differ. Intersection returns a term even when its range is empty. Union
+returns `None` if every possible selection satisfies the combined term.
+
 ## Reuse scoped artifact preference
 
 `nab-provider` supplies `nab_provider.preference.PreferenceSearch` for hosts that prefer working

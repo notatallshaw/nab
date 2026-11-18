@@ -244,7 +244,7 @@ class TestDeMorgan:
     For sets ``A`` and ``B``: ``~(A ∩ B) == ~A ∪ ~B`` and
     ``~(A ∪ B) == ~A ∩ ~B``.
 
-    PubGrub's term-union derivation in :func:`union_terms` relies on the
+    PubGrub's term-union derivation in :meth:`Term.union` relies on the
     intersection variant: the union of two negative terms reduces to
     the negation of the intersection of their constraints.
 

@@ -13,6 +13,7 @@ import pytest
 from nab_resolver import incompat_index, propagate
 from nab_resolver._compat import override
 from nab_resolver.conflict import (
+    _prior_cause,
     apply_targeted_backtrack,
     conflict_resolution,
     find_most_recent_satisfier,
@@ -39,8 +40,6 @@ from nab_resolver.report import (
     explain_incompatibility,
     format_error,
     format_term,
-    prior_cause,
-    union_terms,
 )
 from nab_resolver.resolver import (
     DEFAULT_MAX_ITERATIONS,
@@ -799,7 +798,7 @@ def stalled_solution(
     ``app``'s only assignment is a derivation whose cause is the clause under
     resolution and whose accumulated range is empty.  An empty range satisfies
     both polarities, so the clause is satisfied by the derivation it caused:
-    the loop resolves the clause with itself, :func:`prior_cause` returns the
+    the loop resolves the clause with itself, :func:`_prior_cause` returns the
     same term every time, and no trail depth is consumed.  ``padding``
     lengthens the trail without disturbing that fixed point.
     """
@@ -931,69 +930,7 @@ class TestObserver:
 class TestResolverInternals:
     """Unit tests for internal helper functions."""
 
-    def testunion_terms_both_positive(self) -> None:
-        a = Term("foo", Range.between(1, 3), positive=True)
-        b = Term("foo", Range.between(5, 7), positive=True)
-        result = union_terms(a, b)
-        assert result is not None
-        assert result.is_positive()
-        assert 2 in result.constraint
-        assert 6 in result.constraint
-
-    def testunion_terms_both_negative_universal(self) -> None:
-        """not({2}) union not({3}) = not({2} & {3}) = not(empty) = universal."""
-        a = Term("foo", Range.singleton(2), positive=False)
-        b = Term("foo", Range.singleton(3), positive=False)
-        result = union_terms(a, b)
-        assert result is None  # universal, every version is not-2 or not-3
-
-    def testunion_terms_both_negative_non_universal(self) -> None:
-        """not([1,3)) union not([2,5)) = not([2,3)) (the intersection)."""
-        a = Term("foo", Range.between(1, 3), positive=False)
-        b = Term("foo", Range.between(2, 5), positive=False)
-        result = union_terms(a, b)
-        assert result is not None
-        assert not result.is_positive()
-        # [1,3) & [2,5) = [2,3), so the result is not([2,3))
-        assert 2 in result.constraint
-        assert 1 not in result.constraint
-
-    def testunion_terms_positive_full_range_is_kept(self) -> None:
-        """A full-range positive union is not a tautology.
-
-        It still requires the package to be selected, so dropping it
-        from a resolvent would make the clause fire for solutions that
-        omit the package entirely.
-        """
-        a = Term("foo", Range.full(), positive=True)
-        b = Term("foo", Range.singleton(1), positive=True)
-        result = union_terms(a, b)
-        assert result is not None
-        assert result.is_positive()
-        assert (~result.constraint).is_empty
-
-    def testunion_terms_negative_empty_intersection_returns_none(self) -> None:
-        """Negative union where intersection is empty is universal."""
-        a = Term("foo", Range.less_than(3), positive=False)
-        b = Term("foo", Range.at_least(3), positive=False)
-        assert union_terms(a, b) is None
-
-    def testunion_terms_mixed_polarity(self) -> None:
-        """Positive union negative produces a negative remainder."""
-        a = Term("foo", Range.at_least(3), positive=True)
-        b = Term("foo", Range.at_least(2), positive=False)
-        result = union_terms(a, b)
-        # pos([3,+inf)) union neg([2,+inf)) = all versions >= 3 OR not >= 2
-        # = all versions >= 3 OR < 2 = everything except [2,3)
-        # As negative: not([2,3))
-        assert result is not None
-        assert (
-            1 in ~result.constraint
-            if result.is_positive()
-            else 1 not in result.constraint
-        )
-
-    def testprior_cause_basic(self) -> None:
+    def test_prior_cause_basic(self) -> None:
         """Resolve two incompatibilities sharing package bar."""
         inc1 = Incompatibility(
             [Term("foo", Range.singleton(2)), Term("bar", Range.singleton(1))],
@@ -1003,12 +940,12 @@ class TestResolverInternals:
             [Term("bar", Range.singleton(1)), Term("baz", Range.singleton(3))],
             cause=IncompatibilityCause.DEPENDENCY,
         )
-        result = prior_cause(inc1, inc2, "bar")
+        result = _prior_cause(inc1, inc2, "bar")
         packages = {t.package for t in result}
         assert "foo" in packages
         assert "baz" in packages
 
-    def testprior_cause_shared_package_union_drops_tautology(self) -> None:
+    def test_prior_cause_shared_package_union_drops_tautology(self) -> None:
         """When the shared package's terms union to a tautology, it's dropped.
 
         Mixed polarity over the same range is the classic case: the
@@ -1027,14 +964,14 @@ class TestResolverInternals:
             ],
             cause=IncompatibilityCause.DEPENDENCY,
         )
-        result = prior_cause(inc1, inc2, "bar")
+        result = _prior_cause(inc1, inc2, "bar")
         packages = {t.package for t in result}
         # The bar terms union to a tautology, so bar is dropped.
         assert "bar" not in packages
         assert "foo" in packages
         assert "baz" in packages
 
-    def testprior_cause_shared_package_kept_when_not_universal(self) -> None:
+    def test_prior_cause_shared_package_kept_when_not_universal(self) -> None:
         """Shared package kept when its union is not universal."""
         inc1 = Incompatibility(
             [Term("foo", Range.singleton(1)), Term("shared", Range.singleton(2))],
@@ -1044,14 +981,14 @@ class TestResolverInternals:
             [Term("shared", Range.singleton(3)), Term("baz", Range.singleton(4))],
             cause=IncompatibilityCause.DEPENDENCY,
         )
-        result = prior_cause(inc1, inc2, "shared")
+        result = _prior_cause(inc1, inc2, "shared")
         packages = {t.package for t in result}
         # shared's union is {2}|{3} which is not universal, so kept
         assert "shared" in packages
         assert "foo" in packages
         assert "baz" in packages
 
-    def testprior_cause_other_packages_intersected(self) -> None:
+    def test_prior_cause_other_packages_intersected(self) -> None:
         """Terms for the same non-shared package get intersected."""
         inc1 = Incompatibility(
             [Term("shared", Range.singleton(1)), Term("foo", Range.at_least(2))],
@@ -1061,7 +998,7 @@ class TestResolverInternals:
             [Term("shared", Range.singleton(1)), Term("foo", Range.less_than(5))],
             cause=IncompatibilityCause.DEPENDENCY,
         )
-        result = prior_cause(inc1, inc2, "shared")
+        result = _prior_cause(inc1, inc2, "shared")
         foo_terms = [t for t in result if t.package == "foo"]
         assert len(foo_terms) == 1
         assert 3 in foo_terms[0].constraint
@@ -1158,7 +1095,7 @@ class TestResolverInternals:
         x_mentions = [line for line in lines if "x" in line]
         assert len(x_mentions) == 1
 
-    def testprior_cause_shared_only_in_incompatibility(self) -> None:
+    def test_prior_cause_shared_only_in_incompatibility(self) -> None:
         """Shared package only appears in the first incompatibility."""
         inc1 = Incompatibility(
             [Term("shared", Range.singleton(1)), Term("foo", Range.singleton(2))],
@@ -1168,13 +1105,13 @@ class TestResolverInternals:
             [Term("baz", Range.singleton(3))],
             cause=IncompatibilityCause.DEPENDENCY,
         )
-        result = prior_cause(inc1, inc2, "shared")
+        result = _prior_cause(inc1, inc2, "shared")
         packages = {t.package for t in result}
         assert "shared" in packages
         assert "foo" in packages
         assert "baz" in packages
 
-    def testprior_cause_shared_only_in_cause(self) -> None:
+    def test_prior_cause_shared_only_in_cause(self) -> None:
         """Shared package only appears in the second incompatibility."""
         inc1 = Incompatibility(
             [Term("foo", Range.singleton(2))],
@@ -1184,13 +1121,13 @@ class TestResolverInternals:
             [Term("shared", Range.singleton(1)), Term("baz", Range.singleton(3))],
             cause=IncompatibilityCause.DEPENDENCY,
         )
-        result = prior_cause(inc1, inc2, "shared")
+        result = _prior_cause(inc1, inc2, "shared")
         packages = {t.package for t in result}
         assert "shared" in packages
         assert "foo" in packages
         assert "baz" in packages
 
-    def testprior_cause_non_shared_only_in_cause(self) -> None:
+    def test_prior_cause_non_shared_only_in_cause(self) -> None:
         """Non-shared package appears only in the cause side."""
         inc1 = Incompatibility(
             [Term("shared", Range.singleton(1))],
@@ -1203,11 +1140,11 @@ class TestResolverInternals:
             ],
             cause=IncompatibilityCause.DEPENDENCY,
         )
-        result = prior_cause(inc1, inc2, "shared")
+        result = _prior_cause(inc1, inc2, "shared")
         packages = {t.package for t in result}
         assert "only_cause" in packages
 
-    def testprior_cause_other_package_intersection_empty(self) -> None:
+    def test_prior_cause_other_package_intersection_empty(self) -> None:
         """Non-shared terms that intersect to empty are dropped."""
         inc1 = Incompatibility(
             [Term("shared", Range.singleton(1)), Term("foo", Range.at_least(5))],
@@ -1217,7 +1154,7 @@ class TestResolverInternals:
             [Term("shared", Range.singleton(2)), Term("foo", Range.less_than(3))],
             cause=IncompatibilityCause.DEPENDENCY,
         )
-        result = prior_cause(inc1, inc2, "shared")
+        result = _prior_cause(inc1, inc2, "shared")
         # foo terms: at_least(5) intersect less_than(3) = empty.
         # But Term.intersect returns a Term with empty constraint,
         # which is still appended. Check: both are positive, so
@@ -1228,7 +1165,7 @@ class TestResolverInternals:
         assert len(foo_terms) == 1
         assert foo_terms[0].constraint.is_empty
 
-    def testprior_cause_shared_in_neither(self) -> None:
+    def test_prior_cause_shared_in_neither(self) -> None:
         """Shared package appears in neither incompatibility."""
         inc1 = Incompatibility(
             [Term("foo", Range.singleton(1))],
@@ -1238,24 +1175,11 @@ class TestResolverInternals:
             [Term("bar", Range.singleton(2))],
             cause=IncompatibilityCause.DEPENDENCY,
         )
-        result = prior_cause(inc1, inc2, "missing")
+        result = _prior_cause(inc1, inc2, "missing")
         packages = {t.package for t in result}
         assert "foo" in packages
         assert "bar" in packages
         assert "missing" not in packages
-
-    def testunion_terms_mixed_returns_negative(self) -> None:
-        """Mixed polarity union that produces a negative term."""
-        # pos([3,5)) union neg([2,6)) = all versions in [3,5) OR not in [2,6)
-        # = everything except [2,3) and [5,6)
-        # As negative: not([2,3) | [5,6))
-        a = Term("foo", Range.between(3, 5), positive=True)
-        b = Term("foo", Range.between(2, 6), positive=False)
-        result = union_terms(a, b)
-        assert result is not None
-        # The remainder is neg.constraint & ~pos.constraint = [2,6) & ~[3,5)
-        # = [2,3) | [5,6), which is non-empty, so we get a negative term
-        assert not result.is_positive()
 
     def test_empty_incompatibility_is_terminal(self) -> None:
         """An incompatibility with no terms is terminal (always false)."""
@@ -3010,7 +2934,7 @@ class TestHashOrderIndependence:
             [Term(p, Range.singleton(1)) for p in [shared, *packages[4:]]],
             cause=IncompatibilityCause.DEPENDENCY,
         )
-        terms = prior_cause(incompatibility, cause, shared)
+        terms = _prior_cause(incompatibility, cause, shared)
         return [term.package.name for term in terms]
 
     def test_prior_cause_term_order_ignores_package_hashes(self) -> None:

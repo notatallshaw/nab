@@ -1,8 +1,4 @@
-"""Error reporting and term combinators.
-
-Mirrors pubgrub-rs's ``report.rs`` / dart pub's ``failure.dart``: the
-message-building walk and the prior-cause / term-union combinators sit
-alongside the public ``ResolutionError``.
+"""Render incompatibility derivations as human-readable resolution errors.
 
 Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#error-reporting
 """
@@ -14,7 +10,7 @@ __lazy_modules__ = ("nab_resolver.root",)
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from .root import ROOT
-from .types import IncompatibilityCause, PackageType, Term, VersionType
+from .types import IncompatibilityCause, Term
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -28,8 +24,6 @@ __all__ = [
     "explain_incompatibility",
     "format_error",
     "format_term",
-    "prior_cause",
-    "union_terms",
 ]
 
 
@@ -154,9 +148,7 @@ def _shortfall(
     cause the package carries the other's term; absent from the step it was
     resolved away, which needs the causes to leave nothing.
     """
-    joint = (
-        left if right is None else right if left is None else union_terms(left, right)
-    )
+    joint = left if right is None else right if left is None else left.union(right)
     covered = _satisfying(joint)
     stated = _satisfying(conclusion)
     if covered is None:
@@ -370,89 +362,3 @@ def format_term(term: Term[Any, Any], format_range: _FormatFn = str) -> str:
         return f"all versions of {term.package}"
     sign = "" if term.is_positive() else "not "
     return _with_range(f"{sign}{term.package}", format_range(term.constraint))
-
-
-def prior_cause(
-    incompatibility: Incompatibility[PackageType, VersionType],
-    satisfier_cause: Incompatibility[PackageType, VersionType],
-    shared_package: PackageType,
-) -> list[Term[PackageType, VersionType]]:
-    """Compute the prior cause by resolving two incompatibilities.
-
-    Follows pubgrub-rs's prior_cause: for the shared package, union
-    the terms (and drop if the union is a tautology). For other shared
-    packages, intersect the terms. For packages in only one side,
-    keep as-is.
-
-    Reference: https://github.com/pubgrub-rs/pubgrub
-    """
-    incompat_terms: dict[PackageType, Term[PackageType, VersionType]] = {
-        term.package: term for term in incompatibility.terms
-    }
-    cause_terms: dict[PackageType, Term[PackageType, VersionType]] = {
-        term.package: term for term in satisfier_cause.terms
-    }
-
-    result: list[Term[PackageType, VersionType]] = []
-
-    # Shared package: union, dropping if the result is a tautology.
-    incompat_shared = incompat_terms.pop(shared_package, None)
-    cause_shared = cause_terms.pop(shared_package, None)
-    if incompat_shared is not None and cause_shared is not None:
-        unioned = union_terms(incompat_shared, cause_shared)
-        if unioned is not None:
-            result.append(unioned)
-    elif incompat_shared is not None:
-        result.append(incompat_shared)
-    elif cause_shared is not None:
-        result.append(cause_shared)
-
-    # Remaining packages: intersect when in both sides, else keep as-is.
-    # Dict merge keeps insertion order. Set union would make
-    # learned-clause term order depend on process hash order.
-    all_packages = {**incompat_terms, **cause_terms}
-    for package in all_packages:
-        incompat_term = incompat_terms.get(package)
-        cause_term = cause_terms.get(package)
-        if incompat_term is not None and cause_term is not None:
-            intersected = incompat_term.intersect(cause_term)
-            assert intersected is not None
-            result.append(intersected)
-        elif incompat_term is not None:
-            result.append(incompat_term)
-        else:
-            assert cause_term is not None
-            result.append(cause_term)
-
-    return result
-
-
-def union_terms(
-    first: Term[PackageType, VersionType], second: Term[PackageType, VersionType]
-) -> Term[PackageType, VersionType] | None:
-    """Union two terms for the same package.
-
-    Returns None when the union is a tautology (the term can be dropped
-    from the resolvent).  Only a negative result can be one: a positive
-    term, even over the full range, still requires the package to be
-    selected, so solutions that omit the package don't satisfy it.
-    """
-    # Positive | Positive = Positive(R1 | R2); never a tautology.
-    if first.is_positive() and second.is_positive():
-        merged = first.constraint | second.constraint
-        return Term(first.package, merged, positive=True)
-
-    # Negative | Negative = Negative(R1 & R2) by De Morgan.
-    if not first.is_positive() and not second.is_positive():
-        merged = first.constraint & second.constraint
-        if merged.is_empty:
-            return None
-        return Term(first.package, merged, positive=False)
-
-    # Mixed: the negative's range minus the positive's.
-    positive_term = first if first.is_positive() else second
-    negative_term = second if first.is_positive() else first
-    remainder = negative_term.constraint - positive_term.constraint
-    if remainder.is_empty:
-        return None
-    return Term(first.package, remainder, positive=False)
