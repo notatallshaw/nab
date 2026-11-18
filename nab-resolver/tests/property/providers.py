@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import itertools
 from collections.abc import Iterator, Mapping
 
 from nab_resolver._compat import override
+from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 from nab_resolver.ranges import Range
-from nab_resolver.resolver import BaseProvider
+from nab_resolver.resolver import BaseProvider, Resolver
 from nab_resolver.types import RangeProtocol
 
 
@@ -139,76 +139,49 @@ def reachable_packages(
     return reachable
 
 
-MAX_BRUTE_FORCE_COMBINATIONS = 10_000
+def resolve_or_prove_conflict(
+    resolver: Resolver[str, int],
+    requirements: dict[str, Range[int]],
+    constraints: dict[str, Range[int]] | None = None,
+) -> dict[str, int] | None:
+    """Return pins or a proven conflict. Limits and solver faults fail the test."""
+    try:
+        return resolver.resolve(requirements, constraints)
+    except ResolutionError as error:
+        if (
+            isinstance(error, ResolutionTerminatedError)
+            or error.incompatibility is None
+        ):
+            raise
+        return None
 
 
 def brute_force_has_solution(
     graph: dict[str, dict[int, dict[str, Range[int]]]],
     requirements: dict[str, Range[int]],
     constraints: dict[str, Range[int]] | None = None,
-) -> bool | None:
-    """Check whether any version selection satisfies all constraints.
-
-    Tries every (package, version) combination over the reachable
-    sub-graph.  Returns ``True``/``False``, or ``None`` when the
-    search space exceeds :data:`MAX_BRUTE_FORCE_COMBINATIONS`.
-
-    A user constraint restricts the version of a package only when that
-    package is reachable from the root: a constrained package that is
-    never pulled in leaves its constraint vacuous, mirroring the
-    resolver's own constraint semantics.
-    """
+) -> bool:
+    """Try every published version of each package reached by the requirements."""
     constraints = constraints or {}
-    all_packages = sorted(p for p in graph if p != "root" and graph[p])
 
-    total_combinations = 1
-    for package in all_packages:
-        total_combinations *= len(graph[package])
-        if total_combinations > MAX_BRUTE_FORCE_COMBINATIONS:
-            return None
-
-    candidate_lists = [sorted(graph[p].keys()) for p in all_packages]
-
-    for combo in itertools.product(*candidate_lists):
-        selection = dict(zip(all_packages, combo, strict=False))
-        selection["root"] = 1
-
-        valid = True
-        for package, required_range in requirements.items():
-            if package not in selection or selection[package] not in required_range:
-                valid = False
-                break
-        if not valid:
-            continue
-
-        reachable: set[str] = set()
-        queue = list(requirements.keys())
-        while queue:
-            pkg = queue.pop()
-            if pkg in reachable:
-                continue
-            reachable.add(pkg)
-            version = selection.get(pkg)
-            if version is None:
-                valid = False
-                break
-            deps = graph.get(pkg, {}).get(version, {})
-            for dep_pkg, dep_range in deps.items():
-                if dep_pkg not in selection or selection[dep_pkg] not in dep_range:
-                    valid = False
-                    break
-                if dep_pkg not in reachable:
-                    queue.append(dep_pkg)
-            if not valid:
-                break
-
-        if valid and any(
-            pkg in reachable and selection[pkg] not in crange
-            for pkg, crange in constraints.items()
-        ):
-            valid = False
-
-        if valid:
+    def visit(pins: dict[str, int], pending: list[tuple[str, Range[int]]]) -> bool:
+        if not pending:
             return True
 
-    return False
+        package, allowed = pending[-1]
+        rest = pending[:-1]
+        if package in pins:
+            return pins[package] in allowed and visit(pins, rest)
+
+        constraint = constraints.get(package)
+        for version, dependencies in graph.get(package, {}).items():
+            if version not in allowed or (
+                constraint is not None and version not in constraint
+            ):
+                continue
+            # Each branch owns its choices. Revisiting a package only checks its pin.
+            if visit({**pins, package: version}, [*rest, *dependencies.items()]):
+                return True
+        return False
+
+    return visit({}, list(requirements.items()))

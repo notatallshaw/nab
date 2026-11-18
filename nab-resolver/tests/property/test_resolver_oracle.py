@@ -26,9 +26,10 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from nab_resolver.ranges import Range
-from nab_resolver.resolver import ResolutionError, Resolver
+from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
+from .providers import resolve_or_prove_conflict
 from .strategies import DEEP_SETTINGS
 
 if TYPE_CHECKING:
@@ -278,7 +279,9 @@ class LookaheadProvider:
         return constraint
 
 
-def _assert_closure(result: dict[str, int], deps: Deps, roots: Roots) -> None:
+def _assert_closure(
+    result: dict[str, int], versions: Versions, deps: Deps, roots: Roots
+) -> None:
     """Assert the result satisfies all roots and is dependency-closed."""
     for package, required_range in roots.items():
         assert package in result, f"root {package!r} missing from result"
@@ -286,6 +289,7 @@ def _assert_closure(result: dict[str, int], deps: Deps, roots: Roots) -> None:
             f"root {package!r}@{result[package]} not in {required_range}"
         )
     for package, version in result.items():
+        assert version in versions.get(package, ()), f"Unknown {package!r}@{version}"
         for dep, dep_range in deps.get((package, version), {}).items():
             assert dep in result, (
                 f"dep {dep!r} of {package!r}@{version} missing from result"
@@ -320,18 +324,15 @@ def _check_scenario(
     roots: Roots,
 ) -> None:
     """Resolve and check closure on success, brute-force unsat on failure."""
-    try:
-        result = resolver.resolve(roots)
-    except ResolutionError as error:
-        if "exceeded" in str(error):
-            return
-        witness = _brute_force_sat(versions, deps, roots)
-        assert witness is None, (
-            f"resolver reported impossible but {witness} works\n"
-            f"roots={roots}\ndeps={deps}"
-        )
+    result = resolve_or_prove_conflict(resolver, roots)
+    if result is not None:
+        _assert_closure(result, versions, deps, roots)
         return
-    _assert_closure(result, deps, roots)
+
+    witness = _brute_force_sat(versions, deps, roots)
+    assert witness is None, (
+        f"resolver reported impossible but {witness} works\nroots={roots}\ndeps={deps}"
+    )
 
 
 class TestClosureSoundAgainstBruteForce:
