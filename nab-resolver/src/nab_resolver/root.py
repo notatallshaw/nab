@@ -7,6 +7,8 @@ time (which would create a cycle).
 
 from __future__ import annotations
 
+from typing import Final
+
 from ._compat import override
 
 __all__ = [
@@ -28,4 +30,4 @@ class _RootPackage:
         return "<root>"
 
 
-ROOT = _RootPackage()
+ROOT: Final[object] = _RootPackage()

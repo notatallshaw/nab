@@ -7,7 +7,7 @@ from __future__ import annotations
 
 __lazy_modules__ = ("nab_resolver.root",)
 
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
 from .root import ROOT
 from .types import IncompatibilityCause, Term
@@ -15,10 +15,12 @@ from .types import IncompatibilityCause, Term
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from .types import Incompatibility
+    from .types import Incompatibility, PackageType, RangeProtocol, VersionType
 
-    _NarrowFn: TypeAlias = Callable[[Any, Any], Any]  # (package, constraint) -> shown
-    _FormatFn: TypeAlias = Callable[[Any], str]  # constraint -> display string
+    _NarrowRange: TypeAlias = Callable[
+        [PackageType, RangeProtocol[VersionType]], RangeProtocol[VersionType]
+    ]
+    _FormatRange: TypeAlias = Callable[[RangeProtocol[VersionType]], str]
 
 __all__ = [
     "explain_incompatibility",
@@ -28,9 +30,9 @@ __all__ = [
 
 
 def format_error(
-    root_incompatibility: Incompatibility[Any, Any],
-    narrow: _NarrowFn | None = None,
-    format_range: _FormatFn = str,
+    root_incompatibility: Incompatibility[PackageType, VersionType],
+    narrow: _NarrowRange[PackageType, VersionType] | None = None,
+    format_range: _FormatRange[VersionType] = str,
 ) -> str:
     """Format a human-readable error from an incompatibility derivation tree.
 
@@ -64,11 +66,11 @@ _REQUIREMENT_PREFIX_CAUSES = frozenset(
 
 
 def explain_incompatibility(
-    incompatibility: Incompatibility[Any, Any],
+    incompatibility: Incompatibility[PackageType, VersionType],
     lines: list[str],
     visited_ids: set[int],
-    narrow: _NarrowFn | None = None,
-    format_range: _FormatFn = str,
+    narrow: _NarrowRange[PackageType, VersionType] | None = None,
+    format_range: _FormatRange[VersionType] = str,
 ) -> None:
     """Walk the cause tree appending one explanatory line per node.
 
@@ -76,10 +78,12 @@ def explain_incompatibility(
     backtracked resolve overflows the recursion limit.
     """
     # The flag marks a node whose children are already pushed: it renders after them.
-    stack: list[tuple[Incompatibility[Any, Any], bool]] = [(incompatibility, False)]
+    stack: list[tuple[Incompatibility[PackageType, VersionType], bool]] = [
+        (incompatibility, False)
+    ]
 
-    needed: dict[int, list[Any]] = {}
-    unstated: dict[Any, Any] = {}
+    needed: dict[int, list[PackageType]] = {}
+    unstated: dict[PackageType, RangeProtocol[VersionType]] = {}
     if narrow is not None:
         needed, unstated = _unstated_ranges(incompatibility, narrow)
 
@@ -108,7 +112,9 @@ def explain_incompatibility(
                 stack.append((node.cause_left, False))
 
 
-def _narrow_positive(term: Term[Any, Any], narrow: _NarrowFn) -> Term[Any, Any]:
+def _narrow_positive(
+    term: Term[PackageType, VersionType], narrow: _NarrowRange[PackageType, VersionType]
+) -> Term[PackageType, VersionType]:
     """Return ``term`` with a narrowed constraint when originally positive."""
     if not term.is_positive():
         return term
@@ -116,8 +122,9 @@ def _narrow_positive(term: Term[Any, Any], narrow: _NarrowFn) -> Term[Any, Any]:
 
 
 def _shown_terms(
-    incompatibility: Incompatibility[Any, Any], narrow: _NarrowFn
-) -> dict[Any, Term[Any, Any]]:
+    incompatibility: Incompatibility[PackageType, VersionType],
+    narrow: _NarrowRange[PackageType, VersionType],
+) -> dict[PackageType, Term[PackageType, VersionType]]:
     """Return the terms of ``incompatibility`` as its line renders them.
 
     The comparison runs on exactly what the reader sees, so a requirement is
@@ -130,7 +137,9 @@ def _shown_terms(
     }
 
 
-def _satisfying(term: Term[Any, Any] | None) -> Any:
+def _satisfying(
+    term: Term[PackageType, VersionType] | None,
+) -> RangeProtocol[VersionType] | None:
     """Return the versions that satisfy ``term``, or None for no restriction."""
     if term is None:
         return None
@@ -138,10 +147,10 @@ def _satisfying(term: Term[Any, Any] | None) -> Any:
 
 
 def _shortfall(
-    conclusion: Term[Any, Any] | None,
-    left: Term[Any, Any] | None,
-    right: Term[Any, Any] | None,
-) -> Any:
+    conclusion: Term[PackageType, VersionType] | None,
+    left: Term[PackageType, VersionType] | None,
+    right: Term[PackageType, VersionType] | None,
+) -> RangeProtocol[VersionType] | None:
     """Return what a step rules out for one package that its causes do not.
 
     A step rules out the union of what its causes rule out.  Absent from one
@@ -157,8 +166,9 @@ def _shortfall(
 
 
 def _unstated_ranges(
-    root: Incompatibility[Any, Any], narrow: _NarrowFn
-) -> tuple[dict[int, list[Any]], dict[Any, Any]]:
+    root: Incompatibility[PackageType, VersionType],
+    narrow: _NarrowRange[PackageType, VersionType],
+) -> tuple[dict[int, list[PackageType]], dict[PackageType, RangeProtocol[VersionType]]]:
     """Return which line needs a package's listing stated, and what to state.
 
     The first mapping is node id to packages, the second is package to the whole
@@ -166,10 +176,10 @@ def _unstated_ranges(
     one line over gaps of one listing, so the ranges are unioned per package and
     the caller states each once, at the first line that needs it.
     """
-    needed: dict[int, list[Any]] = {}
-    unstated: dict[Any, Any] = {}
+    needed: dict[int, list[PackageType]] = {}
+    unstated: dict[PackageType, RangeProtocol[VersionType]] = {}
     seen_ids: set[int] = set()
-    stack: list[Incompatibility[Any, Any]] = [root]
+    stack: list[Incompatibility[PackageType, VersionType]] = [root]
 
     while stack:
         node = stack.pop()
@@ -191,8 +201,9 @@ def _unstated_ranges(
 
 
 def _narrowed_away(
-    incompatibility: Incompatibility[Any, Any], narrow: _NarrowFn
-) -> list[tuple[Any, Any]]:
+    incompatibility: Incompatibility[PackageType, VersionType],
+    narrow: _NarrowRange[PackageType, VersionType],
+) -> list[tuple[PackageType, RangeProtocol[VersionType]]]:
     """Return the packages and ranges narrowing drops from a line's support.
 
     Narrowing a widened term back onto the listed versions drops the versions the
@@ -218,7 +229,7 @@ def _narrowed_away(
     shown_right = _shown_terms(right, narrow)
     shown_node = _shown_terms(incompatibility, narrow)
 
-    found: list[tuple[Any, Any]] = []
+    found: list[tuple[PackageType, RangeProtocol[VersionType]]] = []
     for package in {**raw_left, **raw_right}:
         raw_gap = _shortfall(
             raw_node.get(package), raw_left.get(package), raw_right.get(package)
@@ -234,8 +245,9 @@ def _narrowed_away(
 
 
 def _dependency_pair(
-    incompatibility: Incompatibility[Any, Any], terms: Sequence[Term[Any, Any]]
-) -> tuple[Term[Any, Any], Term[Any, Any]] | None:
+    incompatibility: Incompatibility[PackageType, VersionType],
+    terms: Sequence[Term[PackageType, VersionType]],
+) -> tuple[Term[PackageType, VersionType], Term[PackageType, VersionType]] | None:
     """Return the parent and dependency terms of a DEPENDENCY clause, else None.
 
     ``terms`` are the clause's terms as the line renders them, which is not
@@ -259,9 +271,9 @@ def _dependency_pair(
 
 
 def _render_line(
-    incompatibility: Incompatibility[Any, Any],
-    narrow: _NarrowFn | None,
-    format_range: _FormatFn = str,
+    incompatibility: Incompatibility[PackageType, VersionType],
+    narrow: _NarrowRange[PackageType, VersionType] | None,
+    format_range: _FormatRange[VersionType] = str,
 ) -> str:
     """Render a single incompatibility as one explanation line."""
     cause = incompatibility.cause
@@ -295,7 +307,14 @@ def _render_line(
 
     if cause is IncompatibilityCause.CONSTRAINT:
         (term,) = terms
-        shown = format_range(incompatibility.constraint_range)
+        constraint = incompatibility.constraint_range
+        if constraint is None:
+            msg = (
+                f"cannot explain the constraint for {term.package!r} "
+                "without its declared range"
+            )
+            raise ValueError(msg)
+        shown = format_range(constraint)
         subject = _with_range(str(term.package), shown)
         return f"because the user constrained {subject}"
 
@@ -304,8 +323,8 @@ def _render_line(
 
 def _render_prefix_line(
     cause: IncompatibilityCause,
-    terms: Sequence[Term[Any, Any]],
-    format_range: _FormatFn = str,
+    terms: Sequence[Term[PackageType, VersionType]],
+    format_range: _FormatRange[VersionType] = str,
 ) -> str:
     """Render a clause that has no attribution form as a prefix and a body."""
     # The virtual root is always selected, so naming it says nothing; a line
@@ -328,7 +347,7 @@ def _render_prefix_line(
     return f"{prefix} {body}"
 
 
-def _is_full(term: Term[Any, Any]) -> bool:
+def _is_full(term: Term[PackageType, VersionType]) -> bool:
     """Return whether ``term`` is positive over a range with an empty complement."""
     return term.is_positive() and (~term.constraint).is_empty
 
@@ -342,7 +361,9 @@ def _with_range(subject: str, shown: str) -> str:
     return f"{subject} {shown}" if shown else subject
 
 
-def _format_requirement(term: Term[Any, Any], format_range: _FormatFn = str) -> str:
+def _format_requirement(
+    term: Term[PackageType, VersionType], format_range: _FormatRange[VersionType] = str
+) -> str:
     """Render a term in object position ("depends on b").
 
     A full term there is the package name alone.
@@ -352,7 +373,9 @@ def _format_requirement(term: Term[Any, Any], format_range: _FormatFn = str) -> 
     return format_term(term, format_range)
 
 
-def format_term(term: Term[Any, Any], format_range: _FormatFn = str) -> str:
+def format_term(
+    term: Term[PackageType, VersionType], format_range: _FormatRange[VersionType] = str
+) -> str:
     """Render a single term as ``[not ]package range``.
 
     A full term reads as "all versions of package"; :func:`_format_requirement`

@@ -655,7 +655,7 @@ class Resolver(Generic[PackageType, VersionType]):
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         range_type: type[RangeProtocol[Any]] = Range,
         root_version: Any = 1,
-        format_range: Callable[[Any], str] = str,
+        format_range: Callable[[RangeProtocol[VersionType]], str] = str,
     ) -> None:
         """Create a resolver with the given provider and optional observer.
 

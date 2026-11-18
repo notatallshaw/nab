@@ -2256,6 +2256,15 @@ class TestFormatRangeHook:
             == "because a SHOWN depends on b SHOWN"
         )
 
+    def test_constraint_line_requires_the_user_range(self) -> None:
+        incomplete = Incompatibility(
+            [Term("example", Range.at_least(1))], cause=IncompatibilityCause.CONSTRAINT
+        )
+        with pytest.raises(
+            ValueError, match="constraint for 'example'.*declared range"
+        ):
+            format_error(incomplete)
+
     def test_hook_renders_the_user_constraint_line(self) -> None:
         constrained = Incompatibility(
             [Term("a", Range.at_least(1), positive=True)],

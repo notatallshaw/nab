@@ -389,16 +389,16 @@ class TestFormatErrorNarrow:
     def test_narrow_applies_to_parent_side_not_dependency_side(self) -> None:
         """The positive parent term is narrowed; the originally-negative dep
         term renders as requested even though it is displayed positively."""
-        clause = Incompatibility(
+        clause = Incompatibility[str, int](
             [
                 Term("foo", Range.between(1, 4), positive=True),
                 Term("bar", Range.at_least(3), positive=False),
             ],
             cause=IncompatibilityCause.DEPENDENCY,
         )
-        narrowed_packages: list[object] = []
+        narrowed_packages: list[str] = []
 
-        def narrow(package: object, constraint: Range[int]) -> Range[int]:
+        def narrow(package: str, constraint: RangeProtocol[int]) -> Range[int]:
             narrowed_packages.append(package)
             if package == "foo":
                 return Range.singleton(2)
@@ -429,7 +429,7 @@ class TestFormatErrorNarrow:
         assert message == "so all versions of a"
 
     def test_narrow_applies_to_derived_positive_terms(self) -> None:
-        clause = Incompatibility(
+        clause = Incompatibility[str, int](
             [
                 Term("a", Range.between(1, 9), positive=True),
                 Term("b", Range.between(1, 9), positive=False),
@@ -437,7 +437,7 @@ class TestFormatErrorNarrow:
             cause=IncompatibilityCause.DERIVED,
         )
 
-        def narrow(package: object, constraint: Range[int]) -> Range[int]:
+        def narrow(package: str, constraint: RangeProtocol[int]) -> Range[int]:
             return Range.singleton(3)
 
         message = format_error(clause, narrow=narrow)
