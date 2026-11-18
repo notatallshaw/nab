@@ -31,6 +31,7 @@ from nab_provider.records import SdistFile, WheelFile, release_wheel_payload
 from ..errors import (
     ForeignMetadataError,
     IncompatiblePythonError,
+    IndexAccessError,
     InvalidUploadTimeError,
 )
 from ..iso8601 import fast_iso_parser, parse_iso_datetime
@@ -162,9 +163,12 @@ def fetch_versions(provider: Provider, package: str) -> list[tuple[Version, Dist
         if error is not None:
             raise error
         files = provider.coordinator.index.get_listing(normalized)
-    # A successful fetch stores at least an empty list; a failed fetch
-    # stores an error, re-raised above, so ``files`` is non-None here.
-    assert files is not None
+        if files is None:
+            msg = (
+                f"Listing request for {normalized!r} was marked complete before "
+                "the application stored the list of files or an error."
+            )
+            raise IndexAccessError(msg)
 
     # Routed through the method (not the module function) so a subclass
     # override still runs.
@@ -1459,6 +1463,7 @@ def parse_prefetched_metadata(
         ValueError,
         ForeignMetadataError,
         IncompatiblePythonError,
+        IndexAccessError,
         UnsupportedVcsError,
         NotImplementedError,
     ):

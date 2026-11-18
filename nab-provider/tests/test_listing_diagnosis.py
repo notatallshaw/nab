@@ -2010,12 +2010,6 @@ def ladder_entry() -> Diagnostic:
     return entry
 
 
-def extra_entry(kind: str, **kwargs: object) -> Diagnostic:
-    """The entry an extras proxy gets for one of its three markers."""
-    recorded = NoVersionsReason(kind, **kwargs)  # type: ignore[arg-type]
-    return diagnosis_mod.extra_diagnostic("foo", "bar", recorded, "<1.5")
-
-
 def every_shape() -> dict[str, Diagnostic]:
     """Return representative entries for the report rendering checks."""
     blocked = [blocker("bar", diagnosis_mod.BlockerKind.DECIDED)]
@@ -2139,11 +2133,22 @@ def every_shape() -> dict[str, Diagnostic]:
         "metadata": diagnosis_mod.blockers_diagnostic(
             build([wheel("1.0")]), "pkg", [], unreadable
         ),
-        "extra-undeclared": extra_entry(
-            ReasonKind.EXTRA_UNDECLARED, version_range=SpecifierSet(">=1.0").to_range()
+        "extra-undeclared": diagnosis_mod.extra_diagnostic(
+            diagnosis_mod.ExtraFailure("foo", "bar", ReasonKind.EXTRA_UNDECLARED),
+            "<1.5",
         ),
-        "extra-metadata": extra_entry(ReasonKind.EXTRA_METADATA, metadata=unreadable),
-        "extra-narrowed": extra_entry(ReasonKind.EXTRA_NARROWED),
+        "extra-metadata": diagnosis_mod.extra_diagnostic(
+            diagnosis_mod.ExtraFailure(
+                "foo", "bar", ReasonKind.EXTRA_METADATA, metadata=unreadable
+            ),
+            "",
+        ),
+        "extra-narrowed": diagnosis_mod.extra_diagnostic(
+            diagnosis_mod.ExtraFailure(
+                "foo", "bar", ReasonKind.EXTRA_NARROWED, declaring_version=Version("2")
+            ),
+            "",
+        ),
     }
 
 
@@ -2172,3 +2177,37 @@ class TestTheTwoDepths:
         internal = re.compile(r"\b(root|rung|walk|walked|predicate|marker)\b")
         for line in (entry.short, *entry.detail):
             assert internal.search(line) is None, line
+
+
+def test_sdist_diagnostic_without_a_listing() -> None:
+    port = make_coordinator(pending_listings={"pkg": [sdist("1.0", upload_time=AFTER)]})
+    provider = Provider(port, uploaded_prior_to=CUTOFF)
+    assert provider.filtered_sdist_diagnostic("pkg", Version("1.0")) is None
+
+    provider.fetch_versions("pkg")
+    diagnostic = provider.filtered_sdist_diagnostic("pkg", Version("1.0"))
+    assert diagnostic is not None
+    assert "uploaded-prior-to" in diagnostic.short
+
+
+def test_extra_failure_requires_an_extra_package() -> None:
+    provider = Provider(make_coordinator())
+    with pytest.raises(ValueError, match="extra failure for 'pkg'"):
+        provider.record_extra_no_versions("pkg", ReasonKind.EXTRA_UNDECLARED)
+
+
+def test_narrowed_extra_requires_the_declaring_version() -> None:
+    provider = Provider(make_coordinator())
+    with pytest.raises(ValueError, match=r"pkg\[fast\] requires its declaring version"):
+        provider.record_extra_no_versions("pkg[fast]", ReasonKind.EXTRA_NARROWED)
+
+
+def test_empty_replacement_listing_cannot_explain_an_earlier_filter() -> None:
+    port = make_coordinator([sdist("1.0", upload_time=AFTER)])
+    provider = Provider(port, uploaded_prior_to=CUTOFF)
+    assert provider.choose_version("pkg", SpecifierSet("==1").to_range()) is None
+
+    port.index.store_listing("pkg", [])
+    reason = provider.get_no_versions_reason("pkg")
+    assert reason is not None
+    assert reason.short == "no version matches the requirement"

@@ -615,17 +615,6 @@ _SOURCE_VALUES: dict[str, Callable[[PackageOverride | IndexOverride], object]] =
 }
 
 
-# The markers an extras proxy records, which read the proxy's own name
-# rather than a listing the base package's filter emptied.
-_EXTRA_KINDS = frozenset(
-    {
-        _diagnosis.ReasonKind.EXTRA_UNDECLARED,
-        _diagnosis.ReasonKind.EXTRA_METADATA,
-        _diagnosis.ReasonKind.EXTRA_NARROWED,
-    }
-)
-
-
 def _declared_ranges(
     recorded: _lookahead.DepRangeUnion,
 ) -> tuple[RangeProtocol[Version], ...]:
@@ -2354,7 +2343,7 @@ class Provider:
     def record_extra_no_versions(
         self,
         package: str,
-        kind: _diagnosis.Kind,
+        kind: _diagnosis.ExtraKind,
         *,
         metadata: tuple[_diagnosis.MetadataBlock, ...] = (),
         version_range: VersionRange | None = None,
@@ -2367,7 +2356,13 @@ class Provider:
         report with nothing to say and the tree names a package the
         ``Diagnostics:`` section cannot.
         """
-        self._no_versions_reasons[package] = _diagnosis.NoVersionsReason(
+        base, extra, _ = self.split_and_normalize(package)
+        if extra is None:
+            msg = f"Cannot record an extra failure for {package!r} without an extra."
+            raise ValueError(msg)
+        self._no_versions_reasons[package] = _diagnosis.ExtraFailure(
+            base,
+            extra,
             kind,
             metadata=metadata,
             version_range=version_range,
@@ -2662,23 +2657,13 @@ class Provider:
             )
         if isinstance(recorded, _diagnosis.PinnedIndexMiss):
             return _diagnosis.pinned_index_diagnostic(recorded.index_name)
-        if recorded.kind in _EXTRA_KINDS:
-            return self._render_extra_reason(package, recorded)
+        if isinstance(recorded, _diagnosis.ExtraFailure):
+            searched = recorded.version_range
+            return _diagnosis.extra_diagnostic(
+                recorded,
+                "" if searched is None else self._format_blocker_range(searched),
+            )
         return self._render_listing_reason(package, recorded)
-
-    def _render_extra_reason(
-        self, package: str, recorded: _diagnosis.NoVersionsReason
-    ) -> Diagnostic:
-        """Render an extras proxy left with no version of its base package."""
-        base, extra, _ = self.split_and_normalize(package)
-        assert extra is not None
-        searched = recorded.version_range
-        return _diagnosis.extra_diagnostic(
-            base,
-            extra,
-            recorded,
-            "" if searched is None else self._format_blocker_range(searched),
-        )
 
     def _render_listing_reason(
         self, package: str, recorded: _diagnosis.NoVersionsReason
@@ -2692,40 +2677,25 @@ class Provider:
         index never published.
         """
         _, _, normalized = self.split_and_normalize(package)
-        diagnosis = (
-            self.diagnose_listing(normalized)
-            if self._walk_would_be_read(normalized, recorded)
-            else None
-        )
+        in_range = None
+        if recorded.kind != _diagnosis.ReasonKind.FILTERED_EMPTY:
+            # A version the index never published needs no per-file explanation.
+            in_range = recorded.version_range
+            if in_range is None or not _listing.dropped_release_in_range(
+                self, normalized, in_range
+            ):
+                return _diagnosis.NO_MATCH
+
+        diagnosis = self.diagnose_listing(normalized)
         if diagnosis is None:
             return _diagnosis.NO_MATCH
-        if recorded.kind == _diagnosis.ReasonKind.FILTERED_EMPTY:
+        if in_range is None:
             return _diagnosis.empty_listing_diagnostic(
                 self, normalized, diagnosis, recorded.version_range
             )
-
-        # The screen passed, so the marker carries the range it screened.
-        assert recorded.version_range is not None
-        filtered = _diagnosis.in_range_diagnostic(
-            self, normalized, recorded.version_range, diagnosis
-        )
-        return filtered if filtered is not None else _diagnosis.NO_MATCH
-
-    def _walk_would_be_read(
-        self, normalized: str, recorded: _diagnosis.NoVersionsReason
-    ) -> bool:
-        """Whether the walk's detail would reach ``recorded``'s sentence.
-
-        The walk records one refusal per file the filter dropped, and the
-        in-range lead throws every one of them away unless the filter
-        dropped a release inside the range that was asked.  A requirement
-        naming a version the index never published is the ordinary way to
-        reach that, so the cheap question runs first.
-        """
-        if recorded.kind == _diagnosis.ReasonKind.FILTERED_EMPTY:
-            return True
-        return recorded.version_range is not None and _listing.dropped_release_in_range(
-            self, normalized, recorded.version_range
+        return (
+            _diagnosis.in_range_diagnostic(self, normalized, in_range, diagnosis)
+            or _diagnosis.NO_MATCH
         )
 
     def diagnose_listing(self, normalized: str) -> _diagnosis.ListingDiagnosis | None:
@@ -2740,10 +2710,18 @@ class Provider:
         if cached is not _Unset.FIELD:
             return cached
 
+        files = self.coordinator.index.get_listing(normalized)
+        if files is None:
+            # A pending request can still publish the files that explain this failure.
+            return None
+        if not files:
+            self.listing_diagnoses[normalized] = None
+            return None
+
         before = _counters(self.stats)
         tag_counts = dict(self.tag_excluded_wheels_by_version)
         try:
-            diagnosis = _diagnosis.walk_listing(self, normalized)
+            diagnosis = _diagnosis.walk_listing(self, normalized, files)
         finally:
             _restore(self.stats, before)
             self.tag_excluded_wheels_by_version.clear()
@@ -2764,9 +2742,8 @@ class Provider:
         name a rung.
         """
         diagnosis = self.diagnose_listing(normalized)
-        # The ladder marks only after reading an sdist out of the raw
-        # listing, so the walk had files to partition.
-        assert diagnosis is not None
+        if diagnosis is None:
+            return None
         return _diagnosis.filtered_sdist_diagnostic(
             self, normalized, version, diagnosis
         )
