@@ -2430,7 +2430,7 @@ def _drop_clauses(
     """
     kept = list(clauses)
     for clause in sorted(clauses, key=_clause_key):
-        trial = [other for other in kept if other != clause]
+        trial: list[frozenset[Atom]] = [other for other in kept if other != clause]
         if _rows_cover(_disjunction(trial), rows, original_by_row, max_cells, store):
             kept = trial
     return kept
@@ -2718,11 +2718,17 @@ def _remove_covered_cubes(cubes: Sequence[_CoverCube], full: int) -> list[_Cover
     return kept
 
 
+def _common_atoms(clauses: Sequence[frozenset[Atom]]) -> frozenset[Atom]:
+    """Intersect the atoms in a nonempty disjunction."""
+    first, *others = clauses
+    return first.intersection(*others)
+
+
 def _factor_clauses(clauses: Sequence[frozenset[Atom]]) -> Formula:
     """Render clauses in stable order with their common atoms factored out."""
     if not clauses:
         return FALSE
-    common: frozenset[Atom] = frozenset.intersection(*clauses)
+    common = _common_atoms(clauses)
     residual = sorted((clause - common for clause in clauses), key=_clause_key)
     lead = [AtomLeaf(atom) for atom in sorted(common, key=_atom_key)]
     return make_and([*lead, _disjunction(residual)])
@@ -2767,7 +2773,7 @@ def _factor_membership_clauses(clauses: Sequence[frozenset[Atom]]) -> Formula:
         * max(1, len(clauses).bit_length())
     )
 
-    common: frozenset[Atom] = frozenset.intersection(*clauses)
+    common = _common_atoms(clauses)
     residual = [clause - common for clause in clauses]
     # An empty residual means the common clause covers this whole disjunction.
     if any(not clause for clause in residual):

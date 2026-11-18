@@ -668,6 +668,13 @@ unsound-return-statement = "ignore"
 truthiness-test-of-none-union = "ignore"
 redundant-condition-strict = "ignore"
 
+[[tool.ty.overrides]]
+include = ["nab-markersets/src/**"]
+
+[tool.ty.overrides.rules]
+unsound-assignment = "error"
+unsound-return-statement = "error"
+
 [tool.ty.src]
 exclude = ["**/_vendor"]
 
@@ -704,6 +711,10 @@ enable_error_code = [
     "truthy-iterable",
     "exhaustive-match",
 ]
+
+[[tool.mypy.overrides]]
+module = "nab_markersets.*"
+disallow_any_explicit = true
 
 [[tool.mypy.overrides]]
 module = "nab_provider._vendor.*"
