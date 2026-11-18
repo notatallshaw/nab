@@ -2389,7 +2389,7 @@ sha256 = "4e81d95e5bafc2d6e34e4bed780e53e4d5b9a2f928573428aa4d35fbec1eb0de"
 [[packages]]
 name = "dependency-groups"
 version = "1.3.2"
-marker = "\"nox\" in dependency_groups"
+marker = "\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"nox\" in dependency_groups or \"pyright\" in dependency_groups or \"tests\" in dependency_groups or \"types\" in dependency_groups"
 requires-python = ">=3.9"
 dependencies = [
     { name = "packaging" },
@@ -4148,7 +4148,7 @@ sha256 = "f9d78f25221f2a60eaa4a96d3b4ffae011b107537facee61d3da3313880995c7"
 [[packages]]
 name = "markdown-it-py"
 version = "4.2.0"
-marker = "(\"docs\" in dependency_groups and python_version == \"3.12\") or (\"docs\" in dependency_groups and python_version == \"3.13\") or (\"docs\" in dependency_groups and python_version == \"3.14\") or (\"docs\" in dependency_groups and python_version == \"3.15\") or (\"docs-live\" in dependency_groups and python_version == \"3.12\") or (\"docs-live\" in dependency_groups and python_version == \"3.13\") or (\"docs-live\" in dependency_groups and python_version == \"3.14\") or (\"docs-live\" in dependency_groups and python_version == \"3.15\") or \"lint\" in dependency_groups or \"release\" in dependency_groups"
+marker = "((python_version == \"3.10\" or python_version == \"3.11\") and (\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"lint\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"types\" in dependency_groups)) or ((python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\") and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"lint\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"types\" in dependency_groups)) or (python_version == \"3.12\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"lint\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"types\" in dependency_groups))"
 requires-python = ">=3.10"
 dependencies = [
     { name = "mdurl" },
@@ -4701,7 +4701,7 @@ sha256 = "214c82fb2ac524472ab6a5bcab1de80f73b50443e187f401bfd77efbc7c6481d"
 [[packages]]
 name = "mdurl"
 version = "0.1.2"
-marker = "(\"docs\" in dependency_groups and python_version == \"3.12\") or (\"docs\" in dependency_groups and python_version == \"3.13\") or (\"docs\" in dependency_groups and python_version == \"3.14\") or (\"docs\" in dependency_groups and python_version == \"3.15\") or (\"docs-live\" in dependency_groups and python_version == \"3.12\") or (\"docs-live\" in dependency_groups and python_version == \"3.13\") or (\"docs-live\" in dependency_groups and python_version == \"3.14\") or (\"docs-live\" in dependency_groups and python_version == \"3.15\") or \"lint\" in dependency_groups or \"release\" in dependency_groups"
+marker = "((python_version == \"3.10\" or python_version == \"3.11\") and (\"crosshair\" in dependency_groups or \"hatch-test\" in dependency_groups or \"lint\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"types\" in dependency_groups)) or ((python_version == \"3.13\" or python_version == \"3.14\" or python_version == \"3.15\") and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"lint\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"types\" in dependency_groups)) or (python_version == \"3.12\" and (\"crosshair\" in dependency_groups or \"docs\" in dependency_groups or \"docs-live\" in dependency_groups or \"hatch-test\" in dependency_groups or \"lint\" in dependency_groups or \"pyright\" in dependency_groups or \"release\" in dependency_groups or \"tests\" in dependency_groups or \"types\" in dependency_groups))"
 requires-python = ">=3.7"
 index = "https://pypi.org/simple/"
 
@@ -9048,7 +9048,6 @@ command-line = [
     "pylock.dev.toml",
     "--lock-policy",
     "prefer-existing",
-    "--upgrade",
 ]
 input-path = "pyproject.toml"
 mode = "universal"
@@ -9063,6 +9062,6 @@ platforms = [
 
 [tool.nab.validation]
 version = 1
-all-inputs-sha256 = "7aefb419880e9e64939981bf26044afe7876e1acd1f478a393bbd5bfc6b07c42"
-selection-inputs-sha256 = "35424c8e1d6a141f3884b5f9eebccef46ffa5c93a45d9eeafbda104230438bef"
-contents-sha256 = "e228bd164e882948a57660a5c07fb7f8679ac6c13a31dc226f44a4650f094568"
+all-inputs-sha256 = "4938b87624b424ac0471f3a45e1842c4fee4eca9e80b685c237c200be6f91329"
+selection-inputs-sha256 = "1f736ec5ed3879132540736aee524a83fb8b20938af686fdfd2c721eed2abff2"
+contents-sha256 = "f9930b8098f2b7fbd8d0499151debd860599918f8509528ac7dbf38795910ba9"

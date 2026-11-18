@@ -8,7 +8,6 @@ method that carries them.
 from __future__ import annotations
 
 import doctest
-import re
 from pathlib import Path
 from types import ModuleType
 
@@ -16,11 +15,11 @@ import pytest
 
 from nab_markersets import errors, markersets
 
+from ._markdown import fenced_blocks
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 README = REPO_ROOT / "nab-markersets" / "README.md"
 GUIDE = REPO_ROOT / "docs" / "how-to" / "reason-about-markers.md"
-
-_FENCE = re.compile(r"^```pycon\n(?P<body>.*?)^```", re.DOTALL | re.MULTILINE)
 
 # Pinned so deleting a block fails here rather than passing on nothing.
 BLOCKS = {README: 2, GUIDE: 15}
@@ -32,7 +31,11 @@ def _run_pycon_blocks(path: Path) -> tuple[int, doctest.TestResults]:
     Returns the block count beside the result. ``doctest.testfile`` would need a
     blank line before every closing fence and could not answer that.
     """
-    blocks = [match["body"] for match in _FENCE.finditer(path.read_text("utf-8"))]
+    blocks = [
+        body
+        for language, body in fenced_blocks(path.read_text("utf-8"))
+        if language == "pycon"
+    ]
     parser = doctest.DocTestParser()
     runner = doctest.DocTestRunner()
     globs: dict[str, object] = {}

@@ -7,22 +7,13 @@ an installed consumer can read.
 from __future__ import annotations
 
 import io
-import re
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from ._markdown import fenced_blocks
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GUIDE = REPO_ROOT / "docs" / "how-to" / "embed-the-resolver.md"
-
-_FENCE = re.compile(
-    r"^```(?P<language>\w*)\n(?P<body>.*?)^```", re.DOTALL | re.MULTILINE
-)
-
-
-def _fences() -> list[tuple[str, str]]:
-    """Every fenced block on the page as ``(language, body)``, in page order."""
-    text = GUIDE.read_text(encoding="utf-8")
-    return [(match["language"], match["body"]) for match in _FENCE.finditer(text)]
 
 
 def _output_after(fences: list[tuple[str, str]], index: int) -> str | None:
@@ -45,7 +36,7 @@ def _output_after(fences: list[tuple[str, str]], index: int) -> str | None:
 
 def _example() -> list[tuple[str, str | None]]:
     """Each Python block paired with the output it documents, in page order."""
-    fences = _fences()
+    fences = list(fenced_blocks(GUIDE.read_text(encoding="utf-8")))
     return [
         (body, _output_after(fences, index))
         for index, (language, body) in enumerate(fences)

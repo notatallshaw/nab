@@ -23,6 +23,8 @@ from nab_provider.provider import Provider
 from nab_provider.records import SdistFile
 from nab_provider.vcs_admission import UnsupportedVcsError, VcsConfig, admit_vcs_url
 
+from ._markdown import fenced_blocks
+
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
 INDEX = ROOT / "docs" / "index.md"
@@ -55,9 +57,6 @@ DYNAMIC_SDIST_METADATA = WheelMetadata(
 )
 BUILT = WheelMetadata(name="pkg", version=Version("1.0"))
 
-_FENCE = re.compile(
-    r"^```(?P<language>\w*)\n(?P<body>.*?)^```", re.DOTALL | re.MULTILINE
-)
 _MARKDOWN_LINK = re.compile(r"\[[^]]+\]\((?P<target>[^)#]+\.md)(?:#[^)]*)?\)")
 _STABLE_DOCS_ROOT = "https://nab.readthedocs.io/en/stable/"
 _STABLE_DOCS_LINK = re.compile(rf"{re.escape(_STABLE_DOCS_ROOT)}[^)\s>]*")
@@ -107,18 +106,13 @@ def _section(path: Path, title: str) -> str:
     return "\n".join(body).strip()
 
 
-def _fenced_blocks(text: str, language: str) -> list[str]:
-    """Return fenced blocks of one language in source order."""
-    return [
-        match["body"].rstrip()
-        for match in _FENCE.finditer(text)
-        if match["language"] == language
-    ]
-
-
 def _documented_vcs_default() -> VcsConfig:
     """Parse the default VCS block through nab's configuration registry."""
-    blocks = _fenced_blocks(_section(VCS_GUIDE, "Default posture"), "toml")
+    blocks = [
+        body
+        for lang, body in fenced_blocks(_section(VCS_GUIDE, "Default posture"))
+        if lang == "toml"
+    ]
     assert len(blocks) == 1, "the default VCS section must contain one TOML block"
 
     spec = next(option for option in OPTIONS if option.key == "vcs")
@@ -259,8 +253,8 @@ def test_intro_project_plans_universal_targets(tmp_path: Path, page: Path) -> No
     """The complete example must load and plan its declared matrix."""
     blocks = [
         block
-        for block in _fenced_blocks(_text(page), "toml")
-        if "project" in tomli.loads(block)
+        for language, block in fenced_blocks(_text(page))
+        if language == "toml" and "project" in tomli.loads(block)
     ]
 
     assert len(blocks) == 1
