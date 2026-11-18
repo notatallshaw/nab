@@ -18,7 +18,7 @@ def _walks(monkeypatch: pytest.MonkeyPatch) -> list[engine.Formula]:
     calls: list[engine.Formula] = []
     original = engine._charge_formula_work
 
-    def charge(node: engine.Formula) -> int:
+    def charge(node: engine.Formula) -> engine._FormulaWork:
         calls.append(node)
         return original(node)
 
@@ -110,6 +110,26 @@ def test_related_public_simplifications_share_only_the_universe_walk(
 
     assert left.equivalent_within(first, within)
     assert right.equivalent_within(second, within)
+
+
+def test_public_comparisons_share_the_universe_walk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    within = MarkerSet.from_marker(
+        '(sys_platform == "linux" and os_name == "posix") or '
+        '(sys_platform == "win32" and os_name == "nt")'
+    )
+    linux = MarkerSet.from_marker('sys_platform == "linux"')
+    posix = MarkerSet.from_marker('os_name == "posix"')
+    calls = _walks(monkeypatch)
+    store = DecisionStore()
+
+    assert linux.equivalent_within(posix, within, store=store)
+    assert posix.equivalent_within(linux, within, store=store)
+    assert sum(node is within._tree for node in calls) == 1
+
+    assert linux.equivalent_within(posix, within, store=DecisionStore())
+    assert sum(node is within._tree for node in calls) == 2
 
 
 def test_unknown_owned_cost_is_completed_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -335,7 +355,7 @@ def _check_raw_work_budget(
 ) -> None:
     """Check the exact successful and exhausted budget for one raw formula."""
     monkeypatch.setattr(engine._work_meter, "remaining", units, raising=False)
-    assert engine._charge_formula_work(node) == nodes
+    assert engine._charge_formula_work(node) == (nodes, units)
     assert engine._work_meter.remaining == 0
 
     engine._work_meter.remaining = units - 1
@@ -398,7 +418,7 @@ def test_raw_work_does_not_build_atom_ordering_keys(
     monkeypatch.setattr(engine, "_atom_key", recorded)
     monkeypatch.setattr(engine._work_meter, "remaining", 78, raising=False)
 
-    assert engine._charge_formula_work(node) == 4
+    assert engine._charge_formula_work(node) == (4, 78)
     assert engine._work_meter.remaining == 0
 
     assert calls == []

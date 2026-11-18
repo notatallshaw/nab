@@ -2349,19 +2349,20 @@ def equivalent_within_rows(
     if previous_work is None:
         _work_meter.remaining = max_work
     try:
-        left_nodes = _charge_formula_work(left)
-        right_nodes = _charge_formula_work(right)
+        left_work = _charge_formula_work(left)
+        right_work = _charge_formula_work(right)
         if _work_meter.remaining is None:
             _charge_formula_work(universe)
+            universe_units = None
         else:
-            _charge_universe_work(universe, shared)
-        rows = _decompose_rows(universe, shared)
+            universe_units = _charge_universe_work(universe, shared)
+        rows = _decompose_rows(universe, shared, raw_work=universe_units)
         if all(
             isinstance(row.bound, BoolConst) and not row.bound.value for row in rows
         ):
             return True
         result = _independent_rows_equivalent(
-            left, right, rows, left_nodes + right_nodes, max_cells, shared
+            left, right, rows, left_work.nodes + right_work.nodes, max_cells, shared
         )
         if result is not None:
             return result
@@ -2571,9 +2572,17 @@ def _prepare_cover(node: Formula) -> _CoverInput:
     return _CoverInput(node, tuple(sorted(unique, key=_atom_key)), len(leaves))
 
 
-def _charge_formula_work(node: Formula) -> int:
-    """Price a raw walk before preparation and return its node count."""
+class _FormulaWork(NamedTuple):
+    """Node count for comparison and total work charged for the raw traversal."""
+
+    nodes: int
+    units: int
+
+
+def _charge_formula_work(node: Formula) -> _FormulaWork:
+    """Count the work for each node before visiting its children."""
     nodes = 0
+    payload_units = 0
     pending = [node]
     while pending:
         charge_work(1)
@@ -2581,19 +2590,23 @@ def _charge_formula_work(node: Formula) -> int:
         nodes += 1
         if isinstance(current, AtomLeaf):
             atom = current.atom
-            charge_work(
+            size = (
                 len(atom.origin)
                 + len(atom.op)
                 + len(atom.literal)
                 + len(atom.kind)
                 + len(atom.variable)
             )
+            charge_work(size)
+            payload_units += size
         elif isinstance(current, NotNode):
             pending.append(current.child)
         elif isinstance(current, (AndNode, OrNode)):
-            charge_work(len(current.children))
+            size = len(current.children)
+            charge_work(size)
+            payload_units += size
             pending.extend(current.children)
-    return nodes
+    return _FormulaWork(nodes, nodes + payload_units)
 
 
 def _charge_universe_work(universe: Formula, store: Memo) -> int:
@@ -2604,12 +2617,7 @@ def _charge_universe_work(universe: Formula, store: Memo) -> int:
         if record.key is key and record.units is not None:
             charge_work(record.units)
             return record.units
-    before = _work_meter.remaining
-    assert before is not None
-    _charge_formula_work(universe)
-    after = _work_meter.remaining
-    assert after is not None
-    return before - after
+    return _charge_formula_work(universe).units
 
 
 def _fixed_row_pattern(
