@@ -24,6 +24,7 @@ extend-ignore = [
     # Tests inspect internal state.
     "SLF001",
     # pytest patterns.
+    "S101",
     "PT017", "RUF043", "SIM105",
     # Type-checking-only imports stay in scope for test-runtime use.
     "TC001", "TC002", "TC003",

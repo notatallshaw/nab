@@ -89,6 +89,10 @@ rejection cases, include a valid neighboring entry to prove the parser keeps usa
 consolidating tests, use targeted mutations to confirm the retained assertions detect the faults
 they claim to cover.
 
+Use ordinary `assert` statements in tests and run tests with assertions enabled. In shipped
+packages, use a type that guarantees the fields a function needs. If a caller can supply an invalid
+value, raise an error that identifies it and explains how to fix it.
+
 ### Run the suite
 
 The default suite covers every module under `nab_resolver`, `nab_markersets`, `nab_provider`,

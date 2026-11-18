@@ -375,11 +375,13 @@ extend-exclude = ["**/_vendor/**"]
 # and the scripts outside the packages have no printer to write through.
 "src/nab/cli.py" = ["TID251"]
 "src/nab/output.py" = ["TID251"]
+"conftest.py" = ["S101"]
 "**/tests/**" = ["TID251", "RUF029"]  # Async fakes need no suspension.
 
 # Benchmarks intentionally print, lack docstrings, run subprocesses, and
 # carry many scenario knobs.
 "**/benchmarks/**" = [
+    "S101",     # Benchmark harness checks
     "T201",     # Print statements (benchmark output)
     "D103",     # Missing docstring in public function
     "INP001",   # Implicit namespace package (scripts live outside packages)
@@ -473,7 +475,6 @@ ignore = [
     # Individual rules.
     "ANN401",  # Disallows Any (needed for generic library)
     "CPY001",  # Copyright notice per file; the licence sits at the repo root.
-    "S101",    # Assert usage (needed for type narrowing and tests)
     "SIM110",  # Allow explicit loops in place of any/all.
     "TID252",  # Bans relative imports; the project prefers them.
 ]

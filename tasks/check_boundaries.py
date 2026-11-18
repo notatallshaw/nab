@@ -65,8 +65,9 @@ except ModuleNotFoundError:
 # PYTHONSAFEPATH switch off.
 _BUILD_DISTS = Path(__file__).resolve().parent / "build_dists.py"
 _spec = importlib.util.spec_from_file_location("nab_build_dists", _BUILD_DISTS)
-assert _spec is not None
-assert _spec.loader is not None
+if _spec is None or _spec.loader is None:
+    msg = f"Cannot load the distribution definitions from {_BUILD_DISTS}"
+    raise ImportError(msg)
 build_dists = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(build_dists)
 
