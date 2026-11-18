@@ -1454,61 +1454,57 @@ class TestFetchCoordinator:
         coord.shutdown()
 
     @respx.mock
-    def test_drain_queue_empty_exception(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """QueueEmpty during drain loop breaks out of the loop."""
-        import asyncio
-        import time
+    def test_shutdown_drains_metadata_from_an_accepted_listing(self) -> None:
+        stopping = threading.Event()
+        listing_started = threading.Event()
+        late_submission = threading.Event()
+        wheel = make_wheel("2.0")
+        listing = {"filename": wheel.filename, "url": wheel.url, "core-metadata": True}
 
-        respx.get(url__regex=r".*").mock(return_value=httpx.Response(200, text="ok"))
+        async def serve_listing(_request: httpx.Request) -> httpx.Response:
+            listing_started.set()
+            # Let the worker process the stop marker while the listing is in flight.
+            assert await asyncio.to_thread(late_submission.wait, 5)
+            return httpx.Response(200, json={"files": [listing]})
 
-        triggered = threading.Event()
+        respx.get("https://pypi.org/simple/pkg/").mock(side_effect=serve_listing)
+        url = wheel.url + ".metadata"
+        metadata = respx.get(url).mock(
+            return_value=httpx.Response(200, text="metadata")
+        )
 
-        class RiggedQueue(asyncio.Queue):
-            """Queue that, once armed, lies once on empty() to force the race."""
-
-            def __init__(self) -> None:
-                super().__init__()
-                self._origin_empty = super().empty
-                self._origin_get_nowait = super().get_nowait
-                self.armed = False
-
-            def empty(self) -> bool:
-                result = self._origin_empty()
-                if result and self.armed:
-                    self.armed = False
-                    return False
-                return result
-
-            def get_nowait(
+        class ObservedShutdown(FetchCoordinator):
+            def _submit(
                 self,
-            ) -> fetch_requests.FetchRequest | list[fetch_requests.FetchRequest] | None:
-                # Consult the real deque so the lie above can't trick us
-                # into popping from an empty queue. Reaching this branch
-                # is exactly the race the drain loop must handle.
-                if self._origin_empty():
-                    triggered.set()
-                    raise asyncio.QueueEmpty
-                return self._origin_get_nowait()
-
-        monkeypatch.setattr("nab_project.fetch.asyncio.Queue", RiggedQueue)
-        with _coord() as coord:
-            real_dispatch = coord._dispatch
-
-            def arm_after_dispatch(
-                item: fetch_requests.FetchRequest | list[fetch_requests.FetchRequest],
-                client: CachedAsyncSimpleClient | MultiIndexClient,
-                sem: asyncio.Semaphore,
-                tasks: set[asyncio.Task],
+                item: fetch_requests.FetchRequest
+                | list[fetch_requests.FetchRequest]
+                | None,
             ) -> None:
-                real_dispatch(item, client, sem, tasks)
-                coord._async_q.armed = True  # type: ignore[union-attr]
+                super()._submit(item)
+                if item is None:
+                    stopping.set()
 
-            coord._dispatch = arm_after_dispatch  # type: ignore[method-assign]
-            coord.request_metadata("pkg", "1.0", "https://f.com/pkg")
-            time.sleep(0.3)
+        coord = ObservedShutdown(HttpxAsyncTransport())
 
-        assert triggered.is_set()
-        assert not coord._crashed
+        def submit_after_stop() -> threading.Event:
+            assert stopping.wait(5)
+            try:
+                return coord.request_listing("late")
+            finally:
+                late_submission.set()
+
+        with ThreadPoolExecutor(max_workers=1) as callers:
+            with coord:
+                listing_done = coord.request_listing("pkg")
+                assert listing_started.wait(5)
+                late = callers.submit(submit_after_stop)
+
+            assert listing_done.is_set()
+            assert late.result().is_set()
+
+        assert isinstance(coord.index.get_listing_error("late"), RuntimeError)
+        assert metadata.call_count == 1
+        assert coord.index.get_metadata("pkg", "2.0", url) == "metadata"
 
     @respx.mock
     def test_gather_pending_tasks_on_shutdown(self) -> None:

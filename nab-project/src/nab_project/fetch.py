@@ -463,6 +463,8 @@ class FetchCoordinator:
         self._warm_sync_min_blob_bytes = _WARM_SYNC_MIN_BLOB_BYTES
 
         self._start_lock = threading.Lock()
+        self._submission_lock = threading.Lock()
+        self._stopping = False
         self._thread: threading.Thread | None = None
         self._idle_transport: IdleClosableTransport | None = None
         self._started = False
@@ -529,6 +531,8 @@ class FetchCoordinator:
     def _start_worker(self) -> None:
         """Start and await one worker while the caller holds the startup lock."""
         self._started = True
+        with self._submission_lock:
+            self._stopping = False
         self._queue_ready = threading.Event()
         self._thread = threading.Thread(
             target=self._run_loop,
@@ -590,32 +594,34 @@ class FetchCoordinator:
                 self._refuse(item)
                 raise
 
-        loop = self._loop
+        # An accepted listing can schedule its sidecar while shutdown is draining it.
         queue = self._async_q
-        if loop is None or queue is None:
-            self._refuse(item)
+        if queue is not None and threading.current_thread() is self._thread:
+            queue.put_nowait(item)
             return
 
-        try:
-            loop.call_soon_threadsafe(queue.put_nowait, item)
-        except RuntimeError:
-            # call_soon_threadsafe raises RuntimeError once the loop is closed.
-            self._refuse(item)
+        with self._submission_lock:
+            queue = self._async_q
+            if queue is not None and self._schedule(queue.put_nowait, item):
+                if item is None:
+                    self._stopping = True
+                return
+        self._refuse(item)
 
     def _post_to_loop(self, callback: Callable[..., object], *args: object) -> bool:
-        """Hand ``callback`` to the fetcher loop from any thread.
+        """Post a listing tail, or let the caller run it inline after shutdown."""
+        with self._submission_lock:
+            return self._schedule(callback, *args)
 
-        Returns ``False`` when there is no live loop (never started, or closed
-        between the read and the post) so the caller can run the work inline.
-        """
+    def _schedule(self, callback: Callable[..., object], *args: object) -> bool:
+        """Queue a callback before the stop marker under the submission lock."""
         loop = self._loop
-        if loop is None:
+        if loop is None or self._stopping:
             return False
         try:
             loop.call_soon_threadsafe(callback, *args)
         except RuntimeError:
-            # call_soon_threadsafe raises RuntimeError once the loop is closed.
-            return False
+            return False  # A crashed worker may already have closed its loop.
         return True
 
     def _refuse(self, item: _QueueItem) -> None:
@@ -1092,29 +1098,19 @@ class FetchCoordinator:
 
         try:
             stopping = False
-            while not stopping:
+            while True:
+                if stopping and queue.empty():
+                    if not tasks:
+                        break
+                    # Running listings can enqueue more work before they finish.
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    continue
+
                 item = await queue.get()
                 if item is None:
-                    break
-
-                self._dispatch(item, client, sem, tasks)
-
-                # drain any extra queued items without blocking
-                while not queue.empty():
-                    try:
-                        extra = queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-                    if extra is None:
-                        # Fall through to the gather below instead of
-                        # cancelling: a cancelled _handle never records a
-                        # result, leaving its waiter's event unset forever.
-                        stopping = True
-                        break
-                    self._dispatch(extra, client, sem, tasks)
-
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+                    stopping = True
+                else:
+                    self._dispatch(item, client, sem, tasks)
         finally:
             await client.aclose()
 
