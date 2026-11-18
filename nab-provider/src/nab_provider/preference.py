@@ -277,59 +277,67 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         self, candidate: CandidateType, selected: Mapping[str, CandidateType]
     ) -> frozenset[CandidateType]:
         """Find ancestors reachable from roots without the candidate's metadata."""
-        demand = set(self.roots)
-        pins = list(self.input_pins)
-        expanded: set[str] = set()
-
-        # The target's metadata must not establish its own admission.
-        while True:
-            before = len(expanded)
-            for name, parent in selected.items():
-                if (
-                    self.catalogue.candidate_base(parent)
-                    == self.catalogue.candidate_base(candidate)
-                    or name not in demand
-                    or name in expanded
-                ):
-                    continue
-
-                data = self.catalogue.facts.get(parent)
-                if data is None:
-                    continue
-
-                if self.catalogue.candidate_withdrawn(parent) and not any(
-                    self.catalogue.pin_allows(req, parent) for req in pins
-                ):
-                    continue
-
-                expanded.add(name)
-                demand.update(data.dependencies)
-                pins.extend(data.pins)
-            if len(expanded) == before:
-                break
-
-        ancestors: set[str] = set()
+        base = self.catalogue.candidate_base(candidate)
+        parents = self._grounded_parents(selected, excluded_base=base)
         pending = [
             name
             for name, value in selected.items()
-            if self.catalogue.candidate_base(value)
-            == self.catalogue.candidate_base(candidate)
+            if self.catalogue.candidate_base(value) == base
         ]
-        pending.extend(
-            (
-                self.catalogue.candidate_base(candidate),
-                self.catalogue.candidate_package(candidate),
-            )
-        )
+        pending.extend((base, self.catalogue.candidate_package(candidate)))
+
+        ancestors: set[str] = set()
         while pending:
-            child = pending.pop()
-            for name in expanded - ancestors:
-                data = self.catalogue.facts[selected[name]]
-                assert data is not None
-                if child in data.dependencies:
-                    ancestors.add(name)
-                    pending.append(name)
+            for parent in parents.get(pending.pop(), ()):
+                if parent not in ancestors:
+                    ancestors.add(parent)
+                    pending.append(parent)
         return frozenset(selected[name] for name in ancestors)
+
+    def _grounded_parents(
+        self, selected: Mapping[str, CandidateType], *, excluded_base: str
+    ) -> dict[str, list[str]]:
+        """Index the edges reachable without reading the candidate under review."""
+        parents: dict[str, list[str]] = {}
+        demanded = set(self.roots)
+        pending = deque(self.roots)
+        pins: dict[str, list[PinnedRequirementType]] = {}
+        for pin in self.input_pins:
+            pins.setdefault(self.catalogue.pin_project(pin), []).append(pin)
+
+        waiting: dict[str, list[str]] = {}
+        while pending:
+            name = pending.popleft()
+            try:
+                parent = selected[name]
+            except KeyError:
+                continue
+            base = self.catalogue.candidate_base(parent)
+            if base == excluded_base:
+                continue
+            data = self.catalogue.facts.get(parent)
+            if data is None:
+                continue
+
+            # A later reachable parent can supply the pin this package needs.
+            if self.catalogue.candidate_withdrawn(parent) and not any(
+                self.catalogue.pin_allows(pin, parent) for pin in pins.get(base, ())
+            ):
+                waiting.setdefault(base, []).append(name)
+                continue
+
+            for child in data.dependencies:
+                parents.setdefault(child, []).append(name)
+                if child not in demanded:
+                    demanded.add(child)
+                    pending.append(child)
+
+            for pin in data.pins:
+                project = self.catalogue.pin_project(pin)
+                pins.setdefault(project, []).append(pin)
+                pending.extend(waiting.pop(project, ()))
+
+        return parents
 
     def fixed_range(
         self, candidate: CandidateType, parents: frozenset[CandidateType]
@@ -342,8 +350,14 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         allowed = self.catalogue.full_range()
         declarations = [self.roots]
         for parent in parents:
-            data = self.catalogue.facts[parent]
-            assert data is not None
+            data = self.catalogue.facts.get(parent)
+            if data is None:
+                name = self.catalogue.candidate_package(parent)
+                version = self.catalogue.candidate_label(parent)
+                message = (
+                    f"missing dependency metadata for fixed parent {name}=={version}"
+                )
+                raise ResolutionInvariantError(message)
             declarations.append(data.dependencies)
         for dependencies in declarations:
             for package, version_range in dependencies.items():

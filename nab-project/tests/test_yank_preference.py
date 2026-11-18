@@ -122,6 +122,32 @@ def test_scope_preserves_only_independently_grounded_ancestors() -> None:
     assert seen[1].target == "a"
 
 
+def test_late_pin_admits_a_previously_demanded_ancestor() -> None:
+    policy = preference(
+        [
+            ("helper", "1", True, ["target"]),
+            ("grant", "1", False, ["helper==1"]),
+            ("target", "1", True, []),
+        ],
+        ["helper", "grant"],
+    )
+    helper, grant = item("helper", withdrawn=True), item("grant")
+    target = item("target", withdrawn=True)
+    for candidate in (helper, grant):
+        assert policy.catalogue.prepare(candidate) is not None
+
+    selected = {"helper": helper, "grant": grant, "target": target}
+    assert policy.parents(target, selected) == frozenset({grant, helper})
+
+
+def test_fixed_parent_requires_prepared_metadata() -> None:
+    policy = preference(
+        [("parent", "1", False, []), ("target", "1", True, [])], ["parent"]
+    )
+    with pytest.raises(ResolutionInvariantError, match="fixed parent parent==1"):
+        policy.fixed_range(item("target", withdrawn=True), frozenset({item("parent")}))
+
+
 def test_cached_unrooted_cycles_do_not_create_parent_assumptions() -> None:
     policy = preference(
         [
