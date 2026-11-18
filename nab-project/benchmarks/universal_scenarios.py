@@ -511,6 +511,9 @@ def process_scenario(
         "commit": commit,
         "source": source if source is not None else get_git_source_state(),
         "python": python_spec,
+        "python_versions": list(
+            dict.fromkeys(target.python_version for target in targets)
+        ),
         "platforms": list(platforms),
         "python_order": python_order,
         "requirements": requirement_strings,
@@ -656,6 +659,7 @@ def process_scenario(
     output_path.write_text(json.dumps(data, indent=2) + "\n")
 
     stats = data["stats"]
+    accepted = result_is_accepted(data)
     if timed_out:
         print(f"TIMEOUT after {elapsed:.1f}s ({stats['tuples_total']} tuples)")
     elif harness_error:
@@ -665,6 +669,8 @@ def process_scenario(
             f"FAILED ({stats['tuples_ok']}/{stats['tuples_total']} targets resolved, "
             "expected a conflict on every target)"
         )
+    elif scenario_success and not accepted:
+        print("FAILED (benchmark target results or totals do not match the inputs)")
     elif scenario_success:
         print(
             f"ok ({stats['tuples_total']} tuples, "
@@ -680,13 +686,13 @@ def process_scenario(
         )
     else:
         failures = [t for t in per_tuple if not t["success"]]
-        label = "expected conflict" if expected_failure else "FAILED"
+        label = "expected conflict" if accepted else "FAILED"
         first_fail = failures[0]["error"] if failures else harness_error or "?"
         print(
             f"{label} ({stats['tuples_fail']}/{stats['tuples_total']} tuples; "
             f"first error: {first_fail[:80]})"
         )
-    return result_is_accepted(data)
+    return accepted
 
 
 def main() -> None:

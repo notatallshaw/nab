@@ -112,7 +112,7 @@ def _successful_result() -> tuple[ResolveTarget, ResolveResult]:
     return target, result
 
 
-def _result_data(result: dict, *, schema: int = 3) -> dict:
+def _result_data(result: dict, *, schema: int = 4) -> dict:
     complete_result = {
         "success": False,
         "resolution_success": None,
@@ -180,6 +180,7 @@ def _result_data(result: dict, *, schema: int = 3) -> dict:
             "commit": "run",
             "source": _CLEAN_SOURCE,
             "python": ">=3.11,<3.12",
+            "python_versions": ["3.11"],
             "platforms": ["linux_x86_64"],
             "python_order": "asc",
             "requirements": ["foo"],
@@ -406,6 +407,8 @@ def test_result_contract_requires_the_complete_input_shape() -> None:
     [
         ("source", {"commit": "a" * 40, "dirty": False}),
         ("python_order", "newest-first"),
+        ("python_versions", []),
+        ("python_versions", ["3.11", "3.11"]),
         ("requirements", []),
         ("platforms", ["linux_x86_64", "linux_x86_64"]),
         ("align_across_tuples", "true"),
@@ -471,6 +474,17 @@ def test_result_contract_validates_optional_input_fields() -> None:
         invalid = json.loads(json.dumps(data))
         invalid["input"][field] = value
         assert module.result_is_well_formed(invalid) is False
+
+
+@pytest.mark.parametrize("versions", [["3.10"], ["3.11", "3.12"]])
+def test_summary_rejects_results_from_a_different_python_matrix(
+    versions: list[str],
+) -> None:
+    report = _result_data(
+        {"resolution_success": False, "skip_on_fail": True, "expected_failure": True}
+    )
+    report["input"]["python_versions"] = versions
+    assert not _summary_harness().result_is_accepted(report)
 
 
 def test_result_contract_allows_multiple_slices_per_declared_cell() -> None:
@@ -827,6 +841,16 @@ def test_cached_result_must_match_the_shape_and_source(
     assert module.process_scenario(
         "example", scenario, "label", force=False, source=_CLEAN_SOURCE
     )
+    wrong_target = json.loads(result_path.read_text())
+    wrong_target["per_tuple"][0]["python_version"] = "3.10"
+    result_path.write_text(json.dumps(wrong_target))
+    assert module.process_scenario(
+        "example", scenario, "label", force=False, source=_CLEAN_SOURCE
+    )
+    assert (
+        json.loads(result_path.read_text())["per_tuple"][0]["python_version"] == "3.11"
+    )
+
     other_source = {"commit": "b" * 40, "dirty": False, "diff_hash": None}
     assert module.process_scenario(
         "example", scenario, "label", force=False, source=other_source
@@ -839,9 +863,33 @@ def test_cached_result_must_match_the_shape_and_source(
         "example", scenario, "label", force=False, source=unknown_source
     )
 
-    assert calls == 5
+    assert calls == 6
     data = json.loads(result_path.read_text())
     assert data["input"]["source"] == unknown_source
+
+
+def test_run_fails_if_the_resolver_returns_a_lock_for_another_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _harness()
+    _, python_311_result = _successful_result()
+    monkeypatch.setattr(module, "FetchCoordinator", _FakeCoordinator)
+    monkeypatch.setattr(module, "Urllib3AsyncTransport", object)
+    monkeypatch.setattr(
+        module, "resolve_with_coordinator", lambda *args, **kwargs: python_311_result
+    )
+    monkeypatch.setattr(module, "check_lock_consistency", lambda result: (True, []))
+    scenario = {**_universal_scenario("linux_x86_64"), "python": "==3.10.*"}
+
+    assert not module.process_scenario(
+        "wrong-python",
+        scenario,
+        "run",
+        force=True,
+        output_dir=tmp_path,
+        source=_CLEAN_SOURCE,
+    )
+    assert "FAILED" in capsys.readouterr().out
 
 
 def test_wheel_metadata_for_one_release_changes_the_cached_outcome(
@@ -1377,7 +1425,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "lock_consistent": None,
                 "error": "scenario exceeded wall-clock budget",
             },
-            3,
+            4,
             1,
         ),
         (
@@ -1389,7 +1437,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "timed_out": False,
                 "lock_consistent": None,
             },
-            3,
+            4,
             0,
         ),
         (
@@ -1401,7 +1449,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "timed_out": False,
                 "lock_consistent": None,
             },
-            3,
+            4,
             1,
         ),
         (
@@ -1436,7 +1484,7 @@ def test_summary_exit_status(
     (result_dir / "_manifest.json").write_text(
         json.dumps(
             {
-                "benchmark_schema": 3,
+                "benchmark_schema": 4,
                 "commit": "run",
                 "source": _CLEAN_SOURCE,
                 "run_kind": "full",
@@ -1483,7 +1531,7 @@ def test_summary_rejects_a_selected_run_manifest(
     (result_dir / "_manifest.json").write_text(
         json.dumps(
             {
-                "benchmark_schema": 3,
+                "benchmark_schema": 4,
                 "commit": "run",
                 "source": _CLEAN_SOURCE,
                 "run_kind": "selected",
@@ -1510,7 +1558,7 @@ def test_summary_rejects_a_dirty_full_run(
     (result_dir / "_manifest.json").write_text(
         json.dumps(
             {
-                "benchmark_schema": 3,
+                "benchmark_schema": 4,
                 "commit": "run",
                 "source": dirty_source,
                 "run_kind": "full",

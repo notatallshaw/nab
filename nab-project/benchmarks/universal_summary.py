@@ -101,7 +101,11 @@ def main() -> int:
         target_dir = candidates[-1]
     authoritative = authoritative_result_paths(target_dir)
     if authoritative is None:
-        print(f"No complete universal run found in {target_dir}.", file=sys.stderr)
+        print(
+            f"No complete universal run in report format {RESULT_SCHEMA_VERSION} "
+            f"found in {target_dir}. Run universal_scenarios.py to generate one.",
+            file=sys.stderr,
+        )
         return 1
     paths, manifest_commit, manifest_source = authoritative
     records: list[tuple[Path, dict]] = []

@@ -7,7 +7,7 @@ from typing import TypeGuard
 
 from benchmark_datetime import is_valid_datetime
 
-RESULT_SCHEMA_VERSION = 3
+RESULT_SCHEMA_VERSION = 4
 MANIFEST_FILENAME = "_manifest.json"
 
 _PORTABLE_COMPONENT_START = frozenset(
@@ -40,6 +40,7 @@ _REQUIRED_INPUT_FIELDS = frozenset(
         "platforms",
         "python",
         "python_order",
+        "python_versions",
         "reason",
         "requirements",
         "resolution_strategy",
@@ -232,6 +233,7 @@ def _valid_input(value: object, reason: object) -> bool:
         and isinstance(value["python"], str)
         and bool(value["python"])
         and _valid_string_list(value["platforms"], unique=True)
+        and _valid_string_list(value["python_versions"], unique=True)
         and isinstance(value["python_order"], str)
         and value["python_order"] in {"asc", "desc"}
         and _valid_string_list(value["requirements"])
@@ -336,25 +338,19 @@ def _valid_per_tuple(value: object, stats: dict, input_data: dict) -> bool:
         return False
     labels = [item["label"] for item in value]
     cells = {(item["python_version"], item["platform_id"]) for item in value}
+    versions = set(input_data["python_versions"])
     platforms = set(input_data["platforms"])
-    python_versions = {item["python_version"] for item in value}
+    # Several Python patch slices can cover the same requested minor and platform.
+    requested_count = len(versions) * len(platforms)
     return (
         len(value) == stats["tuples_recorded"]
         and stats["tuples_ok"] + stats["tuples_fail"] == len(value)
         and sum(item["success"] is True for item in value) == stats["tuples_ok"]
         and len(set(labels)) == len(labels)
-        and all(item["platform_id"] in platforms for item in value)
-        and (
-            not value
-            or (
-                cells
-                == {
-                    (python, platform)
-                    for python in python_versions
-                    for platform in platforms
-                }
-                and len(cells) == stats["tuples_total"]
-            )
+        and requested_count == stats["tuples_total"]
+        and (not value or len(cells) == requested_count)
+        and all(
+            version in versions and platform in platforms for version, platform in cells
         )
         and all(
             stats[total] == sum(item[field] for item in value)

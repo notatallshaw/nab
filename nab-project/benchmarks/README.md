@@ -115,7 +115,9 @@ python nab-project/benchmarks/universal_summary.py
 Each result retains its per-target solutions and merged target-label pin projection. The runner
 exits nonzero after an unexpected resolution, timeout, lock-emission failure, or projection failure.
 
-The result schema and source identity invalidate stale caches.
+The report records the Python versions selected from the scenario's range before resolution. A
+completed result must cover every requested Python version and platform. Rerun older scenarios to
+write this target list, or read their reports with the summary script from the original checkout.
 
 A full run writes `_manifest.json` with the current scenario set. The summary follows that set,
 ignores removed result files, and accepts only complete runs from a clean source tree.
