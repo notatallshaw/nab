@@ -670,7 +670,7 @@ def test_yanked_wheel_metadata_can_be_used_after_explicit_release_admission() ->
         metadata_text=_WHEEL_METADATA,
     )
     provider = Provider(port, _MAC_TARGET, assume_universal_deps=True)
-    provider.yank_admissions = frozenset({("pkg", _VERSION)})
+    provider.yank_admissions = {("pkg", _VERSION): ()}
 
     assert set(provider.get_dependencies("pkg", _VERSION)) == {"wheel-dep"}
 

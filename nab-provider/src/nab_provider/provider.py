@@ -34,6 +34,7 @@ import operator
 from collections import defaultdict, deque
 from enum import Enum
 from itertools import chain
+from types import MappingProxyType
 from typing import TYPE_CHECKING, TypeVar, cast
 
 from nab_provider._vendor.packaging.markers import prepare_environment
@@ -723,9 +724,11 @@ class Provider:
     CONFLICT_THRESHOLD = decision_priority.CONFLICT_THRESHOLD
     CULPRIT_DEMOTE_THRESHOLD = decision_priority.CULPRIT_DEMOTE_THRESHOLD
 
-    # Deferred admission retains withdrawn candidates but still guards preparation.
-    yank_admissions: frozenset[tuple[str, Version]] = frozenset()
-    yank_admission_sources: dict[str, tuple[str, ...]] | None = None
+    # A preparation provider can read the candidate before its admitting pin is known.
+    # The final provider records the declarations for each selected release.
+    yank_admissions: Mapping[tuple[str, Version], tuple[str, ...]] = MappingProxyType(
+        {}
+    )
     yanked_versions: frozenset[tuple[str, Version]] = frozenset()
 
     def __init__(  # noqa: PLR0913, PLR0915, PLR0917 - resolver config is wide; bundling all flags into one bag is worse for callers

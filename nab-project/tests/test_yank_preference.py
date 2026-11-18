@@ -387,12 +387,11 @@ def test_explain_input_or_constraint_pin_without_inventing_demand(root: str) -> 
     selected = {"a": item("a", withdrawn=True)}
     assert policy.catalogue.prepare(selected["a"]) is not None
     assert policy.explain(selected) == {"a": ("input pin a==1",)}
-    assert policy.catalogue.provider.yank_admission_sources is None
-    assert "yank_admission_sources" not in vars(policy.catalogue.provider)
+    assert not policy.catalogue.provider.yank_admissions
+    assert "yank_admissions" not in vars(policy.catalogue.provider)
     pins, provider = policy.adopt(selected)
     assert pins == {"a": Version("1")}
-    assert provider.yank_admission_sources == {"a": ("input pin a==1",)}
-    assert provider.yank_admissions == frozenset({("a", Version("1"))})
+    assert provider.yank_admissions == {("a", Version("1")): ("input pin a==1",)}
 
 
 def test_explain_late_transitive_pin_uses_a_selected_grounded_parent() -> None:
@@ -449,7 +448,6 @@ def test_only_rooted_cycles_have_admission_explanations(root: str) -> None:
     if root == "a":
         with pytest.raises(ResolutionInvariantError, match="not rooted"):
             policy.adopt(selected)
-        assert policy.catalogue.provider.yank_admission_sources is None
         assert not policy.catalogue.provider.yank_admissions
     else:
         assert policy.explain(selected) == {

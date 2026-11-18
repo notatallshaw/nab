@@ -404,9 +404,9 @@ def test_termination_is_not_retried_as_a_yank_conflict(
         calls += 1
         if isinstance(self.provider, Provider):
             self.provider.fetch_versions("dep")
-            self.provider.yank_admissions = frozenset({("dep", Version("2"))})
+            self.provider.yank_admissions = {("dep", Version("2")): ()}
             self.provider.get_dependencies("dep", Version("2"))
-            self.provider.yank_admissions = frozenset()
+            self.provider.yank_admissions = {}
             assert self.provider.has_withdrawn_alternative()
         raise error
 

@@ -71,9 +71,9 @@ def test_benchmark_termination_does_not_start_yanked_fallback(
     )
     provider = factory()
     provider.fetch_versions("dep")
-    provider.yank_admissions = frozenset({("dep", Version("1"))})
+    provider.yank_admissions = {("dep", Version("1")): ()}
     provider.get_dependencies("dep", Version("1"))
-    provider.yank_admissions = frozenset()
+    provider.yank_admissions = {}
     assert provider.has_withdrawn_alternative()
     prepared = list(port.calls_to("request_metadata"))
     resolver = Resolver(provider)

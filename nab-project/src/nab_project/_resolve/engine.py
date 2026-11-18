@@ -59,6 +59,7 @@ from ..diagnostics import ResolutionMessage
 from ..lockfile import (
     ArtifactMemo,
     IndexPin,
+    LockValidationError,
     build_target_lock,
     collect_dependency_requirements,
 )
@@ -1363,10 +1364,21 @@ def _resolve_yanked_target(
 
 def _warn_selected_yanks(provider: Provider, lock: TargetLock) -> None:
     """Report withdrawal reasons and grounded declarations for selected artifacts."""
-    assert provider.yank_admission_sources is not None
-    for package, version in sorted(provider.yank_admissions):
-        pin = lock.pins[package]
-        assert isinstance(pin, IndexPin)
+    for (package, version), sources in sorted(provider.yank_admissions.items()):
+        if not sources:
+            msg = (
+                f"{lock.target.label}: yanked release {package}=={version}"
+                " has no admitting declaration"
+            )
+            raise LockValidationError(msg)
+        pin = lock.pins.get(package)
+        if not isinstance(pin, IndexPin):
+            msg = (
+                f"{lock.target.label}: expected an index pin"
+                f" for yanked release {package}=={version}"
+            )
+            raise LockValidationError(msg)
+
         urls = {wheel.url.split("#", 1)[0] for wheel in pin.wheels}
         if pin.sdist is not None:
             urls.add(pin.sdist.url.split("#", 1)[0])
@@ -1378,7 +1390,6 @@ def _warn_selected_yanks(provider: Provider, lock: TargetLock) -> None:
             }
         )
         suffix = f": {'; '.join(reasons)}" if reasons else ""
-        sources = provider.yank_admission_sources[package]
         admission = f" (admitted by {'; '.join(sources)})"
         _logger.warning(
             "Selected yanked files for %s==%s%s%s", package, version, suffix, admission
