@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import errno
 import io
 import struct
@@ -11,8 +10,9 @@ import tarfile
 import urllib.request
 import zipfile
 import zlib
+from asyncio import run
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 from urllib.parse import unquote, urljoin, urlsplit
 
 import pytest
@@ -40,15 +40,9 @@ requires_int_limit = pytest.mark.skipif(
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine, Iterator
+    from collections.abc import Iterator
     from typing import Any
     from urllib.parse import ParseResult
-
-_T = TypeVar("_T")
-
-
-def run(coro: Coroutine[Any, Any, _T]) -> _T:
-    return asyncio.run(coro)
 
 
 def _fail_path_call(
