@@ -1,8 +1,8 @@
 """Build the release distributions and prove that they install.
 
 Builds an sdist and a wheel for every released distribution, installs every
-sdist and the full wheel set into throwaway venvs, and checks that each
-artifact ships its LICENSE. Building alone does not catch a broken sdist:
+sdist and the full wheel set into throwaway venvs, and checks package imports,
+typing markers and artifact licenses. Building alone does not catch a broken sdist:
 ``build`` extracts one with a permissive tar filter, while ``pip install``
 applies the data filter and rejects a link that points outside the archive. A
 symlinked license drops out of the wheel silently.
@@ -15,10 +15,7 @@ Run through nox::
 from __future__ import annotations
 
 import email
-import os
-import shutil
 import subprocess
-import sys
 import tarfile
 import tempfile
 import zipfile
@@ -26,13 +23,8 @@ from pathlib import Path
 
 import build_dists
 
-REPO_ROOT = build_dists.REPO_ROOT
-
 # The checked artifacts are the set the release publishes.
 PACKAGES = build_dists.PACKAGES
-
-# The import name of each released distribution, for the wheel smoke import.
-MODULES = tuple(name.replace("-", "_") for name in PACKAGES)
 
 # Every nab-provider artifact ships the vendored packaging tree, so its license
 # files have to travel with it. Matched by suffix because the wheel roots the
@@ -44,18 +36,6 @@ VENDOR_LICENSES = (
 )
 
 
-def _source_date_epoch() -> str:
-    """Return HEAD's committer timestamp, matching the release build."""
-    result = subprocess.run(
-        ["git", "log", "-1", "--pretty=%ct"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout.strip()
-
-
 def _run(command: list[str]) -> None:
     """Run a command, streaming its output, and stop the check if it fails."""
     print("+ " + " ".join(command), flush=True)
@@ -63,27 +43,6 @@ def _run(command: list[str]) -> None:
     if result.returncode != 0:
         msg = f"command failed: {' '.join(command)}"
         raise SystemExit(msg)
-
-
-def _capture(command: list[str]) -> str:
-    """Run a command, echo its output, and return its stdout."""
-    print("+ " + " ".join(command), flush=True)
-    result = subprocess.run(command, check=False, capture_output=True, text=True)
-    sys.stdout.write(result.stdout)
-    sys.stderr.write(result.stderr)
-    if result.returncode != 0:
-        msg = f"command failed: {' '.join(command)}"
-        raise SystemExit(msg)
-    return result.stdout
-
-
-def _make_venv(path: Path) -> Path:
-    """Create a fresh venv with a current pip and return its interpreter."""
-    _run([sys.executable, "-m", "venv", str(path)])
-    bindir = path / ("Scripts" if os.name == "nt" else "bin")
-    python = bindir / "python"
-    _run([str(python), "-m", "pip", "install", "--upgrade", "pip>=26.1"])
-    return python
 
 
 def _find_links(dist_root: Path) -> list[str]:
@@ -132,46 +91,10 @@ def install_each_sdist(dist_root: Path, scratch: Path) -> None:
     links = _find_links(dist_root)
     for package in PACKAGES:
         sdist = _sdist(dist_root, package)
-        python = _make_venv(scratch / f"sdist-{package}")
+        python = build_dists.create_install_env(scratch / f"sdist-{package}")
         target = f"{sdist}{SDIST_EXTRAS.get(package, '')}"
         _run([str(python), "-m", "pip", "install", *links, target])
-
-
-def _console_script(python: Path) -> str:
-    """Return the installed ``nab`` command sitting beside a venv's interpreter."""
-    script = shutil.which("nab", path=str(python.parent))
-    if script is None:
-        msg = f"the wheel installed no nab command in {python.parent}"
-        raise SystemExit(msg)
-    return script
-
-
-def _check_version(command: list[str], version: str) -> None:
-    """Fail unless the command prints the built version and exits 0."""
-    output = _capture([*command, "--version"])
-    expected = f"nab {version}"
-    if output.strip() != expected:
-        shown = " ".join(command)
-        msg = f"`{shown} --version` reported {output.strip()!r}, expected {expected!r}"
-        raise SystemExit(msg)
-
-
-def install_wheels(dist_root: Path, scratch: Path) -> None:
-    """Install every wheel together, then import each package and run the CLI.
-
-    ``[project.scripts]`` and ``src/nab/__main__.py`` name the entry
-    independently of each other, so both are run.
-    """
-    wheels = [str(build_dists.wheel_file(dist_root, package)) for package in PACKAGES]
-    version = build_dists.wheel_version(build_dists.wheel_file(dist_root, "nab"))
-    python = _make_venv(scratch / "wheels")
-    _run([str(python), "-m", "pip", "install", *wheels])
-    # nab_markersets' package root binds no names, so importing it proves
-    # nothing about the copy of packaging the algebra binds.
-    smoke = (*MODULES, "nab_markersets.markersets")
-    _run([str(python), "-c", f"import {', '.join(smoke)}"])
-    _check_version([str(python), "-m", "nab"], version)
-    _check_version([_console_script(python)], version)
+        build_dists.check_installed(python, package)
 
 
 def check_wheel_license(wheel: Path) -> None:
@@ -225,14 +148,14 @@ def check_vendored_licenses(wheel: Path, sdist: Path) -> None:
 
 def main() -> None:
     """Build every distribution, then install and check each artifact."""
-    source_date_epoch = _source_date_epoch()
+    source_date_epoch = build_dists.source_date_epoch()
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
         dist_root = workdir / "dist"
         build_dists.build_all(dist_root, source_date_epoch)
 
         install_each_sdist(dist_root, workdir)
-        install_wheels(dist_root, workdir)
+        build_dists.smoke_test(dist_root)
 
         for package in PACKAGES:
             check_wheel_license(build_dists.wheel_file(dist_root, package))

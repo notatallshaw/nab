@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import subprocess
 import sys
 import tarfile
 import urllib.error
@@ -100,11 +101,45 @@ def test_smoke_installs_every_built_wheel_and_checks_both_entries(
     assert len(installs) == 1
     assert installs[0][4:] == [str(wheel) for wheel in wheels]
 
+    assert any(
+        command[1:]
+        == ["-I", str(_PATH.with_name("check_installed.py")), *build_dists.PACKAGES]
+        for command in calls
+    )
+
     versions = [command for command in calls if command[-1] == "--version"]
     assert len(versions) == 2
     assert versions[0][1:] == ["-m", "nab", "--version"]
     assert Path(versions[1][0]).name == "nab"
     assert any(command[-1] == "--help" for command in calls)
+
+
+def test_installed_check_requires_the_package_typing_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / "typed_fixture"
+    package.mkdir()
+    (package / "__init__.py").touch()
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+
+    def check() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603 - The script and fixture name are fixed.
+            [
+                sys.executable,
+                str(_PATH.with_name("check_installed.py")),
+                "typed-fixture",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    missing = check()
+    assert missing.returncode == 1
+    assert "typed_fixture/py.typed" in missing.stderr
+
+    (package / "py.typed").touch()
+    check().check_returncode()
 
 
 @pytest.mark.parametrize("entry", ["module", "console"])
@@ -428,27 +463,3 @@ def test_pending_json_still_obeys_the_shared_deadline(
             "nab", "0.0.3", filename, "repository", tmp_path, 20.0, digests={}
         )
     assert waits == [15.0, 5.0]
-
-
-@pytest.mark.parametrize(
-    ("output", "valid"),
-    [("nab 0.0.3\n", True), ("nab 0.0.30\n", False), ("not nab 0.0.3", False)],
-)
-def test_distribution_version_check_requires_the_exact_built_version(
-    monkeypatch: pytest.MonkeyPatch, output: str, *, valid: bool
-) -> None:
-    monkeypatch.syspath_prepend(str(_PATH.parent))
-    monkeypatch.setitem(sys.modules, "build_dists", build_dists)
-    spec = importlib.util.spec_from_file_location(
-        "nab_check_dists", _PATH.with_name("check_dists.py")
-    )
-    assert spec is not None
-    assert spec.loader is not None
-    checks = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(checks)
-    monkeypatch.setattr(checks, "_capture", lambda command: output)
-    if valid:
-        checks._check_version(["nab"], "0.0.3")
-    else:
-        with pytest.raises(SystemExit, match="expected"):
-            checks._check_version(["nab"], "0.0.3")

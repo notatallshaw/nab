@@ -231,6 +231,7 @@ def auxiliary_outputs(paths: list[str] | None) -> dict[str, str]:
         elif path in {"README.md", "LICENSE", "LICENSE.txt"} or path in {
             "tasks/build_dists.py",
             "tasks/check_dists.py",
+            "tasks/check_installed.py",
             "tasks/verify_published.py",
         }:
             selected.add("dists")

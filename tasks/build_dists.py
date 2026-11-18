@@ -72,7 +72,7 @@ def source_dir(package: str) -> Path:
     return REPO_ROOT if package == "nab" else REPO_ROOT / package
 
 
-def _source_date_epoch() -> str:
+def source_date_epoch() -> str:
     """Return the committer timestamp of HEAD for reproducible builds."""
     return _run(["git", "log", "-1", "--pretty=%ct"], capture=True)
 
@@ -153,23 +153,34 @@ def wheel_version(wheel: Path) -> str:
     return version
 
 
+def create_install_env(path: Path) -> Path:
+    """Return the interpreter of a fresh environment for artifact checks."""
+    _run([sys.executable, "-m", "venv", str(path)])
+    bindir = path / ("Scripts" if os.name == "nt" else "bin")
+    python = bindir / "python"
+    _run([str(python), "-m", "pip", "install", "--upgrade", "pip>=26.1"])
+    return python
+
+
+def check_installed(python: Path, *packages: str) -> None:
+    """Run the import checks in the installed packages' own environment."""
+    _run([str(python), "-I", str(REPO_ROOT / "tasks/check_installed.py"), *packages])
+
+
 def smoke_test(dist: Path) -> None:
-    """Install the built wheels, exercise help, and check both entry versions."""
+    """Check wheel imports, typing markers, CLI help, and both entry versions."""
     wheels = [wheel_file(dist, package) for package in PACKAGES]
     version = wheel_version(wheel_file(dist, "nab"))
     with tempfile.TemporaryDirectory() as tmp:
-        venv = Path(tmp) / "venv"
-        _run([sys.executable, "-m", "venv", str(venv)])
-        bindir = venv / ("Scripts" if os.name == "nt" else "bin")
-        python = str(bindir / "python")
-        _run([python, "-m", "pip", "install", "--upgrade", "pip"])
-        _run([python, "-m", "pip", "install", *(str(wheel) for wheel in wheels)])
-        console = shutil.which("nab", path=str(bindir))
+        python = create_install_env(Path(tmp) / "venv")
+        _run([str(python), "-m", "pip", "install", *(str(wheel) for wheel in wheels)])
+        check_installed(python, *PACKAGES)
+        console = shutil.which("nab", path=str(python.parent))
         if console is None:
-            msg = f"the built wheels installed no nab command in {bindir}"
+            msg = f"the built wheels installed no nab command in {python.parent}"
             raise SystemExit(msg)
         _run([console, "--help"])
-        for command in ([python, "-m", "nab"], [console]):
+        for command in ([str(python), "-m", "nab"], [console]):
             output = _run([*command, "--version"], capture=True)
             if output.strip() != f"nab {version}":
                 shown = " ".join(command)
@@ -235,8 +246,8 @@ def main() -> None:
     """Build, verify reproducibility, check metadata, and smoke-test."""
     _require_tools("git")
     dist = REPO_ROOT / "dist"
-    source_date_epoch = _source_date_epoch()
-    verify_reproducible(dist, source_date_epoch)
+    epoch = source_date_epoch()
+    verify_reproducible(dist, epoch)
     twine_check(dist)
     smoke_test(dist)
     report_sizes(dist)

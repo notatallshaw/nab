@@ -285,6 +285,7 @@ def test_pr_comparison_writes_selected_arguments(
         (["nab-markersets/tests/test_sets.py"], {"standalone"}),
         (["nab-project/benchmarks/scenarios.py"], {"benchmarks"}),
         (["tasks/build_dists.py"], {"dists"}),
+        (["tasks/check_installed.py"], {"dists"}),
         (["docs/index.md", "pyproject.toml"], {"benchmarks", "dists", "standalone"}),
         (
             ["docs/index.md", "new-package/file.py"],
