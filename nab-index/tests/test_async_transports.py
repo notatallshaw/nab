@@ -610,6 +610,20 @@ class TestAcceptsGzip:
     def test_unparseable_quality_is_a_refusal(self) -> None:
         assert not accepts_gzip({"Accept-Encoding": "gzip;q=high"})
 
+    @pytest.mark.parametrize(
+        ("value", "accepted"),
+        [
+            ("X-GZip;q=0.4", True),
+            ("br, *;q=0.1", True),
+            ("*;q=0", False),
+            ("*, gzip;q=0", False),
+            ("x-gzip;q=0, *", False),
+            ("*;q=0, gzip", True),
+        ],
+    )
+    def test_alias_and_wildcard_preferences(self, value: str, accepted: bool) -> None:
+        assert accepts_gzip({"Accept-Encoding": value}) is accepted
+
     def test_absent_header(self) -> None:
         assert not accepts_gzip({"Accept": "application/json"})
 

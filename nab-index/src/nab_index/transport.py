@@ -109,11 +109,20 @@ def accepts_gzip(request_headers: Mapping[str, str]) -> bool:
     undone.
     """
     folded = {name.lower(): value for name, value in request_headers.items()}
+    gzip_listed = False
+    wildcard_allowed = False
     for entry in folded.get("accept-encoding", "").split(","):
-        coding, _, params = entry.partition(";")
-        if coding.strip().lower() == "gzip" and _quality(params) > 0:
-            return True
-    return False
+        name, _, params = entry.partition(";")
+        coding = name.strip().lower()
+        if coding in _GZIP_CODINGS:
+            gzip_listed = True
+            if _quality(params) > 0:
+                return True
+        elif coding == "*" and _quality(params) > 0:
+            wildcard_allowed = True
+
+    # An explicit refusal overrides the wildcard in either order (RFC 9110 §12.5.3).
+    return wildcard_allowed and not gzip_listed
 
 
 def decode_body(body: bytes, content_encoding: str | None) -> bytes:
