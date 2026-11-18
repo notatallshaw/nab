@@ -65,14 +65,10 @@ def build_solution_data(
     # BFS through the decided graph to find transitively reachable packages,
     # recording each dependency crossed on the way.
     edges: list[tuple[PackageType, PackageType]] = []
-    reachable: set[PackageType] = set()
+    reachable = set(root_required)
     queue: deque[PackageType] = deque(root_required)
     while queue:
         package = queue.popleft()
-        if package in reachable:
-            continue
-        reachable.add(package)
-
         version = all_decisions.get(package)
         if version is None:  # pragma: no cover
             unreachable = f"Bug: reachable package {package!r} has no decision"
@@ -81,6 +77,7 @@ def build_solution_data(
         for dep_package in get_dependencies(package, version):
             edges.append((package, dep_package))
             if dep_package not in reachable:
+                reachable.add(dep_package)
                 queue.append(dep_package)
 
     return (
