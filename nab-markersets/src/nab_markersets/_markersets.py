@@ -3444,6 +3444,25 @@ def _comparison_buffers(
     return _ComparisonBuffers(cells, scalar_units) if scalar_units >= 0 else None
 
 
+def _membership_columns(atoms: Sequence[Atom], size: int) -> _RowTruth:
+    """Build predicate columns for the admitted powerset of a free set axis."""
+    charge_work(size * (len(atoms) + 1))
+    full = (1 << size) - 1
+    positions: dict[str, int] = {}
+    columns = []
+    for atom in atoms:
+        position = positions.setdefault(atom.literal, len(positions))
+        # In subset order, the name is absent for one run, then present for one.
+        width = 1 << position
+        present = ((1 << width) - 1) << width
+        period = 2 * width
+        while period < size:
+            present |= present << period
+            period *= 2
+        columns.append(present if atom.positive else full ^ present)
+    return _RowTruth(tuple(columns), full, size)
+
+
 def _independent_rows_equivalent(
     left: Formula,
     right: Formula,
@@ -3472,18 +3491,7 @@ def _independent_rows_equivalent(
         if not columns.within:
             continue
         if membership is None:
-            membership = _row_pattern_columns(
-                axis.members,
-                _Row({}, TRUE),
-                max_cells,
-                store,
-                max_buffer_units=2 * len(axis.members)
-                + (2 * len(axis.members) + 3)
-                * _integer_payload_units(buffers.member_cells),
-            )
-            # A free set axis has exactly the preadmitted powerset of observations.
-            assert membership is not None
-            assert membership.size == buffers.member_cells
+            membership = _membership_columns(axis.members, buffers.member_cells)
         if not _compare_independent_row(
             left, right, axis, membership, columns, node_count
         ):
@@ -3503,7 +3511,7 @@ def _compare_independent_row(
     """Evaluate both original trees for every admitted scalar and set assignment."""
     charge_work(len(axis.members) + len(axis.others))
     truth = dict(zip(axis.members, membership.columns, strict=True))
-    full = (1 << membership.size) - 1
+    full = membership.within
     remaining = columns.within
     while remaining:
         charge_work(

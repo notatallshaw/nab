@@ -675,19 +675,14 @@ _SPREAD = ' and extra == "gpu" and "arm" in platform_machine'
 def test_one_operation_partitions_each_axis_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A within-universe decision partitions each axis once, not once per row.
-
-    The row walk issues two emptiness decisions for each of the six rows, so the
-    count is exact rather than bounded: 5 partitions here, against 36 with the store
-    ignored and 27 with a store that serves value axes only.
-    """
+    """The six rows share one machine partition and three Python version partitions."""
     left = ms('python_version < "3.12"' + _SPREAD)
     right = ms('python_version < "3.12" and sys_platform != "aix"' + _SPREAD)
 
     partitions = _partition_counter(monkeypatch)
     assert left.equivalent_within(right, _row_universe()) is True
 
-    assert partitions() == 5
+    assert partitions() == 4
 
 
 def test_simplify_keeps_its_partitions_to_one_call(
@@ -815,12 +810,7 @@ def test_partitions_do_not_outlive_one_operation(
 def test_a_shared_store_serves_the_next_decision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A decision handed the previous one's store partitions no axis again.
-
-    The mirror of :func:`test_partitions_do_not_outlive_one_operation`: without a
-    store the repeat pays 5 partitions again, with one it pays none. An ignored
-    ``store`` argument leaves the two counts equal to that test's.
-    """
+    """A second comparison reuses all four scalar partitions from the first."""
     universe = _row_universe()
     left = ms('python_version < "3.12"' + _SPREAD)
     right = ms('python_version < "3.12" and sys_platform != "aix"' + _SPREAD)
@@ -831,7 +821,7 @@ def test_a_shared_store_serves_the_next_decision(
     first = partitions()
     assert left.equivalent_within(right, universe, store=store) is True
 
-    assert first == 5
+    assert first == 4
     assert partitions() == first
 
 
