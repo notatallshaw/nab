@@ -624,7 +624,7 @@ def _result_payload(
         corpus_hash=corpus_hash,
         settings_digest="test-settings",
     ).expected_input
-    stats = dict.fromkeys(module._STANDARD_COUNTER_FIELDS, 0)
+    stats = dict.fromkeys(_expected_distinct_stats(0), 0)
     stats["packages_resolved"] = 1
     stats["wall_time_seconds"] = 0.01
     return {
@@ -692,7 +692,7 @@ def _run_fake(
         seen.append(execution)
         if result_kind == "missing":
             return
-        stats = dict.fromkeys(module._STANDARD_COUNTER_FIELDS, 0)
+        stats = dict.fromkeys(_expected_distinct_stats(0), 0)
         stats["packages_resolved"] = 1
         stats["wall_time_seconds"] = 0.01
         payload = {
@@ -1395,7 +1395,7 @@ def test_process_scenario_uses_the_planned_target(
     def resolve(requirements: dict, *_args: object, **kwargs: object) -> dict:
         seen["requirements"] = requirements
         seen.update(kwargs)
-        stats = dict.fromkeys(module._STANDARD_COUNTER_FIELDS, 0)
+        stats = dict.fromkeys(_expected_distinct_stats(0), 0)
         stats["packages_resolved"] = 1
         stats["wall_time_seconds"] = 0.01
         return {
@@ -2990,6 +2990,10 @@ def test_resolve_scenario_reports_the_counters_a_real_resolve_raised(
 ) -> None:
     """Pin the counters raised by a resolve to their call counts."""
     result = _resolve_dropped_extra(monkeypatch, "aaa==2.0")
+    # Check the producer's actual counters with both readers before inspecting them.
+    result["input"] = {}
+    assert _harness("scenarios")._standard_result_data_valid(result, {})
+    _harness("compare")._validate_result_payload(result, Path("case.json"))
 
     stats = dict(result["stats"])
     assert isinstance(stats.pop("wall_time_seconds"), float)
@@ -3835,7 +3839,7 @@ def test_result_cache_identity_includes_the_host_settings_hash() -> None:
         corpus_hash="f" * 64,
         settings_digest="second-host",
     )
-    stats = dict.fromkeys(module._STANDARD_COUNTER_FIELDS, 0)
+    stats = dict.fromkeys(_expected_distinct_stats(0), 0)
     stats["wall_time_seconds"] = 0.01
     payload = {
         "input": first.expected_input,
@@ -3961,7 +3965,7 @@ def test_standard_runner_output_is_accepted_by_the_comparator(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    scenarios, _, manifest_path = _run_fake(
+    _, _, manifest_path = _run_fake(
         tmp_path,
         monkeypatch,
         matrix=True,
@@ -3970,7 +3974,6 @@ def test_standard_runner_output_is_accepted_by_the_comparator(
 
     run = comparator.load_run(manifest_path.parent)
 
-    assert comparator._STANDARD_COUNTER_FIELDS == scenarios._STANDARD_COUNTER_FIELDS
     assert run.manifest == json.loads(manifest_path.read_text())
     assert all(
         result["input"]["settings_hash"]

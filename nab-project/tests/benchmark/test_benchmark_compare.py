@@ -10,7 +10,7 @@ from types import ModuleType
 
 import pytest
 
-pytestmark = pytest.mark.benchmark
+pytestmark = [pytest.mark.benchmark, pytest.mark.usefixtures("benchmark_import_path")]
 
 _BENCHMARKS = Path(__file__).resolve().parents[2] / "benchmarks"
 _STRATEGIES = ("highest", "lowest", "lowest-direct")
@@ -135,7 +135,7 @@ def _result_payload(
     if strategy != "highest":
         input_data["resolution"] = strategy
 
-    stats = dict.fromkeys(module._STANDARD_COUNTER_FIELDS, 0)
+    stats = dict.fromkeys(module.STAT_LABELS, 0)
     stats["rounds"] = rounds
     stats["packages_resolved"] = 1
     stats["wall_time_seconds"] = 0.01
@@ -208,6 +208,29 @@ def test_comparison_uses_the_manifest_and_keeps_scenario_inputs(
 
     assert first.results["cases/done.json"]["input"]["requirements"] == ["demo>=1"]
     assert "Rounds: 1 -> 2 (+100.0%)" in capsys.readouterr().out
+
+
+def test_proxy_rounds_are_compared_only_when_recorded_in_both_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _harness()
+    first_dir = _write_run(module, tmp_path, "first", source_commit="a" * 40)
+    second_dir = _write_run(module, tmp_path, "second", source_commit="b" * 40)
+    key = "cases/done.json"
+    _rewrite_json(
+        second_dir / key, lambda data: data["stats"].update(yanked_proxy_rounds=1)
+    )
+    second = module.load_run(second_dir)
+    first = module.load_run(first_dir)
+    module.compare_scenario(first.results[key], second.results[key], key)
+    assert "Yanked proxy rounds: 0 -> 1" in capsys.readouterr().out
+
+    _rewrite_json(
+        first_dir / key, lambda data: data["stats"].pop("yanked_proxy_rounds")
+    )
+    legacy = module.load_run(first_dir)
+    module.compare_scenario(legacy.results[key], second.results[key], key)
+    assert capsys.readouterr().out == ""
 
 
 def test_comparison_reports_changed_pins(
@@ -422,6 +445,14 @@ def test_percent_change_is_relative_to_the_baseline(
         pytest.param(
             lambda data: data["result"].update(success=False, error="failed"),
             id="failure-with-pins",
+        ),
+        pytest.param(
+            lambda data: data["stats"].update(yanked_proxy_rounds=True),
+            id="proxy-rounds-must-be-an-integer",
+        ),
+        pytest.param(
+            lambda data: data["stats"].update(yanked_proxy_rounds=-1),
+            id="negative-proxy-rounds",
         ),
         pytest.param(
             lambda data: data["stats"].pop("rounds"),

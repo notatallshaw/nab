@@ -137,8 +137,9 @@ candidates need consideration, they invoke `YankProxyProvider`, matching project
 singleton version range alone does not count as an exact pin.
 
 The existing PubGrub counters include every fallback resolve, non-yanked alternative check and
-known-dependency check. `yanked_proxy_rounds` reports their combined rounds; it is a subset of the
-total rounds and is zero without fallback.
+known-dependency check. `yanked_proxy_rounds` counts the rounds spent on those checks and fallback
+resolves. Those rounds are already included in the total. The counter is zero when fallback is
+unused. The comparison tool shows the difference when both runs recorded it.
 
 ## Scenario shape
 
