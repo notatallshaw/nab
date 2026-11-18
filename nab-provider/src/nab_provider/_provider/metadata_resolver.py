@@ -913,7 +913,9 @@ def _assumed_wheel_candidates(
     files = provider.coordinator.index.get_listing(package) or ()
     candidates = [
         dist
-        for candidate, dist in base_distributions(provider, package, files)
+        for candidate, dist in base_distributions(
+            provider, package, files, provider.listing_filter_cache
+        )
         if candidate == version
         and isinstance(dist, WheelFile)
         and (not dist.yanked or (package, version) in provider.yank_admissions)

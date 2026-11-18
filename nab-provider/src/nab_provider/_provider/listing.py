@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 
     from ..fetch_port import Waitable
     from ..policy import ArchiveSource, LocalSource, VcsSource
-    from ..provider import DistFile, Provider, ProviderStats
+    from ..provider import DistFile, ListingFilterCache, Provider, ProviderStats
     from ..target import ResolveTarget
 
     _PreparedListing = tuple[
@@ -389,6 +389,7 @@ def filter_distributions(
     provider: Provider,
     normalized: str,
     files: Sequence[WheelFile | SdistFile],
+    cache: ListingFilterCache | None,
 ) -> list[tuple[Version, DistFile]]:
     """Return candidate listing records, newest version first.
 
@@ -399,25 +400,25 @@ def filter_distributions(
     Metadata policy can retain wheels as a metadata source for source-only
     installation. Those releases still require a surviving sdist.
     """
-    base = base_distributions(provider, normalized, files)
-    return _apply_wheel_tags(provider, normalized, base)
+    base = base_distributions(provider, normalized, files, cache)
+    return _apply_wheel_tags(provider, normalized, base, cache)
 
 
 def base_distributions(
     provider: Provider,
     normalized: str,
     files: Sequence[WheelFile | SdistFile],
+    cache: ListingFilterCache | None,
 ) -> list[tuple[Version, DistFile]]:
     """Return the pre-tag filter result, through the shared memo when there is one."""
-    cache = provider.listing_filter_cache
     if cache is None:
-        return _filter_base(provider, normalized, files)
+        return _filter_base(provider, normalized, files, cache)
 
     return cache.filtered(
         normalized,
         provider.python_version,
         provider.stats,
-        partial(_filter_base, provider, normalized, files),
+        partial(_filter_base, provider, normalized, files, cache),
     )
 
 
@@ -487,6 +488,7 @@ def _filter_base(
     provider: Provider,
     normalized: str,
     files: Sequence[WheelFile | SdistFile],
+    cache: ListingFilterCache | None,
 ) -> list[tuple[Version, DistFile]]:
     """Filter by policy, Python and upload time before matching wheel tags.
 
@@ -496,7 +498,6 @@ def _filter_base(
     """
     policy = listing_policy(provider, normalized)
 
-    cache = provider.listing_filter_cache
     if cache is None or not cache.shares_pythons:
         result, sdist_required_versions, sort_with_wheel_first = _prepare_listing(
             provider,
@@ -816,10 +817,9 @@ def _prepare_listing_defaults(
 
 
 def _prepared_tag_result(
-    provider: Provider, normalized: str, tags: TagSet
+    provider: Provider, normalized: str, tags: TagSet, cache: ListingFilterCache | None
 ) -> list[tuple[Version, DistFile]] | None:
     """Replay a shared projection only for unmodified native filter contracts."""
-    cache = provider.listing_filter_cache
     if (
         cache is not None
         and provider.prepare_candidate_views
@@ -862,6 +862,7 @@ def _apply_wheel_tags(
     provider: Provider,
     normalized: str,
     base: list[tuple[Version, DistFile]],
+    cache: ListingFilterCache | None,
 ) -> list[tuple[Version, DistFile]]:
     """Drop the wheels this target cannot install, and the versions they leave empty.
 
@@ -875,7 +876,7 @@ def _apply_wheel_tags(
     if tags is None:
         return base
 
-    prepared = _prepared_tag_result(provider, normalized, tags)
+    prepared = _prepared_tag_result(provider, normalized, tags, cache)
     if prepared is not None:
         return prepared
 

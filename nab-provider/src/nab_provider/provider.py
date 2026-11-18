@@ -484,6 +484,60 @@ class ListingFilterCache:
         return cast("_CachedResult", entry)
 
 
+class _PreferredReleaseTrial:
+    """Select the listing and cache to use while checking a saved model."""
+
+    __slots__ = ("cache", "releases", "unchanged_only", "unrestricted_packages")
+
+    def __init__(
+        self,
+        releases: dict[str, Version],
+        cache: ListingFilterCache,
+        *,
+        unchanged_only: bool,
+    ) -> None:
+        self.releases = releases
+        self.cache = cache
+        self.unchanged_only = unchanged_only
+        self.unrestricted_packages: set[str] = set()
+
+    def select(
+        self,
+        provider: Provider,
+        package: str,
+        files: Sequence[DistFile],
+        *,
+        has_withdrawals: bool,
+    ) -> tuple[Sequence[DistFile], ListingFilterCache | None]:
+        """Keep alternatives available when a withdrawal or a forced change matters."""
+        preferred = self.releases.get(package)
+        withdrawals_matter = has_withdrawals and (
+            not self.unchanged_only or (package, preferred) in provider.yanked_versions
+        )
+        if withdrawals_matter and not provider.has_overrides:
+            required = provider.root_requirements.get(package)
+            if (
+                required is not None
+                and preferred is not None
+                and required.contains(preferred, prereleases=True)
+            ):
+                # Historical withdrawals outside the root cannot affect admission.
+                withdrawals_matter = any(
+                    name == package and required.contains(version, prereleases=True)
+                    for name, version in provider.yanked_versions
+                )
+        if withdrawals_matter or package in self.unrestricted_packages:
+            return files, self.cache
+        if preferred is None:
+            # A complete preferred model cannot introduce an unknown package.
+            return (), None
+
+        release, restricted = self.cache.selected_release(package, files, preferred)
+        if self.unchanged_only and any(file.yanked for file in release):
+            return files, self.cache
+        return release, restricted
+
+
 # Sentinel for "this override does not set the field".  Distinct from
 # ``None``, which is a real value (a disabled upload-time cutoff).
 class _Unset(Enum):
@@ -738,11 +792,7 @@ class Provider:
         # targets of this resolve.  ``None`` computes it here instead.
         self.listing_filter_cache = listing_filter_cache
 
-        # Preferred trials retain their own release-selection context.
-        self._preferred_releases: dict[str, Version] | None = None
-        self._unchanged_preferred_model = False
-        self._unrestricted_preferred_packages: set[str] = set()
-        self._full_listing_filter_cache = listing_filter_cache
+        self._preferred_trial: _PreferredReleaseTrial | None = None
 
         self.release_refused_wheels = release_refused_wheels
         self.defer_yanked = defer_yanked
@@ -1714,14 +1764,15 @@ class Provider:
             or self.metadata_cache
             or self.pending_clauses
             or self.solution_decisions
-            or self._preferred_releases is not None
+            or self._preferred_trial is not None
         ):
             msg = "preferred release preparation requires a fresh provider"
             raise ValueError(msg)
 
         # Cutoff errors and prerelease admission can depend on other releases.
+        cache = self.listing_filter_cache
         if (
-            self._full_listing_filter_cache is None
+            cache is None
             or self.uploaded_prior_to is not None
             or any(version.is_prerelease for version in preferred.values())
         ):
@@ -1737,8 +1788,9 @@ class Provider:
                 raise ValueError(msg)
             releases[normalized] = version
 
-        self._preferred_releases = releases
-        self._unchanged_preferred_model = unchanged_only
+        self._preferred_trial = _PreferredReleaseTrial(
+            releases, cache, unchanged_only=unchanged_only
+        )
 
     def filter_distributions(
         self, normalized: str, files: Sequence[WheelFile | SdistFile]
@@ -1753,7 +1805,6 @@ class Provider:
                 self.coordinator.index.consistent_metadata_context(normalized, files)
             )
 
-        original_cache = self.listing_filter_cache
         self.prepared_listings.pop(normalized, None)
 
         if raw_versions := getattr(files, "withdrawn_versions", ()):
@@ -1763,64 +1814,22 @@ class Provider:
                 if (version := _listing.parsed_version(raw)) is not None
             }
 
-        # Scope release-only preparation to this trial's filter.
-        if self._preferred_releases is not None:
-            cache = self._full_listing_filter_cache
-            preferred = self._preferred_releases.get(normalized)
-
-            withdrawals_matter = raw_versions and (
-                not self._unchanged_preferred_model
-                or (normalized, preferred) in self.yanked_versions
+        cache = self.listing_filter_cache
+        if self._preferred_trial is not None:
+            files, cache = self._preferred_trial.select(
+                self, normalized, files, has_withdrawals=bool(raw_versions)
             )
-            if withdrawals_matter and not self.has_overrides:
-                required = self.root_requirements.get(normalized)
-                if (
-                    required is not None
-                    and preferred is not None
-                    and required.contains(preferred, prereleases=True)
-                ):
-                    # Historical withdrawals outside the root cannot affect admission.
-                    withdrawals_matter = any(
-                        name == normalized
-                        and required.contains(version, prereleases=True)
-                        for name, version in self.yanked_versions
-                    )
-            # A withdrawn hinted release or a forced change needs all alternatives.
-            if (
-                withdrawals_matter
-                or normalized in self._unrestricted_preferred_packages
-            ):
-                self.listing_filter_cache = cache
-            elif preferred is None:
-                # A complete preferred model cannot introduce an unknown package.
-                files = ()
-                self.listing_filter_cache = None
-            else:
-                assert cache is not None
-                release, restricted = cache.selected_release(
-                    normalized, files, preferred
-                )
-                if self._unchanged_preferred_model and any(
-                    file.yanked for file in release
-                ):
-                    self.listing_filter_cache = cache
-                else:
-                    files, self.listing_filter_cache = release, restricted
 
-        try:
-            if not self.defer_yanked:
-                files = [
-                    file
-                    for file in files
-                    if not file.yanked
-                    or (normalized, _listing.parsed_version(file.version))
-                    in self.yank_admissions
-                ]
+        if not self.defer_yanked:
+            files = [
+                file
+                for file in files
+                if not file.yanked
+                or (normalized, _listing.parsed_version(file.version))
+                in self.yank_admissions
+            ]
 
-            return _listing.filter_distributions(self, normalized, files)
-        finally:
-            # Restore the shared context even when target admission fails.
-            self.listing_filter_cache = original_cache
+        return _listing.filter_distributions(self, normalized, files, cache)
 
     def pick_best_candidate(
         self,
@@ -1844,11 +1853,8 @@ class Provider:
         base, extra, normalized = self.split_and_normalize(package)
 
         # A forced version change needs alternatives before a view is cached.
-        if (
-            self._preferred_releases is not None
-            and normalized not in self.versions_cache
-        ):
-            expected = self._preferred_releases.get(normalized)
+        if self._preferred_trial is not None and normalized not in self.versions_cache:
+            expected = self._preferred_trial.releases.get(normalized)
             required = version_range
 
             # Extras also obey the base package's current solution range.
@@ -1858,7 +1864,7 @@ class Provider:
                     required = required & base_range
 
             if expected is not None and expected not in required:
-                self._unrestricted_preferred_packages.add(normalized)
+                self._preferred_trial.unrestricted_packages.add(normalized)
 
         priority_error = self.priority_override_errors.get(normalized)
         if priority_error is not None:
