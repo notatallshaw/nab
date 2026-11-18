@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 
 from nab_index.transport import HttpResponse
-from nab_project.fetch import FetchCoordinator, FetchKind, FetchRequest
+from nab_project import _fetch_requests
+from nab_project.fetch import FetchCoordinator
 from nab_project.resolve import resolve_with_coordinator
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider.fetch_port import PrefetchSettings
@@ -91,7 +92,11 @@ def test_listing_tail_obeys_the_operation_metadata_window(
     coord._prefetch_metadata_after_listing(
         "pkg", [make_wheel(str(i)) for i in range(1, 5)]
     )
-    versions = {item.version for item in queued if isinstance(item, FetchRequest)}
+    versions = {
+        item.version
+        for item in queued
+        if isinstance(item, _fetch_requests.SidecarMetadata)
+    }
 
     assert versions == (
         {"4"} if window is None else {str(i) for i in range(5 - window, 5)}
@@ -113,13 +118,14 @@ def test_real_resolve_forwards_backend_advice_and_explicit_zero(
         coord.index.store_listing_index(package, coord.indexes[0].name)
     requested: list[tuple[str, str]] = []
 
-    def serve(item: FetchRequest | list[FetchRequest] | None) -> None:
+    def serve(
+        item: _fetch_requests.FetchRequest | list[_fetch_requests.FetchRequest] | None,
+    ) -> None:
         """Fulfill metadata queue items through the real shared store."""
         assert item is not None
         requests = item if isinstance(item, list) else [item]
         for request in requests:
-            assert request.kind is FetchKind.METADATA
-            assert request.version is not None
+            assert isinstance(request, _fetch_requests.SidecarMetadata)
             requested.append((request.package, request.version))
             deps = (
                 ()

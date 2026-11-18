@@ -40,11 +40,10 @@ from nab_index.multi_index import IndexConfig, MultiIndexClient
 from nab_index.parsed_listing import encode as encode_parsed
 from nab_index.transport import AsyncHttpTransport, HttpError, HttpResponse
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
+from nab_project import _fetch_requests as fetch_requests
 from nab_project.fetch import (
     _WARM_SYNC_MIN_BLOB_BYTES,
     FetchCoordinator,
-    FetchKind,
-    FetchRequest,
     IndexRoute,
     InMemoryIndex,
     WarmSyncStats,
@@ -736,23 +735,6 @@ class TestFetchCoordinator:
             assert event.is_set()
 
     @respx.mock
-    def test_request_metadata_none_url(self) -> None:
-        """Metadata request with None url stores None."""
-        with _coord() as coord:
-            # Put a request with None url directly on the queue
-            from nab_project.fetch import FetchKind, FetchRequest
-
-            coord.index.get_or_create_pending("metadata:pkg:1.0")
-            coord._submit(
-                FetchRequest(
-                    kind=FetchKind.METADATA, package="pkg", version="1.0", url=None
-                )
-            )
-
-            assert _wait_until(lambda: coord.index.has_metadata("pkg", "1.0"))
-            assert coord.index.get_metadata("pkg", "1.0") is None
-
-    @respx.mock
     def test_request_metadata_batch(self) -> None:
         respx.get("https://f.com/a.metadata").mock(
             return_value=httpx.Response(200, text="meta-a")
@@ -1164,8 +1146,7 @@ class TestFetchCoordinator:
             url = "https://files.example.com/pkg-1.0.whl.metadata"
             claimed, _ = coord.index.get_or_create_pending(f"metadata:pkg:1.0:{url}")
             coord._submit(
-                FetchRequest(
-                    kind=FetchKind.METADATA,
+                fetch_requests.SidecarMetadata(
                     package="pkg",
                     version="1.0",
                     url=url,
@@ -1220,7 +1201,7 @@ class TestFetchCoordinator:
 
     @respx.mock
     def test_dispatch_single_and_batch(self) -> None:
-        """Dispatch handles both single FetchRequest and list."""
+        """Dispatch a single fetch and a batch through the same coordinator."""
         respx.get(url__regex=r".*").mock(return_value=httpx.Response(200, text="ok"))
         with _coord() as coord:
             e1 = coord.request_metadata("a", "1", "https://f.com/a")
@@ -1432,7 +1413,7 @@ class TestFetchCoordinator:
         class _DispatchFailureCoordinator(FetchCoordinator):
             def _dispatch(
                 self,
-                item: FetchRequest | list[FetchRequest],
+                item: fetch_requests.FetchRequest | list[fetch_requests.FetchRequest],
                 client: object,
                 sem: asyncio.Semaphore,
                 tasks: set[asyncio.Task],
@@ -1483,7 +1464,9 @@ class TestFetchCoordinator:
                     return False
                 return result
 
-            def get_nowait(self) -> FetchRequest | list[FetchRequest] | None:
+            def get_nowait(
+                self,
+            ) -> fetch_requests.FetchRequest | list[fetch_requests.FetchRequest] | None:
                 # Consult the real deque so the lie above can't trick us
                 # into popping from an empty queue. Reaching this branch
                 # is exactly the race the drain loop must handle.
@@ -1497,7 +1480,7 @@ class TestFetchCoordinator:
             real_dispatch = coord._dispatch
 
             def arm_after_dispatch(
-                item: FetchRequest | list[FetchRequest],
+                item: fetch_requests.FetchRequest | list[fetch_requests.FetchRequest],
                 client: CachedAsyncSimpleClient | MultiIndexClient,
                 sem: asyncio.Semaphore,
                 tasks: set[asyncio.Task],
@@ -1555,7 +1538,7 @@ class TestFetchCoordinator:
         injected = [False]
 
         def hooked_dispatch(
-            item: FetchRequest | list[FetchRequest],
+            item: fetch_requests.FetchRequest | list[fetch_requests.FetchRequest],
             client: CachedAsyncSimpleClient | MultiIndexClient,
             sem: asyncio.Semaphore,
             tasks: set[asyncio.Task],
@@ -1566,8 +1549,7 @@ class TestFetchCoordinator:
                 queue = coord._async_q
                 assert queue is not None
                 queue.put_nowait(
-                    FetchRequest(
-                        kind=FetchKind.METADATA,
+                    fetch_requests.SidecarMetadata(
                         package="drain",
                         version="1.0",
                         url="https://f.com/drain",
@@ -1579,8 +1561,7 @@ class TestFetchCoordinator:
         coord.start()
 
         coord._submit(
-            FetchRequest(
-                kind=FetchKind.METADATA,
+            fetch_requests.SidecarMetadata(
                 package="first",
                 version="1.0",
                 url="https://f.com/first",
@@ -2134,35 +2115,6 @@ class TestFetchCoordinator:
             pass
 
         assert closed.is_set()
-
-    def test_fetch_sdist_archive_null_url_stores_none(self) -> None:
-        """A ``FetchRequest`` with ``url=None`` short-circuits to ``None``.
-
-        Exercises the defensive branch in ``_fetch_sdist_archive`` that
-        handles requests dispatched without a URL (parallel to
-        ``_fetch_metadata``'s same-shape guard).
-        """
-        import asyncio
-
-        from nab_project.fetch import FetchKind, FetchRequest, InMemoryIndex
-
-        index = InMemoryIndex()
-
-        async def _run() -> None:
-            with _coord() as coord:
-                coord.index = index
-                await coord._fetch_sdist_archive(
-                    client=None,
-                    req=FetchRequest(
-                        kind=FetchKind.SDIST_ARCHIVE,
-                        package="pkg",
-                        version="1.0",
-                        url=None,
-                    ),
-                )
-
-        asyncio.run(_run())
-        assert index.get_sdist_archive("pkg", "1.0") is None
 
     @respx.mock
     def test_request_metadata_batch_deduplicates(self) -> None:
@@ -3328,14 +3280,11 @@ class TestRangeMetadataCoordinator:
 
         transport = _HeldRangeTransport("well_behaved", _build_range_wheel())
         with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
-            submitted: list[FetchRequest] = []
+            submitted: list[fetch_requests.FetchRequest] = []
             orig = coord._submit
 
             def spy(item: object) -> None:
-                if (
-                    isinstance(item, FetchRequest)
-                    and item.kind is FetchKind.RANGE_METADATA
-                ):
+                if isinstance(item, fetch_requests.RangeMetadata):
                     submitted.append(item)
                 orig(item)  # type: ignore[arg-type]
 
@@ -3356,14 +3305,11 @@ class TestRangeMetadataCoordinator:
         transport = FakeRangeTransport("well_behaved", _build_range_wheel())
         other_url = _RANGE_URL.replace("py3-none-any", "cp312-cp312-macosx")
         with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
-            submitted: list[FetchRequest] = []
+            submitted: list[fetch_requests.FetchRequest] = []
             orig = coord._submit
 
             def spy(item: object) -> None:
-                if (
-                    isinstance(item, FetchRequest)
-                    and item.kind is FetchKind.RANGE_METADATA
-                ):
+                if isinstance(item, fetch_requests.RangeMetadata):
                     submitted.append(item)
                 orig(item)  # type: ignore[arg-type]
 
@@ -3538,11 +3484,7 @@ def _spy_submit(coord: FetchCoordinator) -> list[object]:
 
 def _listing_submits(calls: Sequence[object]) -> list[object]:
     """The recorded submits that are LISTING requests."""
-    return [
-        item
-        for item in calls
-        if isinstance(item, FetchRequest) and item.kind is FetchKind.LISTING
-    ]
+    return [item for item in calls if isinstance(item, fetch_requests.Listing)]
 
 
 class TestWarmSyncListingPath:
@@ -4132,7 +4074,7 @@ class TestWarmSyncTailOffload:
             meta_submits = {
                 (item.package, item.version, item.url)
                 for item in calls
-                if isinstance(item, FetchRequest) and item.kind is FetchKind.METADATA
+                if isinstance(item, fetch_requests.SidecarMetadata)
             }
             sidecar = "https://f.example/pkg-2.0-py3-none-any.whl.metadata"
             assert meta_submits == {("pkg", "2.0", sidecar)}
@@ -4288,8 +4230,7 @@ class TestSdistArchiveHolding:
         asyncio.run(
             coord._fetch_sdist(
                 client=_SdistFilesClient(pyproject),  # type: ignore[arg-type]
-                req=FetchRequest(
-                    kind=FetchKind.SDIST,
+                req=fetch_requests.SdistMetadata(
                     package="pkg",
                     version="1.0",
                     url="https://f.example/pkg-1.0.tar.gz",
@@ -4535,7 +4476,7 @@ class TestSyncMetadata:
             assert results[1][2].wait(5)
             assert coord.index.get_metadata("pkg", "1.0", warm_url) == "warm text"
             assert coord.index.get_metadata("pkg", "1.0", cold_url) == "cold text"
-            assert calls == [[FetchRequest(FetchKind.METADATA, "pkg", "1.0", cold_url)]]
+            assert calls == [[fetch_requests.SidecarMetadata("pkg", "1.0", cold_url)]]
             assert route.call_count == 1
 
     @pytest.mark.parametrize("batch", [False, True])
