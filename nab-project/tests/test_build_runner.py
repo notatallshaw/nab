@@ -21,11 +21,10 @@ import sysconfig
 import tarfile
 import tempfile
 import zipfile
-from collections.abc import Callable, Generator, Mapping, Sequence
-from contextlib import AbstractContextManager, contextmanager, nullcontext
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime, timezone
 from functools import partial
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from importlib.util import cache_from_source, module_from_spec, spec_from_file_location
 from pathlib import Path
 from typing import Any
@@ -64,7 +63,6 @@ from nab_project._build.runner import (
     run_build_backend,
 )
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
-from nab_project._testing.loopback import running_server
 from nab_project.build_backend import extract_metadata
 from nab_project.download import DownloadError, DownloadResult, iter_artifacts
 from nab_project.inputs import ResolveInputs
@@ -5302,24 +5300,6 @@ _ = sys
 _ = Path
 
 
-class _BuildIndexHandler(SimpleHTTPRequestHandler):
-    """Serve the fixture index without writing access logs."""
-
-    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
-        pass
-
-
-@contextmanager
-def _serve_build_index(root: Path) -> Generator[str, None, None]:
-    """Yield the base URL of a local HTTP index."""
-    root.mkdir(exist_ok=True)
-    server = ThreadingHTTPServer(
-        ("127.0.0.1", 0), partial(_BuildIndexHandler, directory=str(root))
-    )
-    with running_server(server):
-        yield f"http://127.0.0.1:{server.server_port}/"
-
-
 class _BuildTransport:
     """Record requests and enforce one close on the loop that used the client."""
 
@@ -5365,6 +5345,7 @@ class _BuildTransportFactory:
     "make_transport", [Urllib3AsyncTransport, HttpxAsyncTransport, Httpx2AsyncTransport]
 )
 def test_build_backend_uses_selected_transport_for_nested_and_extra_requirements(
+    build_index_url: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     make_transport: Callable[[], AsyncHttpTransport],
@@ -5393,18 +5374,17 @@ def test_build_backend_uses_selected_transport_for_nested_and_extra_requirements
     )
     factory = _BuildTransportFactory(make_transport)
 
-    with _serve_build_index(index) as url:
-        result = resolve_for_targets(
-            project,
-            make_transport(),
-            targets=(ResolveTarget.for_host(),),
-            inputs=ResolveInputs(
-                indexes=(IndexConfig("fixture", url),),
-                build_requires_depth=1,
-                local_sources=(LocalSource("fake-pkg", str(source)),),
-            ),
-            build_transport_factory=factory,
-        )
+    result = resolve_for_targets(
+        project,
+        make_transport(),
+        targets=(ResolveTarget.for_host(),),
+        inputs=ResolveInputs(
+            indexes=(IndexConfig("fixture", build_index_url),),
+            build_requires_depth=1,
+            local_sources=(LocalSource("fake-pkg", str(source)),),
+        ),
+        build_transport_factory=factory,
+    )
 
     result.raise_for_failure()
     assert set(result.target_results[0].pins) == {"fake-pkg", "click"}
@@ -5431,7 +5411,7 @@ def test_build_backend_uses_selected_transport_for_nested_and_extra_requirements
 
 
 def test_explicit_build_transport_factory_reaches_nested_builds(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    build_index_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(env_mod, "extract_sdist_archive", _unpack_fixture_sdist)
     index = tmp_path / "index"
@@ -5439,22 +5419,21 @@ def test_explicit_build_transport_factory_reaches_nested_builds(
     _make_local_index(index, "basedep", "1.0")
     factory = _BuildTransportFactory(Httpx2AsyncTransport)
 
-    with _serve_build_index(index) as url:
-        config = ResolveInputs(
-            indexes=(IndexConfig("fixture", url),),
-            build_requires_depth=1,
-        )
-        with NabBuildEnv(
-            requires=["buildstub"], config=config, transport_factory=factory
-        ):
-            pass
+    config = ResolveInputs(
+        indexes=(IndexConfig("fixture", build_index_url),),
+        build_requires_depth=1,
+    )
+    with NabBuildEnv(requires=["buildstub"], config=config, transport_factory=factory):
+        pass
 
     assert len(factory.clients) == 4
     assert all(client.closed for client in factory.clients)
 
 
 @pytest.mark.parametrize("failure", ["resolve", "download"])
-def test_build_transport_closes_after_failure(tmp_path: Path, failure: str) -> None:
+def test_build_transport_closes_after_failure(
+    build_index_url: str, tmp_path: Path, failure: str
+) -> None:
     index = tmp_path / "index"
     factory = _BuildTransportFactory(Httpx2AsyncTransport)
     if failure == "download":
@@ -5472,13 +5451,12 @@ def test_build_transport_closes_after_failure(tmp_path: Path, failure: str) -> N
         )
         wheel.unlink()
 
-    with _serve_build_index(index) as url:
-        config = ResolveInputs(indexes=(IndexConfig("fixture", url),))
-        with (
-            pytest.raises((ResolutionError, BuildEnvError)),
-            NabBuildEnv(requires=["basedep"], config=config, transport_factory=factory),
-        ):
-            pytest.fail("the missing requirement or wheel must fail the build")
+    config = ResolveInputs(indexes=(IndexConfig("fixture", build_index_url),))
+    with (
+        pytest.raises((ResolutionError, BuildEnvError)),
+        NabBuildEnv(requires=["basedep"], config=config, transport_factory=factory),
+    ):
+        pytest.fail("the missing requirement or wheel must fail the build")
 
     assert len(factory.clients) == (1 if failure == "resolve" else 2)
     assert all(client.closed for client in factory.clients)

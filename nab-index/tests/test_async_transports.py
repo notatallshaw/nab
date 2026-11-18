@@ -1,4 +1,4 @@
-"""Tests for the async HTTP transports and FetchCoordinator transport injection."""
+"""Tests for the index HTTP transports, clients and archive reads."""
 
 from __future__ import annotations
 
@@ -10,13 +10,15 @@ import itertools
 import json
 import ssl
 import tarfile
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Generator, Mapping, Sequence
+from contextlib import AbstractContextManager, contextmanager
+from functools import partial
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock
+from threading import Thread
+from typing import Any, TypeVar
+from unittest.mock import MagicMock, patch
 from urllib.parse import urljoin
 
 import httpx
@@ -59,8 +61,6 @@ from nab_index.urllib3_async_transport import (
     _Urllib3Response,
 )
 from nab_markersets._compat import get_int_max_str_digits
-from nab_project._testing.loopback import running_server
-from nab_project.fetch import FetchCoordinator
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
@@ -95,6 +95,23 @@ UNPARSEABLE_RETRY_AFTERS = [
 # Literals, so dropping a status from RETRY_STATUSES fails a test instead of
 # quietly deleting its own cases.
 EXPECTED_RETRY_STATUSES = (408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 527)
+
+
+_Server = TypeVar("_Server", bound=ThreadingHTTPServer)
+
+
+@contextmanager
+def _running_server(server: _Server) -> Generator[_Server, None, None]:
+    with server:
+        thread = Thread(
+            target=partial(server.serve_forever, poll_interval=0.01), daemon=True
+        )
+        thread.start()
+        try:
+            yield server
+        finally:
+            server.shutdown()
+            thread.join()
 
 
 class _QuietHandler(BaseHTTPRequestHandler):
@@ -140,7 +157,7 @@ def _stub_index(
     server.statuses = list(statuses)
     server.seen = []
     server.retry_after = retry_after
-    return running_server(server)
+    return _running_server(server)
 
 
 class _GzipStubIndex(ThreadingHTTPServer):
@@ -171,7 +188,7 @@ def _gzip_stub_index(
     server.bodies = list(bodies)
     server.encoding = encoding
     server.seen = []
-    return running_server(server)
+    return _running_server(server)
 
 
 class _ArtifactStubIndex(ThreadingHTTPServer):
@@ -204,7 +221,7 @@ def _artifact_stub_index(body: bytes) -> AbstractContextManager[_ArtifactStubInd
     server = _ArtifactStubIndex(("127.0.0.1", 0), _ArtifactStubIndexHandler)
     server.body = body
     server.accept_encoding = []
-    return running_server(server)
+    return _running_server(server)
 
 
 class _UserAgentStubIndex(ThreadingHTTPServer):
@@ -231,7 +248,7 @@ def _user_agent_stub_index() -> AbstractContextManager[_UserAgentStubIndex]:
     server = _UserAgentStubIndex(("127.0.0.1", 0), _UserAgentStubIndexHandler)
     server.user_agents = []
     server.encodings = []
-    return running_server(server)
+    return _running_server(server)
 
 
 EARLY_HINTS_LISTING = (
@@ -274,7 +291,7 @@ def _early_hints_index(
 ) -> AbstractContextManager[_EarlyHintsIndex]:
     server = _EarlyHintsIndex(("127.0.0.1", 0), _EarlyHintsIndexHandler)
     server.informational = list(informational)
-    return running_server(server)
+    return _running_server(server)
 
 
 class _MovedIndex(ThreadingHTTPServer):
@@ -324,7 +341,7 @@ def _moved_index(
     server.body = body
     server.seen = []
     server.transient = list(transient)
-    return running_server(server)
+    return _running_server(server)
 
 
 @pytest.fixture
@@ -595,19 +612,6 @@ class TestAcceptsGzip:
 
     def test_absent_header(self) -> None:
         assert not accepts_gzip({"Accept": "application/json"})
-
-
-class TestFetchCoordinatorTransport:
-    @respx.mock
-    def test_explicit_transport(self) -> None:
-        """Coordinator routes fetches through whatever transport is passed in."""
-        respx.get("https://pypi.org/simple/pkg/").mock(
-            return_value=httpx.Response(200, json=LISTING_JSON)
-        )
-        with FetchCoordinator(transport=HttpxAsyncTransport()) as coord:
-            event = coord.request_listing("pkg")
-            event.wait(timeout=5)
-            assert coord.index.get_listing("pkg") is not None
 
 
 class TestHttpxAsyncTransport:
@@ -1824,9 +1828,7 @@ class TestAsyncSimpleClient:
             asyncio.run(go())
         assert isinstance(caught.value, HttpError)
 
-    def test_get_files_over_nested_raises_clean(
-        self, refuse_over_nested: Callable[[bytes], AbstractContextManager[None]]
-    ) -> None:
+    def test_get_files_over_nested_raises_clean(self) -> None:
         """A body past the JSON decoder's recursion guard must not escape raw."""
         body = b"[[[]]]"
         transport = self._FakeTransport(body)
@@ -1836,12 +1838,13 @@ class TestAsyncSimpleClient:
                 return await c.get_files("pkg")
 
         with (
-            refuse_over_nested(body),
+            patch.object(json, "loads", side_effect=RecursionError) as decode,
             pytest.raises(
                 MalformedSimpleResponseError, match="nested too deeply to decode"
             ),
         ):
             asyncio.run(go())
+        decode.assert_called_once_with(body)
 
     def test_get_files_404_returns_empty(self) -> None:
         transport = self._FakeTransport(b"not found", status=404)
@@ -1975,21 +1978,6 @@ class TestArtifactContentEncoding:
                     )
 
             assert asyncio.run(go()) == SDIST_BODY
-
-        assert server.accept_encoding == ["identity"]
-
-    @pytest.mark.parametrize("make_transport", TRANSPORTS)
-    def test_direct_archive_keeps_the_served_bytes(
-        self, make_transport: Callable[[], AsyncHttpTransport]
-    ) -> None:
-        """The ``archive-sources`` path, whose caller checks the declared hash."""
-        with (
-            _artifact_stub_index(SDIST_BODY) as server,
-            FetchCoordinator(transport=make_transport()) as coord,
-        ):
-            url = f"http://127.0.0.1:{server.server_port}/demo-1.0.tar.gz"
-            coord.request_direct_archive("demo", SDIST_SHA256, url).wait(timeout=10)
-            assert coord.index.get_sdist_archive("demo", SDIST_SHA256) == SDIST_BODY
 
         assert server.accept_encoding == ["identity"]
 
