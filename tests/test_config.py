@@ -30,6 +30,7 @@ from nab.config.model import (
     NabProjectConfig,
     _check_requires_python_admits_target,
     _option_label,
+    declared_target,
     plan_targets,
     read_pyproject_config,
 )
@@ -2236,6 +2237,24 @@ class TestEnvironment:
         config = read_pyproject_config(path)
         assert config.environment is None
         assert plan_targets(config) == (ResolveTarget.for_host(),)
+
+    def test_empty_environment_uses_the_host(self) -> None:
+        config = NabProjectConfig(environment=EnvironmentConfig())
+        assert plan_targets(config) == (ResolveTarget.for_host(),)
+
+    @pytest.mark.parametrize("python", [None, "3.12"])
+    def test_an_implementation_needs_a_platform_when_planning_directly(
+        self, python: str | None
+    ) -> None:
+        config = NabProjectConfig(
+            environment=EnvironmentConfig(python=python, implementation="pypy")
+        )
+        with pytest.raises(ConfigError, match="implementation 'pypy' needs a platform"):
+            plan_targets(config)
+
+    def test_declared_target_requires_a_platform(self) -> None:
+        with pytest.raises(ConfigError, match="platform"):
+            declared_target(EnvironmentConfig(python="3.12"))
 
     def test_python_only_retargets_the_host_python(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab.environment]\npython = "3.10"\n')
