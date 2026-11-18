@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from nab_provider.target import ResolveTarget
 
     from .inputs import ResolveInputs
+    from .prepared_input import PreparedProjectInput
     from .resolve import ResolveFork
 
 __all__ = ["LockConsistencyError", "can_reuse_saved_lock", "check_saved_lock"]
@@ -298,6 +299,7 @@ def _check_changed_bounds(  # noqa: PLR0913 - explicit saved-lock input and sele
     extras: Sequence[str],
     build_requirements: bool,
     input_format: InputFormat,
+    project_input: PreparedProjectInput | None = None,
 ) -> None:
     """Validate compatible input edits using the standard package selections."""
     local = _current_local_metadata(current, inputs)
@@ -309,6 +311,7 @@ def _check_changed_bounds(  # noqa: PLR0913 - explicit saved-lock input and sele
         extras=extras,
         build_requirements=build_requirements,
         input_format=input_format,
+        project_input=project_input,
     )
     constraints = [parse_requirement(text) for text in current["constraints"]]
     local_requirements = [
@@ -352,6 +355,7 @@ def check_saved_lock(  # noqa: PLR0913 - public keyword API for independent lock
     extras: Sequence[str] = (),
     build_requirements: bool = False,
     input_format: InputFormat = InputFormat.PROJECT,
+    project_input: PreparedProjectInput | None = None,
 ) -> None:
     """Validate saved pins without version discovery or a resolver transport."""
     if not lockfile.exists():
@@ -380,6 +384,7 @@ def check_saved_lock(  # noqa: PLR0913 - public keyword API for independent lock
             extras=extras,
             build_requirements=build_requirements,
             input_format=input_format,
+            project_input=project_input,
         )
     except (
         PylockValidationError,
@@ -458,6 +463,7 @@ def can_reuse_saved_lock(  # noqa: PLR0913 - mirror the saved checker inputs and
     extras: Sequence[str] = (),
     build_requirements: bool = False,
     input_format: InputFormat = InputFormat.PROJECT,
+    project_input: PreparedProjectInput | None = None,
 ) -> bool:
     """Check a saved solution without remote discovery or changing its file."""
     try:
@@ -479,6 +485,7 @@ def can_reuse_saved_lock(  # noqa: PLR0913 - mirror the saved checker inputs and
             extras=extras,
             build_requirements=build_requirements,
             input_format=input_format,
+            project_input=project_input,
         )
     except (
         OSError,

@@ -30,6 +30,7 @@ project.
 ## Use Nab in another tool
 
 - [Embed the resolver](embed-the-resolver.md).
+- [Read dependency inputs from source projects](dependency-inputs.md).
 - [Compare and simplify marker sets](reason-about-markers.md).
 - [Understand the packages and their APIs](../explanation/packages.md).
 
@@ -51,5 +52,6 @@ archive-sources
 workspaces
 use-the-lock
 embed-the-resolver
+dependency-inputs
 reason-about-markers
 ```

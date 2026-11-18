@@ -40,6 +40,17 @@ resolution and saved-lock validation. The CLI selects the input format and appli
 layers, including a script's inline `[tool.nab]`. Script parsing never imports the script, and
 selecting a script does not discover an enclosing workspace.
 
+Dependency input imports also belong to `nab-project`: it reads selected project, group, extra and
+static build declarations from local trees or pinned source archives. `nab-index` reads archive
+members without extracting a tree; `nab-provider` expands references between the separately
+installed projects and carries their extra conditions. Imported project configuration and build
+backends are never executed.
+
+The CLI compiles lock plan configuration into project declarations. `nab-project` owns the prepared
+declaration view and checks its original inputs during resolution and saved-lock validation. Its
+selection planner checks conflicts and combines the selected roots for one installation. The
+provider binds selected extra markers while preserving their environment conditions.
+
 `nab-project` also emits its generated TOML. Its writer uses a fixed layout for locks and synthetic
 build projects; it does not preserve source formatting or comments. Datetime values use a `T`
 separator.

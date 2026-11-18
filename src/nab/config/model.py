@@ -116,6 +116,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
+    from nab.config.ladder import Layer
+    from nab_project.prepared_input import PreparedProjectInput
     from nab_provider.overrides import IndexOverride, PackageOverride
     from nab_provider.tags import PlatformSpec
 
@@ -125,6 +127,7 @@ __all__ = [
     "EnvironmentConfig",
     "NabProjectConfig",
     "ResolveMode",
+    "declared_target",
     "plan_targets",
     "read_pyproject_config",
 ]
@@ -347,6 +350,8 @@ def read_pyproject_config(
     anchor: datetime | None = None,
     cli_overrides: Mapping[str, Any] | None = None,
     input_format: InputFormat = InputFormat.PROJECT,
+    project_input: PreparedProjectInput | None = None,
+    plan_settings: Layer | None = None,
 ) -> NabProjectConfig:
     """Read the project's effective :class:`NabProjectConfig`.
 
@@ -372,7 +377,9 @@ def read_pyproject_config(
     if anchor is None:
         anchor = datetime.now(timezone.utc)
     pyproject_dir = realpath(path.parent)
-    document = _read_pyproject_document(path, input_format=input_format)
+    document = _read_pyproject_document(
+        path, input_format=input_format, project_input=project_input
+    )
     _reject_unknown_pyproject_keys(
         document,
         kind=SourceKind.SCRIPT
@@ -391,7 +398,9 @@ def read_pyproject_config(
         input_format=input_format,
     )
     with resolve_anchor(anchor):
-        layers = discover_layers(roots)
+        layers = discover_layers(roots, project_input=project_input)
+        if plan_settings is not None:
+            layers.append(plan_settings)
         cli_layer = build_cli_layer(cli_overrides or {})
         effective = resolve_config(layers, read_env_layer({}), cli_layer)
     if input_format is InputFormat.SCRIPT and any(
@@ -402,6 +411,8 @@ def read_pyproject_config(
             "build-group",
             "conflicts",
             "workspace",
+            "plans",
+            "input-sources",
         )
     ):
         message = (
@@ -773,11 +784,16 @@ def _apply_workspace_discovery(
 
 
 def _read_pyproject_document(
-    path: Path, *, input_format: InputFormat = InputFormat.PROJECT
+    path: Path,
+    *,
+    input_format: InputFormat = InputFormat.PROJECT,
+    project_input: PreparedProjectInput | None = None,
 ) -> dict[str, Any]:
     """Parse ``path``, reporting an unreadable or malformed file as ``ConfigError``."""
     try:
-        return read_input_document(path, input_format=input_format)
+        return read_input_document(
+            path, input_format=input_format, project_input=project_input
+        )
     except ScriptMetadataError as exc:
         raise ConfigError(str(exc)) from exc
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
@@ -866,14 +882,14 @@ def _plan_targets(
     if environment is None:
         return (ResolveTarget.for_host(),)
     if environment.platform is not None:
-        return (_declared_target(environment),)
+        return (declared_target(environment),)
     # An implementation without a platform is rejected at parse, so a
     # remaining environment declares the python axis and nothing else.
     assert environment.python is not None
     return (ResolveTarget.for_host_python(environment.python),)
 
 
-def _declared_target(environment: EnvironmentConfig) -> ResolveTarget:
+def declared_target(environment: EnvironmentConfig) -> ResolveTarget:
     """Build the one target ``[tool.nab.environment]`` declares.
 
     The platform is named, so the target's markers and wheel tags are

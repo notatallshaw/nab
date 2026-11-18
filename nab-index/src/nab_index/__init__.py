@@ -2,5 +2,6 @@
 
 Supported imports:
 
+    nab_index.archive_files  read_archive_files, source_relative_path
     nab_index.urls  strip_userinfo
 """

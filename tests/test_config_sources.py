@@ -1030,6 +1030,7 @@ class TestReproducibilityNotice:
         overrides = build_cli_overrides(
             {
                 "project_resolution": "lowest",
+                "plan": None,
                 "offline": None,
                 "cache_dir": Path("/c"),
                 "http_backend": None,
@@ -1536,6 +1537,8 @@ class TestParserFoldHelpers:
         assert pyproject_registry_keys() == frozenset(
             {
                 "resolution",
+                "plans",
+                "input-sources",
                 "decision-order",
                 "base-group",
                 "build-group",
@@ -1624,6 +1627,7 @@ class TestRegistryShape:
             SourceKind.PYPROJECT: "project",
             SourceKind.SCRIPT: "project",
             SourceKind.PROJECT_TOML: "project",
+            SourceKind.LOCK_PLAN: "plan",
             SourceKind.ENV: "env",
             SourceKind.CLI: "cli",
         }

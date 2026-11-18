@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from nab_provider.target import ResolveTarget
 
     from .inputs import ResolveInputs
+    from .prepared_input import PreparedProjectInput
 
 __all__ = [
     "VALIDATION_VERSION",
@@ -281,7 +282,7 @@ def _requirements(requirements: Iterable[Requirement], base: Path) -> list[str]:
     return sorted({_requirement(requirement, base) for requirement in requirements})
 
 
-def snapshot_inputs(
+def snapshot_inputs(  # noqa: PLR0913 - independently selectable project inputs and policies
     path: Path,
     inputs: ResolveInputs,
     targets: Sequence[ResolveTarget],
@@ -291,11 +292,14 @@ def snapshot_inputs(
     build_requirements: bool = False,
     exclude: frozenset[str] = frozenset(),
     input_format: InputFormat = InputFormat.PROJECT,
+    project_input: PreparedProjectInput | None = None,
 ) -> dict[str, Any]:
     """Capture declarations, admission policy, targets and local metadata."""
     # A symlinked input still declares paths relative to its parent.
     base = path.parent.resolve()
-    data = read_input_document(path, input_format=input_format)
+    data = read_input_document(
+        path, input_format=input_format, project_input=project_input
+    )
     roots: dict[str, list[str]] = {}
     if build_requirements:
         roots["build"] = _requirements(build_system_requires(data, path), base)
@@ -331,7 +335,7 @@ def snapshot_inputs(
         local[canonicalize_name(source.name)] = _project_inputs(
             directory / "pyproject.toml"
         )
-    return {
+    snapshot = {
         "roots": roots,
         "constraints": _requirements(
             (parse_requirement(text) for text in inputs.constraints), base
@@ -356,6 +360,10 @@ def snapshot_inputs(
         "excluded": sorted(exclude),
         "build-requirements": build_requirements,
     }
+
+    if project_input is not None:
+        snapshot["prepared-inputs"] = _value(project_input.identity, base)
+    return snapshot
 
 
 def make_validation_record(

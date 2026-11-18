@@ -74,6 +74,8 @@ from .output import printer
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from nab.config.ladder import Layer
+    from nab_project.prepared_input import PreparedProjectInput
     from nab_provider.provider import ResolutionStrategy
 
     from ._cli.definition.model import Opt
@@ -150,6 +152,8 @@ def effective_config(
     rejected_out: list[RejectedLayer] | None = None,
     read_pyproject: bool = True,
     input_format: InputFormat = InputFormat.PROJECT,
+    project_input: PreparedProjectInput | None = None,
+    plan_settings: Layer | None = None,
 ) -> dict[str, EffectiveValue]:
     """Resolve config layers for the project at ``path``.
 
@@ -179,7 +183,14 @@ def effective_config(
     # durations across the two project files are not read as conflicting
     # values (the resolve path uses its lockfile anchor instead).
     with inspector_anchor():
-        layers = discover_layers(roots, rejections=sink, read_pyproject=read_pyproject)
+        layers = discover_layers(
+            roots,
+            rejections=sink,
+            read_pyproject=read_pyproject,
+            project_input=project_input,
+        )
+        if plan_settings is not None:
+            layers.append(plan_settings)
         env_layer = read_env_layer(rejections=sink)
         cli_layer = build_cli_layer(cli_overrides or {})
         if rejected_out is not None:
@@ -196,6 +207,8 @@ def read_config_ladder(
     cli_overrides: Mapping[str, object],
     *,
     input_format: InputFormat = InputFormat.PROJECT,
+    project_input: PreparedProjectInput | None = None,
+    plan_settings: Layer | None = None,
 ) -> ConfigLadder:
     """Read the layered config once for a run and hold what came back.
 
@@ -206,7 +219,11 @@ def read_config_ladder(
     """
     try:
         return effective_config(
-            path, cli_overrides=cli_overrides, input_format=input_format
+            path,
+            cli_overrides=cli_overrides,
+            input_format=input_format,
+            project_input=project_input,
+            plan_settings=plan_settings,
         )
     except SourceConfigError as exc:
         return exc
@@ -277,6 +294,7 @@ class RunSettings(Record):
         "lock_policy",
         "format",
         "cache",
+        "plan",
         "groups",
         "all_groups",
         "extras",
@@ -294,6 +312,7 @@ class RunSettings(Record):
     lock_policy: LockPolicy
     format: LockFormat
     cache: bool
+    plan: str | None
     groups: tuple[str, ...]
     all_groups: bool
     extras: tuple[str, ...]
@@ -316,6 +335,7 @@ class RunSettings(Record):
         lock_policy: LockPolicy = LockPolicy.RESOLVE,
         format: LockFormat = "pylock",  # noqa: A002 - the matching record/configuration field
         cache: bool = True,
+        plan: str | None = None,
         groups: tuple[str, ...] = (),
         all_groups: bool = False,
         extras: tuple[str, ...] = (),
@@ -334,6 +354,7 @@ class RunSettings(Record):
         self.format = format
         self.cache = cache
 
+        self.plan = plan
         self.groups = groups
         self.all_groups = all_groups
         self.extras = extras
@@ -387,6 +408,7 @@ def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a reg
     cli_matrix_python_order: str | None = None,
     cli_matrix_python_patches: tuple[str, ...] = (),
     cli_python: str | None = None,
+    cli_plan: str | None = None,
     cli_environment_python: str | None = None,
     cli_environment_platform: tuple[str, ...] = (),
     cli_environment_implementation: str | None = None,
@@ -406,6 +428,7 @@ def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a reg
     raising.
     """
     values: dict[str, object] = {
+        "plan": cli_plan,
         "project_resolution": cli_resolution,
         "offline": cli_offline,
         "cache_dir": cli_cache_dir,
@@ -578,6 +601,7 @@ def _layered_run_settings(effective: Mapping[str, EffectiveValue]) -> RunSetting
         lock_policy=effective["lock-policy"].value,
         format=effective["format"].value,
         cache=effective["cache"].value,
+        plan=effective["plan"].value,
         groups=effective["groups"].value,
         all_groups=effective["all-groups"].value,
         extras=effective["extras"].value,
@@ -598,15 +622,20 @@ def _layered_run_settings_or_exit(
     ``produces_lock`` selects its wording.
     """
     if isinstance(ladder, SourceConfigError):
-        if isinstance(ladder.__cause__, OSError):
-            printer().error(str(ladder))
-            sys.exit(1)
-        _fail_config(ladder)
+        exit_config_error(ladder)
     settings = _layered_run_settings(ladder)
     notice = project_cli_override_notice(ladder, produces_lock=produces_lock)
     if notice is not None:
         printer().stderr_line(notice)
     return settings
+
+
+def exit_config_error(error: SourceConfigError) -> NoReturn:
+    """Preserve file-error and configuration diagnostics when unwrapping a ladder."""
+    if isinstance(error.__cause__, OSError):
+        printer().error(str(error))
+        raise SystemExit(1)
+    _fail_config(error)
 
 
 def _fail_config(exc: SourceConfigError) -> NoReturn:

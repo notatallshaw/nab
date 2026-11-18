@@ -56,7 +56,9 @@ from nab_provider.target import ResolveTarget
 
 # Every registry option carrying a CLI flag, keyed on the option's key.
 _CLI_FLAGS: dict[str, str] = {
-    spec.key: spec.cli_flag for spec in OPTIONS if spec.cli_flag is not None
+    spec.key: spec.cli_flag
+    for spec in OPTIONS
+    if spec.cli_flag is not None and "config" in spec.commands
 }
 
 # Per flagged option: its key, the value passed on argv, and the value
@@ -589,6 +591,8 @@ class TestConfigRefusalSeverity:
 
 _STRUCTURED_PROJECT_TABLES = frozenset(
     {
+        "plans",
+        "input-sources",
         "archive-sources",
         "conflicts",
         "environment",

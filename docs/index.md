@@ -55,6 +55,7 @@ caption: Reference
 ---
 reference/cli
 reference/selection
+reference/lock-plans
 reference/yanking
 reference/formats
 reference/diagnostics

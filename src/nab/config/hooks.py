@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from nab_index.file_urls import parse_file_url
+from nab_project.toml_writer import dumps_value
 from nab_provider.records import IndexConfig
 from nab_provider.serialization import SimpleSerialization
 
@@ -427,6 +428,11 @@ def render_workspace(value: Any) -> str:
     if value is None:
         return "<none>"
     return f"members={list(value.members)}"
+
+
+def render_input_tables(value: Mapping[str, Any]) -> str:
+    """Render lock plan or dependency-input declarations as TOML."""
+    return dumps_value(value)
 
 
 def render_uploaded_prior_to(value: Any) -> str:

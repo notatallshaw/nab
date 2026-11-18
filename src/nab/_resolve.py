@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING
 import tomli
 
 from nab_index.transport import prefetch_settings_for_backend
-from nab_project.input_source import InputFormat, ScriptMetadataError
+from nab_project.input_source import InputChangedError, InputFormat, ScriptMetadataError
 from nab_project.lockfile import MissingHashError, MissingSdistError
 from nab_project.pyproject_files import (
     MissingProjectTableError,
@@ -90,9 +90,11 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
+    from nab.config.ladder import Layer
     from nab_index.transport import AsyncHttpTransport, HttpResponse
     from nab_project.declarations import DependencyDeclaration
     from nab_project.lock_preferences import LockPreferences
+    from nab_project.prepared_input import PreparedProjectInput
     from nab_project.resolve import ResolveResult
     from nab_provider.provider import ResolutionStrategy
 
@@ -266,6 +268,8 @@ def _load_config(
     anchor: datetime | None = None,
     cli_overrides: Mapping[str, object] | None = None,
     input_format: InputFormat = InputFormat.PROJECT,
+    project_input: PreparedProjectInput | None = None,
+    plan_settings: Layer | None = None,
 ) -> NabProjectConfig:
     require_pyproject_file(path, input_format=input_format)
 
@@ -276,8 +280,10 @@ def _load_config(
             anchor=anchor,
             cli_overrides=cli_overrides,
             input_format=input_format,
+            project_input=project_input,
+            plan_settings=plan_settings,
         )
-    except ConfigError as exc:
+    except (ConfigError, InputChangedError) as exc:
         printer().error(exc)
         raise SystemExit(1) from None
     except WorkspaceDiscoveryError as exc:
@@ -341,6 +347,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     reconcile_build_variants: bool = False,
     progress: ProgressReporter | None = None,
     max_concurrency: int,
+    project_input: PreparedProjectInput | None = None,
 ) -> ResolveResult:
     """Run the resolver and map known user-facing failures to process exits.
 
@@ -375,6 +382,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
                     resolution_strategy=resolution_strategy,
                     progress=progress,
                     max_concurrency=max_concurrency,
+                    project_input=project_input,
                 )
         finally:
             if progress is not None:
@@ -384,6 +392,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
         sys.exit(1)
     except (
         ScriptMetadataError,
+        InputChangedError,
         UnsupportedVcsError,
         MissingExtraError,
         SiblingMetadataDivergenceError,
