@@ -80,6 +80,43 @@ def run_graph(
     return result.target_results, port
 
 
+@pytest.mark.parametrize("parents", [("early", "late"), ("late", "early")])
+@pytest.mark.parametrize("withdrawn", [False, True])
+def test_withdrawn_side_dependency_keeps_prerelease_order(
+    parents: tuple[str, str], *, withdrawn: bool
+) -> None:
+    (result,), _ = run_graph(
+        [
+            ("app", "1", False, [*parents, "side==1"]),
+            ("early", "1", False, ["lib>=1rc1"]),
+            ("late", "1", False, ["lib>=1"]),
+            ("side", "1", withdrawn, []),
+            ("lib", "1", False, []),
+            ("lib", "2rc1", False, []),
+        ],
+        ["app"],
+    )
+    assert result.success, result.error
+    assert result.pins["lib"] == Version("2rc1")
+
+
+def test_rejected_parent_does_not_keep_prereleases_enabled() -> None:
+    (result,), _ = run_graph(
+        [
+            ("app", "1", False, ["parent", "side==1"]),
+            ("parent", "2", False, ["lib>=1rc1", "missing"]),
+            ("parent", "1", False, ["lib>=1"]),
+            ("side", "1", True, []),
+            ("lib", "1", False, []),
+            ("lib", "2rc1", False, []),
+        ],
+        ["app"],
+    )
+    assert result.success, result.error
+    assert result.pins["parent"] == Version("1")
+    assert result.pins["lib"] == Version("1")
+
+
 @pytest.mark.parametrize(
     ("roots", "succeeds"),
     [

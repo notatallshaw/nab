@@ -172,10 +172,12 @@ class YankProxyProvider(BaseProvider[Package, int]):
         self.scope = scope
         self.fixed = {candidate.package: candidate for candidate in scope.fixed}
         self.items: dict[int, Candidate] = {}
+        self._mixed_release_packages: set[str] = set()
         self.identities: dict[Candidate, int] = {}
         self.proofs: dict[PermissionProxy, dict[Support, int]] = {}
         self.supports: dict[int, Support] = {}
         self.decisions: Mapping[Package, int] = {}
+        self._dependency_parents: dict[str, set[str]] = {}
         self.positive: Mapping[Package, RangeProtocol[int]] = {}
         self.pending: list[Incompatibility[Package, int]] = []
         self.incomplete = False
@@ -201,9 +203,17 @@ class YankProxyProvider(BaseProvider[Package, int]):
         if package in self.catalogue.missing_listings:
             self.incomplete = True
         allowed &= self.constraints.get(package, self._full_version_range)
+        choices = self.catalogue.ordered(package, allowed)
+        if choices and package not in self._mixed_release_packages:
+            first_is_prerelease = choices[0].version.is_prerelease
+            if any(
+                choice.version.is_prerelease != first_is_prerelease
+                for choice in choices
+            ):
+                self._mixed_release_packages.add(package)
         return Range[int].from_versions(
             self.identify(candidate)
-            for candidate in self.catalogue.ordered(package, allowed)
+            for candidate in choices
             if self.eligible(candidate)
         )
 
@@ -313,8 +323,9 @@ class YankProxyProvider(BaseProvider[Package, int]):
                 0 if culprit_counts is None else culprit_counts.get(package, 0),
                 culprit_counts,
             )
-            return (0, tier)
-        return (1 if isinstance(package, MetadataProxy) else 2, 0)
+            # Read parent requirements before ranking final and prerelease candidates.
+            return (2 if package in self._mixed_release_packages else 0, tier)
+        return (1 if isinstance(package, MetadataProxy) else 3, 0)
 
     def block_context(self, package: Package) -> None:
         """Reject selected choices without excluding a candidate globally."""
@@ -395,17 +406,32 @@ class YankProxyProvider(BaseProvider[Package, int]):
         self, package: str, version_range: RangeProtocol[int]
     ) -> int | None:
         """Choose an eligible package candidate within the encoded range."""
-        # Cached dependencies need incompatibilities before excluding candidates.
-        allowed = self.constraints.get(package, self._full_version_range)
-        for candidate in self.catalogue.ordered(package, allowed):
-            if not self.eligible(candidate):
-                continue
-
-            token = self.identify(candidate)
-            if self._integer_membership.contains(version_range, token):
-                return token
-
+        for order in self._ordering_ranges(package):
+            for candidate in self.catalogue.ordered(package, order):
+                if not self.eligible(candidate):
+                    continue
+                token = self.identify(candidate)
+                if self._integer_membership.contains(version_range, token):
+                    return token
         return None
+
+    def _ordering_ranges(self, package: str) -> Iterator[VersionRange]:
+        """Rank prereleases using the requirements of the currently selected parents."""
+        constraint = self.constraints.get(package, self._full_version_range)
+        if package in self._mixed_release_packages:
+            required = self.roots.get(package, self._full_version_range) & constraint
+            for parent in self._dependency_parents.get(package, ()):
+                token = self.decisions.get(parent)
+                if token is not None:
+                    data = self.catalogue.facts.get(self.items[token])
+                    if data is not None and package in data.dependencies:
+                        required &= data.dependencies[package]
+            if required != constraint:
+                yield required
+
+        # Only the solver's encoded range can rule out a candidate. A previous
+        # metadata read can tell us how to rank it before its clause is active.
+        yield constraint
 
     def has_satisfying_version(
         self, package: Package, version_range: RangeProtocol[int]
@@ -435,13 +461,18 @@ class YankProxyProvider(BaseProvider[Package, int]):
             support = next(s for s, v in self.proofs[package].items() if v == version)
             return {self.items[i].package: Range.singleton(i) for i in support}
         token = package.candidate
-        data = self.catalogue.prepared_data(self.items[token])
+        parent = self.items[token]
+        data = self.catalogue.prepared_data(parent)
         self._trial_pins = (*self.input_pins, *data.pins)
         try:
-            return {
-                name: self.encode_range(name, allowed)
-                for name, allowed in data.dependencies.items()
-            }
+            encoded: dict[Package, Range[int]] = {}
+            for child, allowed in data.dependencies.items():
+                encoded[child] = self.encode_range(child, allowed)
+                if child in self._mixed_release_packages:
+                    self._dependency_parents.setdefault(child, set()).add(
+                        parent.package
+                    )
+            return encoded
         finally:
             self._trial_pins = self.input_pins
 
