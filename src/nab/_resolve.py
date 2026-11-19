@@ -178,49 +178,36 @@ def _make_transport(backend: str) -> AsyncHttpTransport:
 
     Optional transports are imported only when selected.
     """
-    make_transport: Callable[[], AsyncHttpTransport]
-    if backend in {"httpx", "httpx2"}:
-        try:
-            # Distinguish a missing backend from missing HTTP/2 dependencies.
-            if sys.modules.get(backend) is None and find_spec(backend) is None:
-                msg = f"No module named {backend!r}"
-                raise ModuleNotFoundError(msg, name=backend)
-            if backend == "httpx":
-                from nab_index.httpx_async_transport import (  # noqa: PLC0415 - optional dependency
-                    HttpxAsyncTransport,
-                )
+    if backend not in {"httpx", "httpx2"}:
+        return _make_urllib3_transport()
 
-                make_transport = HttpxAsyncTransport
-            else:
-                from nab_index.httpx2_async_transport import (  # noqa: PLC0415 - optional dependency
-                    Httpx2AsyncTransport,
-                )
+    for package in (backend, "h2"):
+        if sys.modules.get(package) is not None or find_spec(package) is not None:
+            continue
+        message = (
+            f"{backend} is not installed"
+            if package == backend
+            else f"{backend} is installed without HTTP/2 support"
+        )
+        hint = f"install 'nab[{backend}]' in the environment that runs Nab"
+        printer().error(DiagnosticMessage(message, suggestions=(Suggestion(hint),)))
+        raise SystemExit(1)
 
-                make_transport = Httpx2AsyncTransport
-        except ImportError:
-            printer().error(
-                DiagnosticMessage(
-                    (f"{backend} is not installed"),
-                    suggestions=(Suggestion(f"run `pip install nab[{backend}]`"),),
-                )
+    try:
+        if backend == "httpx":
+            from nab_index.httpx_async_transport import (  # noqa: PLC0415 - optional dependency
+                HttpxAsyncTransport,
             )
-            sys.exit(1)
 
-        try:
-            return make_transport()
-        except ImportError:
-            printer().error(
-                DiagnosticMessage(
-                    (f"{backend} is installed without HTTP/2 support"),
-                    suggestions=(Suggestion(f"run `pip install nab[{backend}]`"),),
-                )
-            )
-            sys.exit(1)
-        except Exception as exc:  # noqa: BLE001 - constructor errors have backend-specific types
-            printer().error(f"cannot initialize {backend} transport: {exc}")
-            sys.exit(1)
+            return HttpxAsyncTransport()
+        from nab_index.httpx2_async_transport import (  # noqa: PLC0415 - optional dependency
+            Httpx2AsyncTransport,
+        )
 
-    return _make_urllib3_transport()
+        return Httpx2AsyncTransport()
+    except Exception as exc:
+        printer().error(f"cannot initialize {backend} transport: {exc}")
+        raise SystemExit(1) from exc
 
 
 class _DeferredUrllib3Transport:

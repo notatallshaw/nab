@@ -32,12 +32,17 @@ With pipx, use `pipx run nab lock pyproject.toml`.
 
 ## Picking an HTTP backend
 
-`nab-index` ships urllib3 by default. Install an extra to use httpx or httpx2:
+`nab-index` uses urllib3 by default. To use httpx2, install the extra with the same tool you used to
+install Nab:
 
-```bash
-uv tool install 'nab[httpx2]'
-nab lock --http-backend httpx2
-```
+| Installation               | Command                              |
+| -------------------------- | ------------------------------------ |
+| uv tool                    | `uv tool install 'nab[httpx2]'`      |
+| Existing pipx installation | `pipx install --force 'nab[httpx2]'` |
+
+Then run `nab lock --http-backend httpx2`. For a one-off run, use
+`uvx --from 'nab[httpx2]' nab lock --http-backend httpx2` or
+`pipx run --spec 'nab[httpx2]' nab lock --http-backend httpx2`.
 
 The selected backend also fetches build dependencies, including dependencies of nested builds.
 

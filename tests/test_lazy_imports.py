@@ -99,7 +99,7 @@ console_entry()
 
     assert result.returncode == 1
     assert f"{backend} is not installed" in result.stderr
-    assert f"pip install nab[{backend}]" in result.stderr
+    assert f"install 'nab[{backend}]' in the environment that runs Nab" in result.stderr
 
 
 def test_lock_policy_enum_does_not_load_saved_lock_implementation() -> None:

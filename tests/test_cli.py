@@ -7825,25 +7825,27 @@ class TestMakeTransport:
         assert f"{backend} is not installed" in capsys.readouterr().err
 
     @pytest.mark.parametrize("backend", ["httpx", "httpx2"])
-    def test_optional_backend_missing_exits_with_hint(
+    def test_optional_transport_import_failure_names_the_cause(
         self,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
         backend: str,
     ) -> None:
-        """A missing optional backend exits with an installation hint."""
+        """A broken adapter reports the original import error."""
         original_import = builtins.__import__
 
         def fake_import(name: str, *args: object, **kwargs: object) -> object:
             if name == f"nab_index.{backend}_async_transport":
-                raise ImportError(name)
+                raise ImportError("incompatible dependency")
             return original_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
         with pytest.raises(SystemExit) as info:
             _make_transport(backend)
         assert info.value.code == 1
-        assert f"nab[{backend}]" in capsys.readouterr().err
+        assert f"cannot initialize {backend} transport: incompatible dependency" in (
+            capsys.readouterr().err
+        )
 
     @pytest.mark.parametrize("backend", ["httpx", "httpx2"])
     def test_optional_backend_without_h2_exits_with_hint(
@@ -8083,14 +8085,8 @@ class TestResolveTransport:
         pyproject = _make_pyproject(
             tmp_path, '[project]\nname = "root"\nversion = "0"\ndependencies = []\n'
         )
-        original_import = builtins.__import__
+        monkeypatch.setitem(sys.modules, "httpx", None)
 
-        def fake_import(name: str, *args: object, **kwargs: object) -> object:
-            if name == "nab_index.httpx_async_transport":
-                raise ImportError(name)
-            return original_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", fake_import)
         with pytest.raises(SystemExit) as info:
             lock(
                 pyproject,
