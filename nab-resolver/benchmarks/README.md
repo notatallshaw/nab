@@ -33,12 +33,13 @@ A change to `Range` can win on one scenario and lose on another, so compare all 
 Each prints its `Range` call counts, `hash_misses` for calls that found the hash memo empty,
 `intervals_max` and `intervals_mean` over the intervals tested, a solution digest, and process CPU.
 
-Everything but the `__hash__` count and timing survives a change of machine. `__hash__` follows how
-often CPython's dicts ask a key for its hash and so differs between versions, which is why
-`hash_misses` is reported beside it.
+The number of times a dictionary calls `__hash__` can differ between Python versions. `hash_misses`
+counts the calls that actually computed a range's hash.
 
-Quote a CPU number only from a serialized run. Two runs whose digests differ answer different
-questions and cannot be compared.
+Each scenario starts with a warm-up. The next solve records the selected versions, search counters
+and range calls together. The timed solves run with the original range methods. The benchmark
+rejects a run if any solve differs in its pins, rounds, decisions or conflicts. To compare CPU
+times, run one benchmark process at a time.
 
 The digest identifies the solution, not the workload. `wrong-package-backtracking` always resolves
 to the same four pins, so its search counters and interval census separate runs.

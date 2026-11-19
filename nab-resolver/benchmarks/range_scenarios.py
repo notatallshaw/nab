@@ -15,16 +15,11 @@ membership tests against single-interval ranges, and
 ``satisfied-ceiling-fanin`` puts every ``relation`` question the resolver asks
 on a requirement that already holds, so all of them answer SUBSET.
 
-Every scenario reports its Range call counts, how many ``__hash__`` calls found
-the memo empty, the intervals per range that membership was tested against, and
-a digest of the solution it reached. All of it holds across machines and
-interpreters except the ``__hash__`` count, which follows how often CPython's
-dicts ask a key for its hash and so differs between versions. The memo misses
-beside it are what a change to hashing shows up in. Timing holds on no machine,
-so quote a CPU number only from a serialized run, and read two runs whose
-digests differ as two different questions.
-
-``README.md`` next to this script covers what the numbers do and do not settle.
+The report counts Range calls, including hash calls that had to compute a hash,
+and records the number of intervals in each range tested for membership. Each
+scenario also reports its solution digest and search counts. Check those before
+comparing CPU times. The number of calls to ``__hash__`` can vary between Python
+versions. See the adjacent README for the workloads and examples.
 """
 
 from __future__ import annotations
@@ -35,9 +30,11 @@ import json
 import platform
 import statistics
 import time
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import BaseProvider, Resolver
@@ -190,11 +187,7 @@ class GraphProvider(BaseProvider[str, int]):
     def has_satisfying_version(
         self, package: str, version_range: RangeProtocol[int]
     ) -> bool:
-        """Report whether any release of ``package`` is inside ``version_range``.
-
-        Owed to ``ResolverProvider`` and not supplied by ``BaseProvider``. No
-        scenario here reaches it.
-        """
+        """Return whether any release of the package satisfies the requested range."""
         return any(v in version_range for v in self._newest_first.get(package, ()))
 
     def get_dependencies(self, package: str, version: int) -> Mapping[str, Range[int]]:
@@ -241,6 +234,24 @@ class Resolution:
     def digest(self) -> str:
         """Short stable identity for the solution this resolve reached."""
         return solution_digest(self.solution)
+
+    @property
+    def search_counts(self) -> dict[str, int]:
+        """The search counters included in the JSON report."""
+        return {
+            "rounds": self.stats.rounds,
+            "decisions": self.stats.decisions,
+            "conflicts": self.stats.conflicts,
+        }
+
+    def check_repeat(self, repeated: Resolution, scenario: str) -> None:
+        """Require the same pins, rounds, decisions and conflicts for each run."""
+        if repeated.solution != self.solution:
+            msg = f"{scenario}: repeated resolve selected a different solution"
+            raise RuntimeError(msg)
+        if repeated.search_counts != self.search_counts:
+            msg = f"{scenario}: repeated resolve reported different search counts"
+            raise RuntimeError(msg)
 
 
 def resolve_once(graph: Graph) -> Resolution:
@@ -291,60 +302,29 @@ class RangeTraffic:
     hash_misses: int = 0
 
 
-def count_range_traffic(graph: Graph) -> RangeTraffic:
-    """Resolve ``graph`` once with ``Range``'s methods wrapped in counters.
-
-    The wrappers are far too expensive to leave in place while timing, so this
-    is its own resolve and the timed repeats run against the untouched class.
-    """
+def resolve_with_counters(graph: Graph) -> tuple[Resolution, RangeTraffic]:
+    """Return the solution, search counts and Range calls from one resolve."""
     traffic = RangeTraffic()
-    originals = {name: getattr(Range, name) for name in COUNTED_METHODS}
 
-    def counter(name: str, original: Any) -> Any:
-        """Wrap one Range method so every call to it is tallied."""
-
-        def counted(self: Range[int], *args: Any, **kwargs: Any) -> Any:
+    def counter(name: str, original: Callable[..., object]) -> Callable[..., object]:
+        def counted(self: Range[int], *args: object, **kwargs: object) -> object:
             traffic.counts[name] += 1
+            if name == "__contains__":
+                traffic.census.record(len(self._intervals))
+            elif name == "__hash__" and self._hash == 0:
+                traffic.hash_misses += 1
             return original(self, *args, **kwargs)
 
         return counted
 
-    def membership_counter(original: Any) -> Any:
-        """Wrap ``__contains__``, which also censuses its receiver's intervals."""
-
-        def counted(self: Range[int], version: object) -> bool:
-            traffic.counts["__contains__"] += 1
-            traffic.census.record(len(self._intervals))
-            return bool(original(self, version))
-
-        return counted
-
-    def hash_counter(original: Any) -> Any:
-        """Wrap ``__hash__``, separating the calls the memo already answers."""
-
-        def counted(self: Range[int]) -> int:
-            traffic.counts["__hash__"] += 1
-            if self._hash == 0:
-                traffic.hash_misses += 1
-            return int(original(self))
-
-        return counted
-
-    for name, original in originals.items():
-        if name == "__contains__":
-            setattr(Range, name, membership_counter(original))
-        elif name == "__hash__":
-            setattr(Range, name, hash_counter(original))
-        else:
-            setattr(Range, name, counter(name, original))
-
-    try:
-        resolve_once(graph)
-    finally:
-        for name, original in originals.items():
-            setattr(Range, name, original)
-
-    return traffic
+    # Restore Range's methods before the first timed run, even if the resolve fails.
+    with ExitStack() as patches:
+        for name in COUNTED_METHODS:
+            patches.enter_context(
+                patch.object(Range, name, counter(name, getattr(Range, name)))
+            )
+        resolution = resolve_once(graph)
+    return resolution, traffic
 
 
 @dataclass(frozen=True)
@@ -363,28 +343,25 @@ class Measurement:
 
 
 def measure(scenario: Scenario, repeats: int) -> Measurement:
-    """Run one scenario: once for its counters, then ``repeats`` times for CPU.
+    """Warm up one scenario, count its Range calls, then time ``repeats`` solves.
 
     The counted resolve is not the first against this graph, so the hash misses
     it reports come from the ranges a resolve builds rather than from the
     graph's own literals.
 
-    The repeats are checked against the first resolve's solution, which catches
-    a resolve that is not reproducible within a run. Comparing answers across
-    runs is what the reported digest is for.
+    All solves must agree on the selected versions and reported search counters.
     """
     graph = scenario.build(scenario.size)
-    resolution = resolve_once(graph)
-    traffic = count_range_traffic(graph)
+    warmup = resolve_once(graph)
+    resolution, traffic = resolve_with_counters(graph)
+    resolution.check_repeat(warmup, scenario.id)
 
     cpu_seconds = []
     for _ in range(repeats):
         start = time.process_time()
         repeated = resolve_once(graph)
         cpu_seconds.append(time.process_time() - start)
-        if repeated.solution != resolution.solution:
-            msg = f"{scenario.id}: repeated resolve selected a different solution"
-            raise RuntimeError(msg)
+        resolution.check_repeat(repeated, scenario.id)
 
     return Measurement(scenario, resolution, traffic, cpu_seconds)
 
@@ -401,11 +378,7 @@ def build_report(measurements: Sequence[Measurement], repeats: int) -> dict[str,
                 "size": measurement.scenario.size,
                 "range_type": measurement.resolution.range_type,
                 "digest": measurement.resolution.digest,
-                "search": {
-                    "rounds": measurement.resolution.stats.rounds,
-                    "decisions": measurement.resolution.stats.decisions,
-                    "conflicts": measurement.resolution.stats.conflicts,
-                },
+                "search": measurement.resolution.search_counts,
                 "range_calls": measurement.traffic.counts,
                 "hash_misses": measurement.traffic.hash_misses,
                 "intervals": {
