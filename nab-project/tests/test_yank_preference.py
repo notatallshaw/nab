@@ -8,7 +8,6 @@ from functools import partial
 
 import pytest
 
-from nab_project._testing.yanking import Extras, ReleaseRow, graph_port
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
@@ -30,16 +29,18 @@ from nab_resolver.errors import (
 )
 from nab_resolver.resolver import ResolverStats
 
+from .yanked_releases import ReleaseExtras, ReleaseRow, make_release_coordinator
+
 
 def preference(
     rows: list[ReleaseRow],
     roots: list[str],
     *,
     max_steps: int = 100_000,
-    extras: Extras | None = None,
+    extras: ReleaseExtras | None = None,
 ) -> YankPreference:
     """Keep real metadata and original declarations while testing the query protocol."""
-    port = graph_port(rows, extras)
+    port = make_release_coordinator(rows, extras)
     factory = partial(
         Provider, port, defer_yanked=True, extras_mode=ExtrasMode.BACKTRACK
     )

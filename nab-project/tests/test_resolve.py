@@ -25,7 +25,6 @@ from nab_project._resolve.engine import (
     _walk_no_versions_packages,
 )
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
-from nab_project._testing.yanking import graph_port
 from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
@@ -94,6 +93,8 @@ from nab_resolver.errors import (
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
+
+from .yanked_releases import make_release_coordinator
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -280,7 +281,7 @@ def _malformed_group_pyproject(tmp_path: Path) -> Path:
 @pytest.fixture
 def python_marker_fetch_port() -> FakeFetchPort:
     """Serve leaf dependencies on both sides of the Python 3.12 boundary."""
-    return graph_port(
+    return make_release_coordinator(
         (
             (
                 "foo",
@@ -1059,7 +1060,7 @@ class TestResolvePyproject:
             '[project]\ndependencies = ["foo===custom", "bar>=1.0"]\n',
         )
 
-        coordinator = graph_port(
+        coordinator = make_release_coordinator(
             (
                 ("foo", "1.0", False, ()),
                 ("bar", "1.0", False, ()),
@@ -1118,7 +1119,7 @@ class TestResolvePyproject:
             '[tool.nab]\nconstraints = ["bar<2.0", "skip===custom"]\n',
         )
 
-        coordinator = graph_port(
+        coordinator = make_release_coordinator(
             (
                 ("foo", "2.0", False, ("bar>=1.0",)),
                 ("bar", "1.0", False, ()),
@@ -1165,7 +1166,7 @@ class TestResolvePyproject:
             '[project]\ndependencies = ["requests[security]>=2.0"]\n',
         )
 
-        coordinator = graph_port(
+        coordinator = make_release_coordinator(
             (
                 (
                     "requests",
@@ -1427,7 +1428,7 @@ class TestResolvePyproject:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text('[project]\ndependencies = ["foo"]\n')
 
-        coordinator = graph_port(
+        coordinator = make_release_coordinator(
             (
                 ("foo", "2.0", False, ("urllib3>=1.0",)),
                 ("urllib3", "1.0", False, ()),
@@ -8094,7 +8095,7 @@ class TestFetchWidth:
 def test_terminal_solver_graphs_do_not_acquire_no_versions_diagnostics(
     error_type: type[ResolutionTerminatedError],
 ) -> None:
-    provider = Provider(graph_port([("missing-pkg", "1", False, [])]))
+    provider = Provider(make_release_coordinator([("missing-pkg", "1", False, [])]))
     bounds = VersionRange.singleton(V("2"))
     assert provider.choose_version("missing-pkg", bounds) is None
     assert provider.get_no_versions_reason("missing-pkg", bounds) is not None

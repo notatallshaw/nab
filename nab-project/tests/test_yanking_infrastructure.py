@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from nab_project._resolve.engine import _warn_selected_yanks
-from nab_project._testing.yanking import ReleaseRow, graph_port
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import IndexPin, LocalPin, LockValidationError, TargetLock
 from nab_project.resolve import resolve_with_coordinator
@@ -26,13 +25,15 @@ from nab_provider.yank_candidates import Candidate, YankCandidates, add_range, i
 from nab_provider.yanking import mark_yanked
 from nab_resolver.errors import ResolutionInvariantError
 
+from .yanked_releases import ReleaseRow, make_release_coordinator
+
 if TYPE_CHECKING:
     from nab_provider.testing import FakeFetchPort
 
 
 def catalogue(releases: list[ReleaseRow]) -> YankCandidates:
     """Create a real deferred provider while leaving selection policy to its caller."""
-    port = graph_port(releases)
+    port = make_release_coordinator(releases)
     factory = partial(
         Provider, port, defer_yanked=True, extras_mode=ExtrasMode.BACKTRACK
     )
@@ -41,7 +42,7 @@ def catalogue(releases: list[ReleaseRow]) -> YankCandidates:
 
 @pytest.mark.parametrize("requirement", ["dep", "dep==2"])
 def test_ordinary_resolution_keeps_skipping_yanked_files(requirement: str) -> None:
-    port = graph_port([("dep", "2", True, []), ("dep", "1", False, [])])
+    port = make_release_coordinator([("dep", "2", True, []), ("dep", "1", False, [])])
     provider = Provider(port)
     selected = provider.choose_version(
         "dep", Requirement(requirement).specifier.to_range()
@@ -54,7 +55,9 @@ def test_ordinary_resolution_keeps_skipping_yanked_files(requirement: str) -> No
 
 
 def test_ordinary_mixed_version_reads_only_live_metadata() -> None:
-    port = graph_port([("dep", "2", True, ["missing"]), ("dep", "2", False, [])])
+    port = make_release_coordinator(
+        [("dep", "2", True, ["missing"]), ("dep", "2", False, [])]
+    )
     provider = Provider(port)
     assert provider.get_dependencies("dep", Version("2")) == {}
     assert all(not file.yanked for file in provider.dist_files_for("dep", Version("2")))
@@ -64,7 +67,7 @@ def test_ordinary_mixed_version_reads_only_live_metadata() -> None:
 
 
 def test_deferred_listing_is_not_preparation_permission() -> None:
-    port = graph_port([("dep", "2", True, [])])
+    port = make_release_coordinator([("dep", "2", True, [])])
     provider = Provider(port, defer_yanked=True)
     assert provider.fetch_versions("dep")
     with pytest.raises(YankAdmissionRequiredError):
@@ -183,7 +186,7 @@ def test_offline_listing_is_distinct_from_a_complete_empty_page() -> None:
 
 
 def test_cached_declared_extras_keep_only_their_active_pin_syntax() -> None:
-    port = graph_port(
+    port = make_release_coordinator(
         [
             (
                 "dep",
@@ -235,7 +238,9 @@ def test_invalid_extra_is_a_metadata_rejection() -> None:
 def test_fact_ordering_preserves_preferences_and_strategy(
     preference: str, lowest: bool, expected: list[str]
 ) -> None:
-    port = graph_port([("dep", version, False, []) for version in ("1", "1.0", "2")])
+    port = make_release_coordinator(
+        [("dep", version, False, []) for version in ("1", "1.0", "2")]
+    )
     factory = partial(
         Provider,
         port,
@@ -283,7 +288,7 @@ def test_source_install_accepts_unordered_files() -> None:
 
 def source_install_port(release_count: int) -> FakeFetchPort:
     """Serve wheel/sdist pairs with only the newest release withdrawn."""
-    port = graph_port(
+    port = make_release_coordinator(
         [
             ("dep", str(version), version == release_count, [])
             for version in range(1, release_count + 1)
@@ -389,7 +394,7 @@ def withdrawn_sdist(version: str = "2") -> SdistFile:
 
 
 def test_artifact_view_excludes_withdrawn_siblings_without_permission() -> None:
-    port = graph_port([("dep", "2", False, []), ("dep", "2", True, [])])
+    port = make_release_coordinator([("dep", "2", False, []), ("dep", "2", True, [])])
     provider = Provider(port, defer_yanked=True)
     provider.fetch_versions("dep")
     files = provider.dist_files_for("dep", Version("2"))
@@ -401,7 +406,7 @@ def test_artifact_view_excludes_withdrawn_siblings_without_permission() -> None:
 def test_artifact_view_cannot_supply_a_withdrawn_install_source(
     live_wheel: bool,
 ) -> None:
-    port = graph_port([("dep", "2", False, [])] if live_wheel else [])
+    port = make_release_coordinator([("dep", "2", False, [])] if live_wheel else [])
     port.index.store_listing(
         "dep", [*(port.index.get_listing("dep") or []), withdrawn_sdist()]
     )
@@ -420,7 +425,7 @@ def test_artifact_view_cannot_supply_a_withdrawn_install_source(
 
 
 def test_prefetch_does_not_promote_legacy_sdist_metadata_to_wheel_metadata() -> None:
-    port = graph_port([("dep", "2", False, [])])
+    port = make_release_coordinator([("dep", "2", False, [])])
     url = "https://example.test/dep-2-False.whl.metadata"
     port.index.store_metadata("dep", "2", None, metadata_url=url)
     port.index.store_sdist_metadata(

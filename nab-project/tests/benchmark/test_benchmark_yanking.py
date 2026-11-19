@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, TypeVar
 import pytest
 
 from nab_project._testing.coordinator_fake import make_coordinator
-from nab_project._testing.yanking import graph_port
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.records import WheelFile
 from nab_provider.target import ResolveTarget
@@ -25,6 +24,7 @@ from nab_resolver.errors import (
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause
 
+from ..yanked_releases import make_release_coordinator
 from .test_benchmark_parse_requirements import _harness
 
 if TYPE_CHECKING:
@@ -56,7 +56,7 @@ def test_benchmark_termination_does_not_start_yanked_fallback(
     runner: str, error_type: type[ResolutionTerminatedError]
 ) -> None:
     module = _harness(runner)
-    port = graph_port([("dep", "1", False, []), ("dep", "1", True, [])])
+    port = make_release_coordinator([("dep", "1", False, []), ("dep", "1", True, [])])
     inputs = module.build_benchmark_resolver_inputs(
         module.parse_requirements(["dep==1"]), None
     )
@@ -212,7 +212,7 @@ def test_retry_counters_include_every_actual_solve(
             ("withdrawn", "1", True, []),
         ]
     )
-    coordinator = graph_port(releases)
+    coordinator = make_release_coordinator(releases)
 
     @contextmanager
     def opened_coordinator(
