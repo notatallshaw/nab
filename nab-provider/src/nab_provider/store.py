@@ -115,8 +115,9 @@ class InMemoryIndex:
         # for a wheel's METADATA, or None for text that stands for the version
         # itself, such as an sdist's PKG-INFO.  Each is cut to its header block
         # less the description on the way in.
-        self._metadata: dict[tuple[str, str, str | None], str | None] = {}
-        self._metadata_errors: dict[tuple[str, str, str | None], BaseException] = {}
+        self._metadata: dict[
+            tuple[str, str, str | None], str | BaseException | None
+        ] = {}
         # Versions whose version-level slot was written from an sdist PKG-INFO;
         # only sdist deps go through the PEP 643 check.
         self._metadata_from_sdist: set[tuple[str, str]] = set()
@@ -306,11 +307,15 @@ class InMemoryIndex:
             slot = (package, version, metadata_url)
             if slot in self._metadata:
                 text = self._metadata[slot]
+                if isinstance(text, BaseException):
+                    return (None, False)
                 if text is not None:
                     return (text, False)
             elif (package, version) in self._metadata_from_sdist:
                 return (None, False)
         version_level = self._metadata.get((package, version, None))
+        if isinstance(version_level, BaseException):
+            return (None, False)
         return (version_level, (package, version) in self._metadata_from_sdist)
 
     def get_metadata(
@@ -325,8 +330,8 @@ class InMemoryIndex:
     ) -> bool:
         """Return ``True`` once a fetch answering for ``metadata_url`` resolved.
 
-        Any value counts, including the ``None`` of an unserved sidecar.  The
-        precedence is :meth:`_read_metadata`'s.
+        Text, an absent sidecar and a fetch error are all completed results.
+        A caller can read the error with :meth:`get_metadata_error`.
         """
         with self._lock:
             if (
@@ -334,9 +339,14 @@ class InMemoryIndex:
                 and (package, version, metadata_url) in self._metadata
             ):
                 return True
-            return (package, version, None) in self._metadata and (
-                metadata_url is None
-                or (package, version) not in self._metadata_from_sdist
+            release = (package, version, None)
+            if metadata_url is None:
+                return release in self._metadata
+            # A release-wide error does not complete a different wheel's own fetch.
+            return (
+                release in self._metadata
+                and (package, version) not in self._metadata_from_sdist
+                and not isinstance(self._metadata[release], BaseException)
             )
 
     def get_metadata_with_origin(
@@ -384,9 +394,8 @@ class InMemoryIndex:
 
             # A replacement or fetch error invalidates the shared source.
             url, text = representative
-            if self._metadata.get((package, version, url)) != text or (
-                (package, version, url) in self._metadata_errors
-                or (package, version, None) in self._metadata_errors
+            if self._metadata.get((package, version, url)) != text or isinstance(
+                self._metadata.get((package, version, None)), BaseException
             ):
                 sources.pop(version)
                 return None
@@ -430,7 +439,7 @@ class InMemoryIndex:
     def _write_metadata_slot(
         self,
         slot: tuple[str, str, str | None],
-        data: str | None,
+        data: str | BaseException | None,
         *,
         from_sdist: bool,
     ) -> None:
@@ -439,25 +448,23 @@ class InMemoryIndex:
         Replacing version-level text drops metadata derived from it.
         """
         package, version, metadata_url = slot
-        if data is None:
-            text = None
-        else:
-            text = self._share_slot_text(
+        result = data
+        if isinstance(data, str):
+            result = self._share_slot_text(
                 (package, version),
                 metadata_without_description(metadata_header_block(data)),
             )
 
         if metadata_url is None:
-            if self._metadata.get(slot) != text:
+            if isinstance(result, BaseException) or self._metadata.get(slot) != result:
                 self._resolved_sdist_metadata.pop((package, version), None)
             if from_sdist:
                 self._metadata_from_sdist.add((package, version))
             else:
                 self._metadata_from_sdist.discard((package, version))
 
-        # The text lands last, so an unlocked reader never pairs it with sdist
-        # metadata derived from the text it replaced.
-        self._metadata[slot] = text
+        # Publish after clearing any sdist metadata derived from the previous text.
+        self._metadata[slot] = result
 
     def store_metadata(
         self,
@@ -492,7 +499,9 @@ class InMemoryIndex:
         """
         key = metadata_pending_key(package, version, metadata_url)
         with self._publishing(key):
-            self._metadata_errors[(package, version, metadata_url)] = error
+            self._write_metadata_slot(
+                (package, version, metadata_url), error, from_sdist=False
+            )
 
     def get_metadata_error(
         self, package: str, version: str, metadata_url: str | None = None
@@ -503,10 +512,11 @@ class InMemoryIndex:
         """
         with self._lock:
             if metadata_url is not None:
-                error = self._metadata_errors.get((package, version, metadata_url))
-                if error is not None:
-                    return error
-            return self._metadata_errors.get((package, version, None))
+                result = self._metadata.get((package, version, metadata_url))
+                if isinstance(result, BaseException):
+                    return result
+            result = self._metadata.get((package, version, None))
+            return result if isinstance(result, BaseException) else None
 
     def record_offline_metadata_miss(
         self, package: str, version: str, url: str
@@ -563,7 +573,7 @@ class InMemoryIndex:
         """
         key = f"sdist:{package}:{version}"
         with self._publishing(key):
-            self._metadata_errors[(package, version, None)] = error
+            self._write_metadata_slot((package, version, None), error, from_sdist=False)
 
     def metadata_from_sdist(self, package: str, version: str) -> bool:
         """Return whether the supplied cache key holds sdist-derived metadata."""
@@ -592,7 +602,7 @@ class InMemoryIndex:
         """
         key = range_pending_key(package, version, wheel_url)
         with self._publishing(key):
-            pass
+            self._metadata.pop((package, version, wheel_url), None)
 
     def store_range_error(
         self, package: str, version: str, wheel_url: str, error: BaseException
@@ -605,7 +615,9 @@ class InMemoryIndex:
         """
         key = range_pending_key(package, version, wheel_url)
         with self._publishing(key):
-            self._metadata_errors[(package, version, wheel_url)] = error
+            self._write_metadata_slot(
+                (package, version, wheel_url), error, from_sdist=False
+            )
 
     def store_range_outcome(
         self, package: str, version: str, wheel_url: str, outcome: RangeOutcome

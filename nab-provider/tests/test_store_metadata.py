@@ -113,6 +113,41 @@ class TestStoredMetadata:
         assert not idx.claim_offline_metadata_warning("foo")
         assert idx.claim_offline_metadata_warning("bar")
 
+    def test_sidecar_retry_replaces_its_own_result(self) -> None:
+        index = InMemoryIndex()
+        linux = "https://index.example/demo-linux.whl.metadata"
+        windows = "https://index.example/demo-windows.whl.metadata"
+        index.store_sdist_metadata("demo", "1", "source metadata")
+        index.store_metadata("demo", "1", "Linux", metadata_url=linux)
+        index.store_metadata("demo", "1", "Windows", metadata_url=windows)
+
+        failure = OSError("read interrupted")
+        index.store_metadata_error("demo", "1", failure, linux)
+        assert index.has_metadata("demo", "1", linux)
+        assert index.get_metadata_error("demo", "1", linux) is failure
+        assert index.get_metadata("demo", "1") == "source metadata"
+        assert index.get_metadata("demo", "1", linux) is None
+        assert index.get_metadata("demo", "1", windows) == "Windows"
+
+        index.store_metadata("demo", "1", "new Linux", metadata_url=linux)
+        assert index.get_metadata_error("demo", "1", linux) is None
+        assert index.get_metadata("demo", "1", linux) == "new Linux"
+
+    def test_sdist_failure_retires_derived_metadata(self) -> None:
+        index = InMemoryIndex()
+        text = make_metadata("demo", "1")
+        index.store_sdist_metadata("demo", "1", text)
+        index.store_resolved_sdist_metadata("demo", "1", parse_metadata(text))
+
+        failure = OSError("read interrupted")
+        index.store_sdist_metadata_error("demo", "1", failure)
+        assert index.get_metadata_with_origin("demo", "1") == (None, False)
+        assert index.get_resolved_sdist_metadata("demo", "1") is None
+
+        index.store_sdist_metadata("demo", "1", text)
+        assert index.get_metadata_error("demo", "1") is None
+        assert index.metadata_from_sdist("demo", "1")
+
     def test_metadata_error_roundtrip(self) -> None:
         idx = InMemoryIndex()
         assert idx.get_metadata_error("foo", "1.0") is None
@@ -358,6 +393,17 @@ class TestStoredMetadata:
 
 
 class TestRangeMetadata:
+    def test_later_range_read_replaces_an_error_or_text(self) -> None:
+        index = InMemoryIndex()
+        index.store_range_error("widget", "1", _RANGE_URL_A, OSError("try again"))
+        index.store_range_metadata("widget", "1", _RANGE_URL_A, "fetched")
+        assert index.get_metadata_error("widget", "1", _RANGE_URL_A) is None
+        assert index.get_metadata("widget", "1", _RANGE_URL_A) == "fetched"
+
+        index.store_range_absent("widget", "1", _RANGE_URL_A)
+        assert not index.has_metadata("widget", "1", _RANGE_URL_A)
+        assert index.get_metadata("widget", "1", _RANGE_URL_A) is None
+
     def test_store_range_metadata_fires_pending(self) -> None:
         idx = InMemoryIndex()
         key = f"range:widget:1.0:{_RANGE_URL_A}"
