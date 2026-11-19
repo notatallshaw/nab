@@ -11,7 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from operator import setitem
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 from typing import Literal
 from unittest.mock import MagicMock
 
@@ -23,7 +23,7 @@ from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.fetch import IndexRoute
 from nab_provider._vendor.packaging.tags import Tag
 from nab_provider._vendor.packaging.version import Version
-from nab_provider.provider import ProviderStats
+from nab_provider.provider import Provider, ProviderStats
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.target import ResolveTarget
 from nab_resolver.resolver import ResolverStats
@@ -2786,7 +2786,8 @@ def test_resolve_scenario_coordinates_config_target_and_constraints(
         trust_unverified_sdist_deps=False,
     )
     coordinator = object()
-    provider = SimpleNamespace(stats=_distinct_provider_stats())
+    provider = Provider(make_coordinator())
+    provider.stats = _distinct_provider_stats()
     seen: dict[str, object] = {}
 
     @contextmanager
@@ -2868,6 +2869,7 @@ def test_resolve_scenario_coordinates_config_target_and_constraints(
 
     assert seen["resolver_provider"] is provider
     assert seen["resolver_kwargs"] == {
+        "format_range": provider.format_range,
         "range_type": module.VersionRange,
         "root_version": "0",
     }
@@ -2903,7 +2905,9 @@ def test_resolve_scenario_records_no_pins_after_failure(
         yield object()
 
     def fake_build_provider(*_args: object, **_kwargs: object) -> object:
-        return SimpleNamespace(stats=_distinct_provider_stats())
+        provider = Provider(make_coordinator())
+        provider.stats = _distinct_provider_stats()
+        return provider
 
     class FakeResolver:
         def __init__(self, *_args: object, **_kwargs: object) -> None:

@@ -1319,6 +1319,7 @@ def resolve_scenario(
             provider,
             range_type=VersionRange,
             root_version="0",
+            format_range=provider.format_range,
         )
 
         pins: dict[str, str] = {}
