@@ -247,61 +247,38 @@ class MultiIndexClient:
             # A cold index can still supply the package on a later lookup.
             raise skipped_offline
 
-        # Every index answered absent. Attribute follow-up calls to the first one.
-        self._record_route(package, self._order[0])
+        # No index served the package. A later lookup must check them all again.
         return []
 
     def served_unreadable_only(self, package: str) -> bool:
-        """Whether any walked index listed ``package`` in unreadable formats.
+        """Whether an index listed the package only in unreadable formats.
 
-        An empty walk routes ``package`` to the first index, which need not
-        be the one that served the unreadable page, so every client is asked
-        rather than the routed one.
+        An empty result has no serving index, so check each client's listing.
         """
         return any(
             client.served_unreadable_only(package) for client in self._clients.values()
         )
 
     def served_unreachable_only(self, package: str) -> bool:
-        """Whether any walked index served ``package`` only links nab cannot reach.
-
-        Asked of every client for the same reason
-        :meth:`served_unreadable_only` is: an empty walk routes ``package``
-        to the first index, which need not be the one that served it.
-        """
+        """Whether an index listed only links Nab could not reach."""
         return any(
             client.served_unreachable_only(package) for client in self._clients.values()
         )
 
     def served_no_usable_file(self, package: str) -> bool:
-        """Whether a walked index named files for ``package`` and nab kept none.
-
-        Asked of every client for the same reason
-        :meth:`served_unreadable_only` is: an empty walk routes ``package``
-        to the first index, which need not be the one that served it.
-        """
+        """Whether an index listed files for the package but Nab kept none."""
         return any(
             client.served_no_usable_file(package) for client in self._clients.values()
         )
 
     def served_all_yanked(self, package: str) -> bool:
-        """Whether a walked index listed ``package`` and yanked every file.
-
-        Asked of every client for the same reason
-        :meth:`served_unreadable_only` is: an empty walk routes ``package``
-        to the first index, which need not be the one that served it.
-        """
+        """Whether an index listed the package with every release yanked."""
         return any(
             client.served_all_yanked(package) for client in self._clients.values()
         )
 
     def served_zip_sdists(self, package: str) -> frozenset[str]:
-        """Versions any walked index served as a ``.zip`` sdist.
-
-        Asked of every client for the same reason
-        :meth:`served_unreadable_only` is: the routed index need not be the
-        one that served the ``.zip``.
-        """
+        """Return the package's ZIP sdist versions reported by any index."""
         return frozenset(
             version
             for client in self._clients.values()
@@ -369,13 +346,7 @@ class MultiIndexClient:
             return self._route_cache.get(canonical)
 
     def route_for(self, package: str) -> str | None:
-        """Return the index name that served ``package``, or ``None``.
-
-        ``None`` indicates the router has not seen the package yet:
-        no listing call has resolved its location.  Callers must
-        treat the return value as best-effort and fall back to a
-        configured default when ``None`` comes back.
-        """
+        """Return the pinned or serving index, or ``None`` if none was selected."""
         return self._cached_route_name(package)
 
     def _record_route(self, package: str, index_name: str) -> None:

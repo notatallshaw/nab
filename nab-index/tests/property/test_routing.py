@@ -93,6 +93,7 @@ def test_listing_and_metadata_follow_the_selected_index(
         first_lookup = order
 
     selected = order[chosen]
+    has_route = use_override or any(available)
     expected_urls = (
         [f"https://{selected}.example/{filename}"] if available[chosen] else []
     )
@@ -104,12 +105,12 @@ def test_listing_and_metadata_follow_the_selected_index(
             files = await router.get_files(requested)
             assert [f.url for f in files] == expected_urls
             assert requests == first_lookup
-            assert router.route_for(repeated) == selected
+            assert router.route_for(repeated) == (selected if has_route else None)
 
             requests.clear()
             files = await router.get_files(repeated)
             assert [f.url for f in files] == expected_urls
-            assert requests == [selected]
+            assert requests == ([selected] if has_route else order)
 
             requests.clear()
             text = await router.get_metadata_text(
