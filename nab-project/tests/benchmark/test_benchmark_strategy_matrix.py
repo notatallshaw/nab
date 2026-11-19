@@ -4564,6 +4564,7 @@ def test_profile_runner_accepts_an_explicit_strategy() -> None:
 )
 def test_profile_main_validates_schema_before_host_capture(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
     field: str,
     value: object,
     message: str,
@@ -4582,8 +4583,19 @@ def test_profile_main_validates_schema_before_host_capture(
 
     monkeypatch.setattr(module.sc.BenchmarkHost, "current", classmethod(fail_host))
 
-    with pytest.raises((TypeError, ValueError), match=re.escape(message)):
+    with pytest.raises(SystemExit) as exc:
         module.main()
+    assert exc.value.code == 2
+    assert message in capsys.readouterr().err
+
+
+def test_profile_rejects_an_unsupported_scenario_with_its_reason() -> None:
+    profile = _harness("_profile_runner")
+    scenario = {"unsupported_reason": "requires a Windows-only distribution"}
+    with pytest.raises(
+        SystemExit, match="example:.*requires a Windows-only distribution"
+    ):
+        profile.build_inputs("example", scenario)
 
 
 def test_standard_canary_and_profile_build_the_same_project_config() -> None:
