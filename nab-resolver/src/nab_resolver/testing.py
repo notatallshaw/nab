@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import copy
 from itertools import product
 from math import prod
 from types import MappingProxyType
@@ -630,9 +631,10 @@ def _resolution_queries(
     # Singleton roots expose omissions hidden by another feasible alternative.
     for package, choices in fixture.graph.items():
         for version in choices:
-            roots = {package: _checked_singleton(range_type, version, versions)}
-            scenario = ProviderScenario(
-                fixture.name, roots, fixture.graph, constraints=fixture.constraints
+            # Each query has its own roots. The graph and constraints are read-only.
+            scenario = copy(reordered)
+            scenario.requirements = MappingProxyType(
+                {package: _checked_singleton(range_type, version, versions)}
             )
             membership: dict[_PackageType, frozenset[VersionType]] = {
                 package: frozenset((version,))
