@@ -7327,6 +7327,55 @@ class TestClosedStandardStreams:
     process outright, so every test here patches it.
     """
 
+    def test_lost_diagnostics_only_affect_the_current_call(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(sys, "stderr", None)
+        with pytest.raises(SystemExit) as error:
+            main(["unknown-command"])
+        assert error.value.code == 120
+        assert sys.stderr is None
+
+        main(["--version"])
+        assert capsys.readouterr().out == f"nab {nab_version.__version__}\n"
+        assert sys.stderr is None
+
+    @pytest.mark.parametrize("detached", [False, True], ids=["closed", "detached"])
+    def test_run_with_an_unavailable_stdout_returns_write_failure(
+        self, monkeypatch: pytest.MonkeyPatch, *, detached: bool
+    ) -> None:
+        stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        if detached:
+            stream.detach().close()
+        else:
+            stream.close()
+        monkeypatch.setattr(sys, "stdout", stream)
+        assert run(("--help",)) == 120
+        assert sys.stdout is stream
+
+    def test_empty_write_to_missing_stderr_keeps_success(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "stderr", None)
+
+        def empty_write() -> None:
+            sys.stderr.write("")
+
+        assert run(("cache", "dir", "--cache-dir", str(tmp_path)), empty_write) == 0
+        assert sys.stderr is None
+
+    def test_redirected_stderr_is_restored_after_an_exception(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "stderr", None)
+
+        def interrupted() -> None:
+            raise RuntimeError("callback failed")
+
+        with pytest.raises(RuntimeError, match="callback failed"):
+            run(("cache", "dir", "--cache-dir", str(tmp_path)), interrupted)
+        assert sys.stderr is None
+
     def test_closed_stdout_exits_120(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``--version`` with no stdout exits 120 instead of crashing."""
         monkeypatch.setattr(sys, "argv", ["nab", "--version"])
@@ -7419,6 +7468,19 @@ class TestClosedStandardStreams:
 
 class TestSystemExitStatus:
     """Tests for mapping a ``SystemExit`` code to a process status."""
+
+    def test_text_exit_without_stderr_reports_lost_output(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "stderr", None)
+        assert _system_exit_status("boom") == 120
+
+    def test_text_exit_with_unencodable_stderr_reports_lost_output(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stream = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
+        monkeypatch.setattr(sys, "stderr", stream)
+        assert _system_exit_status("café") == 120
 
     def test_bare_exit_is_zero(self) -> None:
         """``sys.exit()`` raises ``SystemExit(None)``, which means success."""
