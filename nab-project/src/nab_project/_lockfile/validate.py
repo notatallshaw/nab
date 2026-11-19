@@ -348,7 +348,7 @@ def check_direct_requirements(
     contain it. Anything that cannot be reduced to a name and specifier
     against a concrete version is skipped: an inactive or indeterminate
     marker, a URL requirement, a version-less or direct (URL, VCS, directory)
-    pin, and a name carrying more than one versioned pin. Returns the first
+    pin, and a name with more than one package row. Returns the first
     violation, or ``None``.
 
     ``resolve_target`` is the target ``marker_env`` came from: a marker its
@@ -458,20 +458,22 @@ def _versioned_pins(committed: Pylock) -> dict[str, Version]:
     """Map canonical name to version for names with a single concrete pin.
 
     URL, VCS and directory pins are excluded: they have no index version to
-    test a specifier against. A name carrying more than one versioned pin is
-    excluded too: a conflict fork records the same package once per member
-    under a disjoint marker, so no single version stands for the name.
+    test a specifier against. If a name has multiple rows, a marker or
+    source choice decides which row applies.
     """
     versions: dict[str, Version] = {}
-    duplicated: set[str] = set()
+    excluded: set[str] = set()
     for package in committed.packages:
-        if package.version is None or _is_direct_pin(package):
-            continue
-        if package.name in versions:
-            duplicated.add(package.name)
-        versions[package.name] = package.version
-    for name in duplicated:
-        del versions[name]
+        if (
+            package.version is None
+            or _is_direct_pin(package)
+            or package.name in versions
+        ):
+            excluded.add(package.name)
+        else:
+            versions[package.name] = package.version
+    for name in excluded:
+        versions.pop(name, None)
     return versions
 
 
