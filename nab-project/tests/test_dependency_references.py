@@ -23,6 +23,7 @@ from nab_project.lockfile import (
     render_lock,
     resolve_dependency_references,
 )
+from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
@@ -184,6 +185,44 @@ def _one_parent_lock(tmp_path: Path) -> Pylock:
         ),
         lock_dir=tmp_path,
     )
+
+
+def test_identity_references_do_not_serialize_the_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lock = _one_parent_lock(tmp_path)
+    marker = Marker('python_version >= "3.10"')
+    reference = {"name": "child", "version": "1", "marker": str(marker)}
+    packages = [
+        replace(package, dependencies=(reference,))
+        if package.name == "parent"
+        else replace(package, marker=marker)
+        for package in lock.packages
+    ]
+    qualified = replace(lock, packages=packages)
+    qualified.validate()
+
+    def refuse_serialization(self: Pylock) -> None:
+        raise AssertionError("resolving an identity reference serialized the lock")
+
+    monkeypatch.setattr(Pylock, "to_dict", refuse_serialization)
+    by_name = {package.name: index for index, package in enumerate(packages)}
+    assert resolve_dependency_references(qualified) == {
+        by_name["parent"]: frozenset({by_name["child"]}),
+        by_name["child"]: frozenset(),
+    }
+
+
+def test_package_name_subclass_matches_the_serialized_name(tmp_path: Path) -> None:
+    class Name(str):
+        __slots__ = ()
+
+    document = dict(_one_parent_lock(tmp_path).to_dict())
+    child = next(row for row in document["packages"] if row["name"] == "child")
+    child["name"] = Name("child")
+    lock = Pylock.from_dict(document)
+    by_name = {package.name: index for index, package in enumerate(lock.packages)}
+    assert resolve_dependency_references(lock)[by_name["parent"]] == {by_name["child"]}
 
 
 @pytest.mark.parametrize("field", ["version", "index", "wheels"])
