@@ -127,13 +127,9 @@ jobs:
       - run: python -m nox -s locks -- --locked
 
   types:
-    name: ${{ matrix.checker }}
+    name: type checks
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        checker: [mypy, pyright, ty, pyrefly, zuban]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -153,9 +149,5 @@ jobs:
       - name: Install nox
         run: pip install --group pylock.dev.toml:nox
 
-      # Type-check logic lives in noxfile.py. The checker goes through env,
-      # not inline ${{ }}, for zizmor.
-      - name: Run ${{ matrix.checker }}
-        run: nox -s "types(checker='${CHECKER}')"
-        env:
-          CHECKER: ${{ matrix.checker }}
+      - name: Run all type checkers
+        run: python -m nox -s types

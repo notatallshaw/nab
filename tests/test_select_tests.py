@@ -28,7 +28,7 @@ assert GIT is not None
     ("path", "expected"),
     [
         ("nab-resolver/src/nab_resolver/ranges.py", list(WORKSPACES)),
-        ("nab-resolver/tests/property/test_pubgrub_resolver.py", list(WORKSPACES)),
+        ("nab-resolver/tests/property/test_pubgrub_resolver.py", ["resolver"]),
         (
             "nab-markersets/src/nab_markersets/_packaging.py",
             ["provider", "project", "umbrella"],
@@ -40,7 +40,7 @@ assert GIT is not None
         ("nab-index/src/nab_index/client.py", ["project", "umbrella"]),
         (
             "nab-project/tests/property_python/test_alignment.py",
-            ["project", "umbrella"],
+            ["project"],
         ),
         ("src/nab/cli.py", ["project", "umbrella"]),
         ("tests/test_output.py", ["umbrella"]),
@@ -58,6 +58,49 @@ assert GIT is not None
 )
 def test_changed_path_selects_its_consumers(path: str, expected: list[str]) -> None:
     assert select_tests.select_workspaces([path], WORKSPACES) == expected
+
+
+def test_native_platforms_share_one_runner_per_os() -> None:
+    paths = ["nab-index/src/nab_index/client.py"]
+    outputs = select_tests.job_outputs(["project", "umbrella"], WORKSPACES, paths)
+    cells = json.loads(outputs["test-matrix"])["include"]
+    for os_name in ("macos", "windows"):
+        assert [row for row in cells if row["os"] == os_name] == [
+            {"os": os_name, "python": "3.10", "second": "3.15"}
+        ]
+    linux = {row["python"] for row in cells if row["os"] == "ubuntu"}
+    assert linux == {*select_tests.PYTHON_VERSIONS, "3.15t", "3.10.4"}
+    assert json.loads(outputs["benchmark-matrix"])["include"] == [
+        {"os": "ubuntu", "python": "3.15", "reports": True}
+    ]
+
+
+@pytest.mark.parametrize(
+    "path", ["docs/index.md", "nab-project/benchmarks/scenarios/universal.toml"]
+)
+def test_docs_and_benchmark_inputs_use_one_ordinary_linux_job(path: str) -> None:
+    outputs = select_tests.job_outputs(list(WORKSPACES), WORKSPACES, [path])
+    assert json.loads(outputs["test-matrix"])["include"] == [
+        {"os": "ubuntu", "python": "3.15"}
+    ]
+    skips = json.loads(outputs["allowed-skips"])
+    assert {"property-tests", "crosshair-tests"}.issubset(skips)
+    assert ("benchmarks" in skips) == path.startswith("docs/")
+    if outputs["benchmarks"] == "true":
+        assert {"os": "windows", "python": "3.15"} in json.loads(
+            outputs["benchmark-matrix"]
+        )["include"]
+
+
+def test_full_linux_compatibility_runs_when_there_is_no_pr_diff() -> None:
+    outputs = select_tests.job_outputs(list(WORKSPACES), WORKSPACES, None)
+    linux = {
+        row["python"]
+        for row in json.loads(outputs["test-matrix"])["include"]
+        if row["os"] == "ubuntu"
+    }
+    assert {"3.14t", "3.11.0", "3.12.0", "3.13.0", "3.14.0"} <= linux
+    assert json.loads(outputs["allowed-skips"]) == []
 
 
 def test_combined_changes_and_empty_comparison() -> None:
@@ -216,13 +259,18 @@ def test_pr_comparison_writes_selected_arguments(
         "sys.argv", ["select_tests.py", "--base", "main", "--output", str(output)]
     )
     select_tests.main()
-    assert output.read_text(encoding="utf-8").splitlines() == [
+    lines = output.read_text(encoding="utf-8").splitlines()
+    matrices = dict(line.split("=", 1) for line in lines if "-matrix=" in line)
+    assert set(matrices) == {"test-matrix", "benchmark-matrix"}
+    assert all(json.loads(value)["include"] for value in matrices.values())
+    assert [line for line in lines if "-matrix=" not in line] == [
         "workspaces=project umbrella",
         "test-paths=nab-provider/tests nab-project/tests nab-index/tests tests",
         "resolver=false",
         "benchmarks=true",
         "dists=true",
         "standalone=false",
+        "properties=true",
         'allowed-skips=["crosshair-tests", "standalone"]',
     ]
 
@@ -234,7 +282,7 @@ def test_pr_comparison_writes_selected_arguments(
         ([], {"benchmarks", "dists", "standalone"}),
         (["docs/index.md"], set()),
         (["nab-index/src/nab_index/client.py"], {"benchmarks", "dists"}),
-        (["nab-markersets/tests/test_sets.py"], {"benchmarks", "dists", "standalone"}),
+        (["nab-markersets/tests/test_sets.py"], {"standalone"}),
         (["nab-project/benchmarks/scenarios.py"], {"benchmarks"}),
         (["tasks/build_dists.py"], {"dists"}),
         (["docs/index.md", "pyproject.toml"], {"benchmarks", "dists", "standalone"}),

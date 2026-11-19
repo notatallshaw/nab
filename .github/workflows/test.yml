@@ -23,6 +23,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      test-matrix: ${{ steps.select.outputs.test-matrix }}
+      benchmark-matrix: ${{ steps.select.outputs.benchmark-matrix }}
+      properties: ${{ steps.select.outputs.properties }}
       workspaces: ${{ steps.select.outputs.workspaces }}
       test-paths: ${{ steps.select.outputs.test-paths }}
       resolver: ${{ steps.select.outputs.resolver }}
@@ -49,90 +52,71 @@ jobs:
 
   test:
     needs: select
-    name: ${{ matrix.os }} / ${{ matrix.python-version }}
+    name: ${{ matrix.os }} / ${{ matrix.python }}${{ matrix.second && format(' and {0}', matrix.second) || '' }}
     runs-on: ${{ matrix.runner || format('{0}-latest', matrix.os) }}
-    timeout-minutes: 20
+    timeout-minutes: ${{ matrix.second && 40 || 20 }}
+    env:
+      WORKSPACES: ${{ needs.select.outputs.workspaces }}
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu, windows, macos]
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
-        include:
-          - os: ubuntu
-            python-version: "3.14t"
-          - os: ubuntu
-            python-version: "3.15t"
-          - os: windows
-            python-version: "3.15t"
-          - os: macos
-            python-version: "3.15t"
-          # Keep old patch releases on an image that supplies them.
-          - os: ubuntu
-            python-version: "3.10.4"
-            runner: ubuntu-24.04
-          - os: ubuntu
-            python-version: "3.11.0"
-            runner: ubuntu-24.04
-          - os: ubuntu
-            python-version: "3.12.0"
-            runner: ubuntu-24.04
-          - os: ubuntu
-            python-version: "3.13.0"
-            runner: ubuntu-24.04
-          - os: ubuntu
-            python-version: "3.14.0"
-            runner: ubuntu-24.04
+      matrix: ${{ fromJSON(needs.select.outputs.test-matrix) }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
-        name: Install Python ${{ matrix.python-version }}
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: ${{ matrix.python }}
+          allow-prereleases: true
           cache: pip
-          cache-dependency-path: |
+          cache-dependency-path: &test-locks |
             pylock.dev.toml
             .github/requirements/pylock.build.toml
-          allow-prereleases: true
 
-      - name: Ensure pip supports locked groups
-        run: python -m pip install "pip>=26.3"
+      - name: Install nox on Python ${{ matrix.python }}
+        run: &install-nox |
+          python -m pip install "pip>=26.3"
+          python -m pip install --group pylock.dev.toml:nox
 
-      - name: Install nox
-        run: pip install --group pylock.dev.toml:nox
-
-      - name: Test affected workspaces
-        shell: bash
-        env:
-          WORKSPACES: ${{ needs.select.outputs.workspaces }}
-        run: |
+      - name: Test affected workspaces on Python ${{ matrix.python }}
+        run: &test-workspaces |
           read -r -a workspaces <<< "$WORKSPACES"
-          nox -s tests -- "${workspaces[@]}"
+          python -m nox -s tests -- "${workspaces[@]}"
+
+      - name: Set up Python ${{ matrix.second }}
+        id: second-python
+        if: ${{ !cancelled() && matrix.second != '' }}
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: ${{ matrix.second }}
+          allow-prereleases: true
+          cache: pip
+          cache-dependency-path: *test-locks
+
+      - name: Install nox on Python ${{ matrix.second }}
+        id: second-nox
+        if: ${{ !cancelled() && steps.second-python.outcome == 'success' }}
+        run: *install-nox
+
+      - name: Test affected workspaces on Python ${{ matrix.second }}
+        if: ${{ !cancelled() && steps.second-nox.outcome == 'success' }}
+        run: *test-workspaces
 
   benchmarks:
     needs: select
     if: needs.select.outputs.benchmarks == 'true'
-    name: benchmark harness / ${{ matrix.os }} / ${{ matrix.python-version }}
+    name: benchmark harness / ${{ matrix.os }} / ${{ matrix.python }}
     runs-on: ${{ matrix.os }}-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
-      # These cover the benchmarks directories, which are developer tooling
-      # rather than shipped code, so they run on the ends of the supported
-      # range instead of the full matrix. Windows earns its cell because the
-      # harness builds output paths and the tests pin its device-name rules.
-      matrix:
-        include:
-          - os: ubuntu
-            python-version: "3.10"
-          - os: ubuntu
-            python-version: "3.15"
-            reports: true
-          - os: windows
-            python-version: "3.15"
+      matrix: ${{ fromJSON(needs.select.outputs.benchmark-matrix) }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -140,9 +124,9 @@ jobs:
           persist-credentials: false
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
-        name: Install Python ${{ matrix.python-version }}
+        name: Install Python ${{ matrix.python }}
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: |
             pylock.dev.toml
@@ -178,6 +162,7 @@ jobs:
 
   property-tests:
     needs: select
+    if: needs.select.outputs.properties == 'true'
     name: Property tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
