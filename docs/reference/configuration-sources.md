@@ -68,6 +68,7 @@ Only user settings have `NAB_*` bindings:
 | `NAB_MAX_CONCURRENCY`     | `max-concurrency`     | Positive integer                                          |
 | `NAB_FORMAT`              | `format`              | `pylock`, `requirements` or `requirements-without-hashes` |
 | `NAB_CACHE`               | `cache`               | `1`, `0`, `true` or `false`                               |
+| `NAB_PLAN`                | `plan`                | Name of a declared lock plan, such as `ci`                |
 | `NAB_GROUPS`              | `groups`              | TOML array, such as `["dev"]`                             |
 | `NAB_ALL_GROUPS`          | `all-groups`          | `1`, `0`, `true` or `false`                               |
 | `NAB_EXTRAS`              | `extras`              | TOML array, such as `["test"]`                            |

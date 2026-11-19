@@ -55,7 +55,8 @@ default output is `pylock.NAME.toml` or `NAME.requirements.txt` for a requiremen
 
 Use `nab lock --all-plans` to refresh every declared plan and `nab lock --all-plans --locked` to
 check the files. Both the individual and batch commands support `--upgrade` and `--reproduce`. To
-select a default plan in user configuration, set `plan = "ci"` or `NAB_PLAN=ci`.
+select a default plan in user configuration, set `plan = "ci"` or `NAB_PLAN=ci`. `--all-plans`
+overrides that default. On the command line, choose either `--all-plans` or a single plan.
 
 ## Import requirements from another project
 

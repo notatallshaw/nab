@@ -140,6 +140,7 @@ __all__ = [
     "parse_mode",
     "parse_package_rules",
     "parse_packages_sugar",
+    "parse_plan_name",
     "parse_requires_python",
     "parse_resolution",
     "parse_string_list",
@@ -334,36 +335,28 @@ def _parse_string_value(where: str, value: object) -> str:
     return value
 
 
-def parse_base_group(value: object, where: str) -> str | None:
-    """Parse ``[tool.nab].base-group`` as a PEP 735 group name.
-
-    Names the group a lock gives the project's own dependencies, so an
-    installer can ask for one group without them.  Unset leaves them
-    unconditional.
-    """
+def _normalized_name(value: object, where: str, kind: str) -> str:
     raw = _parse_string_value(where, value)
     try:
-        canonical = canonicalize_name(raw, validate=True)
-    except InvalidName as e:
-        msg = f"{where} {raw!r} is not a valid group name: {e}"
-        raise SourceConfigError(msg) from e
-    return str(canonical)
+        return str(canonicalize_name(raw, validate=True))
+    except InvalidName as exc:
+        msg = f"{where} {raw!r} is not a valid {kind} name"
+        raise SourceConfigError(msg) from exc
 
 
-def parse_build_group(value: object, where: str) -> str | None:
-    """Parse ``[tool.nab].build-group`` as a PEP 735 group name.
+def parse_base_group(value: object, where: str) -> str:
+    """Normalize the group name for the project's runtime dependencies."""
+    return _normalized_name(value, where, "group")
 
-    Names the group a lock gives ``[build-system].requires``, so one lock
-    can describe the environment the project is built in as well as the
-    one it runs in.  Unset, a lock says nothing about how it is built.
-    """
-    raw = _parse_string_value(where, value)
-    try:
-        canonical = canonicalize_name(raw, validate=True)
-    except InvalidName as e:
-        msg = f"{where} {raw!r} is not a valid group name: {e}"
-        raise SourceConfigError(msg) from e
-    return str(canonical)
+
+def parse_build_group(value: object, where: str) -> str:
+    """Normalize the group name for the project's build requirements."""
+    return _normalized_name(value, where, "group")
+
+
+def parse_plan_name(value: object, where: str) -> str:
+    """Normalize the name used to select a declared lock plan."""
+    return _normalized_name(value, where, "lock plan")
 
 
 def parse_requires_python(value: object, where: str) -> str | None:

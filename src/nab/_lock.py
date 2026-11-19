@@ -338,8 +338,8 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         cli_environment_platform=project_environment_platform,
         cli_environment_implementation=project_environment_implementation,
     )
-    if plan is not None and all_plans:
-        printer().error("--plan and --all-plans are mutually exclusive")
+    if all_plans and "plan" in overrides:
+        printer().error("choose a single lock plan or use --all-plans")
         raise SystemExit(1)
     ladder = _checked_ladder(
         read_config_ladder(path, overrides, input_format=input_format)

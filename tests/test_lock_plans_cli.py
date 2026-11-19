@@ -20,7 +20,7 @@ from .test_prefer_existing_cli import Registry
 
 @pytest.fixture
 def named(hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch) -> Registry:
-    """Route indexed dependency reads through a fresh real fetch port."""
+    """Serve the project's dependency listings and metadata from the test registry."""
     value = Registry(hermetic_roots)
     monkeypatch.setattr("nab_project.resolve.FetchCoordinator", value.coordinator)
     value.project.write_text(
@@ -183,6 +183,9 @@ def test_archive_inputs_follow_offline_cache_and_backend_controls(
         pytest.param(("--plan", "missing"), id="unknown-lock"),
         pytest.param(("--plan", "dev", "--all-plans"), id="mixed-selections"),
         pytest.param(
+            ("--all-plans", "--setting", 'user.plan="dev"'), id="plan-setting-and-all"
+        ),
+        pytest.param(
             ("--all-plans", "--output", "pylock.other.toml"), id="batch-output"
         ),
     ],
@@ -193,6 +196,23 @@ def test_invalid_selections_report_errors_without_a_traceback(
     assert command(named, *args) == 1
     assert "Traceback" not in capsys.readouterr().err
     assert not named.ports
+    assert not list(named.project.parent.glob("pylock.*.toml"))
+
+
+def test_all_plans_overrides_an_environment_default(
+    named: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("NAB_PLAN", "dev")
+    assert command(named, "--all-plans") == 0
+    assert named.project.with_name("pylock.dev.toml").is_file()
+    assert named.project.with_name("pylock.build.toml").is_file()
+
+
+def test_invalid_plan_name_identifies_the_setting(
+    named: Registry, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert command(named, "--plan", "bad name") == 1
+    assert "--plan 'bad name' is not a valid lock plan name" in capsys.readouterr().err
 
 
 def test_batch_output_collisions_fail_before_writing(named: Registry) -> None:
