@@ -115,7 +115,7 @@ from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
     expand_extra_requirements,
-    resolve_groups_to_requirements,
+    iter_group_requirements,
 )
 from nab_provider.target import IntractableMarkerError, UnevaluableMarkerError
 from nab_provider.value import Record, replace
@@ -1362,14 +1362,14 @@ def _active_root_requirements(  # noqa: PLR0913 - independent root sources and s
                 )
             )
 
-    effective_groups = dict.fromkeys(
-        active_group_names(groups, default_groups, base_group, build_group)
+    effective_groups = active_group_names(
+        groups, default_groups, base_group, build_group
     )
     if effective_groups:
         table = input_dependency_groups(document)
-        for group in effective_groups:
-            requirements = resolve_groups_to_requirements(table, [group])
-            if group not in groups:
+        requested_groups = set(groups)
+        for group, requirements in iter_group_requirements(table, effective_groups):
+            if group not in requested_groups:
                 continue
             roots.extend(
                 RootRequirement(

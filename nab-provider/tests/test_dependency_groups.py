@@ -9,6 +9,7 @@ import pytest
 from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     expand_group_includes,
+    iter_group_requirements,
     resolve_groups_to_requirements,
 )
 
@@ -73,6 +74,19 @@ class TestResolveGroupsToRequirements:
         reqs = resolve_groups_to_requirements(groups, ("dev",))
         names = sorted(r.name for r in reqs)
         assert names == ["pytest", "ruff"]
+
+    def test_included_requirements_belong_to_each_selected_group(self) -> None:
+        groups = {
+            "unit": ["pytest"],
+            "all": [{"include-group": "unit"}, "ruff"],
+        }
+
+        selected = iter_group_requirements(groups, ("all", "Unit", "all"))
+        assert [(name, [req.name for req in reqs]) for name, reqs in selected] == [
+            ("all", ["pytest", "ruff"]),
+            ("Unit", ["pytest"]),
+            ("all", ["pytest", "ruff"]),
+        ]
 
     def test_unknown_group_raises(self) -> None:
         with pytest.raises(LookupError, match="nope"):

@@ -18,7 +18,7 @@ from collections import deque
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
-from ._vendor.packaging.dependency_groups import resolve_dependency_groups
+from ._vendor.packaging.dependency_groups import DependencyGroupResolver
 from ._vendor.packaging.errors import ExceptionGroup
 from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.utils import canonicalize_name
@@ -52,6 +52,7 @@ __all__ = [
     "expand_group_includes",
     "expand_project_requirements",
     "expand_self_extras",
+    "iter_group_requirements",
     "parse_project_requirement",
     "parse_requirements",
     "raise_for_unsatisfiable",
@@ -60,7 +61,7 @@ __all__ = [
     "self_extra_markers",
 ]
 
-_GROUP_LOADER_FILE = resolve_dependency_groups.__code__.co_filename
+_GROUP_LOADER_FILE = DependencyGroupResolver.resolve.__code__.co_filename
 
 
 class InvalidProjectTableError(TypeError):
@@ -459,19 +460,19 @@ def _too_deep_error(exc: RecursionError) -> InvalidProjectRequirementError:
     return InvalidProjectRequirementError(msg)
 
 
-def resolve_groups_to_requirements(
+def iter_group_requirements(
     groups: Mapping[str, Sequence[str | Mapping[str, str]]],
     selected: Sequence[str],
-) -> list[Requirement]:
-    """Resolve selected PEP 735 groups and return their combined requirements.
-
-    Unknown groups raise LookupError. Invalid group data or excessive nesting
-    raises InvalidProjectRequirementError.
-    """
+) -> Iterator[tuple[str, list[Requirement]]]:
+    """Yield each selected group's name and requirements in selection order."""
     if not selected:
-        return []
+        return
+
     try:
-        resolved = resolve_dependency_groups(groups, *selected)
+        resolver = DependencyGroupResolver(groups)
+        resolved = [
+            (name, [str(req) for req in resolver.resolve(name)]) for name in selected
+        ]
     except RecursionError as exc:
         raise _too_deep_error(exc) from exc
     except ExceptionGroup as group:
@@ -480,4 +481,23 @@ def resolve_groups_to_requirements(
             raise LookupError(detail) from group
         msg = f"invalid [dependency-groups]: {detail}"
         raise InvalidProjectRequirementError(msg) from group
-    return parse_requirements(resolved, "[dependency-groups]")
+
+    # Parse fresh requirements for each group using Nab's version checks.
+    for name, requirements in resolved:
+        yield name, parse_requirements(requirements, "[dependency-groups]")
+
+
+def resolve_groups_to_requirements(
+    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    selected: Sequence[str],
+) -> list[Requirement]:
+    """Combine the requirements of the selected PEP 735 groups in order.
+
+    Unknown groups raise LookupError. Invalid group data or excessive nesting
+    raises InvalidProjectRequirementError.
+    """
+    return [
+        requirement
+        for _, requirements in iter_group_requirements(groups, selected)
+        for requirement in requirements
+    ]

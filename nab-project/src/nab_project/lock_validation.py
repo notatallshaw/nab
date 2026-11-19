@@ -27,8 +27,8 @@ from nab_provider.policy import (
 from nab_provider.requirements_file import (
     InvalidProjectTableError,
     expand_extra_requirements,
+    iter_group_requirements,
     require_string_list,
-    resolve_groups_to_requirements,
 )
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.value import Record, SlottedValue, field_names
@@ -337,12 +337,13 @@ def snapshot_inputs(  # noqa: PLR0913 - independently selectable project inputs 
                 base,
             )
         table = dependency_groups(data)
-        for group in sorted(
+        selected_groups = sorted(
             (set(groups) | set(inputs.default_groups))
             - {inputs.base_group, inputs.build_group}
-        ):
+        )
+        for group, requirements in iter_group_requirements(table, selected_groups):
             roots["group:" + canonicalize_name(group)] = _requirements(
-                resolve_groups_to_requirements(table, [group]), base
+                requirements, base
             )
         if inputs.build_group is not None:
             roots["build"] = _requirements(build_system_requires(data, path), base)

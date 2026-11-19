@@ -67,7 +67,7 @@ from nab_provider.requirements_file import (
     expand_extra_requirements,
     expand_group_includes,
     expand_self_extras,
-    resolve_groups_to_requirements,
+    iter_group_requirements,
     self_extra_markers,
 )
 from nab_provider.resolver_inputs import (
@@ -861,9 +861,11 @@ def _selector_requirements(
     for extra in fork.active_extras:
         member = (ConflictKind.EXTRA.value, str(canonicalize_name(extra)))
         selectors[member] = tuple(_extra_requirements(tables, [extra], path))
-    for group in fork.active_groups:
+
+    per_group = _group_requirements_by_group(tables.groups, fork.active_groups, path)
+    for group, requirements in per_group.items():
         member = (ConflictKind.GROUP.value, str(canonicalize_name(group)))
-        selectors[member] = tuple(_group_requirements(tables.groups, [group], path))
+        selectors[member] = tuple(requirements)
     return selectors
 
 
@@ -923,19 +925,9 @@ def _group_requirements(
     selected: Sequence[str],
     path: Path,
 ) -> list[Requirement]:
-    """Expand ``selected`` PEP 735 groups from an already-read table.
-
-    ``path`` is used only for the missing-table error message.
-    """
-    if not selected:
-        return []
-    if not groups:
-        msg = (
-            "groups requested but [dependency-groups] is missing from"
-            f" {path}: {sorted(selected)!r}"
-        )
-        raise LookupError(msg)
-    return resolve_groups_to_requirements(groups, selected)
+    """Combine all selected groups in selection order."""
+    per_group = _group_requirements_by_group(groups, selected, path)
+    return [requirement for group in selected for requirement in per_group[group]]
 
 
 def _group_requirements_by_group(
@@ -943,8 +935,15 @@ def _group_requirements_by_group(
     selected: Sequence[str],
     path: Path,
 ) -> dict[str, list[Requirement]]:
-    """Like :func:`_group_requirements`, but keyed by the source group."""
-    return {group: _group_requirements(groups, [group], path) for group in selected}
+    """Read all selected groups from the same dependency table."""
+    if selected and not groups:
+        msg = (
+            "groups requested but [dependency-groups] is missing from"
+            f" {path}: {sorted(selected)!r}"
+        )
+        raise LookupError(msg)
+
+    return dict(iter_group_requirements(groups, selected))
 
 
 def _extra_requirements(
