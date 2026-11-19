@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Hashable
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 
 from ._compat import override
 
@@ -42,10 +42,12 @@ VersionType = TypeVar("VersionType", bound=Hashable)
 
 # Contravariant so packaging.ranges.VersionRange (accepts Version | str)
 # can satisfy RangeProtocol[Version].
-VersionType_contra = TypeVar("VersionType_contra", bound=Hashable, contravariant=True)
+_ContravariantVersion = TypeVar(  # noqa: PLC0105 - spell out contravariance.
+    "_ContravariantVersion", bound=Hashable, contravariant=True
+)
 
 
-class RangeProtocol(Protocol[VersionType_contra]):
+class RangeProtocol(Protocol[_ContravariantVersion]):
     """Contract for version range types used by the resolver.
 
     Beyond the signatures, conflict resolution only terminates while
@@ -84,7 +86,7 @@ class RangeProtocol(Protocol[VersionType_contra]):
         ...
 
     @classmethod
-    def singleton(cls, version: VersionType_contra) -> Self:
+    def singleton(cls, version: _ContravariantVersion) -> Self:
         """Create a range containing exactly one version."""
         ...
 
@@ -93,7 +95,7 @@ class RangeProtocol(Protocol[VersionType_contra]):
         """``True`` if this range contains no versions."""
         ...
 
-    def __contains__(self, version: VersionType_contra, /) -> bool:
+    def __contains__(self, version: _ContravariantVersion, /) -> bool:
         """Test version membership."""
         ...
 
@@ -186,13 +188,14 @@ class Term(Generic[PackageType, VersionType]):
 
     def intersect(
         self, other: Term[PackageType, VersionType]
-    ) -> Term[PackageType, VersionType] | None:
+    ) -> Term[PackageType, VersionType]:
         """Intersect two terms for the same package.
 
-        Returns None if the packages differ.
+        Raise ValueError if the terms refer to different packages.
         """
         if self.package != other.package:
-            return None
+            msg = f"cannot intersect terms for {self.package!r} and {other.package!r}"
+            raise ValueError(msg)
 
         if self._positive and other._positive:
             return Term(
@@ -214,6 +217,42 @@ class Term(Generic[PackageType, VersionType]):
         negative_term = other if self._positive else self
         difference = positive_term.constraint - negative_term.constraint
         return Term(self.package, difference, positive=True)
+
+    def union(
+        self, other: Term[PackageType, VersionType]
+    ) -> Term[PackageType, VersionType] | None:
+        """Union two terms for the same package.
+
+        Raise ValueError if the terms refer to different packages.
+
+        Returns None when the union is a tautology (the term can be dropped
+        from the resolvent).  Only a negative result can be one: a positive
+        term, even over the full range, still requires the package to be
+        selected, so solutions that omit the package don't satisfy it.
+        """
+        if self.package != other.package:
+            msg = f"cannot union terms for {self.package!r} and {other.package!r}"
+            raise ValueError(msg)
+
+        # Positive | Positive = Positive(R1 | R2); never a tautology.
+        if self.is_positive() and other.is_positive():
+            merged = self.constraint | other.constraint
+            return Term(self.package, merged, positive=True)
+
+        # Negative | Negative = Negative(R1 & R2) by De Morgan.
+        if not self.is_positive() and not other.is_positive():
+            merged = self.constraint & other.constraint
+            if merged.is_empty:
+                return None
+            return Term(self.package, merged, positive=False)
+
+        # Mixed: the negative's range minus the positive's.
+        positive_term = self if self.is_positive() else other
+        negative_term = other if self.is_positive() else self
+        remainder = negative_term.constraint - positive_term.constraint
+        if remainder.is_empty:
+            return None
+        return Term(self.package, remainder, positive=False)
 
     @override
     def __repr__(self) -> str:
@@ -284,13 +323,13 @@ class RootRequirement(Generic[PackageType, VersionType]):
 
     package: PackageType
     constraint: RangeProtocol[VersionType]
-    origin: Any
+    origin: object
 
     def __init__(
         self,
         package: PackageType,
         constraint: RangeProtocol[VersionType],
-        origin: Any = None,
+        origin: object = None,
     ) -> None:
         """Record one requirement on ``package``."""
         object.__setattr__(self, "package", package)
@@ -423,7 +462,7 @@ class Incompatibility(Generic[PackageType, VersionType]):
         cause_left: Incompatibility[PackageType, VersionType] | None = None,
         cause_right: Incompatibility[PackageType, VersionType] | None = None,
         constraint_range: RangeProtocol[VersionType] | None = None,
-        origin: Any = None,
+        origin: object = None,
         dependency_range: RangeProtocol[VersionType] | None = None,
     ) -> None:
         """Create an incompatibility with terms and a cause."""

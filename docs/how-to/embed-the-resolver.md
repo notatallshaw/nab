@@ -190,6 +190,10 @@ satisfying `RangeProtocol`, a `root_version` to decide the virtual root at, whic
 `range_type.singleton()` has to accept, and a `format_range` unless that type's `str` already reads
 as a constraint. nab drives the resolver this way, with a PEP 440 range type.
 
+Use `left.intersect(right)` or `left.union(right)` to combine terms for the same package. Both raise
+`ValueError` if the packages differ. Intersection returns a term even when its range is empty. Union
+returns `None` if every possible selection satisfies the combined term.
+
 ## Reuse scoped artifact preference
 
 `nab-provider` supplies `nab_provider.preference.PreferenceSearch` for hosts that prefer working
@@ -214,23 +218,17 @@ final result and diagnostics.
 
 ## The supported API
 
-These module paths will not move without a major version bump:
+Import these names from their modules. The paths will remain available until a major version change.
 
-```text
-nab_resolver.errors     ResolutionError, ResolutionInvariantError,
-                        ResolutionLimitError,
-                        ResolutionStalledError, ResolutionTerminatedError
-nab_resolver.ranges     Range
-nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,
-                        ResolverObserver, ResolverProvider, Solution
-nab_resolver.root       ROOT
-nab_resolver.testing    ProviderScenario, check_provider, check_provider_scenarios
-nab_resolver.types      Incompatibility, IncompatibilityCause,
-                        RangeProtocol, RootRequirement, Term
-```
-
-The package root binds no names, so importing `nab_resolver` pulls in no submodules. Anything else
-is internal and may move in any release.
+| Module                     | Supported names                                                                                                              |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `nab_resolver.resolver`    | `Resolver`, `ResolverProvider`, `BaseProvider`, `ResolverObserver`, `Solution`, `DEFAULT_MAX_ITERATIONS`                     |
+| `nab_resolver.root`        | `ROOT`                                                                                                                       |
+| `nab_resolver.ranges`      | `Range`, `IntegerRangeMembership`                                                                                            |
+| `nab_resolver.types`       | `RootRequirement`, `Term`, `Incompatibility`, `IncompatibilityCause`, `RangeProtocol`                                        |
+| `nab_resolver.errors`      | `ResolutionError`, `ResolutionTerminatedError`, `ResolutionLimitError`, `ResolutionInvariantError`, `ResolutionStalledError` |
+| `nab_resolver.diagnostics` | `DiagnosticMessage`, `Suggestion`, `error_message`, `suggestion_lines`                                                       |
+| `nab_resolver.testing`     | `ProviderScenario`, `ProviderConformanceError`, `check_provider`, `check_provider_scenarios`                                 |
 
 ## Checking a provider
 
@@ -253,8 +251,10 @@ changes root order and tries every combination in each small fixture to check bo
 failures.
 
 Supply three distinct package keys, two distinct version keys and your range class. `check_provider`
-accepts custom fixtures and an explicit search budget. The fixture must list all available versions
-and their unchanging dependencies.
+accepts custom fixtures and an explicit search budget. List every available version and its
+dependencies in the fixture. Those dependencies must stay the same throughout the check. If the
+provider gives a different answer, `ProviderConformanceError` names the scenario and explains what
+failed. Read its `scenario` attribute to identify the failing fixture.
 
 Use `probe_state` to return an independent snapshot of decision state around
 `has_satisfying_version`. Exclude caches and diagnostics from that snapshot.

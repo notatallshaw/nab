@@ -36,6 +36,13 @@ def test_read_wrapped_and_unwrapped_tar(prefix: str) -> None:
     }
 
 
+def test_read_a_single_root_file() -> None:
+    data = _tar({"pyproject.toml": "[project]"})
+    assert read_archive_files(data, ["pyproject.toml"]) == {
+        "pyproject.toml": "[project]"
+    }
+
+
 def test_a_single_enclosing_directory_becomes_the_source_root() -> None:
     assert read_archive_files(
         _tar({"tests/requirements.txt": "pytest"}), ["requirements.txt"]
@@ -108,6 +115,18 @@ def test_duplicate_archive_names_are_refused() -> None:
         read_archive_files(buffer.getvalue(), ["pyproject.toml"])
 
 
+@pytest.mark.parametrize(
+    "names", [("project/data", "project/data/"), ("project/data/", "project/data")]
+)
+def test_a_path_cannot_be_both_a_file_and_a_directory(names: tuple[str, str]) -> None:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name in names:
+            archive.writestr(name, b"")
+    with pytest.raises(ValueError, match="duplicate archive path"):
+        read_archive_files(buffer.getvalue(), ["data"])
+
+
 def test_archive_file_must_have_a_name() -> None:
     with pytest.raises(ValueError, match="no file name"):
         read_archive_files(_tar({".": "not a file name"}), ["pyproject.toml"])
@@ -116,7 +135,7 @@ def test_archive_file_must_have_a_name() -> None:
 def test_empty_directories_participate_in_root_selection() -> None:
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-        for name in [".", "empty"]:
+        for name in [".", "empty", "empty"]:
             entry = tarfile.TarInfo(name)
             entry.type = tarfile.DIRTYPE
             archive.addfile(entry)

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import itertools
 import os
-import re
 import shlex
 import subprocess
 import sys
@@ -18,6 +17,10 @@ from typing import Any
 
 import pytest
 import tomli
+from dependency_groups import DependencyGroupResolver
+from packaging.utils import canonicalize_name
+
+from ._markdown import commands
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -25,27 +28,11 @@ CONTRIBUTING = REPO_ROOT / "docs" / "contributing.md"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 HATCH_TOML = REPO_ROOT / "hatch.toml"
 
-_FENCE = re.compile(r"^```.*?^```", re.DOTALL | re.MULTILINE)
-_INLINE = re.compile(r"`([^`\n]+)`")
-
 _VENV = ".venv"
 _VENV_BIN = f"{_VENV}/bin/"
 
 # Hatch expands its `{root}` field to the project directory before it runs a command.
 _ROOT_PREFIX = "{root}/"
-
-# A dependency specifier down to its bare name.
-_REQUIREMENT_NAME = re.compile(r"^[^\[=<>!~;\s]+")
-
-
-def _documented_commands() -> list[str]:
-    """Every command the page prints, fenced or inline."""
-    text = CONTRIBUTING.read_text(encoding="utf-8")
-    commands = [
-        line for block in _FENCE.findall(text) for line in block.splitlines()[1:-1]
-    ]
-    commands.extend(_INLINE.findall(_FENCE.sub("", text)))
-    return commands
 
 
 def _invocation(command: str) -> tuple[str, tuple[str, ...]] | None:
@@ -66,7 +53,7 @@ def _invocation(command: str) -> tuple[str, tuple[str, ...]] | None:
 def _documented_pytest_arguments() -> set[tuple[str, ...]]:
     """Argument lists the page passes to pytest."""
     found = set()
-    for command in _documented_commands():
+    for command in commands(CONTRIBUTING.read_text(encoding="utf-8")):
         invocation = _invocation(command)
         if invocation is None:
             continue
@@ -78,32 +65,12 @@ def _documented_pytest_arguments() -> set[tuple[str, ...]]:
     return found
 
 
-def _canonical(name: str) -> str:
-    """Return one normalized form of a distribution, module, or script name."""
-    return name.lower().replace("_", "-")
-
-
-def _group_names(group: str, groups: dict[str, list[object]]) -> set[str]:
-    """The distributions one dependency-group installs, through its includes."""
-    names = set()
-    for entry in groups[group]:
-        if isinstance(entry, dict):
-            names |= _group_names(str(entry["include-group"]), groups)
-        else:
-            match = _REQUIREMENT_NAME.match(str(entry))
-            assert match is not None
-            names.add(_canonical(match.group()))
-    return names
-
-
 def _project_names(directory: Path) -> set[str]:
     """The distribution name and console scripts one project directory ships."""
     project = tomli.loads((directory / "pyproject.toml").read_text(encoding="utf-8"))[
         "project"
     ]
-    return {_canonical(project["name"])} | {
-        _canonical(script) for script in project.get("scripts", {})
-    }
+    return {canonicalize_name(project["name"]), *project.get("scripts", {})}
 
 
 def _hatch_envs() -> dict[str, Any]:
@@ -144,8 +111,9 @@ def _installed_names() -> set[str]:
     installed = _project_names(REPO_ROOT)
     for member in _default_workspace_members():
         installed |= _project_names(REPO_ROOT / member)
+    resolver = DependencyGroupResolver(groups)
     for group in _default_dependency_groups():
-        installed |= _group_names(group, groups)
+        installed.update(canonicalize_name(req.name) for req in resolver.resolve(group))
     return installed
 
 
@@ -161,19 +129,19 @@ def _pre_install_editables(env: dict[str, Any]) -> set[str]:
 def _venv_tools() -> set[str]:
     """The tools the page runs out of the development environment."""
     tools = set()
-    for command in _documented_commands():
+    for command in commands(CONTRIBUTING.read_text(encoding="utf-8")):
         if not command.startswith(_VENV_BIN):
             continue
         invocation = _invocation(command)
         if invocation is not None:
-            tools.add(_canonical(invocation[0]))
+            tools.add(invocation[0])
     return tools
 
 
 def _documented_hatch_scripts() -> set[tuple[str, str]]:
     """The `hatch run <env>:<script>` targets the page prints."""
     targets = set()
-    for command in _documented_commands():
+    for command in commands(CONTRIBUTING.read_text(encoding="utf-8")):
         invocation = _invocation(command)
         if invocation is None:
             continue

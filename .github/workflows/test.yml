@@ -130,6 +130,7 @@ jobs:
             python-version: "3.10"
           - os: ubuntu
             python-version: "3.15"
+            reports: true
           - os: windows
             python-version: "3.15"
 
@@ -156,6 +157,24 @@ jobs:
 
       - name: Run the benchmark-harness tests
         run: nox -s benchmarks
+
+      - name: Run the offline benchmark suites
+        if: matrix.reports
+        env:
+          PYTHONHASHSEED: "0"
+        run: |
+          .nox/benchmarks/bin/python nab-project/benchmarks/deterministic_smoke.py --json "$RUNNER_TEMP/deterministic-smoke.json"
+          .nox/benchmarks/bin/python nab-resolver/benchmarks/range_scenarios.py --json "$RUNNER_TEMP/range-scenarios.json"
+
+      - name: Upload benchmark reports
+        if: matrix.reports
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: offline-benchmarks
+          path: |
+            ${{ runner.temp }}/deterministic-smoke.json
+            ${{ runner.temp }}/range-scenarios.json
+          if-no-files-found: error
 
   property-tests:
     needs: select

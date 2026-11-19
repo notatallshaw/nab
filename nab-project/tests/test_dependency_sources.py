@@ -54,14 +54,23 @@ def test_online_import_and_offline_reuse_check_content_and_archive_hashes(
     assert calls == []
 
 
-def test_hash_mismatch_does_not_publish_cached_declarations(tmp_path: Path) -> None:
-    payload = _archive({"pyproject.toml": b'[project]\nname="wrong"\n'})
-    reader = DependencySourceReader(tmp_path, tmp_path / "cache", lambda url: payload)
+def test_reader_retries_after_an_incomplete_download(tmp_path: Path) -> None:
+    payload = _archive({"pyproject.toml": b"[project]"})
+    responses = iter((b"", payload))
+    cache_dir = tmp_path / "cache"
+    reader = DependencySourceReader(tmp_path, cache_dir, lambda _url: next(responses))
+    read = reader.bind(
+        {
+            "url": "https://example.org/source.tar.gz",
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+    )
+
     with pytest.raises(SdistHashMismatchError, match="mismatch"):
-        reader.bind({"url": "https://example.org/source.tar.gz", "sha256": "0" * 64})(
-            "pyproject.toml"
-        )
-    assert not (tmp_path / "cache").exists()
+        read("pyproject.toml")
+    assert not cache_dir.exists()
+
+    assert read("pyproject.toml") == "[project]"
 
 
 def test_local_import_refuses_symlink_escape(tmp_path: Path) -> None:

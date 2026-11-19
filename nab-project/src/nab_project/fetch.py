@@ -12,7 +12,6 @@ schedules puts on the loop with ``call_soon_threadsafe``.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "asyncio",
     "nab_index.cache",
     "nab_index.cached_client",
@@ -24,22 +23,22 @@ __lazy_modules__ = (
     "nab_project._sources",
     "nab_project._toml",
     "nab_provider._vendor.packaging.utils",
-    "nab_provider.metadata",
     "nab_provider.fetch_port",
+    "nab_provider.metadata",
     "nab_provider.policy",
     "nab_provider.records",
     "nab_provider.serialization",
     "nab_provider.store",
+    "nab_resolver.diagnostics",
     "packaging.utils",
     "threading",
     "urllib.parse",
 )
 
 import asyncio
-import enum
 import logging
 import threading
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from packaging.utils import canonicalize_name as canonicalize_name_boundary
@@ -78,9 +77,10 @@ from nab_provider.store import (
     range_pending_key,
     sdist_artifact_key,
 )
-from nab_provider.value import HashableRecord, Record
+from nab_provider.value import Record
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
+from . import _fetch_requests as fetch_requests
 from ._build_remote import build_remote_sdist
 from ._sources import materialize_source
 from ._toml import parse_pyproject_table
@@ -97,8 +97,6 @@ __all__ = [
     "DEFAULT_INDEX_NAME",
     "DEFAULT_INDEX_URL",
     "FetchCoordinator",
-    "FetchKind",
-    "FetchRequest",
     "InMemoryIndex",
     "IndexRoute",
     "WarmSyncStats",
@@ -156,17 +154,6 @@ def _done_event() -> threading.Event:
     event = threading.Event()
     event.set()
     return event
-
-
-class FetchKind(enum.Enum):
-    """Distinguishes the kinds of fetches the coordinator handles."""
-
-    LISTING = "listing"
-    METADATA = "metadata"
-    RANGE_METADATA = "range-metadata"
-    SDIST = "sdist"
-    SDIST_ARCHIVE = "sdist-archive"
-    DIRECT_ARCHIVE = "direct-archive"
 
 
 class IndexRoute(Record):
@@ -243,47 +230,6 @@ def _builds_remote_sdists(inputs: ResolveInputs | None) -> bool:
     return any(o.build_policy is BuildPolicy.BUILD_REMOTE for o in overrides)
 
 
-class FetchRequest(HashableRecord):
-    """A single fetch request, carried across the sync->async boundary."""
-
-    __slots__ = __match_args__ = (
-        "kind",
-        "package",
-        "version",
-        "url",
-        "metadata_hash",
-        "sdist_hashes",
-        "wheel_hashes",
-    )
-
-    kind: Final[FetchKind]
-    package: Final[str]
-    version: Final[str | None]
-    url: Final[str | None]
-    metadata_hash: Final[tuple[str, str] | None]
-    sdist_hashes: Final[tuple[tuple[str, str], ...]]
-    wheel_hashes: Final[tuple[tuple[str, str], ...]]
-
-    def __init__(
-        self,
-        kind: FetchKind,
-        package: str,
-        version: str | None = None,
-        url: str | None = None,
-        metadata_hash: tuple[str, str] | None = None,
-        sdist_hashes: tuple[tuple[str, str], ...] = (),
-        wheel_hashes: tuple[tuple[str, str], ...] = (),
-    ) -> None:
-        """Describe an artifact request and its expected integrity."""
-        self.kind = kind
-        self.package = package
-        self.version = version
-        self.url = url
-        self.metadata_hash = metadata_hash
-        self.sdist_hashes = sdist_hashes
-        self.wheel_hashes = wheel_hashes
-
-
 class WarmSyncStats(Record):
     """Counters for the synchronous warm-hit listing path.
 
@@ -333,7 +279,7 @@ class WarmSyncStats(Record):
 
 
 # Queue items: single request, batch of requests, or None (shutdown).
-_QueueItem = FetchRequest | list[FetchRequest] | None
+_QueueItem = fetch_requests.FetchRequest | list[fetch_requests.FetchRequest] | None
 
 
 def _coordinator_cache(
@@ -678,31 +624,28 @@ class FetchCoordinator:
         if item is None:
             return
 
-        requests = item if isinstance(item, list) else [item]
-        for req in requests:
+        batch = item if isinstance(item, list) else [item]
+        for req in batch:
             error = RuntimeError("Fetcher loop is not running, request refused")
-            if req.kind is FetchKind.LISTING:
+            if isinstance(req, fetch_requests.Listing):
                 self.index.store_listing_error(req.package, error)
-                continue
-            assert req.version is not None
-            if req.kind is FetchKind.METADATA:
+            elif isinstance(req, fetch_requests.SidecarMetadata):
                 self.index.store_metadata_error(
                     req.package, req.version, error, req.url
                 )
-            elif req.kind is FetchKind.RANGE_METADATA:
+            elif isinstance(req, fetch_requests.RangeMetadata):
                 # A dead loop is a rung miss: unblock the waiter and let it fall
                 # through to the sdist rung, not a candidate-dropping error.
-                assert req.url is not None
                 self.index.store_range_absent(req.package, req.version, req.url)
-            elif req.kind is FetchKind.SDIST:
+            elif isinstance(req, fetch_requests.SdistMetadata):
                 self.index.store_sdist_metadata_error(
-                    req.package, sdist_artifact_key(req.version, req.url or ""), error
+                    req.package, sdist_artifact_key(req.version, req.url), error
                 )
             else:
                 self.index.store_sdist_archive_error(
                     req.package,
-                    sdist_artifact_key(req.version, req.url or "")
-                    if req.kind is FetchKind.SDIST_ARCHIVE
+                    sdist_artifact_key(req.version, req.url)
+                    if isinstance(req, fetch_requests.SdistArchive)
                     else req.version,
                     error,
                 )
@@ -810,7 +753,7 @@ class FetchCoordinator:
                 self._warm_sync_stats.declined_small_blob += 1
             self._warm_sync_stats.listing_declines += 1
 
-        self._submit(FetchRequest(kind=FetchKind.LISTING, package=package))
+        self._submit(fetch_requests.Listing(package=package))
         return event
 
     def _try_metadata_sync(self, package: str, version: str, url: str) -> bool:
@@ -843,8 +786,7 @@ class FetchCoordinator:
         event, existed = self.index.get_or_create_pending(key)
         if not existed and not self._try_metadata_sync(package, version, url):
             self._submit(
-                FetchRequest(
-                    kind=FetchKind.METADATA,
+                fetch_requests.SidecarMetadata(
                     package=package,
                     version=version,
                     url=url,
@@ -877,12 +819,11 @@ class FetchCoordinator:
         event, existed = self.index.get_or_create_pending(key)
         if not existed:
             self._submit(
-                FetchRequest(
-                    kind=FetchKind.RANGE_METADATA,
+                fetch_requests.RangeMetadata(
                     package=package,
                     version=version,
                     url=wheel_url,
-                    wheel_hashes=wheel_hashes,
+                    hashes=wheel_hashes,
                 )
             )
         return event
@@ -906,12 +847,11 @@ class FetchCoordinator:
         event, existed = self.index.get_or_create_pending(key)
         if not existed:
             self._submit(
-                FetchRequest(
-                    kind=FetchKind.SDIST,
+                fetch_requests.SdistMetadata(
                     package=package,
                     version=version,
                     url=url,
-                    sdist_hashes=sdist_hashes,
+                    hashes=sdist_hashes,
                 )
             )
         return event
@@ -936,12 +876,11 @@ class FetchCoordinator:
         event, existed = self.index.get_or_create_pending(key)
         if not existed:
             self._submit(
-                FetchRequest(
-                    kind=FetchKind.SDIST_ARCHIVE,
+                fetch_requests.SdistArchive(
                     package=package,
                     version=version,
                     url=url,
-                    sdist_hashes=sdist_hashes,
+                    hashes=sdist_hashes,
                 )
             )
         return event
@@ -964,8 +903,7 @@ class FetchCoordinator:
         event, existed = self.index.get_or_create_pending(key)
         if not existed:
             self._submit(
-                FetchRequest(
-                    kind=FetchKind.DIRECT_ARCHIVE,
+                fetch_requests.DirectArchive(
                     package=package,
                     version=version,
                     url=url,
@@ -1031,7 +969,7 @@ class FetchCoordinator:
         """
         self._check_alive()
         results: list[tuple[str, str, threading.Event]] = []
-        batch: list[FetchRequest] = []
+        batch: list[fetch_requests.FetchRequest] = []
 
         for package, version, url, metadata_hash in items:
             if self.index.has_metadata(package, version, url):
@@ -1042,8 +980,7 @@ class FetchCoordinator:
             event, existed = self.index.get_or_create_pending(key)
             if not existed and not self._try_metadata_sync(package, version, url):
                 batch.append(
-                    FetchRequest(
-                        kind=FetchKind.METADATA,
+                    fetch_requests.SidecarMetadata(
                         package=package,
                         version=version,
                         url=url,
@@ -1201,59 +1138,53 @@ class FetchCoordinator:
 
     def _dispatch(
         self,
-        item: FetchRequest | list[FetchRequest],
+        item: fetch_requests.FetchRequest | list[fetch_requests.FetchRequest],
         client: CachedAsyncSimpleClient | LocalIndexClient | MultiIndexClient,
         sem: asyncio.Semaphore,
         tasks: set[asyncio.Task[None]],
     ) -> None:
         """Create async tasks for a single request or a batch."""
-        if isinstance(item, list):
-            for req in item:
-                task = asyncio.create_task(self._handle(client, req, sem))
-                tasks.add(task)
-                task.add_done_callback(tasks.discard)
-        else:
-            task = asyncio.create_task(self._handle(client, item, sem))
+        batch = item if isinstance(item, list) else (item,)
+        for request in batch:
+            task = asyncio.create_task(self._handle(client, request, sem))
             tasks.add(task)
             task.add_done_callback(tasks.discard)
 
     async def _handle(
         self,
         client: CachedAsyncSimpleClient | LocalIndexClient | MultiIndexClient,
-        req: FetchRequest,
+        req: fetch_requests.FetchRequest,
         sem: asyncio.Semaphore,
     ) -> None:
         """Run one limited request and record fetch failures for its waiter."""
         async with sem:
             try:
-                if req.kind is FetchKind.LISTING:
+                if isinstance(req, fetch_requests.Listing):
                     await self._fetch_listing(client, req)
-                elif req.kind is FetchKind.METADATA:
+                elif isinstance(req, fetch_requests.SidecarMetadata):
                     await self._fetch_metadata(client, req)
-                elif req.kind is FetchKind.SDIST:
+                elif isinstance(req, fetch_requests.SdistMetadata):
                     await self._fetch_sdist(client, req)
-                elif req.kind is FetchKind.SDIST_ARCHIVE:
+                elif isinstance(req, fetch_requests.SdistArchive):
                     await self._fetch_sdist_archive(client, req)
-                elif req.kind is FetchKind.RANGE_METADATA:
+                elif isinstance(req, fetch_requests.RangeMetadata):
                     await self._fetch_range_metadata(client, req)
                 else:
                     await self._fetch_direct_archive(req)
             except OfflineError as exc:
                 # Offline with a cold cache is an expected miss.
-                logger.debug(
-                    "Fetch failed: %s %s: %s", req.kind.value, req.package, exc
-                )
+                logger.debug("Fetch failed: %s %s: %s", req.operation, req.package, exc)
                 self._record_fetch_failure(client, req, exc)
             except Exception as exc:  # noqa: BLE001 - failures must unblock the waiter
                 logger.warning(
-                    "Fetch failed: %s %s: %s", req.kind.value, req.package, exc
+                    "Fetch failed: %s %s: %s", req.operation, req.package, exc
                 )
                 self._record_fetch_failure(client, req, exc)
 
     def _record_fetch_failure(
         self,
         client: CachedAsyncSimpleClient | LocalIndexClient | MultiIndexClient,
-        req: FetchRequest,
+        req: fetch_requests.FetchRequest,
         exc: Exception,
     ) -> None:
         """Record a failed fetch so any waiter unblocks (else a deadlock).
@@ -1270,7 +1201,7 @@ class FetchCoordinator:
         """
         offline = isinstance(exc, OfflineError)
 
-        if req.kind is FetchKind.LISTING:
+        if isinstance(req, fetch_requests.Listing):
             if offline:
                 # Record the serving index before the empty listing fires the
                 # pending event (see _fetch_listing).
@@ -1280,11 +1211,10 @@ class FetchCoordinator:
                 self.index.store_listing_error(req.package, exc)
             return
 
-        assert req.version is not None
         self._record_versioned_failure(req, exc, offline=offline)
 
     def _record_versioned_failure(
-        self, req: FetchRequest, exc: Exception, *, offline: bool
+        self, req: fetch_requests.VersionedRequest, exc: Exception, *, offline: bool
     ) -> None:
         """Record the failure of a version-scoped fetch, unblocking its waiter.
 
@@ -1300,52 +1230,49 @@ class FetchCoordinator:
         A metadata rung marks the skip before it stores, so a waiter released
         by the store reads the mark and not a bare empty slot.
         """
-        assert req.version is not None
-        if req.kind is FetchKind.METADATA:
+        if offline and isinstance(
+            req,
+            (
+                fetch_requests.SidecarMetadata,
+                fetch_requests.RangeMetadata,
+                fetch_requests.SdistMetadata,
+            ),
+        ):
+            self.index.record_offline_metadata_miss(req.package, req.version, req.url)
+
+        if isinstance(req, fetch_requests.SidecarMetadata):
             if offline:
-                assert req.url is not None
-                self.index.record_offline_metadata_miss(
-                    req.package, req.version, req.url
-                )
                 self.index.store_metadata(
                     req.package, req.version, None, metadata_url=req.url
                 )
             else:
                 self.index.store_metadata_error(req.package, req.version, exc, req.url)
-        elif req.kind is FetchKind.RANGE_METADATA:
-            assert req.url is not None
+        elif isinstance(req, fetch_requests.RangeMetadata):
             if offline:
                 # A cold offline miss is a rung miss: fall through to the sdist.
-                self.index.record_offline_metadata_miss(
-                    req.package, req.version, req.url
-                )
                 self.index.store_range_absent(req.package, req.version, req.url)
             else:
                 # A malformed blob or an unserveable advertised wheel fails
                 # the resolve; record the per-wheel error.
                 self.index.store_range_error(req.package, req.version, req.url, exc)
-        elif req.kind is FetchKind.SDIST:
+        elif isinstance(req, fetch_requests.SdistMetadata):
             if offline:
-                assert req.url is not None
-                self.index.record_offline_metadata_miss(
-                    req.package, req.version, req.url
-                )
                 self.index.store_sdist_metadata(
-                    req.package, sdist_artifact_key(req.version, req.url or ""), None
+                    req.package, sdist_artifact_key(req.version, req.url), None
                 )
             else:
                 self.index.store_sdist_metadata_error(
-                    req.package, sdist_artifact_key(req.version, req.url or ""), exc
+                    req.package, sdist_artifact_key(req.version, req.url), exc
                 )
-        elif offline and req.kind is FetchKind.SDIST_ARCHIVE:
+        elif offline and isinstance(req, fetch_requests.SdistArchive):
             self.index.store_sdist_archive(
-                req.package, sdist_artifact_key(req.version, req.url or ""), None
+                req.package, sdist_artifact_key(req.version, req.url), None
             )
         else:
             self.index.store_sdist_archive_error(
                 req.package,
-                sdist_artifact_key(req.version, req.url or "")
-                if req.kind is FetchKind.SDIST_ARCHIVE
+                sdist_artifact_key(req.version, req.url)
+                if isinstance(req, fetch_requests.SdistArchive)
                 else req.version,
                 exc,
             )
@@ -1353,7 +1280,7 @@ class FetchCoordinator:
     async def _fetch_listing(
         self,
         client: CachedAsyncSimpleClient | LocalIndexClient | MultiIndexClient,
-        req: FetchRequest,
+        req: fetch_requests.Listing,
     ) -> None:
         files = await client.get_files(req.package)
         # Record the serving index before store_listing fires the pending
@@ -1499,12 +1426,8 @@ class FetchCoordinator:
     async def _fetch_metadata(
         self,
         client: CachedAsyncSimpleClient | LocalIndexClient | MultiIndexClient,
-        req: FetchRequest,
+        req: fetch_requests.SidecarMetadata,
     ) -> None:
-        assert req.version is not None
-        if req.url is None:
-            self.index.store_metadata(req.package, req.version, None)
-            return
         text = await client.get_metadata_text(
             req.package, req.version, req.url, req.metadata_hash
         )
@@ -1514,7 +1437,7 @@ class FetchCoordinator:
     async def _fetch_range_metadata(
         self,
         client: CachedAsyncSimpleClient | LocalIndexClient | MultiIndexClient,
-        req: FetchRequest,
+        req: fetch_requests.RangeMetadata,
     ) -> None:
         """Recover a sidecar-less wheel's METADATA over an HTTP range read.
 
@@ -1524,14 +1447,12 @@ class FetchCoordinator:
         sdist rung.  A malformed blob or an unserveable wheel URL raises out of
         the client and is caught by :meth:`_handle` as a fetch failure.
         """
-        assert req.version is not None
-        assert req.url is not None
         result = await client.get_range_metadata(
             req.package,
             req.version,
             req.url,
             canonicalize_name_boundary(req.package),
-            req.wheel_hashes,
+            req.hashes,
         )
         self.index.store_range_outcome(
             req.package, req.version, req.url, result.outcome
@@ -1552,12 +1473,10 @@ class FetchCoordinator:
     async def _fetch_sdist(
         self,
         client: CachedAsyncSimpleClient | LocalIndexClient | MultiIndexClient,
-        req: FetchRequest,
+        req: fetch_requests.SdistMetadata,
     ) -> None:
-        assert req.version is not None
-        assert req.url is not None
         pkg_info, pyproject = await client.get_sdist_files(
-            req.package, req.version, req.url, req.sdist_hashes
+            req.package, req.version, req.url, req.hashes
         )
         source_key = sdist_artifact_key(req.version, req.url)
         # Store pyproject.toml first: store_sdist_metadata fires the
@@ -1588,26 +1507,17 @@ class FetchCoordinator:
     async def _fetch_sdist_archive(
         self,
         client: CachedAsyncSimpleClient | LocalIndexClient | MultiIndexClient,
-        req: FetchRequest,
+        req: fetch_requests.SdistArchive,
     ) -> None:
-        assert req.version is not None
-        if req.url is None:
-            self.index.store_sdist_archive(
-                req.package, sdist_artifact_key(req.version, ""), None
-            )
-            return
         data = await client.get_sdist_archive(
-            req.package, req.version, req.url, req.sdist_hashes
+            req.package, req.version, req.url, req.hashes
         )
         self.index.store_sdist_archive(
             req.package, sdist_artifact_key(req.version, req.url), data
         )
 
-    async def _fetch_direct_archive(self, req: FetchRequest) -> None:
+    async def _fetch_direct_archive(self, req: fetch_requests.DirectArchive) -> None:
         """Read an archive declared by URL, by that URL's own scheme."""
-        assert req.version is not None
-        assert req.url is not None
-
         if urlsplit(req.url).scheme == "file":
             data = parse_file_url(req.url).read_bytes()
         else:

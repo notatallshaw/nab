@@ -23,16 +23,18 @@ __lazy_modules__ = (
 
 import sys
 from pathlib import Path
+from typing import get_args
 
 from nab_index.cache import OnDiskCache, is_recognized_bucket
 
 from ._run import _default_cache_dir, _fail_config, effective_config
 from .config.values import SourceConfigError
+from .flagtypes import CacheAction
 from .output import printer
 
 
 def cache_command(
-    action: str,
+    action: CacheAction,
     *,
     cache_dir: Path | None = None,
 ) -> None:
@@ -49,9 +51,10 @@ def cache_command(
         _verify(root)
     elif action == "clear":
         _clear(root)
-    else:  # pragma: no cover - the parser refuses any other verb
-        msg = f"unreachable cache action {action!r}"
-        raise AssertionError(msg)
+    else:
+        choices = ", ".join(get_args(CacheAction))
+        msg = f"unknown cache action {action!r} (choose from {choices})"
+        raise ValueError(msg)
 
 
 def _cache_root(cache_dir: Path | None) -> Path:

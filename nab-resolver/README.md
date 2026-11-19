@@ -16,23 +16,20 @@ is a worked example in the docs:
 
 ## The public API
 
-The supported API is the module paths below. They will not move without a major version bump.
-Everything else in the package is internal and may be renamed or relocated in any release.
+The following import paths are supported and will remain available until a major version change.
 
-```text
-nab_resolver.errors     ResolutionError, ResolutionInvariantError,
-                        ResolutionLimitError, ResolutionStalledError,
-                        ResolutionTerminatedError
-nab_resolver.ranges     Range
-nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,
-                        ResolverObserver, ResolverProvider, Solution
-nab_resolver.root       ROOT
-nab_resolver.types      Incompatibility, IncompatibilityCause,
-                        RangeProtocol, RootRequirement, Term
-```
+| Module                     | Supported names                                                                                                              |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `nab_resolver.resolver`    | `Resolver`, `ResolverProvider`, `BaseProvider`, `ResolverObserver`, `Solution`, `DEFAULT_MAX_ITERATIONS`                     |
+| `nab_resolver.root`        | `ROOT`                                                                                                                       |
+| `nab_resolver.ranges`      | `Range`, `IntegerRangeMembership`                                                                                            |
+| `nab_resolver.types`       | `RootRequirement`, `Term`, `Incompatibility`, `IncompatibilityCause`, `RangeProtocol`                                        |
+| `nab_resolver.errors`      | `ResolutionError`, `ResolutionTerminatedError`, `ResolutionLimitError`, `ResolutionInvariantError`, `ResolutionStalledError` |
+| `nab_resolver.diagnostics` | `DiagnosticMessage`, `Suggestion`, `error_message`, `suggestion_lines`                                                       |
+| `nab_resolver.testing`     | `ProviderScenario`, `ProviderConformanceError`, `check_provider`, `check_provider_scenarios`                                 |
 
-The package root binds no names, so importing `nab_resolver` pulls in no submodules and a caller
-loads only what it imports.
+Import the names you need from their modules. Importing `nab_resolver` alone loads no submodules.
+Other module paths are internal and may change in any release.
 
 ## Checking preferred versions
 

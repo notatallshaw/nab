@@ -9,15 +9,13 @@ names it by, so one wording serves every rung of the ladder: a bad
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "collections",
     "datetime",
     "itertools",
     "nab_index.file_urls",
     "nab_markersets.python_versions",
-    "nab_project.lock_policy",
     "nab_project",
-    "tomli",
+    "nab_project.lock_policy",
     "nab_project.paths",
     "nab_project.workspace",
     "nab_provider._vendor.packaging.specifiers",
@@ -34,7 +32,9 @@ __lazy_modules__ = (
     "nab_provider.tags",
     "nab_provider.target",
     "nab_provider.vcs_admission",
+    "nab_resolver.diagnostics",
     "pathlib",
+    "tomli",
     "urllib.parse",
 )
 
@@ -513,15 +513,15 @@ def _parse_bool(key: str, value: object, *, default: bool) -> bool:
 
 
 # The bound is a string so ``enum`` can stay a typing-only import.
-_EnumT = TypeVar("_EnumT", bound="enum.Enum")
+_EnumMember = TypeVar("_EnumMember", bound="enum.Enum")
 
 
 def parse_enum(
     value: object,
     where: str,
-    enum_cls: type[_EnumT],
-    default: _EnumT,
-) -> _EnumT:
+    enum_cls: type[_EnumMember],
+    default: _EnumMember,
+) -> _EnumMember:
     """Read ``value`` as one of ``enum_cls``'s values, or ``default`` when unset."""
     if value is None:
         return default

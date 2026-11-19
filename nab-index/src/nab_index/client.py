@@ -9,7 +9,6 @@ implementing the :class:`AsyncHttpTransport` protocol can be used.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "hashlib",
     "io",
     "nab_index._json_decode",
@@ -18,6 +17,7 @@ __lazy_modules__ = (
     "nab_provider.errors",
     "nab_provider.records",
     "nab_provider.serialization",
+    "nab_resolver.diagnostics",
     "packaging.utils",
     "packaging.version",
     "shutil",

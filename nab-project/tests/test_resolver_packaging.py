@@ -14,7 +14,6 @@ from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
 from nab_resolver.errors import ResolutionError
-from nab_resolver.report import union_terms
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Term
 
@@ -750,7 +749,7 @@ class TestPrereleaseAuthorizationBacktracking:
 class TestConflictPathPrereleaseAdmission:
     """Conflict-resolution term algebra must not leak pre-release admission.
 
-    ``Term.intersect`` and ``union_terms`` subtract a negative (exclusion)
+    ``Term.intersect`` and ``Term.union`` subtract a negative (exclusion)
     term from a positive one. The result must keep only the positive (or
     negative-minuend) side's pre-release opt-in, so a learned exclusion
     grants no pre-release admission when its negation is propagated back
@@ -771,7 +770,7 @@ class TestConflictPathPrereleaseAdmission:
         """The mixed-term remainder keeps the negative term's opt-in only."""
         negative = Term("c", SpecifierSet(">=1.0").to_range(), positive=False)
         positive = Term("c", SpecifierSet(">=2.0b1").to_range(), positive=True)
-        result = union_terms(negative, positive)
+        result = negative.union(positive)
         assert result is not None
         assert not result.is_positive()
         picked = list(result.constraint.filter([V("1.5a1"), V("1.0")]))

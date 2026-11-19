@@ -190,6 +190,9 @@ def build_resolver_inputs(
     roots: list[RootRequirement[str, Version]] = []
     resolver_requirements: dict[str, VersionRange] = {}
     root_extras: set[tuple[str, str]] = set()
+    constraint_sources: defaultdict[str, list[str]] | None = (
+        defaultdict(list) if kind == "constraint" else None
+    )
     already_warned: set[tuple[str, str]] = set() if warned is None else warned
 
     for req in requirements:
@@ -217,7 +220,10 @@ def build_resolver_inputs(
             else VersionRange.full(admit_arbitrary=False)
         )
         resolver_requirements[name] = previous & term
-        roots.append(_root(name, term, str(req)))
+        origin = str(req)
+        roots.append(_root(name, term, origin))
+        if constraint_sources is not None:
+            constraint_sources[name].append(origin)
 
         for extra in sorted(req.extras):
             extra_key = join_extra(name, extra)
@@ -227,17 +233,12 @@ def build_resolver_inputs(
             if extra_key not in resolver_requirements:
                 proxy = VersionRange.full(admit_arbitrary=False)
                 resolver_requirements[extra_key] = proxy
-                roots.append(_root(extra_key, proxy, str(req)))
+                roots.append(_root(extra_key, proxy, origin))
 
-            _, normalized_extra = split_extra(extra_key)
-            assert normalized_extra is not None  # join_extra always sets one
-            root_extras.add((name, normalized_extra))
+            root_extras.add((name, canonicalize_name(extra)))
 
-    if kind == "constraint":
-        sources: defaultdict[str, list[str]] = defaultdict(list)
-        for root in roots:
-            sources[root.package].append(root.origin)
-        raise_for_unsatisfiable(resolver_requirements, sources, kind=kind)
+    if constraint_sources is not None:
+        raise_for_unsatisfiable(resolver_requirements, constraint_sources, kind=kind)
 
     return _ResolverInputs(roots, resolver_requirements, root_extras)
 

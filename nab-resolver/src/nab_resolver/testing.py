@@ -30,7 +30,12 @@ if TYPE_CHECKING:
         _PackageType, Mapping[VersionType, _Membership[_PackageType, VersionType]]
     ]
 
-__all__ = ["ProviderScenario", "check_provider", "check_provider_scenarios"]
+__all__ = [
+    "ProviderConformanceError",
+    "ProviderScenario",
+    "check_provider",
+    "check_provider_scenarios",
+]
 
 # Two roots and their shared dependency need three package keys.
 _SCENARIO_PACKAGE_COUNT = 3
@@ -78,6 +83,28 @@ class ProviderScenario(Generic[_PackageType, VersionType]):
         self.graph: _DependencyGraph[_PackageType, VersionType] = MappingProxyType(
             copied_graph
         )
+
+
+class ProviderConformanceError(ValueError):
+    """The observed provider behavior disagrees with the named fixture."""
+
+    def __init__(self, scenario: str, detail: str) -> None:
+        """Identify the scenario whose contract failed."""
+        super().__init__(scenario, detail)
+        self.scenario = scenario
+        self.detail = detail
+
+    @override
+    def __str__(self) -> str:
+        """Show the failing fixture and the observation that violated its contract."""
+        return f"{self.scenario}: {self.detail}"
+
+
+def _compare(scenario: str, detail: str, *, expected: object, observed: object) -> None:
+    """Show the differing observations to the provider implementer."""
+    if observed != expected:
+        msg = f"{detail}: expected {expected!r}, observed {observed!r}"
+        raise ProviderConformanceError(scenario, msg)
 
 
 def _membership(
@@ -281,11 +308,19 @@ class _CheckingProvider(BaseProvider[_PackageType, VersionType]):
     def _check_retained(self) -> None:
         """Check earlier answers while the provider's resolution is still active."""
         for version, original in self._hashes:
-            assert hash(version) == original, "candidate hash changed"
+            _compare(
+                self.scenario.name,
+                "candidate hash changed",
+                expected=original,
+                observed=hash(version),
+            )
 
         for actual, recorded in self._retained:
-            assert _membership(actual, self.scenario.graph) == recorded, (
-                "returned dependency mapping was mutated"
+            _compare(
+                self.scenario.name,
+                "returned dependency mapping was mutated",
+                expected=recorded,
+                observed=_membership(actual, self.scenario.graph),
             )
 
     def _record_choice(
@@ -295,20 +330,28 @@ class _CheckingProvider(BaseProvider[_PackageType, VersionType]):
         allowed: RangeProtocol[VersionType],
     ) -> None:
         """Record a real choice and compare it with earlier widened facts."""
-        assert version in allowed, f"chosen version outside query for {package!r}"
-        assert version in self.expected.graph.get(package, {}), (
-            f"chosen version outside fixture for {package!r}"
-        )
+        if version not in allowed:
+            msg = (
+                f"chosen version outside query for {package!r}: "
+                f"{version!r} is outside {allowed!r}"
+            )
+            raise ProviderConformanceError(self.scenario.name, msg)
+        if version not in self.expected.graph.get(package, {}):
+            msg = f"chosen version outside fixture for {package!r}: {version!r}"
+            raise ProviderConformanceError(self.scenario.name, msg)
 
         self._known.setdefault(package, set()).add(version)
         self._hashes.append((version, hash(version)))
 
         # Only choices seen in this resolution prove that a version is selectable.
         for widened in self._widened:
-            if widened.package == package and version in widened.allowed:
-                assert widened.dependencies == self.expected.graph[package][version], (
-                    f"widening merges unequal dependencies for {package!r}"
-                )
+            if (
+                widened.package == package
+                and version in widened.allowed
+                and widened.dependencies != self.expected.graph[package][version]
+            ):
+                msg = f"widening merges unequal dependencies for {package!r}"
+                raise ProviderConformanceError(self.scenario.name, msg)
 
     def has_satisfying_version(
         self, package: _PackageType, version_range: RangeProtocol[VersionType]
@@ -320,12 +363,18 @@ class _CheckingProvider(BaseProvider[_PackageType, VersionType]):
         input_membership = _range_membership(version_range, self.versions)
         available = self.provider.has_satisfying_version(package, version_range)
 
-        assert _range_membership(version_range, self.versions) == input_membership, (
-            "availability probe mutated its range"
+        _compare(
+            self.scenario.name,
+            "availability probe mutated its range",
+            expected=input_membership,
+            observed=_range_membership(version_range, self.versions),
         )
         if self.probe_state is not None:
-            assert self.probe_state(self.provider) == before, (
-                "availability probe changed decision state"
+            _compare(
+                self.scenario.name,
+                "availability probe changed decision state",
+                expected=before,
+                observed=self.probe_state(self.provider),
             )
         self._check_retained()
 
@@ -340,8 +389,11 @@ class _CheckingProvider(BaseProvider[_PackageType, VersionType]):
         input_membership = _range_membership(version_range, self.versions)
         chosen = self.provider.choose_version(package, version_range)
 
-        assert _range_membership(version_range, self.versions) == input_membership, (
-            "candidate query mutated its range"
+        _compare(
+            self.scenario.name,
+            "candidate query mutated its range",
+            expected=input_membership,
+            observed=_range_membership(version_range, self.versions),
         )
         self._check_retained()
 
@@ -374,10 +426,15 @@ class _CheckingProvider(BaseProvider[_PackageType, VersionType]):
         self._answer = None
         self._pending = False
 
-        if answer is not None and not (answer.chosen is None and (pending or targets)):
-            assert answer.available == (answer.chosen is not None), (
-                f"availability probe disagrees for {answer.package!r}"
+        if answer is None or (answer.chosen is None and (pending or targets)):
+            return targets
+
+        if answer.available != (answer.chosen is not None):
+            msg = (
+                f"availability probe disagrees for {answer.package!r}: "
+                f"reported {answer.available}, chose {answer.chosen!r}"
             )
+            raise ProviderConformanceError(self.scenario.name, msg)
 
         return targets
 
@@ -389,17 +446,17 @@ class _CheckingProvider(BaseProvider[_PackageType, VersionType]):
 
         actual = self.provider.get_dependencies(package, version)
         captured = _membership(actual, self.scenario.graph)
-        assert captured == self.expected.graph[package][version], (
-            f"wrong dependencies for {(package, version)!r}"
-        )
+        if captured != self.expected.graph[package][version]:
+            msg = f"wrong dependencies for {(package, version)!r}"
+            raise ProviderConformanceError(self.scenario.name, msg)
 
         self._retained.append((actual, captured))
 
         # Repeated reads happen after the real decision, with its original hints.
         repeated = self.provider.get_dependencies(package, version)
-        assert _membership(repeated, self.scenario.graph) == captured, (
-            f"dependencies changed for {(package, version)!r}"
-        )
+        if _membership(repeated, self.scenario.graph) != captured:
+            msg = f"dependencies changed for {(package, version)!r}"
+            raise ProviderConformanceError(self.scenario.name, msg)
 
         self._retained.append((repeated, captured))
         self._check_retained()
@@ -412,14 +469,18 @@ class _CheckingProvider(BaseProvider[_PackageType, VersionType]):
         """Compare widened facts with versions actually chosen in this resolution."""
         widened = self.provider.widen_decision(package, version)
         if widened is not None:
-            assert version in widened, f"widening excludes decision for {package!r}"
+            if version not in widened:
+                msg = f"widening excludes decision for {package!r}"
+                raise ProviderConformanceError(self.scenario.name, msg)
 
             dependencies = self.expected.graph[package][version]
             for known in self._known.get(package, ()):
-                if known in widened:
-                    assert dependencies == self.expected.graph[package][known], (
-                        f"widening merges unequal dependencies for {package!r}"
-                    )
+                if (
+                    known in widened
+                    and dependencies != self.expected.graph[package][known]
+                ):
+                    msg = f"widening merges unequal dependencies for {package!r}"
+                    raise ProviderConformanceError(self.scenario.name, msg)
 
             self._widened.append(_WidenedDependencies(package, widened, dependencies))
         self._check_retained()
@@ -440,12 +501,12 @@ class _CheckingProvider(BaseProvider[_PackageType, VersionType]):
         shown = self.provider.narrow_for_display(package, constraint)
 
         # Returning the same mutated object must not change both sides of the check.
-        assert _range_membership(shown, known) == original, (
-            f"display narrowing changes membership for {package!r}"
-        )
-        assert _range_membership(constraint, known) == original, (
-            f"display narrowing mutated input for {package!r}"
-        )
+        if _range_membership(shown, known) != original:
+            msg = f"display narrowing changes membership for {package!r}"
+            raise ProviderConformanceError(self.scenario.name, msg)
+        if _range_membership(constraint, known) != original:
+            msg = f"display narrowing mutated input for {package!r}"
+            raise ProviderConformanceError(self.scenario.name, msg)
         self._check_retained()
 
         return shown
@@ -489,15 +550,16 @@ class _CheckingProvider(BaseProvider[_PackageType, VersionType]):
 
 
 def _check_solution(
+    scenario: str,
     solution: Solution[_PackageType, VersionType],
     requirements: _Membership[_PackageType, VersionType],
     graph: _OracleGraph[_PackageType, VersionType],
     constraints: _Membership[_PackageType, VersionType],
 ) -> None:
     """Check the result's pins, reachable packages, edges and roots independently."""
-    assert _valid_selection(solution.pins, requirements, graph, constraints), (
-        "solution violates fixture requirements"
-    )
+    if not _valid_selection(solution.pins, requirements, graph, constraints):
+        msg = f"solution violates fixture requirements: pins {solution.pins!r}"
+        raise ProviderConformanceError(scenario, msg)
 
     reachable: set[_PackageType] = set()
     pending = list(requirements)
@@ -513,12 +575,23 @@ def _check_solution(
         edges.update((package, child) for child in dependencies)
         pending.extend(dependencies)
 
-    assert reachable == solution.pins.keys(), "solution includes unreachable packages"
-    assert edges == set(solution.edges), (
-        "solution edges differ from fixture dependencies"
+    _compare(
+        scenario,
+        "solution includes unreachable packages",
+        expected=reachable,
+        observed=solution.pins.keys(),
     )
-    assert tuple(requirements) == solution.roots, (
-        "solution roots differ from input order"
+    _compare(
+        scenario,
+        "solution edges differ from fixture dependencies",
+        expected=edges,
+        observed=set(solution.edges),
+    )
+    _compare(
+        scenario,
+        "solution roots differ from input order",
+        expected=tuple(requirements),
+        observed=solution.roots,
     )
 
 
@@ -576,9 +649,24 @@ def _check_fixture(
 ) -> None:
     """Keep shared range mutations from changing the expected answers."""
     current = _fixture_membership(scenario)
-    assert current.graph == expected.graph, "fixture metadata changed"
-    assert current.requirements == expected.requirements, "fixture requirements changed"
-    assert current.constraints == expected.constraints, "fixture constraints changed"
+    _compare(
+        scenario.name,
+        "fixture metadata changed",
+        expected=expected.graph,
+        observed=current.graph,
+    )
+    _compare(
+        scenario.name,
+        "fixture requirements changed",
+        expected=expected.requirements,
+        observed=current.requirements,
+    )
+    _compare(
+        scenario.name,
+        "fixture constraints changed",
+        expected=expected.constraints,
+        observed=current.constraints,
+    )
 
 
 def check_provider(
@@ -597,11 +685,10 @@ def check_provider(
 
     The graph defines the candidate versions and their unchanging dependencies.
     factory receives each query's roots and constraints and returns a fresh provider.
-    Contract failures raise AssertionError; operational errors propagate.
+    Contract failures raise ProviderConformanceError with the scenario name.
     max_combinations limits search before the provider is called.
     probe_state may return an independent snapshot of decision state; exclude
     permitted cache and diagnostic changes from that snapshot.
-    Run these checks with assertions enabled.
     """
     # Freeze inputs before provider construction, including shared range values.
     expected = _fixture_membership(scenario)
@@ -649,11 +736,16 @@ def check_provider(
         except ResolutionError as error:
             if error.incompatibility is None:
                 raise
-            assert not possible, "provider rejected a satisfiable fixture"
+            if possible:
+                msg = "provider rejected a satisfiable fixture"
+                raise ProviderConformanceError(scenario.name, msg) from error
         else:
-            assert possible, "provider accepted an impossible fixture"
             _check_solution(
-                solution, query.membership, expected.graph, expected.constraints
+                scenario.name,
+                solution,
+                query.membership,
+                expected.graph,
+                expected.constraints,
             )
 
         _check_fixture(scenario, expected)
@@ -845,16 +937,11 @@ def check_provider_scenarios(
     for scenario in _scenarios(package_keys, version_keys, range_type):
         # The root package is a separate sentinel; any accepted version key is valid.
         budget = prod(max(1, len(choices)) for choices in scenario.graph.values())
-        try:
-            check_provider(
-                factory,
-                scenario,
-                range_type=range_type,
-                root_version=version_keys[0],
-                max_combinations=budget,
-                probe_state=probe_state,
-            )
-        except AssertionError as error:
-            # Preserve the original exception and traceback on Python 3.10, too.
-            error.args = (f"{scenario.name}: {error}",)
-            raise
+        check_provider(
+            factory,
+            scenario,
+            range_type=range_type,
+            root_version=version_keys[0],
+            max_combinations=budget,
+            probe_state=probe_state,
+        )

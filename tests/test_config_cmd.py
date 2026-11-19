@@ -788,13 +788,10 @@ class TestTheFoldThroughTheInspector:
 
 
 class TestConfigErrors:
-    def test_an_unknown_action_never_reaches_the_body(
-        self, hermetic_roots: Path
-    ) -> None:
-        """The parser refuses it, so the body only asserts it cannot happen."""
+    def test_unknown_action_passed_directly(self, hermetic_roots: Path) -> None:
         _project(hermetic_roots)
 
-        with pytest.raises(AssertionError, match="unreachable config action"):
+        with pytest.raises(ValueError, match="unknown config action 'frobnicate'"):
             config_command("frobnicate", path=hermetic_roots / "pyproject.toml")
 
     def test_missing_path_exits(

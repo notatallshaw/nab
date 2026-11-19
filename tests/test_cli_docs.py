@@ -35,6 +35,8 @@ from nab_project.lockfile import (
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 
+from ._markdown import fenced_blocks
+
 _DOCS = Path(__file__).resolve().parents[1] / "docs"
 _CLI_REFERENCE = _DOCS / "reference" / "cli.md"
 _CONFLICTS_DOC = _DOCS / "explanation" / "conflicts.md"
@@ -129,11 +131,11 @@ class _Tty(io.StringIO):
 def _documented_progress_line() -> str:
     """The progress line the CLI reference shows in its fenced example."""
     section = _reference_section(_CLI_REFERENCE, "## Output control")
-    block = re.search(r"```\n(.*?)\n```", section, re.DOTALL)
-    if block is None:
-        msg = "no fenced progress example under ## Output control"
-        raise AssertionError(msg)
-    return block.group(1)
+    for language, body in fenced_blocks(section):
+        if not language:
+            return body.rstrip("\n")
+    msg = "no fenced progress example under ## Output control"
+    raise AssertionError(msg)
 
 
 def _painted_progress_lines(fetched: int, pinned: int) -> set[str]:
@@ -358,7 +360,9 @@ class TestIncludeRejected:
 
 def _console_block(text: str, command: str) -> list[str]:
     """The output lines of the ``console`` block whose first line is ``command``."""
-    for body in re.findall(r"```console\n(.*?)\n```", text, re.DOTALL):
+    for language, body in fenced_blocks(text):
+        if language != "console":
+            continue
         lines = body.splitlines()
         if lines[0] == command:
             return lines[1:]

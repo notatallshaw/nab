@@ -14,6 +14,7 @@ from nab_resolver.ranges import IntegerRangeMembership, Range
 from nab_resolver.resolver import BaseProvider, ResolverProvider
 from nab_resolver.root import ROOT
 from nab_resolver.testing import (
+    ProviderConformanceError,
     ProviderScenario,
     check_provider,
     check_provider_scenarios,
@@ -156,7 +157,7 @@ def test_mutating_input_ranges_cannot_rewrite_the_oracle(target: str) -> None:
             changed._hash = 0
             return super().get_dependencies(package, version)
 
-    with pytest.raises(AssertionError, match="fixture.*changed"):
+    with pytest.raises(ProviderConformanceError, match="fixture.*changed"):
         check_provider(
             MutatingProvider,
             fixture,
@@ -439,7 +440,7 @@ def test_probe_state_hook_detects_permanent_choice_changes() -> None:
             self.choices += 1
             return super().has_satisfying_version(package, version_range)
 
-    with pytest.raises(AssertionError, match="probe changed decision state"):
+    with pytest.raises(ProviderConformanceError, match="probe changed decision state"):
         check_provider_scenarios(
             ProbeChangesChoice,
             packages=("one", "two", "three"),
@@ -458,7 +459,7 @@ def test_suite_failure_names_the_scenario_and_preserves_conflict_context() -> No
             return None
 
     with pytest.raises(
-        AssertionError, match="chain: provider rejected a satisfiable fixture"
+        ProviderConformanceError, match="chain: provider rejected a satisfiable fixture"
     ) as caught:
         check_provider_scenarios(
             MissingCandidates,
@@ -467,21 +468,25 @@ def test_suite_failure_names_the_scenario_and_preserves_conflict_context() -> No
             range_type=Range,
         )
 
-    assert isinstance(caught.value.__context__, ResolutionError)
+    assert isinstance(caught.value.__cause__, ResolutionError)
 
 
-def test_suite_does_not_reinterpret_operational_errors() -> None:
-    failure = OSError("provider data unavailable")
+@pytest.mark.parametrize(
+    "failure", [OSError("unavailable"), AssertionError("bad state")]
+)
+def test_suite_propagates_provider_errors(failure: Exception) -> None:
 
     def factory(scenario: ProviderScenario[str, int]) -> ScenarioProvider[str, int]:
         raise failure
 
-    with pytest.raises(OSError, match="provider data unavailable") as caught:
+    original_args = failure.args
+    with pytest.raises(type(failure)) as caught:
         check_provider_scenarios(
             factory, packages=("one", "two", "three"), versions=(1, 2), range_type=Range
         )
 
     assert caught.value is failure
+    assert caught.value.args == original_args
 
 
 class RootHintProvider(ScenarioProvider[str, int]):
@@ -559,7 +564,9 @@ def test_scenarios_detect_harmful_widening_in_both_choice_orders(
         def widen_decision(self, package: str, version: int) -> Range[int]:
             return Range.full()
 
-    with pytest.raises(AssertionError, match="provider rejected a satisfiable fixture"):
+    with pytest.raises(
+        ProviderConformanceError, match="provider rejected a satisfiable fixture"
+    ):
         check_provider_scenarios(
             AlwaysWiden,
             packages=("one", "two", "three"),

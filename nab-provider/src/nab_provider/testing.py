@@ -72,7 +72,7 @@ _UNSERVED = (
     " or override the request in the test"
 )
 
-_T = TypeVar("_T")
+_HandlerResult = TypeVar("_HandlerResult")
 
 REQUESTS = (
     "request_listing",
@@ -398,11 +398,14 @@ class FakeFetchPort:
         return name
 
     def _handle(
-        self, name: str, args: tuple[object, ...], default: Callable[..., _T]
-    ) -> _T:
+        self,
+        name: str,
+        args: tuple[object, ...],
+        default: Callable[..., _HandlerResult],
+    ) -> _HandlerResult:
         """Record the call to ``name``, then run its override or ``default``."""
         self._calls[name].append(args)
-        handler: Callable[..., _T] = self._overrides.get(name, default)
+        handler: Callable[..., _HandlerResult] = self._overrides.get(name, default)
         return handler(*args)
 
     def request_listing(

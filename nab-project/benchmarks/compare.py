@@ -9,10 +9,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import sys
 from pathlib import Path
 from typing import NamedTuple, NoReturn
+
+from standard_stats import STAT_LABELS, valid_statistics
 
 from nab_provider._vendor.packaging.utils import is_normalized_name
 from nab_provider._vendor.packaging.version import Version
@@ -56,33 +57,6 @@ _LIST_FIELDS = tuple(
     )
 )
 
-STAT_LABELS = {
-    "rounds": "Rounds",
-    "decisions": "Decisions",
-    "conflicts": "Conflicts",
-    "derivations": "Derivations",
-    "backjumps": "Backjumps",
-    "restarts": "Restarts",
-    "incompatibilities_learned": "Incompatibilities learned",
-    "listings_fetched": "Listings fetched",
-    "metadata_fetched": "Metadata fetched",
-    "sdist_pkg_info_fetched": "Sdist PKG-INFO fetched",
-    "distributions_seen": "Distributions seen",
-    "wheels_seen": "Wheels seen",
-    "sdists_seen": "Sdists seen",
-    "excluded_by_python": "Excluded by Python",
-    "excluded_by_time": "Excluded by upload time",
-    "excluded_by_dist_policy": "Excluded by dist policy",
-    "excluded_by_build_policy": "Excluded by build policy",
-    "sdist_pyproject_fallbacks": "Sdist pyproject.toml fallbacks",
-    "get_dependencies_calls": "get_dependencies calls",
-    "choose_version_calls": "choose_version calls",
-    "prioritize_calls": "prioritize calls",
-    "look_ahead_rejections": "Look-ahead rejections",
-    "packages_resolved": "Packages resolved",
-    "wall_time_seconds": "Wall time (s)",
-}
-_STANDARD_COUNTER_FIELDS = frozenset(STAT_LABELS) - {"wall_time_seconds"}
 _STANDARD_SETTINGS_FIELDS = frozenset(
     {
         "dist_policy",
@@ -373,25 +347,7 @@ def _validate_result_payload(data: dict[str, object], path: Path) -> None:
     ):
         _fail(f"invalid benchmark result payload: {path}")
 
-    stats = data.get("stats")
-    if not isinstance(stats, dict) or set(stats) != _STANDARD_COUNTER_FIELDS | {
-        "wall_time_seconds"
-    }:
-        _fail(f"invalid benchmark statistics: {path}")
-    if any(
-        type(stats[field]) is not int or stats[field] < 0
-        for field in _STANDARD_COUNTER_FIELDS
-    ):
-        _fail(f"invalid benchmark statistics: {path}")
-    if stats["packages_resolved"] != len(pins):
-        _fail(f"invalid benchmark statistics: {path}")
-    wall_time = stats["wall_time_seconds"]
-    if (
-        not isinstance(wall_time, (int, float))
-        or isinstance(wall_time, bool)
-        or not math.isfinite(wall_time)
-        or wall_time < 0
-    ):
+    if not valid_statistics(data.get("stats"), len(pins)):
         _fail(f"invalid benchmark statistics: {path}")
 
 
@@ -519,8 +475,10 @@ def compare_scenario(
         else:
             messages.append(f"New error: {err2}")
     for key, label_text in STAT_LABELS.items():
-        value1 = stats1.get(key, 0)
-        value2 = stats2.get(key, 0)
+        if key not in stats1 or key not in stats2:
+            continue
+        value1 = stats1[key]
+        value2 = stats2[key]
         if value1 != value2:
             assert isinstance(value1, (int, float))
             assert isinstance(value2, (int, float))

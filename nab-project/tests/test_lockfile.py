@@ -3688,7 +3688,9 @@ class TestBuildTargetLock:
                 ],
             },
         )
-        with pytest.raises(AssertionError, match="not one of the configured indexes"):
+        with pytest.raises(
+            LookupError, match="foo==1.0: no serving index was recorded"
+        ):
             build_target_lock(
                 provider,
                 _HOST,
@@ -4391,7 +4393,9 @@ class TestBuildTargetLock:
             listings={"foo": [(Version("1.0"), _wheel_file())]},
             listing_indexes={"foo": "gone"},
         )
-        with pytest.raises(AssertionError, match="not one of the configured indexes"):
+        with pytest.raises(
+            LookupError, match="foo==1.0: serving index 'gone'.*primary"
+        ):
             build_target_lock(
                 provider,
                 _HOST,

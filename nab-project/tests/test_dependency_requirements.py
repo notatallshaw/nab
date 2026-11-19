@@ -170,8 +170,9 @@ def test_checked_requirements_return_collected_map(
 ) -> None:
     selected = _resolve(tmp_path, requirements)
     data = selected.dependency_requirements()
-    assert selected.lock is not None
-    assert data is selected.lock.dependency_requirements
+    lock = selected.require_lock()
+    assert lock is selected.lock
+    assert data is lock.dependency_requirements
     if "parent[feature]" in requirements:
         assert len(data["parent"]["child-name"]) == 2
     else:

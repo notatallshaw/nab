@@ -123,8 +123,7 @@ def _dist_info(names: list[str]) -> str:
     raise SystemExit(msg)
 
 
-# nab-markersets declares no required dependency, so the sdist install has to
-# name the extra a standalone user would.
+# A standalone marker installation selects its packaging backend with an extra.
 SDIST_EXTRAS = {"nab-markersets": "[packaging]"}
 
 

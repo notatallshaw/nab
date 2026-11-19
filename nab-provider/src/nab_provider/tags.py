@@ -590,14 +590,14 @@ class _NamedWheel(Protocol):
         ...
 
 
-_WheelT = TypeVar("_WheelT", bound=_NamedWheel)
+_Wheel = TypeVar("_Wheel", bound=_NamedWheel)
 
 
 # One line of a target's tag order with the platform axis projected out:
 # interpreter, abi, and either the entry's own platform or None where the
 # platform axis multiplies it. A None ABI matches any native PyPy ABI of
 # that interpreter; the open family occupies one preference block.
-_AxisEntry = tuple[str, str | None, str | None]
+_AxisEntry = tuple[str, str | None, None] | tuple[str, str, str]
 
 
 # Stands in for "not looked up yet" in ``TagSet._placed``, which holds a real
@@ -712,13 +712,13 @@ class TagSet(SlottedValue):
         fixed: dict[Tag, int] = {}
         base = 0
 
-        for interpreter, abi, platform_ in self._entries:
-            if platform_ is None:
+        for entry in self._entries:
+            if entry[2] is None:
+                interpreter, abi, _ = entry
                 multiplied[(interpreter, abi)] = base
                 base += len(self._platforms)
             else:
-                assert abi is not None
-                fixed[ptags.Tag(interpreter, abi, platform_)] = base
+                fixed[ptags.Tag(*entry)] = base
                 base += 1
 
         return _AxisIndex(multiplied, fixed, _platform_offsets(self._platforms))
@@ -799,7 +799,7 @@ class TagSet(SlottedValue):
             return None
         return (rank_index, _build_tag_sort_key(wheel_filename))
 
-    def pick(self, wheels: Iterable[_WheelT]) -> _WheelT | None:
+    def pick(self, wheels: Iterable[_Wheel]) -> _Wheel | None:
         """Pick the most-specific compatible wheel for the target, or None.
 
         Implements PEP 425 preference: wheels matching earlier
@@ -811,7 +811,7 @@ class TagSet(SlottedValue):
         ``wheels`` is anything carrying a ``filename``: an index
         listing's wheel or a lockfile's wheel artefact.
         """
-        best_wheel: _WheelT | None = None
+        best_wheel: _Wheel | None = None
         best_rank = 0  # ignored until best_wheel is set
         best_build: tuple[int, str] | None = None
 
@@ -1032,11 +1032,9 @@ def _tag_order_template(
         major, minor = _python_pair(python_version)
         open_abi = ((f"pp{major}{minor}", None, None),)
     return open_abi + tuple(
-        (
-            tag.interpreter,
-            tag.abi,
-            None if tag.platform == _PLATFORM_PLACEHOLDER else tag.platform,
-        )
+        (tag.interpreter, tag.abi, None)
+        if tag.platform == _PLATFORM_PLACEHOLDER
+        else (tag.interpreter, tag.abi, tag.platform)
         for tag in _packaging_tags(
             python_version,
             (_PLATFORM_PLACEHOLDER,),

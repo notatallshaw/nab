@@ -4,6 +4,10 @@ nab ships two live-index benchmark suites that exercise single-environment and u
 against real-world scenarios. It also includes a small, deterministic offline smoke suite for
 repeatable correctness and performance checks.
 
+The Test workflow's benchmark job runs the offline smoke and resolver range suites on Ubuntu with
+Python 3.15. Download the `offline-benchmarks` artifact for the results, search counters and
+timings.
+
 ## Deterministic offline smoke suite
 
 `deterministic_smoke.py` materializes a content-addressed local Simple index and runs seven semantic
@@ -133,8 +137,9 @@ candidates need consideration, they invoke `YankProxyProvider`, matching project
 singleton version range alone does not count as an exact pin.
 
 The existing PubGrub counters include every fallback resolve, non-yanked alternative check and
-known-dependency check. `yanked_proxy_rounds` reports their combined rounds; it is a subset of the
-total rounds and is zero without fallback.
+known-dependency check. `yanked_proxy_rounds` counts the rounds spent on those checks and fallback
+resolves. Those rounds are already included in the total. The counter is zero when fallback is
+unused. The comparison tool shows the difference when both runs recorded it.
 
 ## Scenario shape
 

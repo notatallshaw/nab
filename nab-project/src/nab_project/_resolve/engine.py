@@ -281,17 +281,20 @@ class TargetResult(Record):
         self.distributions_seen = distributions_seen
         self.wall_time = wall_time
 
+    def require_lock(self) -> TargetLock:
+        """Return the resolved lock or raise the target's resolution error."""
+        if self.error is not None:
+            raise self.error
+        if self.lock is None:
+            message = f"No successful lock is available for target {self.target.label}"
+            raise RuntimeError(message)
+        return self.lock
+
     def dependency_requirements(
         self,
     ) -> Mapping[str, Mapping[str, tuple[DependencyDeclaration, ...]]]:
         """Return collected declarations, raising for a failed or uncollected target."""
-        if self.error is not None:
-            raise self.error
-        lock = self.lock
-        if lock is None:
-            message = f"No successful lock is available for target {self.target.label}"
-            raise RuntimeError(message)
-        requirements = lock.dependency_requirements
+        requirements = self.require_lock().dependency_requirements
         if requirements is None:
             message = (
                 "Dependency requirements were not collected; "
@@ -813,12 +816,10 @@ def _same_build_selection(left: TargetResult, right: TargetResult) -> bool:
     if left.pins != right.pins:
         return False
 
-    assert left.lock is not None
-    assert right.lock is not None
-
+    left_gates = left.require_lock().package_gates
+    right_gates = right.require_lock().package_gates
     return all(
-        frozenset(left.lock.package_gates.get(name, ()))
-        == frozenset(right.lock.package_gates.get(name, ()))
+        frozenset(left_gates.get(name, ())) == frozenset(right_gates.get(name, ()))
         for name in left.pins
     )
 

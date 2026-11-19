@@ -110,7 +110,7 @@ class TestSignatureConformance:
         hints = get_type_hints(_command_function(command))
 
         for row in _rows(command):
-            if row.vtype is not VType.CHOICE:
+            if row.vtype is not VType.CHOICE and row.kind is not Kind.VERB:
                 continue
             annotated = hints[row.dest]
             optional = [arg for arg in get_args(annotated) if arg is not type(None)]

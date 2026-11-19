@@ -20,7 +20,6 @@ import sys
 import sysconfig
 import tarfile
 import tempfile
-import threading
 import zipfile
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
@@ -65,6 +64,7 @@ from nab_project._build.runner import (
     run_build_backend,
 )
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
+from nab_project._testing.loopback import running_server
 from nab_project.build_backend import extract_metadata
 from nab_project.download import DownloadError, DownloadResult, iter_artifacts
 from nab_project.inputs import ResolveInputs
@@ -5316,16 +5316,8 @@ def _serve_build_index(root: Path) -> Generator[str, None, None]:
     server = ThreadingHTTPServer(
         ("127.0.0.1", 0), partial(_BuildIndexHandler, directory=str(root))
     )
-    thread = threading.Thread(
-        target=partial(server.serve_forever, poll_interval=0.01), daemon=True
-    )
-    thread.start()
-    try:
+    with running_server(server):
         yield f"http://127.0.0.1:{server.server_port}/"
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
 
 
 class _BuildTransport:

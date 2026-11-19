@@ -23,6 +23,7 @@ __lazy_modules__ = (
     "nab_project._lockfile.disjointness",
     "nab_project._lockfile.groups",
     "nab_project.conflicts",
+    "nab_project.toml_writer",
     "nab_provider._vendor.packaging.markers",
     "nab_provider._vendor.packaging.pylock",
     "nab_provider._vendor.packaging.specifiers",
@@ -32,7 +33,6 @@ __lazy_modules__ = (
     "nab_provider.marker_holds",
     "os",
     "pathlib",
-    "nab_project.toml_writer",
 )
 
 import os
@@ -129,10 +129,11 @@ if TYPE_CHECKING:
         created_by: str
         tool: Mapping[str, object] | None
 
-    _PackageT = TypeVar("_PackageT", bound=PackageIdentity)
-    _PackageT_co = TypeVar("_PackageT_co", bound=PackageIdentity, covariant=True)
+    _CovariantLockedPackage = TypeVar(  # noqa: PLC0105 - spell out covariance.
+        "_CovariantLockedPackage", bound=PackageIdentity, covariant=True
+    )
 
-    class _PackageOutput(Protocol[_PackageT_co]):
+    class _PackageOutput(Protocol[_CovariantLockedPackage]):
         """Construct a package retaining the builder's owned dependency list."""
 
         def __call__(
@@ -142,7 +143,7 @@ if TYPE_CHECKING:
             *,
             lock_dir: Path,
             dependencies: list[dict[str, str]] | None = None,
-        ) -> _PackageT_co: ...
+        ) -> _CovariantLockedPackage: ...
 
 
 __all__ = [
@@ -729,8 +730,8 @@ def _prepare_pylock(
     lock_input: LockInput,
     *,
     lock_dir: Path | None,
-    package_output: _PackageOutput[_PackageT],
-) -> tuple[_RootFields, list[_PackageT]]:
+    package_output: _PackageOutput[_CovariantLockedPackage],
+) -> tuple[_RootFields, list[_CovariantLockedPackage]]:
     """Apply shared lock policy with the requested package output."""
     from ..lockfile import LOCK_VERSION
 
@@ -1285,8 +1286,8 @@ def _build_packages(
     store: DecisionStore,
     *,
     prepared_sets: PreparedMarkerSets | None = None,
-    package_output: _PackageOutput[_PackageT],
-) -> list[_PackageT]:
+    package_output: _PackageOutput[_CovariantLockedPackage],
+) -> list[_CovariantLockedPackage]:
     """Collapse the per-target pins into Package entries with markers.
 
     For each canonical package name:
@@ -1324,7 +1325,7 @@ def _build_packages(
     :class:`DivergentBaseDependencyError` instead of emitting a lock
     whose no-member context misses it.
     """
-    out: list[_PackageT] = []
+    out: list[_CovariantLockedPackage] = []
     package_rows: dict[tuple[str, str], int] = {}
     pending_dependencies: list[_PendingDependencies] = []
     targets = lock_input.targets

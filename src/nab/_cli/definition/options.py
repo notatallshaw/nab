@@ -10,7 +10,7 @@ import types
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, NewType
+from typing import Any, NewType
 
 from nab_project.conflicts import ConflictSet
 from nab_project.lock_policy import LockPolicy
@@ -34,6 +34,8 @@ from ...config import hooks, values
 from ...config.values import MatrixConfig
 from ...flagtypes import (
     BuildPolicyFlag,
+    CacheAction,
+    ConfigAction,
     DecisionOrderFlag,
     DistPolicyFlag,
     HttpBackend,
@@ -710,7 +712,7 @@ class ConfigWords(Table, on=("config",), docs="reference/cli.md"):
         on=_RUN,
     )
 
-    action = Verb[Literal["list", "get", "explain"]](
+    action = Verb[ConfigAction](
         help="which configuration report to print",
     )
 
@@ -727,7 +729,7 @@ class CacheWords(Table, on=("cache",), docs="reference/cache.md"):
     ``RunFlags`` have already bound, and a table binds each name once.
     """
 
-    action = Verb[Literal["dir", "verify", "clear"]](
+    action = Verb[CacheAction](
         help="what to do with the cache",
     )
 

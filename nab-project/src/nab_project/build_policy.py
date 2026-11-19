@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "nab_provider.errors",
     "nab_provider.policy",
+    "nab_resolver.diagnostics",
 )
 
 import logging

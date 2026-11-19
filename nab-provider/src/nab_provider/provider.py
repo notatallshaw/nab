@@ -8,7 +8,6 @@ into nab-resolver Range types.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_resolver.diagnostics",
     "bisect",
     "collections",
     "itertools",
@@ -26,12 +25,14 @@ __lazy_modules__ = (
     "nab_provider.metadata",
     "nab_provider.records",
     "nab_provider.vcs_admission",
+    "nab_resolver.diagnostics",
 )
 
 import bisect
 import logging
 import operator
 from collections import defaultdict, deque
+from enum import Enum
 from itertools import chain
 from typing import TYPE_CHECKING, TypeVar, cast
 
@@ -152,7 +153,8 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-_PreparedT = TypeVar("_PreparedT")
+_PolicyValue = TypeVar("_PolicyValue")
+_CachedResult = TypeVar("_CachedResult")
 
 
 class ProviderStats(Record):
@@ -432,8 +434,8 @@ class ListingFilterCache:
         self,
         package: str,
         stats: ProviderStats,
-        compute: Callable[[], _PreparedT],
-    ) -> _PreparedT:
+        compute: Callable[[], _CachedResult],
+    ) -> _CachedResult:
         """Return the Python-invariant filter half, running ``compute`` once.
 
         Keyed by package alone, so every Python of a matrix shares one
@@ -445,7 +447,7 @@ class ListingFilterCache:
         if entry is not None:
             result, delta = entry
             _replay(stats, delta)
-            return cast("_PreparedT", result)
+            return cast("_CachedResult", result)
 
         before = _counters(stats)
         result = compute()
@@ -457,8 +459,8 @@ class ListingFilterCache:
         self,
         package: str,
         python_version: str | None,
-        compute: Callable[[], _PreparedT],
-    ) -> _PreparedT:
+        compute: Callable[[], _CachedResult],
+    ) -> _CachedResult:
         """Return the diagnosis walk's base pass, running ``compute`` once.
 
         Keyed the way :meth:`filtered` is, because the rungs the walk shares
@@ -477,53 +479,69 @@ class ListingFilterCache:
         if entry is None:
             entry = compute()
             self._diagnosed[key] = entry
-        return cast("_PreparedT", entry)
+        return cast("_CachedResult", entry)
 
 
 # Sentinel for "this override does not set the field".  Distinct from
 # ``None``, which is a real value (a disabled upload-time cutoff).
-_UNSET = object()
+class _Unset(Enum):
+    FIELD = "unset"
 
 
-def _unset_if_none(value: object) -> object:
-    """Map ``None`` to ``_UNSET``, retaining other values."""
+def _unset_if_none(value: _PolicyValue | None) -> _PolicyValue | _Unset:
+    """Map ``None`` to ``_Unset.FIELD``, retaining other values."""
     if value is None:
-        return _UNSET
+        return _Unset.FIELD
     return value
 
 
-def _uploaded_prior_to_value(override: PackageOverride | IndexOverride) -> object:
-    """Upload-time value: a datetime, ``None`` (disabled), or ``_UNSET``."""
+def _uploaded_prior_to_value(
+    override: PackageOverride | IndexOverride,
+) -> datetime | _Unset | None:
+    """Upload-time value: a datetime, ``None`` (disabled), or ``_Unset.FIELD``."""
     if override.uploaded_prior_to is not None:
         return override.uploaded_prior_to
     if override.uploaded_prior_to_disabled:
         return None
-    return _UNSET
+    return _Unset.FIELD
 
 
-def _dist_policy_value(override: PackageOverride | IndexOverride) -> object:
-    """Dist-policy value: a :class:`DistPolicy`, or ``_UNSET`` when unset."""
+def _build_policy_value(
+    override: PackageOverride | IndexOverride,
+) -> BuildPolicy | _Unset:
+    """Read the build setting shared by index and package overrides."""
+    return _unset_if_none(override.build_policy)
+
+
+def _dist_policy_value(
+    override: PackageOverride | IndexOverride,
+) -> DistPolicy | _Unset:
+    """Dist-policy value: a :class:`DistPolicy`, or ``_Unset.FIELD`` when unset."""
     return _unset_if_none(override.dist_policy)
 
 
-def _metadata_policy_value(override: PackageOverride | IndexOverride) -> object:
+def _metadata_policy_value(
+    override: PackageOverride | IndexOverride,
+) -> MetadataPolicy | _Unset:
     """Metadata policy value, retaining an explicitly selected default."""
     return _unset_if_none(override.metadata_policy)
 
 
-def _allow_zip_sdists_value(override: PackageOverride | IndexOverride) -> object:
+def _allow_zip_sdists_value(override: PackageOverride | IndexOverride) -> bool | _Unset:
     """ZIP admission value, preserving an explicit refusal."""
     return _unset_if_none(override.allow_zip_sdists)
 
 
-def _assume_universal_deps_value(override: PackageOverride | IndexOverride) -> object:
+def _assume_universal_deps_value(
+    override: PackageOverride | IndexOverride,
+) -> bool | _Unset:
     """Read the cross-target assertion, preserving an explicit refusal."""
     return _unset_if_none(override.assume_universal_deps)
 
 
 def _assume_consistent_metadata_value(
     override: PackageOverride | IndexOverride,
-) -> object:
+) -> bool | _Unset:
     """Read the release-wide metadata assumption, preserving an explicit refusal."""
     return _unset_if_none(override.assume_consistent_metadata)
 
@@ -537,7 +555,7 @@ _SOURCE_VALUES: dict[str, Callable[[PackageOverride | IndexOverride], object]] =
     "allow-zip-sdists": _allow_zip_sdists_value,
     "assume-universal-deps": _assume_universal_deps_value,
     "assume-consistent-metadata": _assume_consistent_metadata_value,
-    "build-policy": lambda override: _unset_if_none(override.build_policy),
+    "build-policy": _build_policy_value,
 }
 
 
@@ -1213,12 +1231,13 @@ class Provider:
         for ``index_name`` that both set ``build-policy`` are a conflict
         (raises :class:`~nab_provider.errors.OverrideConflictError`).
         """
-        result = self._effective_field(
+        result: BuildPolicy = self._effective_field(
             canonical_name,
             version,
             index_name,
             field="build-policy",
-            value=lambda o: _unset_if_none(o.build_policy),
+            value=_build_policy_value,
+            default=self.build_policy,
         )
         if (
             self.target is not None
@@ -1228,9 +1247,6 @@ class Provider:
             )
         ):
             return BuildPolicy.NEVER
-        if result is _UNSET:
-            return self.build_policy
-        assert isinstance(result, BuildPolicy)
         return result
 
     def effective_build_policy_for_source(self, canonical_name: str) -> BuildPolicy:
@@ -1275,17 +1291,14 @@ class Provider:
         if not self.has_overrides:
             return self.dist_policy
 
-        result = self._effective_field(
+        return self._effective_field(
             canonical_name,
             version,
             index_name,
             field="dist-policy",
             value=_dist_policy_value,
+            default=self.dist_policy,
         )
-        if result is _UNSET:
-            return self.dist_policy
-        assert isinstance(result, DistPolicy)
-        return result
 
     def effective_metadata_policy(
         self,
@@ -1296,17 +1309,14 @@ class Provider:
         """Return the metadata source policy for this indexed release."""
         if not self.has_overrides:
             return self.metadata_policy
-        result = self._effective_field(
+        return self._effective_field(
             canonical_name,
             version,
             index_name,
             field="metadata-policy",
             value=_metadata_policy_value,
+            default=self.metadata_policy,
         )
-        if result is _UNSET:
-            return self.metadata_policy
-        assert isinstance(result, MetadataPolicy)
-        return result
 
     def effective_allow_zip_sdists(
         self,
@@ -1317,17 +1327,14 @@ class Provider:
         """Return whether this indexed release may use legacy ZIP sdists."""
         if not self.has_overrides:
             return self.allow_zip_sdists
-        result = self._effective_field(
+        return self._effective_field(
             canonical_name,
             version,
             index_name,
             field="allow-zip-sdists",
             value=_allow_zip_sdists_value,
+            default=self.allow_zip_sdists,
         )
-        if result is _UNSET:
-            return self.allow_zip_sdists
-        assert isinstance(result, bool)
-        return result
 
     def effective_uploaded_prior_to(
         self,
@@ -1343,18 +1350,14 @@ class Provider:
         field.  A per-package (range-matching) and a per-index override
         that both set the field are a conflict.
         """
-        result = self._effective_field(
+        return self._effective_field(
             canonical_name,
             version,
             index_name,
             field="uploaded-prior-to",
             value=_uploaded_prior_to_value,
+            default=self.uploaded_prior_to,
         )
-        if result is _UNSET:
-            return self.uploaded_prior_to
-        # ``_uploaded_prior_to_value`` yields only ``None`` (a disabled
-        # cutoff) or a datetime.
-        return cast("datetime | None", result)
 
     def effective_trust_unverified(
         self,
@@ -1363,17 +1366,14 @@ class Provider:
         index_name: str | None = None,
     ) -> bool:
         """Return the sdist-trust flag for ``canonical_name==version``."""
-        result = self._effective_field(
+        return self._effective_field(
             canonical_name,
             version,
             index_name,
             field="dist-policy.trust-unverified-deps",
             value=lambda o: _unset_if_none(o.dist_trust_unverified_deps),
+            default=self.trust_unverified_sdist_deps,
         )
-        if result is _UNSET:
-            return self.trust_unverified_sdist_deps
-        assert isinstance(result, bool)
-        return result
 
     def effective_assume_universal_deps(
         self,
@@ -1382,17 +1382,14 @@ class Provider:
         index_name: str | None = None,
     ) -> bool:
         """Whether this release's dependency metadata may be reused across targets."""
-        result = self._effective_field(
+        return self._effective_field(
             canonical_name,
             version,
             index_name,
             field="assume-universal-deps",
             value=_assume_universal_deps_value,
+            default=self.assume_universal_deps,
         )
-        if result is _UNSET:
-            return self.assume_universal_deps
-        assert isinstance(result, bool)
-        return result
 
     def effective_assume_consistent_metadata(
         self,
@@ -1404,18 +1401,14 @@ class Provider:
         if not self._package_overrides and not self._index_overrides:
             return self.assume_consistent_metadata
 
-        result = self._effective_field(
+        return self._effective_field(
             canonical_name,
             version,
             index_name,
             field="assume-consistent-metadata",
             value=_assume_consistent_metadata_value,
+            default=self.assume_consistent_metadata,
         )
-        if result is _UNSET:
-            return self.assume_consistent_metadata
-
-        assert isinstance(result, bool)
-        return result
 
     def effective_dependencies(
         self, canonical_name: str, version: Version
@@ -1545,7 +1538,7 @@ class Provider:
                 continue
             if version not in override.version_range:
                 continue
-            if sets_field(override) is not _UNSET:
+            if sets_field(override) is not _Unset.FIELD:
                 return override
         return None
 
@@ -1556,21 +1549,22 @@ class Provider:
         index_name: str | None,
         *,
         field: str,
-        value: Callable[[PackageOverride | IndexOverride], object],
-    ) -> object:
+        value: Callable[[PackageOverride | IndexOverride], _PolicyValue | _Unset],
+        default: _PolicyValue,
+    ) -> _PolicyValue:
         """Resolve a field from matching package and serving index overrides.
 
         Raise :class:`~nab_provider.errors.OverrideConflictError` if both set it.
-        Return ``_UNSET`` for the caller's global default if neither sets it.
+        Use the global default if neither override sets the field.
 
-        ``value`` accepts either override type; ``_UNSET`` marks an absent field.
+        ``value`` accepts either override type; ``_Unset.FIELD`` marks an absent field.
         ``None`` is a set value, as with a disabled upload-time cutoff.
         """
         pkg = self._matching_package_override(canonical_name, version, value)
         idx = self._index_overrides.get(index_name) if index_name is not None else None
-        idx_value = value(idx) if idx is not None else _UNSET
+        idx_value = value(idx) if idx is not None else _Unset.FIELD
 
-        if pkg is not None and idx_value is not _UNSET:
+        if pkg is not None and idx_value is not _Unset.FIELD:
             report = DiagnosticMessage(
                 (
                     f"override conflict for {canonical_name}=={version} served from "
@@ -1588,9 +1582,8 @@ class Provider:
             )
             raise OverrideConflictError(report)
 
-        if pkg is not None:
-            return value(pkg)
-        return idx_value
+        selected = value(pkg) if pkg is not None else idx_value
+        return default if selected is _Unset.FIELD else selected
 
     def force_backtrack_count(self, canonical_name: str) -> int:
         """How many times this package has triggered force-backtrack."""
@@ -2821,9 +2814,9 @@ class Provider:
         :attr:`stats` and to the per-version tag tally is taken back before
         the answer is returned.
         """
-        cached = self.listing_diagnoses.get(normalized, _UNSET)
-        if cached is not _UNSET:
-            return cast("_diagnosis.ListingDiagnosis | None", cached)
+        cached = self.listing_diagnoses.get(normalized, _Unset.FIELD)
+        if cached is not _Unset.FIELD:
+            return cached
 
         before = _counters(self.stats)
         tag_counts = dict(self.tag_excluded_wheels_by_version)
@@ -2878,7 +2871,7 @@ class Provider:
 
         if index_name is not None:
             index = self._index_overrides.get(index_name)
-            if index is not None and value(index) is not _UNSET:
+            if index is not None and value(index) is not _Unset.FIELD:
                 return _diagnosis.Remedy(
                     field,
                     _diagnosis.OverrideLayer.INDEX,
@@ -2944,7 +2937,7 @@ class Provider:
         scoped = [
             override
             for override in self._package_overrides
-            if override.name == canonical_name and value(override) is not _UNSET
+            if override.name == canonical_name and value(override) is not _Unset.FIELD
         ]
         if not scoped:
             return None

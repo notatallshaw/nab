@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+CacheAction = Literal["dir", "verify", "clear"]
+ConfigAction = Literal["list", "get", "explain"]
 HttpBackend = Literal["urllib3", "httpx", "httpx2"]
 LockPolicyFlag = Literal["resolve", "prefer-existing", "reuse"]
 LockFormat = Literal["pylock", "requirements", "requirements-without-hashes"]

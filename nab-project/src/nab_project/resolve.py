@@ -154,24 +154,6 @@ __all__ = [
 _logger = logging.getLogger(__name__)
 
 
-class _ConfiguredContext(Record):
-    """An install context ``[tool.nab]`` configures rather than a run selects.
-
-    ``name`` is ``None`` for the project's own dependencies when no
-    ``base-group`` names them.  Unnamed they cannot be a conflict member,
-    so every fork carries them.
-    """
-
-    __slots__ = __match_args__ = ("name", "requirements")
-
-    name: str | None
-    requirements: tuple[Requirement, ...]
-
-    def __init__(self, name: str | None, requirements: tuple[Requirement, ...]) -> None:
-        self.name = name
-        self.requirements = requirements
-
-
 def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     path: Path,
     transport: AsyncHttpTransport,
@@ -620,37 +602,23 @@ class _ProjectTables(Record):
     in ``dependencies`` instead and leaves this empty."""
 
 
-def _configured_contexts(
-    inputs: ResolveInputs, tables: _ProjectTables
-) -> tuple[_ConfiguredContext, tuple[_ConfiguredContext, ...]]:
-    """Split the configured install contexts into the project's and the rest.
-
-    The project's own dependencies are always a context, named or not.  The
-    build requirements are one only when ``build-group`` names them.
-    """
-    project = _ConfiguredContext(inputs.base_group, tuple(tables.dependencies))
-    selectors = (
-        (_ConfiguredContext(inputs.build_group, tuple(tables.build_requires)),)
-        if inputs.build_group is not None
-        else ()
-    )
-    return project, selectors
-
-
 def _carried_by(
     fork: ConflictFork,
-    project: _ConfiguredContext,
-    selectors: Sequence[_ConfiguredContext],
-) -> tuple[tuple[Requirement, ...], tuple[_ConfiguredContext, ...]]:
-    """Return the configured contexts ``fork`` resolves, project first.
+    inputs: ResolveInputs,
+    project: tuple[Requirement, ...],
+    build: tuple[Requirement, ...],
+) -> tuple[tuple[Requirement, ...], dict[str, tuple[Requirement, ...]]]:
+    """Select the project requirements and named build group carried by this fork."""
+    if (
+        inputs.base_group is not None
+        and inputs.base_group not in fork.active_configured
+    ):
+        project = ()
 
-    An unnamed context cannot be a conflict member, so every fork carries
-    it; a named one is carried only by the fork that chose it.
-    """
-    carried = tuple(c for c in selectors if c.name in fork.active_configured)
-    if project.name is None or project.name in fork.active_configured:
-        return project.requirements, carried
-    return (), carried
+    selectors = {}
+    if inputs.build_group is not None and inputs.build_group in fork.active_configured:
+        selectors[inputs.build_group] = build
+    return project, selectors
 
 
 def _project_tables(
@@ -787,7 +755,8 @@ def _plan_forks(
     the plan forked; see :func:`resolve_with_coordinator`.
     """
     configured = _configured_group_names(inputs)
-    project_context, selector_contexts = _configured_contexts(inputs, tables)
+    project_requirements = tuple(tables.dependencies)
+    build_requirements = tuple(tables.build_requires)
     if inputs.conflicts:
         _validate_conflict_members_exist(
             inputs.conflicts, tables.optional, tables.groups, configured
@@ -825,7 +794,9 @@ def _plan_forks(
                 targets,
             )
 
-        project, carried = _carried_by(fork, project_context, selector_contexts)
+        project, carried = _carried_by(
+            fork, inputs, project_requirements, build_requirements
+        )
         forks.append(
             ResolveFork(
                 selection=fork.selection,
@@ -849,7 +820,7 @@ def _plan_forks(
     if len(plan) > 1:
         base_fork = _base_fork(plan[0])
         base_project, base_carried = _carried_by(
-            base_fork, project_context, selector_contexts
+            base_fork, inputs, project_requirements, build_requirements
         )
         base_requirements = _fork_requirements(
             path, tables, base_fork, project=base_project, selectors=base_carried
@@ -862,7 +833,7 @@ def _selector_requirements(
     tables: _ProjectTables,
     fork: ConflictFork,
     *,
-    contexts: Sequence[_ConfiguredContext],
+    contexts: Mapping[str, tuple[Requirement, ...]],
 ) -> dict[tuple[str, str], tuple[Requirement, ...]]:
     """Split a fork's active extras and groups into one requirement list each.
 
@@ -877,10 +848,10 @@ def _selector_requirements(
     A configured context is a selector no run selects, and only the fork
     that walked it gets one.
     """
-    selectors: dict[tuple[str, str], tuple[Requirement, ...]] = {}
-    for context in contexts:
-        assert context.name is not None  # _carried_by keeps only named contexts
-        selectors[(ConflictKind.GROUP.value, context.name)] = context.requirements
+    selectors = {
+        (ConflictKind.GROUP.value, name): requirements
+        for name, requirements in contexts.items()
+    }
     for extra in fork.active_extras:
         member = (ConflictKind.EXTRA.value, str(canonicalize_name(extra)))
         selectors[member] = tuple(_extra_requirements(tables, [extra], path))
@@ -896,7 +867,7 @@ def _fork_requirements(
     fork: ConflictFork,
     *,
     project: Sequence[Requirement],
-    selectors: Sequence[_ConfiguredContext],
+    selectors: Mapping[str, tuple[Requirement, ...]],
 ) -> list[Requirement]:
     """Fold one fork's contexts, groups and extras into one requirement list.
 
@@ -904,8 +875,8 @@ def _fork_requirements(
     carries, empty where a declared conflict put one in another fork.
     """
     requirements = list(project)
-    for context in selectors:
-        requirements.extend(context.requirements)
+    for group_requirements in selectors.values():
+        requirements.extend(group_requirements)
     requirements.extend(_group_requirements(tables.groups, fork.active_groups, path))
     requirements.extend(_extra_requirements(tables, fork.active_extras, path))
     return requirements

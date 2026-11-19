@@ -370,7 +370,7 @@ def test_scalar_subclass_without_url_is_retained(tmp_path: Path) -> None:
     assert _value(text, tmp_path) is text
 
 
-@pytest.mark.parametrize("authority", ["", "localhost"])
+@pytest.mark.parametrize("authority", ["", "localhost", "LOCALHOST"])
 @pytest.mark.parametrize("suffix", ["", "?download=1", "#fragment", "?x=1#fragment"])
 def test_local_file_urls_normalize_filesystem_paths(
     tmp_path: Path, authority: str, suffix: str

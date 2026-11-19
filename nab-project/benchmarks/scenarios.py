@@ -63,6 +63,7 @@ from benchmark_host import (
     parse_target_marker_environment,
     settings_hash,
 )
+from standard_stats import valid_statistics
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_project.fetch import (
@@ -864,34 +865,6 @@ SCENARIO_WALL_TIMEOUT_SECONDS = 120
 
 CACHE_DIR = BENCHMARKS_DIR / "cache"
 
-_STANDARD_COUNTER_FIELDS = frozenset(
-    {
-        "rounds",
-        "decisions",
-        "conflicts",
-        "derivations",
-        "backjumps",
-        "restarts",
-        "incompatibilities_learned",
-        "listings_fetched",
-        "metadata_fetched",
-        "sdist_pkg_info_fetched",
-        "distributions_seen",
-        "wheels_seen",
-        "sdists_seen",
-        "excluded_by_python",
-        "excluded_by_time",
-        "excluded_by_dist_policy",
-        "excluded_by_build_policy",
-        "sdist_pyproject_fallbacks",
-        "get_dependencies_calls",
-        "choose_version_calls",
-        "prioritize_calls",
-        "look_ahead_rejections",
-        "packages_resolved",
-    }
-)
-
 
 def standard_benchmark_settings(host: BenchmarkHost) -> dict[str, object]:
     """Return the global settings shared by every standard result."""
@@ -960,24 +933,7 @@ def _standard_result_data_valid(  # noqa: PLR0911 - fail-closed schema validator
         return False
     if not _valid_standard_pins(pins) or (not success and pins):
         return False
-    stats = data.get("stats")
-    if not isinstance(stats, dict) or set(stats) != _STANDARD_COUNTER_FIELDS | {
-        "wall_time_seconds"
-    }:
-        return False
-    if any(type(stats.get(field)) is not int for field in _STANDARD_COUNTER_FIELDS):
-        return False
-    if any(stats[field] < 0 for field in _STANDARD_COUNTER_FIELDS):
-        return False
-    if stats["packages_resolved"] != len(pins):
-        return False
-    wall_time = stats.get("wall_time_seconds")
-    return (
-        isinstance(wall_time, (int, float))
-        and not isinstance(wall_time, bool)
-        and math.isfinite(wall_time)
-        and wall_time >= 0
-    )
+    return valid_statistics(data.get("stats"), len(pins))
 
 
 def _result_input(

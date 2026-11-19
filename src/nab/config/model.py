@@ -9,14 +9,11 @@ module owns the project side.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab.config.assignments",
-    "nab.config.assignments",
-    "nab_resolver.diagnostics",
     "datetime",
+    "nab.config.assignments",
     "nab.config.hooks",
     "nab.config.ladder",
     "nab.config.values",
-    "nab_project",
     "nab_project.build_policy",
     "nab_project.conflicts",
     "nab_project.inputs",
@@ -26,6 +23,7 @@ __lazy_modules__ = (
     "nab_provider._vendor.packaging.utils",
     "nab_provider._vendor.packaging.version",
     "nab_provider.errors",
+    "nab_resolver.diagnostics",
     "tomli",
 )
 
@@ -879,14 +877,16 @@ def _plan_targets(
     """
     if matrix is not None:
         return tuple(matrix_from_config(matrix).expand())
-    if environment is None:
-        return (ResolveTarget.for_host(),)
-    if environment.platform is not None:
-        return (declared_target(environment),)
-    # An implementation without a platform is rejected at parse, so a
-    # remaining environment declares the python axis and nothing else.
-    assert environment.python is not None
-    return (ResolveTarget.for_host_python(environment.python),)
+    if environment is not None:
+        if environment.platform is not None:
+            return (declared_target(environment),)
+        if environment.implementation is not None:
+            msg = f"implementation {environment.implementation!r} needs a platform"
+            raise ConfigError(msg)
+        if environment.python is not None:
+            return (ResolveTarget.for_host_python(environment.python),)
+
+    return (ResolveTarget.for_host(),)
 
 
 def declared_target(environment: EnvironmentConfig) -> ResolveTarget:
@@ -899,7 +899,10 @@ def declared_target(environment: EnvironmentConfig) -> ResolveTarget:
     (``"3.12.0"``, ``"3.14rc1"``) is pinned whole; a bare ``"3.12"`` resolves
     as a micro interval.
     """
-    assert environment.platform is not None  # the caller checked
+    if environment.platform is None:
+        msg = "a declared target needs an environment platform"
+        raise ConfigError(msg)
+
     python = environment.python or host_environment()["python_full_version"]
     axis = python_axis_environment(python)
     implementation = environment.implementation or "cpython"

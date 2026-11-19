@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
 
-from nab_index.file_urls import parse_file_url
+from nab_index.file_urls import is_local_file_authority, parse_file_url
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
@@ -78,7 +78,7 @@ def _relative(path: Path, base: Path) -> str:
 def _url(url: str, base: Path) -> str:
     """Remove URL credentials and normalize local source locations."""
     parts = urlsplit(url)
-    if parts.scheme == "file" and parts.netloc in {"", "localhost"}:
+    if parts.scheme == "file" and is_local_file_authority(parts.netloc):
         location = _relative(parse_file_url(url), base)
         # Keep filename '?' and '#' separate from URL selectors.
         location = location.replace("%", "%25").replace("?", "%3F").replace("#", "%23")
