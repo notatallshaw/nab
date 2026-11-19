@@ -17,6 +17,7 @@ from packaging.version import InvalidVersion, Version
 from nab_index.client import (
     _canonical_version,
     _intern_name,
+    _parse_files,
     _parse_sdist_filename,
     _parse_wheel_filename,
 )
@@ -189,6 +190,25 @@ def test_rejects_oversized_wheel_version(filename: str) -> None:
 @requires_int_limit
 def test_rejects_oversized_sdist_version() -> None:
     assert _parse_sdist_filename(f"foo-{OVERSIZED}.tar.gz") is None
+
+
+@requires_int_limit
+@pytest.mark.parametrize(
+    "suffix", ["py3-none-any.whl", "tar.gz", "zip"], ids=["wheel", "sdist", "zip"]
+)
+def test_oversized_version_is_skipped(
+    wheel_entry: dict[str, object], suffix: str
+) -> None:
+    filename = (
+        f"foo-{OVERSIZED}-{suffix}"
+        if suffix.endswith(".whl")
+        else f"foo-{OVERSIZED}.{suffix}"
+    )
+    index = "https://example.com/"
+    entries = [{"filename": filename, "url": f"{index}foo/{filename}"}, wheel_entry]
+    files = _parse_files({"files": entries}, index, "foo")
+
+    assert [file.filename for file in files] == [wheel_entry["filename"]]
 
 
 def test_accepts_version_at_int_limit() -> None:

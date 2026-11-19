@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -103,12 +104,15 @@ def test_is_dev_version() -> None:
     assert not release.is_dev_version("not-a-version")
 
 
-def test_is_release_version() -> None:
-    assert release.is_release_version("0.0.3")
-    assert release.is_release_version("0.0.3rc1")
-    assert not release.is_release_version("0.0.3.dev0")
-    assert not release.is_release_version("0.0.3+local")
-    assert not release.is_release_version("not-a-version")
+def test_normalized_release_version() -> None:
+    assert release.normalized_release_version("0.0.3") == "0.0.3"
+    assert release.normalized_release_version("0.0.3-rc1") == "0.0.3rc1"
+
+
+@pytest.mark.parametrize("version", ["0.0.3.dev0", "0.0.3+local", "not-a-version"])
+def test_unpublishable_version_is_rejected(version: str) -> None:
+    with pytest.raises(SystemExit, match="version"):
+        release.normalized_release_version(version)
 
 
 def test_next_dev_version() -> None:
@@ -130,6 +134,12 @@ def test_rewrite_requirement_updates_workspace_pins() -> None:
         release._rewrite_requirement("nab-index[httpx]==0.0.2", "0.0.3")
         == "nab-index[httpx]==0.0.3"
     )
+
+
+def test_workspace_pin_preserves_extras_and_the_python_marker() -> None:
+    requirement = 'nab-index[httpx]==0.0.2; python_version < "3.12"'
+    result = release._rewrite_requirement(requirement, "0.0.3")
+    assert result == 'nab-index[httpx]==0.0.3; python_version < "3.12"'
 
 
 def test_rewrite_requirement_leaves_third_party_alone() -> None:
@@ -207,12 +217,13 @@ def test_check_release_rejects_tag_mismatch(
         release.check_release("v0.0.4")
 
 
-def test_check_release_rejects_dev(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("version", ["0.0.3.dev0", "0.0.3+local"])
+def test_check_release_rejects_unpublishable_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str
 ) -> None:
-    _use_tree(tmp_path, monkeypatch, "0.0.3.dev0", "0.0.3.dev0")
-    with pytest.raises(SystemExit, match="dev version"):
-        release.check_release("v0.0.3.dev0")
+    _use_tree(tmp_path, monkeypatch, version, version)
+    with pytest.raises(SystemExit, match="not a public release version"):
+        release.check_release(f"v{version}")
 
 
 def test_check_release_rejects_stale_pin(
@@ -250,7 +261,7 @@ def test_plan_respects_explicit_next_dev() -> None:
 
 
 def test_plan_rejects_non_release_version() -> None:
-    with pytest.raises(SystemExit, match="not a release version"):
+    with pytest.raises(SystemExit, match="not a public release version"):
         release._plan("0.0.3.dev0", "0.0.2.dev0", None)
 
 
@@ -274,6 +285,34 @@ def test_github_slug() -> None:
         == "notatallshaw/nab"
     )
     assert release._github_slug("https://gitlab.com/x/y.git") is None
+
+
+def test_existing_remote_tag_leaves_the_release_branch_unpublished(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    _use_tree(checkout, monkeypatch, "0.0.3.dev0", "0.0.3.dev0")
+    monkeypatch.setattr(release, "REPO_ROOT", checkout)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    release._run("git", "init", "--initial-branch=main")
+    release._run("git", "config", "user.name", "Release test")
+    release._run("git", "config", "user.email", "release@example.invalid")
+    release._run("git", "add", ".")
+    release._run("git", "commit", "-m", "Initial manifests")
+    remote = tmp_path / "origin.git"
+    release._run("git", "init", "--bare", str(remote))
+    release._run("git", "remote", "add", "origin", str(remote))
+
+    # A release tag can exist on the server without being in this checkout.
+    release._run("git", "push", "origin", "HEAD:refs/tags/v0.0.3")
+    original_refs = release._run("git", "ls-remote", "--refs", "origin")
+    with pytest.raises(SystemExit, match="git push"):
+        release._make("0.0.3", None, assume_yes=True, push=True)
+
+    assert release._run("git", "ls-remote", "--refs", "origin") == original_refs
 
 
 def test_main_make_defaults_to_pushing_and_asking_first(

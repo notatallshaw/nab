@@ -25,6 +25,7 @@ __lazy_modules__ = (
     "nab.flagtypes",
     "nab.lock_inputs",
     "nab.output",
+    "nab_index.atomic",
     "nab_project",
     "nab_project.dependency_sources",
     "nab_project.lock_check",
@@ -40,7 +41,6 @@ __lazy_modules__ = (
     "os",
     "stat",
     "string",
-    "tempfile",
 )
 
 import contextlib
@@ -49,7 +49,6 @@ import os
 import shlex
 import stat
 import sys
-import tempfile
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,6 +57,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
 
 import tomli
 
+from nab_index.atomic import create_staging_file
 from nab_project import toml_io
 from nab_project.input_source import (
     InputChangedError,
@@ -1105,7 +1105,13 @@ def _check_saved(
             input_format=run.input_format,
             project_input=run.project_input,
         )
-    except (OSError, ValueError, LookupError, RecursionError) as exc:
+    except (
+        OSError,
+        ValueError,
+        LookupError,
+        RecursionError,
+        InvalidProjectTableError,
+    ) as exc:
         printer().error(
             DiagnosticMessage(
                 f"--locked: cannot verify {target}: {exc}",
@@ -1732,21 +1738,19 @@ def _stage_path(output: Path) -> Generator[Path, None, None]:
     """
     if output.is_dir():
         raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), str(output))
-    fd, name = tempfile.mkstemp(
-        dir=output.parent, prefix=f"{output.name}.", suffix=".tmp"
-    )
+    fd, staged = create_staging_file(output)
     try:
         os.close(fd)
-        yield Path(name)
+        yield staged
     except BaseException:
-        _discard(Path(name))
+        _discard(staged)
         raise
 
 
 def _destination_mode(output: Path) -> int:
     """Permissions to give a staged file before it replaces ``output``.
 
-    ``mkstemp`` creates at 0600, so a staged file needs the mode the
+    The staging file starts at 0600, so a staged file needs the mode the
     destination already has, or the one a fresh write would have given it.
     """
     try:

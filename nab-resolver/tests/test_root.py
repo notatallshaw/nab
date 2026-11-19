@@ -6,6 +6,8 @@ The resolver's package-keyed dicts hash it on every lookup, so a Python
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 from nab_resolver.root import ROOT
 
 
@@ -17,6 +19,7 @@ class TestRootSentinel:
         """A second instance of the class is a distinct key, not an alias."""
         other = type(ROOT)()
 
+        assert deepcopy(other) is not ROOT
         assert other != ROOT
         assert {ROOT: "root", other: "other"}[ROOT] == "root"
 

@@ -38,7 +38,12 @@ Nab reads these sources before considering a backend:
 | Index sdist                                                   | PEP 643 static dependency fields in `PKG-INFO`, or static dependency declarations in the bundled `pyproject.toml` |
 | Local checkout, workspace member, VCS clone or direct archive | Static `[project]` fields in `pyproject.toml`                                                                     |
 
-For PEP 643 sdists, `Requires-Dist` and `Provides-Extra` must not be listed in `Dynamic`.
+For PEP 643 sdists, `Requires-Dist` and `Provides-Extra` must not be listed in `Dynamic`. If the
+archive marks `Requires-Python` as dynamic, Nab reads the Python requirement from its bundled
+`[project]` table when that field is static. Otherwise, Nab needs permission to build the package to
+determine which Python versions its wheel supports. A package rule can also set `requires-python`
+explicitly. Borrowing another wheel’s dependencies does not supply this value.
+
 Pre-PEP-643 `PKG-INFO` dependencies need
 [an explicit trust setting](distribution-policy.md#trusting-older-source-metadata).
 

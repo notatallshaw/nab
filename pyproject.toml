@@ -48,11 +48,14 @@ nab = "nab._entry:console_entry"
 requires = ["hatchling>=1.33.0"]
 build-backend = "hatchling.build"
 
-# The umbrella sdist ships only the CLI package and its own tests. Without this
-# it would pull in the whole monorepo: the sibling workspaces, docs/, .github/,
-# and the release tooling under tasks/.
+# The umbrella sdist includes the CLI, its tests and their shared fixtures.
 [tool.hatch.build.targets.sdist]
-only-include = ["src/nab", "tests", "conftest.py"]
+only-include = [
+    "src/nab",
+    "tests",
+    "conftest.py",
+    "nab-project/test-support/nab_test_support/tests/conftest.py",
+]
 
 # These read files the sdist does not carry (docs/, tasks/, the noxfile, the
 # workflows, the sibling workspaces), so they stay out of it;
@@ -243,6 +246,7 @@ uploaded-prior-to = false
 # https://docs.pytest.org/en/stable/reference/reference.html#confval-addopts
 [tool.pytest.ini_options]
 minversion = "9.0"
+pythonpath = ["nab-project/test-support"]
 addopts = [
     "-ra",
     "--import-mode=importlib",

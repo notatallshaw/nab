@@ -19,7 +19,7 @@ marks a package whose listing has not settled.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from collections.abc import Set as AbstractSet
 from typing import Any
 
@@ -73,6 +73,18 @@ def test_an_unchanged_scan_reads_no_keys() -> None:
 
     assert picked == "b"
     assert book.take_read() == set()
+
+
+def test_deciding_a_package_does_not_rescan_the_remaining_packages() -> None:
+    class Remaining(set[str]):
+        @override
+        def __iter__(self) -> Iterator[str]:
+            raise AssertionError("walked packages whose keys are current")
+
+    book = KeyBook({"a": (0, 1), "b": (0, 2), "c": (0, 3)})
+    queue: DecisionQueue[str] = DecisionQueue()
+    assert queue.pick({"a", "b", "c"}, book.sort_key, {"a", "b", "c"}, 0) == "a"
+    assert queue.pick(Remaining({"b", "c"}), book.sort_key, {"a"}, 0) == "b"
 
 
 def test_a_changed_package_takes_the_lead_on_its_new_key() -> None:

@@ -16,9 +16,10 @@ from typing_extensions import Self
 
 from nab_index.multi_index import IndexConfig
 from nab_project.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
-from nab_provider.provider import ProviderStats
+from nab_provider.provider import Provider, ProviderStats
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.target import ResolveTarget
+from nab_provider.testing import make_coordinator
 from nab_resolver.resolver import ResolverStats
 
 # canary.py imports its siblings by bare name.
@@ -475,13 +476,10 @@ def test_canary_configures_lowest_direct_roots(
             pass
 
     # Distinct values pin each summary key to the counter it names.
-    class FakeProvider:
-        def __init__(self) -> None:
-            self.stats = ProviderStats(
-                metadata_fetched=102,
-                distributions_seen=108,
-                look_ahead_rejections=121,
-            )
+    provider = Provider(make_coordinator())
+    provider.stats = ProviderStats(
+        metadata_fetched=102, distributions_seen=108, look_ahead_rejections=121
+    )
 
     class FakeResolver:
         def __init__(self, *_args: object, **kwargs: object) -> None:
@@ -499,9 +497,9 @@ def test_canary_configures_lowest_direct_roots(
             seen["resolver_constraints"] = kwargs["constraints"]
             return {}
 
-    def fake_build_provider(_coordinator: object, **kwargs: object) -> FakeProvider:
+    def fake_build_provider(_coordinator: object, **kwargs: object) -> Provider:
         seen.update(kwargs)
-        return FakeProvider()
+        return provider
 
     monkeypatch.setattr(module, "FetchCoordinator", FakeCoordinator)
     monkeypatch.setattr(module, "HttpxAsyncTransport", object)
@@ -575,6 +573,7 @@ def test_canary_configures_lowest_direct_roots(
     assert seen["config"] is config
     assert seen["target"] is admission.target
     assert resolver_kwargs == {
+        "format_range": provider.format_range,
         "range_type": module.VersionRange,
         "root_version": "0",
     }

@@ -20,6 +20,7 @@ __lazy_modules__ = (
     "nab_provider.records",
     "nab_provider.store",
     "nab_provider.tags",
+    "nab_provider.value",
     "nab_provider.vcs_admission",
     "nab_resolver.diagnostics",
     "urllib.parse",
@@ -58,12 +59,15 @@ from ..policy import BuildPolicy
 from ..project_requirements import (
     InvalidProjectRequirementError,
     parse_project_requirement,
+    parse_project_requires_python,
     parse_requirements,
+    project_with_static_requires_python,
     require_string_list,
 )
 from ..records import RangeOutcome, SdistFile, WheelFile
 from ..store import sdist_artifact_key
 from ..tags import python_axis_accepts
+from ..value import replace
 from ..vcs_admission import admit_vcs_url
 
 if TYPE_CHECKING:
@@ -781,10 +785,6 @@ def resolve_dynamic_sdist(
     metadata: WheelMetadata,
 ) -> WheelMetadata:
     """Reconcile sdist dependencies under the release's metadata and build policies."""
-    # In-function: ``build_remote`` imports ``find_sdist`` from here at load,
-    # and tests patch ``build_remote_sdist`` on that module.
-    from .build_remote import build_remote_sdist
-
     package, version = cache_key
     canonical = canonicalize_name(package)
     index = provider.coordinator.index
@@ -807,18 +807,36 @@ def resolve_dynamic_sdist(
         if assumed is not None:
             return assumed
 
-    effective = provider.effective_build_policy(
-        canonical, version, provider.serving_index(canonical)
-    )
+    return _build_or_refuse_sdist(provider, canonical, version, "dependencies")
+
+
+def _build_or_refuse_sdist(
+    provider: Provider,
+    canonical: str,
+    version: Version,
+    field: Literal["dependencies", "Requires-Python"],
+) -> WheelMetadata:
+    # Building needs find_sdist from this module.
+    from .build_remote import build_remote_sdist
+
+    index = provider.serving_index(canonical)
+    effective = provider.effective_build_policy(canonical, version, index)
     if effective is BuildPolicy.BUILD_REMOTE:
-        return build_remote_sdist(provider, package, version)
+        return build_remote_sdist(provider, canonical, version)
 
     provider.stats.excluded_by_build_policy += 1
+    missing = (
+        "has dynamic dependencies and no static pyproject.toml fallback"
+        if field == "dependencies"
+        else "computes its Python requirement (Requires-Python) when built"
+    )
     msg = (
-        f"{package}=={version} sdist has dynamic dependencies and no static"
-        f" pyproject.toml fallback; building requires build-policy"
+        f"{canonical}=={version} sdist {missing}. Building requires build-policy"
         f" '{BuildPolicy.BUILD_REMOTE.value}' but the effective policy is"
         f" '{effective.value}'"
+    )
+    assume_universal = provider.effective_assume_universal_deps(
+        canonical, version, index
     )
     declared = provider.target is not None and provider.target.platform_spec is not None
     steps: list[str] = []
@@ -830,7 +848,9 @@ def resolve_dynamic_sdist(
             )
         )
         # A potential wheel avoids a build only if its metadata can be read.
-        if _assumed_wheel_candidates(provider, canonical, version):
+        if field == "dependencies" and _assumed_wheel_candidates(
+            provider, canonical, version
+        ):
             build_condition = "if no usable wheel metadata is available, "
 
     steps.append(
@@ -1209,12 +1229,40 @@ def parse_and_cache_metadata(
     dependencies and host-built metadata require each target's own policy
     check before they can be reused.
     """
-    package, version = cache_key
     metadata = _parsed_metadata(provider, cache_key, metadata_text)
 
     _reject_foreign_metadata(cache_key, metadata)
 
-    if from_sdist and _sdist_deps_need_dynamic(
+    if from_sdist:
+        metadata = _metadata_from_sdist(provider, cache_key, metadata)
+
+    cache_deps_from_metadata(provider, cache_key, metadata)
+
+
+def _metadata_from_sdist(
+    provider: Provider, cache_key: tuple[str, Version], metadata: WheelMetadata
+) -> WheelMetadata:
+    """Read the Python requirement and dependencies the sdist leaves to its backend."""
+    package, version = cache_key
+    check_python = (
+        "requires-python" in metadata.dynamic
+        and provider.effective_requires_python(package, version) is None
+    )
+    requires_python = None
+    if check_python:
+        data = provider.coordinator.index.get_sdist_pyproject(
+            package, sdist_metadata_key(provider, package, version)
+        )
+        project = project_with_static_requires_python(data, package)
+        if project is not None:
+            requires_python = parse_project_requires_python(
+                project.get("requires-python")
+            )
+        elif not provider.defer_sdist_python_to_install:
+            # Another wheel's Python requirement only describes that wheel.
+            return _build_or_refuse_sdist(provider, package, version, "Requires-Python")
+
+    if _sdist_deps_need_dynamic(
         metadata,
         trust_unverified=provider.effective_trust_unverified(
             package, version, provider.serving_index(package)
@@ -1222,7 +1270,10 @@ def parse_and_cache_metadata(
     ):
         metadata = resolve_dynamic_sdist(provider, cache_key, metadata)
 
-    cache_deps_from_metadata(provider, cache_key, metadata)
+    if check_python:
+        # A cached dependency record may still have the sdist's provisional value.
+        return replace(metadata, requires_python=requires_python)
+    return metadata
 
 
 def _parsed_metadata(

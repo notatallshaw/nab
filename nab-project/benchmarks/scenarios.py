@@ -63,7 +63,7 @@ from benchmark_host import (
     parse_target_marker_environment,
     settings_hash,
 )
-from standard_stats import valid_statistics
+from standard_result import read_benchmark_json, valid_outcome, valid_statistics
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_project.fetch import (
@@ -74,8 +74,7 @@ from nab_project.fetch import (
 from nab_provider._vendor.packaging.markers import default_environment
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.utils import canonicalize_name, is_normalized_name
-from nab_provider._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
 from nab_provider.provider import (
     BuildPolicy,
@@ -377,16 +376,12 @@ def _preflight_standard_result_parents(
             raise ValueError(msg)
 
 
-def _strict_json_equal(  # noqa: PLR0911 - recursive fail-closed JSON comparator
+def _strict_json_equal(
     left: object,
     right: object,
 ) -> bool:
     """Compare JSON values without Python's bool/int or int/float coercions."""
-    if type(left) is not type(right):
-        return False
-    if type(left) is dict:
-        assert isinstance(left, dict)
-        assert isinstance(right, dict)
+    if type(left) is dict and type(right) is dict:
         if (
             any(type(key) is not str for key in left)
             or any(type(key) is not str for key in right)
@@ -394,19 +389,15 @@ def _strict_json_equal(  # noqa: PLR0911 - recursive fail-closed JSON comparator
         ):
             return False
         return all(_strict_json_equal(left[key], right[key]) for key in left)
-    if type(left) is list:
-        assert isinstance(left, list)
-        assert isinstance(right, list)
+    if type(left) is list and type(right) is list:
         return len(left) == len(right) and all(
             _strict_json_equal(left_item, right_item)
             for left_item, right_item in zip(left, right, strict=True)
         )
-    if type(left) is float:
-        assert isinstance(left, float)
-        assert isinstance(right, float)
+    if type(left) is float and type(right) is float:
         return math.isfinite(left) and math.isfinite(right) and left == right
     if left is None or type(left) in {str, int, bool}:
-        return left == right
+        return type(left) is type(right) and left == right
     return False
 
 
@@ -897,23 +888,7 @@ def _clean_source_identity(source: object) -> bool:
     )
 
 
-def _valid_standard_pins(value: object) -> bool:
-    """Return whether *value* is a normalized name-to-version mapping."""
-    if not isinstance(value, dict):
-        return False
-    try:
-        return all(
-            type(name) is str
-            and is_normalized_name(name)
-            and type(version) is str
-            and str(Version(version)) == version
-            for name, version in value.items()
-        )
-    except ValueError:
-        return False
-
-
-def _standard_result_data_valid(  # noqa: PLR0911 - fail-closed schema validator
+def _standard_result_data_valid(
     data: object,
     expected_input: dict,
 ) -> bool:
@@ -921,19 +896,10 @@ def _standard_result_data_valid(  # noqa: PLR0911 - fail-closed schema validator
         return False
     if not _strict_json_equal(data.get("input"), expected_input):
         return False
-    result = data.get("result")
-    if not isinstance(result, dict) or set(result) != {"success", "error", "pins"}:
-        return False
-    success = result.get("success")
-    error = result.get("error")
-    pins = result.get("pins")
-    if type(success) is not bool or (success and error is not None):
-        return False
-    if not success and (not isinstance(error, str) or not error):
-        return False
-    if not _valid_standard_pins(pins) or (not success and pins):
-        return False
-    return valid_statistics(data.get("stats"), len(pins))
+    outcome = data["result"]
+    return valid_outcome(outcome) and valid_statistics(
+        data["stats"], len(outcome["pins"])
+    )
 
 
 def _result_input(
@@ -977,7 +943,7 @@ def _completed_standard_executions(
     for execution in executions:
         path = output_dir / execution.result_key
         try:
-            data = json.loads(path.read_text())
+            data = read_benchmark_json(path)
         except (OSError, ValueError):
             continue
         prepared = prepared_executions[execution.result_key]
@@ -1091,7 +1057,7 @@ def prepare_standard_result_namespace(
         )
         raise ValueError(msg)
     try:
-        manifest = json.loads(manifest_path.read_text())
+        manifest = read_benchmark_json(manifest_path)
     except (OSError, ValueError) as exc:
         msg = (
             f"existing standard manifest is unreadable: {manifest_path}; "
@@ -1319,6 +1285,7 @@ def resolve_scenario(
             provider,
             range_type=VersionRange,
             root_version="0",
+            format_range=provider.format_range,
         )
 
         pins: dict[str, str] = {}
@@ -1570,7 +1537,7 @@ def process_scenario(
 
     if output_path.exists() and not force:
         try:
-            existing = json.loads(output_path.read_text())
+            existing = read_benchmark_json(output_path)
         except (OSError, ValueError):
             existing = None
         if _standard_result_data_valid(existing, prepared.expected_input):

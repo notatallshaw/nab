@@ -9,8 +9,6 @@ import os
 import stat
 import subprocess
 import time
-from collections.abc import Callable
-from contextlib import AbstractContextManager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -46,9 +44,6 @@ NEG_BUCKET = f"simple-neg-{CACHE_VERSION_SIMPLE_NEG}"
 METADATA_BUCKET = f"metadata-{CACHE_VERSION_METADATA}"
 SDIST_BUCKET = f"sdist-{CACHE_VERSION_SDIST}"
 PARSED_BUCKET = f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}"
-
-# Stands in for a body nested past the decoder's guard (``refuse_over_nested``).
-OVER_NESTED = b"[[[]]]"
 
 # Two wheels of one version, each with its own PEP 658 sidecar.
 METADATA_URLS = (
@@ -739,17 +734,14 @@ class TestCorruptEntryLogging:
         self,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
-        refuse_over_nested: Callable[[bytes], AbstractContextManager[None]],
+        over_nested_json: bytes,
     ) -> None:
         cache = self._make(tmp_path)
         body_path, policy_path = cache._simple_paths("foo")
         body_path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_record(body_path, b"{}")
-        _atomic_write_record(policy_path, OVER_NESTED)
-        with (
-            refuse_over_nested(OVER_NESTED),
-            caplog.at_level(logging.WARNING, logger="nab_index.cache"),
-        ):
+        _atomic_write_record(policy_path, over_nested_json)
+        with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
             assert cache.get_simple("foo") is None
         warnings = _warnings(caplog)
         assert len(warnings) == 1
@@ -759,16 +751,13 @@ class TestCorruptEntryLogging:
         self,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
-        refuse_over_nested: Callable[[bytes], AbstractContextManager[None]],
+        over_nested_json: bytes,
     ) -> None:
         cache = self._make(tmp_path)
         path = cache._sdist_json_path("foo", "1.0")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(OVER_NESTED)
-        with (
-            refuse_over_nested(OVER_NESTED),
-            caplog.at_level(logging.WARNING, logger="nab_index.cache"),
-        ):
+        path.write_bytes(over_nested_json)
+        with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
             assert cache.get_sdist_files("foo", "1.0") is None
         warnings = _warnings(caplog)
         assert len(warnings) == 1
@@ -993,38 +982,35 @@ class TestReadCacheEntry:
     def test_over_nested_simple_json(
         self,
         tmp_path: Path,
-        refuse_over_nested: Callable[[bytes], AbstractContextManager[None]],
+        over_nested_json: bytes,
     ) -> None:
         cache = self._cache(tmp_path)
         path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.json"
         path.parent.mkdir(parents=True)
-        _atomic_write_record(path, OVER_NESTED)
-        with refuse_over_nested(OVER_NESTED):
-            assert cache.read_cache_entry(path) == "nested too deeply to decode"
+        _atomic_write_record(path, over_nested_json)
+        assert cache.read_cache_entry(path) == "nested too deeply to decode"
 
     def test_over_nested_policy(
         self,
         tmp_path: Path,
-        refuse_over_nested: Callable[[bytes], AbstractContextManager[None]],
+        over_nested_json: bytes,
     ) -> None:
         cache = self._cache(tmp_path)
         path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy"
         path.parent.mkdir(parents=True)
-        _atomic_write_record(path, OVER_NESTED)
-        with refuse_over_nested(OVER_NESTED):
-            assert cache.read_cache_entry(path) == "policy not decodable"
+        _atomic_write_record(path, over_nested_json)
+        assert cache.read_cache_entry(path) == "policy not decodable"
 
     def test_over_nested_parsed_blob(
         self,
         tmp_path: Path,
-        refuse_over_nested: Callable[[bytes], AbstractContextManager[None]],
+        over_nested_json: bytes,
     ) -> None:
         cache = self._cache(tmp_path)
         path = tmp_path / PARSED_BUCKET / "pypi" / "foo.parsed"
         path.parent.mkdir(parents=True)
-        _atomic_write_record(path, OVER_NESTED)
-        with refuse_over_nested(OVER_NESTED):
-            assert cache.read_cache_entry(path) == "nested too deeply to decode"
+        _atomic_write_record(path, over_nested_json)
+        assert cache.read_cache_entry(path) == "nested too deeply to decode"
 
     def test_valid_simple_json_is_clean(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)

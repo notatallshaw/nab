@@ -449,6 +449,31 @@ def test_direct_pin_with_version_skips_version_check() -> None:
     )
 
 
+@pytest.mark.parametrize("local_first", [True, False])
+@pytest.mark.parametrize("local_version", [None, "2"])
+def test_mixed_sources_have_no_single_index_version(
+    *, local_first: bool, local_version: str | None
+) -> None:
+    local = Package(
+        name=canonicalize_name("foo"),
+        version=Version(local_version) if local_version else None,
+        directory=PackageDirectory(path="./foo"),
+        marker=Marker('sys_platform == "linux"'),
+    )
+    index = marked_pin("foo", "1", 'sys_platform == "darwin"')
+    rows = (local, index) if local_first else (index, local)
+    committed = pylock_of(*rows)
+
+    assert (
+        check_direct_requirements(committed, [root("foo>=2")], marker_env=LINUX_ENV)
+        is None
+    )
+    assert (
+        check_constraints(committed, [Requirement("foo>=2")], marker_env=LINUX_ENV)
+        is None
+    )
+
+
 def test_direct_duplicate_versioned_pins_skipped() -> None:
     committed = pylock_of(
         marked_pin("foo", "1.5", "'old' in extras"),

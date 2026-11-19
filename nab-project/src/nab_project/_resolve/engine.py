@@ -997,6 +997,7 @@ def _make_target_provider(
         metadata_policy=inputs.metadata_policy,
         allow_zip_sdists=inputs.allow_zip_sdists,
         build_policy=inputs.build_policy,
+        defer_sdist_python_to_install=inputs.defer_sdist_python_to_install,
         package_overrides=inputs.package_overrides,
         index_overrides=inputs.index_overrides,
         trust_unverified_sdist_deps=inputs.trust_unverified_sdist_deps,

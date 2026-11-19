@@ -14,6 +14,8 @@ SPECS = (
     "",
     "==1",
     "==2",
+    "==2rc1",
+    ">=1rc1",
     "===1.0",
     "==1+local",
     "==1.*",
@@ -22,9 +24,9 @@ SPECS = (
     "!=1",
     ">=1,==1",
 )
-PIN_SPECS = frozenset({"==1", "==2", "===1.0", "==1+local", ">=1,==1"})
+PIN_SPECS = frozenset({"==1", "==2", "==2rc1", "===1.0", "==1+local", ">=1,==1"})
 SPECIFIERS = {text: SpecifierSet(text) for text in SPECS}
-VERSIONS = ("1", "2", "1.0", "1+local")
+VERSIONS = ("1", "2", "1.0", "1+local", "2rc1")
 MARKERS = {
     "always": "",
     "linux": '; sys_platform == "linux"',

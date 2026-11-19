@@ -47,7 +47,11 @@ Changelog = "https://github.com/notatallshaw/nab/releases"
 requires = ["hatchling>=1.33.0"]
 build-backend = "hatchling.build"
 
-# Benchmarks are development tooling, not part of the shipped package, so the
-# sdist carries only the source and tests.
+# The benchmark harness and the tests that need it run from the checkout.
 [tool.hatch.build.targets.sdist]
-exclude = ["/benchmarks"]
+exclude = ["/benchmarks", "/tests/benchmark", "/tests/test_deterministic_smoke_core.py"]
+
+# The checkout imports the fixtures as a plugin. In the archive, pytest finds
+# its config at the root and the same fixtures in tests/conftest.py.
+[tool.hatch.build.targets.sdist.sources]
+"test-support/nab_test_support" = ""

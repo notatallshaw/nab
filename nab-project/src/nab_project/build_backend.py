@@ -14,11 +14,10 @@ __lazy_modules__ = (
     "nab_project",
     "nab_project._build.errors",
     "nab_project.paths",
-    "nab_provider._vendor.packaging.specifiers",
     "nab_provider._vendor.packaging.utils",
     "nab_provider._vendor.packaging.version",
     "nab_provider.metadata",
-    "nab_provider.requirements_file",
+    "nab_provider.project_requirements",
     "nab_resolver.diagnostics",
     "tomli",
 )
@@ -27,17 +26,16 @@ from typing import TYPE_CHECKING, Any
 
 import tomli
 
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import (
     WheelMetadata,
     static_project_from_table,
-    validate_specifier_versions,
 )
-from nab_provider.requirements_file import (
+from nab_provider.project_requirements import (
     InvalidProjectRequirementError,
     parse_project_requirement,
+    parse_project_requires_python,
     require_string_list,
 )
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
@@ -128,7 +126,7 @@ def project_metadata(project: dict[str, Any]) -> WheelMetadata | None:
         msg = f"invalid [project].version {version_raw!r}: {exc}"
         raise InvalidProjectRequirementError(msg) from exc
 
-    requires_python = _static_requires_python(project.get("requires-python"))
+    requires_python = parse_project_requires_python(project.get("requires-python"))
 
     return WheelMetadata(
         name=canonicalize_name(name),
@@ -137,27 +135,6 @@ def project_metadata(project: dict[str, Any]) -> WheelMetadata | None:
         requires_dist=_collect_requires_dist(project),
         provides_extra=sorted(_collect_provides_extra(project)),
     )
-
-
-def _static_requires_python(raw: object) -> SpecifierSet | None:
-    """Parse a static ``requires-python``, raising when it is corrupt.
-
-    Absent is a valid "no constraint". A non-string or an unparseable
-    specifier is corrupt: it raises rather than silently dropping the
-    Python bound, which would admit candidates the bound excludes.
-    """
-    if raw is None:
-        return None
-    if not isinstance(raw, str):
-        msg = f"[project].requires-python must be a string, got {type(raw).__name__}"
-        raise InvalidProjectRequirementError(msg)
-    try:
-        specifier_set = SpecifierSet(raw)
-        validate_specifier_versions(specifier_set)
-    except ValueError as exc:
-        msg = f"invalid [project].requires-python {raw!r}: {exc}"
-        raise InvalidProjectRequirementError(msg) from exc
-    return specifier_set
 
 
 def _collect_requires_dist(project: dict[str, Any]) -> list[Requirement]:
@@ -242,14 +219,11 @@ def extract_metadata(
         return static
     if config is None:
         report = DiagnosticMessage(
-            (
-                "dynamic-metadata path requires a ResolveInputs; the static reader "
-                f"returned None for {source_dir}"
-            ),
+            f"Reading package metadata from {source_dir} requires a build backend.",
             suggestions=(
                 Suggestion(
-                    "pass one through ``extract_metadata`` or use a build-policy "
-                    "that does not enter the dynamic path."
+                    "Pass the project's build settings (ResolveInputs) "
+                    "as the config argument to extract_metadata()."
                 ),
             ),
         )

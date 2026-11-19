@@ -335,7 +335,7 @@ def _json_response(entries: list[tuple[str, str | None]]) -> io.BytesIO:
 def test_release_reuses_package_json_but_not_across_runs(
     tmp_path: Path, published: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    files = published.expected_files("0.0.3")
+    files = published.expected_files("0.0.3rc1")
     digest = hashlib.sha256(b"built").hexdigest()
     for _, filename in files:
         (tmp_path / filename).write_bytes(b"built")
@@ -355,11 +355,14 @@ def test_release_reuses_package_json_but_not_across_runs(
         "_verify_attestation",
         lambda filename, repository: attestations.append(filename),
     )
-    published.verify_release("0.0.3", tmp_path)
+    monkeypatch.setattr(
+        sys, "argv", ["verify_published", "v0.0.3-rc1", "--dist-dir", str(tmp_path)]
+    )
+    published.main()
     assert len(requests) == len(build_dists.PACKAGES)
     assert attestations == [filename for _, filename in files]
 
-    published.verify_release("0.0.3", tmp_path)
+    published.verify_release("0.0.3-rc1", tmp_path)
     assert len(requests) == 2 * len(build_dists.PACKAGES)
     assert len(attestations) == 2 * len(files)
 

@@ -20,12 +20,13 @@ and cofinite ranges.
 from __future__ import annotations
 
 import itertools
+from copy import deepcopy
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nab_resolver.incompat_index import add_incompatibility, dependency_merge_key
+from nab_resolver.incompat_index import add_incompatibility
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
@@ -44,59 +45,32 @@ def _fresh_resolver() -> Resolver[str, int]:
 
 
 @st.composite
-def clause_specs(draw: st.DrawFn) -> tuple[object, ...]:
-    """Generate a clause spec; building twice yields independent copies."""
+def clauses(draw: st.DrawFn) -> Incompatibility[str, int]:
+    """Generate both mergeable dependencies and clauses that must stay separate."""
     cause = draw(
         st.sampled_from(
             [IncompatibilityCause.DEPENDENCY] * 4
             + [IncompatibilityCause.NO_VERSIONS, IncompatibilityCause.DERIVED]
         )
     )
-    parent = draw(st.sampled_from(_PKGS))
+    parent_package = draw(st.sampled_from(_PKGS))
+    parent_range = rep_to_range(draw(rep_constraints()))
     if cause is IncompatibilityCause.NO_VERSIONS:
-        return ("one", cause, parent, draw(rep_constraints()))
-    dep = draw(st.sampled_from(_PKGS))  # parent == dep allowed (self-dep shape)
-    parent_rep = draw(rep_constraints())
-    parent_positive = draw(st.sampled_from([True, True, True, False]))
-    dep_rep = draw(rep_constraints())
-    dep_positive = draw(st.sampled_from([False, False, True]))
-    return (
-        "two",
-        cause,
-        parent,
-        parent_rep,
-        parent_positive,
-        dep,
-        dep_rep,
-        dep_positive,
-    )
-
-
-def _build_clause(spec: tuple[object, ...]) -> Incompatibility[str, int]:
-    """Materialize a clause spec into an Incompatibility."""
-    if spec[0] == "one":
-        _, cause, parent, rep = spec
-        assert isinstance(cause, IncompatibilityCause)
-        assert isinstance(parent, str)
-        assert isinstance(rep, tuple)
         return Incompatibility(
-            [Term(parent, rep_to_range(rep), positive=True)], cause=cause
+            [Term(parent_package, parent_range, positive=True)], cause
         )
-    _, cause, parent, parent_rep, parent_positive, dep, dep_rep, dep_positive = spec
-    assert isinstance(cause, IncompatibilityCause)
-    assert isinstance(parent, str)
-    assert isinstance(parent_rep, tuple)
-    assert isinstance(parent_positive, bool)
-    assert isinstance(dep, str)
-    assert isinstance(dep_rep, tuple)
-    assert isinstance(dep_positive, bool)
-    return Incompatibility(
-        [
-            Term(parent, rep_to_range(parent_rep), positive=parent_positive),
-            Term(dep, rep_to_range(dep_rep), positive=dep_positive),
-        ],
-        cause=cause,
+
+    parent = Term(
+        parent_package,
+        parent_range,
+        positive=draw(st.sampled_from([True, True, True, False])),
     )
+    dependency = Term(
+        draw(st.sampled_from(_PKGS)),
+        rep_to_range(draw(rep_constraints())),
+        positive=draw(st.sampled_from([False, False, True])),
+    )
+    return Incompatibility([parent, dependency], cause)
 
 
 def _term_true(term: Term[str, int], assignment: dict[str, int | None]) -> bool:
@@ -116,17 +90,16 @@ def _violated(
     )
 
 
-@given(specs=st.lists(clause_specs(), min_size=1, max_size=8))
+@given(raw=st.lists(clauses(), min_size=1, max_size=8))
 @PROPERTY_SETTINGS
 def test_merged_store_semantically_equivalent(
-    specs: list[tuple[object, ...]],
+    raw: list[Incompatibility[str, int]],
 ) -> None:
     """The merged store forbids exactly the assignments the raw list does."""
     resolver = _fresh_resolver()
-    raw: list[Incompatibility[str, int]] = []
-    for spec in specs:
-        raw.append(_build_clause(spec))  # independent copy for the raw store
-        add_incompatibility(resolver, _build_clause(spec))
+    # Keep the reference clauses independent if merging changes an input in place.
+    for clause in deepcopy(raw):
+        add_incompatibility(resolver, clause)
 
     versions: tuple[int | None, ...] = (None, *POOL)
     for combo in itertools.product(versions, repeat=len(_PKGS)):
@@ -136,16 +109,16 @@ def test_merged_store_semantically_equivalent(
         ), f"forbidden-set divergence at {assignment}"
 
 
-@given(specs=st.lists(clause_specs(), min_size=1, max_size=8))
+@given(raw=st.lists(clauses(), min_size=1, max_size=8))
 @PROPERTY_SETTINGS
-def test_package_index_matches_full_scan(specs: list[tuple[object, ...]]) -> None:
+def test_package_index_matches_full_scan(raw: list[Incompatibility[str, int]]) -> None:
     """The per-package index reaches exactly the clauses a full scan finds.
 
     The skip stamps stay at one entry per clause too.
     """
     resolver = _fresh_resolver()
-    for spec in specs:
-        add_incompatibility(resolver, _build_clause(spec))
+    for clause in raw:
+        add_incompatibility(resolver, clause)
 
     full_scan: dict[str, set[int]] = {pkg: set() for pkg in _PKGS}
     for i, clause in enumerate(resolver.incompatibilities):
@@ -163,17 +136,32 @@ def test_package_index_matches_full_scan(specs: list[tuple[object, ...]]) -> Non
     assert len(resolver.clause_contradicted_at) == len(resolver.incompatibilities)
 
 
-@given(specs=st.lists(clause_specs(), min_size=1, max_size=8))
+@given(raw=st.lists(clauses(), min_size=1, max_size=8))
 @PROPERTY_SETTINGS
-def test_dependency_index_keys_stay_canonical(
-    specs: list[tuple[object, ...]],
+def test_dependency_index_matches_stored_clauses(
+    raw: list[Incompatibility[str, int]],
 ) -> None:
-    """Every dependency_index key still matches its clause's merge key."""
+    """Each mergeable clause has exactly one entry in the dependency index."""
     resolver = _fresh_resolver()
-    for spec in specs:
-        add_incompatibility(resolver, _build_clause(spec))
+    for clause in raw:
+        add_incompatibility(resolver, clause)
 
-    for key, index in resolver.dependency_index.items():
-        assert 0 <= index < len(resolver.incompatibilities)
-        clause = resolver.incompatibilities[index]
-        assert dependency_merge_key(clause) == key
+    expected = {}
+    for index, clause in enumerate(resolver.incompatibilities):
+        if (
+            clause.cause is not IncompatibilityCause.DEPENDENCY
+            or len(clause.terms) != 2
+        ):
+            continue
+        parent, dependency = clause.terms
+        if parent.is_positive():
+            key = (
+                parent.package,
+                dependency.package,
+                dependency.constraint,
+                dependency.is_positive(),
+            )
+            assert key not in expected
+            expected[key] = index
+
+    assert resolver.dependency_index == expected

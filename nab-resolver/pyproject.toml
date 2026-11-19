@@ -35,7 +35,9 @@ Changelog = "https://github.com/notatallshaw/nab/releases"
 requires = ["hatchling>=1.33.0"]
 build-backend = "hatchling.build"
 
-# Benchmarks are development tooling, not part of the shipped package, so the
-# sdist carries only the source and tests.
+# Run the range benchmark and its harness tests from the checkout.
 [tool.hatch.build.targets.sdist]
-exclude = ["/benchmarks"]
+exclude = ["/benchmarks", "/tests/test_range_benchmark.py"]
+
+[tool.hatch.build.targets.sdist.sources]
+"test-support" = ""

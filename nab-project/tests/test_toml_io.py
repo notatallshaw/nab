@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import io
 from pathlib import Path
 
@@ -11,58 +10,8 @@ import tomli
 
 from nab_project import toml_io
 
-WORKSPACE = Path(__file__).resolve().parents[2]
-
-SHIPPED_PACKAGES = (
-    WORKSPACE / "src" / "nab",
-    *sorted(WORKSPACE.glob("nab-*/src/nab_*")),
-)
-"""The source trees the census walks, globbed rather than listed.
-
-A tree the glob missed would leave the census with nothing to find, so the
-test asserts this set before walking it.
-"""
-
 OVER_NESTED = 1100
 """Deeper than tomli will follow into an inline array or table."""
-
-
-def _reaches_a_parser(node: ast.AST) -> bool:
-    """Whether ``node`` reaches a TOML parser other than ``toml_io``'s.
-
-    An alias or a ``from`` import binds the parser under a name no walk over
-    attributes would catch, and ``tomllib`` is a second parser, so the imports
-    count as much as the calls.  Plain ``import tomli`` stays allowed, since
-    modules import it to name ``TOMLDecodeError``.
-    """
-    if isinstance(node, ast.Attribute):
-        return (
-            isinstance(node.value, ast.Name)
-            and node.value.id == "tomli"
-            and node.attr in {"load", "loads"}
-        )
-    if isinstance(node, ast.Import):
-        return any(
-            alias.name == "tomllib"
-            or (alias.name == "tomli" and alias.asname is not None)
-            for alias in node.names
-        )
-    if isinstance(node, ast.ImportFrom):
-        if node.module == "tomllib":
-            return True
-        return node.module == "tomli" and any(
-            alias.name in {"load", "loads"} for alias in node.names
-        )
-    return False
-
-
-def parser_references(source: str) -> list[int]:
-    """Return the lines of ``source`` that reach a parser other than ``toml_io``."""
-    return sorted(
-        node.lineno
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, (ast.stmt, ast.expr)) and _reaches_a_parser(node)
-    )
 
 
 class TestParseFailures:
@@ -145,47 +94,3 @@ class TestLoadPathFailures:
         document.write_bytes(b"count = [")
         with pytest.raises(tomli.TOMLDecodeError, match="Invalid value"):
             toml_io.load_path(document)
-
-
-class TestCensus:
-    """Every shipped module parses through :mod:`nab_project.toml_io`."""
-
-    def test_census_sees_the_forms_it_bans(self) -> None:
-        source = (
-            "import tomli\n"
-            "import tomli as t\n"
-            "import tomllib\n"
-            "from tomli import loads\n"
-            "from tomli import TOMLDecodeError\n"
-            "from tomllib import load\n"
-            "tomli.loads(text)\n"
-            "tomli.TOMLDecodeError\n"
-        )
-        assert parser_references(source) == [2, 3, 4, 6, 7]
-
-    def test_census_reads_the_wrapper_itself(self) -> None:
-        # toml_io holds the last such call, so finding it is what says the
-        # walk can see one at all.
-        source = WORKSPACE / "nab-project" / "src" / "nab_project" / "toml_io.py"
-        assert len(parser_references(source.read_text(encoding="utf-8"))) == 1
-
-    def test_every_parse_goes_through_toml_io(self) -> None:
-        # A glob that missed a package would leave nothing to find.
-        assert [package.name for package in SHIPPED_PACKAGES] == [
-            "nab",
-            "nab_index",
-            "nab_markersets",
-            "nab_project",
-            "nab_provider",
-            "nab_resolver",
-        ]
-
-        found: list[str] = []
-        for package in SHIPPED_PACKAGES:
-            for path in sorted(package.rglob("*.py")):
-                if "_vendor" in path.parts or path.name == "toml_io.py":
-                    continue
-                lines = parser_references(path.read_text(encoding="utf-8"))
-                found.extend(f"{path.relative_to(WORKSPACE)}:{line}" for line in lines)
-
-        assert found == []

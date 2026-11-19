@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 import tomlkit
 from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
@@ -66,13 +67,17 @@ def is_dev_version(version: str) -> bool:
         return False
 
 
-def is_release_version(version: str) -> bool:
-    """Return whether the version parses and is neither a dev nor a local version."""
+def normalized_release_version(version: str) -> str:
+    """Return a public release version in the form used by distribution filenames."""
     try:
         parsed = Version(version)
-    except InvalidVersion:
-        return False
-    return not parsed.is_devrelease and parsed.local is None
+    except InvalidVersion as exc:
+        msg = f"{version!r} is not a valid version"
+        raise SystemExit(msg) from exc
+    if parsed.is_devrelease or parsed.local is not None:
+        msg = f"{version!r} is not a public release version"
+        raise SystemExit(msg)
+    return str(parsed)
 
 
 def next_dev_version(release: str) -> str:
@@ -89,8 +94,9 @@ def _rewrite_requirement(dependency: str, version: str) -> str:
     requirement = Requirement(dependency)
     if canonicalize_name(requirement.name) not in _WORKSPACE:
         return dependency
-    extras = f"[{','.join(sorted(requirement.extras))}]" if requirement.extras else ""
-    return f"{requirement.name}{extras}{cross_pin(version)}"
+    requirement.specifier = SpecifierSet(cross_pin(version))
+    requirement.url = None
+    return str(requirement)
 
 
 def _version_module(version: str) -> str:
@@ -146,7 +152,7 @@ def check_release(tag: str) -> None:
     """Verify the working tree is a clean release matching ``tag``.
 
     The ``vX.Y.Z`` tag has to match every package version, that version must
-    not be a dev version, every cross-pin has to be exactly ``==X.Y.Z``, and
+    be a public release version, every cross-pin has to be exactly ``==X.Y.Z``, and
     every version literal has to hold it.
     """
     if not tag.startswith("v"):
@@ -157,9 +163,7 @@ def check_release(tag: str) -> None:
     if version != expected:
         msg = f"tag {tag!r} does not match package version {version!r}"
         raise SystemExit(msg)
-    if is_dev_version(version):
-        msg = f"refusing to release a dev version {version!r}"
-        raise SystemExit(msg)
+    normalized_release_version(version)
     wanted = cross_pin(version)
     for path in PYPROJECT_PATHS:
         document = tomlkit.parse(path.read_text(encoding="utf-8"))
@@ -190,9 +194,7 @@ def _plan(
     release: str, current: str, next_dev: str | None
 ) -> tuple[str, str, str, str]:
     """Validate inputs and return ``(release, dev, branch, tag)``."""
-    if not is_release_version(release):
-        msg = f"{release!r} is not a release version"
-        raise SystemExit(msg)
+    normalized_release_version(release)
     if not is_dev_version(current):
         msg = f"current version is {current!r}, expected a .dev version"
         raise SystemExit(msg)
@@ -276,8 +278,15 @@ def _make(release: str, next_dev: str | None, *, assume_yes: bool, push: bool) -
     _run("git", "commit", "--message", "Back to development")
 
     if push:
-        _run("git", "push", "--set-upstream", "origin", branch)
-        _run("git", "push", "origin", tag)
+        _run(
+            "git",
+            "push",
+            "--atomic",
+            "--set-upstream",
+            "origin",
+            f"refs/heads/{branch}",
+            f"refs/tags/{tag}",
+        )
     _run("git", "switch", "main")
 
     if not push:

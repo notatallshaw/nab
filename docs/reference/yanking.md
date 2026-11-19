@@ -17,6 +17,10 @@ Suppose `lib==1.2` is yanked and `lib==1.1` is not:
 The pin can come from your requirements, a selected dependency, or a constraint on a required
 package. Pins for inactive extras or other environments do not apply.
 
+During this search Nab uses the requirements of the selected parents to rank prereleases. For
+example, a requirement of `lib>=1rc1` admits a later prerelease of `lib` when a different package
+needs a yanked file.
+
 ## Dependencies and alternatives
 
 For example, a project can request a yanked release explicitly:

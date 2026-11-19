@@ -268,6 +268,7 @@ def verify_release(
     deadline: float | None = None,
 ) -> None:
     """Verify every published file for a release, raising on any failure."""
+    version = release.normalized_release_version(version)
     if deadline is None:
         deadline = time.monotonic() + RETRY_BUDGET_SECONDS
     files = expected_files(version)
@@ -314,18 +315,6 @@ def verify_release(
     print(f"\nAll {len(files)} published files verified.")
 
 
-def _version_from_tag(tag: str) -> str:
-    """Return the release version named by a ``vX.Y.Z`` tag."""
-    if not tag.startswith("v"):
-        msg = f"release tag {tag!r} must start with 'v'"
-        raise SystemExit(msg)
-    version = tag[1:]
-    if not release.is_release_version(version):
-        msg = f"{tag!r} does not name a release version"
-        raise SystemExit(msg)
-    return version
-
-
 def main() -> None:
     """Parse arguments and verify the tag's published files."""
     parser = argparse.ArgumentParser(description="Verify a release's PyPI files.")
@@ -337,8 +326,10 @@ def main() -> None:
         help="tree of built artifacts to compare against the published files",
     )
     args = parser.parse_args()
-    version = _version_from_tag(args.tag)
-    verify_release(version, args.dist_dir)
+    if not args.tag.startswith("v"):
+        msg = f"release tag {args.tag!r} must start with 'v'"
+        raise SystemExit(msg)
+    verify_release(args.tag[1:], args.dist_dir)
 
 
 if __name__ == "__main__":

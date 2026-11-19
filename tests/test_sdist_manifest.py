@@ -1,9 +1,8 @@
 """Hold this suite to the files the umbrella sdist carries.
 
-The sdist ships the CLI package, this suite and the root conftest, so a test
-that reads ``docs/``, ``tasks/`` or a sibling workspace fails when the suite is
-run from the unpacked source. Such a test goes on the sdist's exclude list
-instead.
+The sdist ships the CLI package, this suite and its fixtures. Tests that
+need the repository documentation, development tools or sibling packages'
+source trees go on the sdist's exclude list.
 
 The check reads paths built from ``__file__`` by ``.parent``, ``.parents[n]``
 and ``/`` joins. A module that reaches a file some other way is not covered.
@@ -38,7 +37,11 @@ _ALWAYS_SHIPPED = frozenset(
 
 def _suite_modules() -> list[Path]:
     """The Python files that make up the suite, shipped and excluded alike."""
-    return [_ROOT / "conftest.py", *sorted(_TESTS.glob("*.py"))]
+    return [
+        _ROOT / "conftest.py",
+        _ROOT / "nab-project/test-support/nab_test_support/tests/conftest.py",
+        *sorted(_TESTS.glob("*.py")),
+    ]
 
 
 def _as_posix(relative: str, flavour: type[PurePath]) -> str:

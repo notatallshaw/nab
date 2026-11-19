@@ -28,6 +28,43 @@ if TYPE_CHECKING:
     from nab_provider.target import ResolveTarget
 
 
+@pytest.mark.parametrize(
+    ("edit", "field"),
+    [
+        ('dynamic = "dependencies"', "[project].dynamic"),
+        ("dependencies = {foo = 1}", "[project].dependencies"),
+        ('optional-dependencies = ["cli"]', "[project.optional-dependencies]"),
+        (
+            '[project.optional-dependencies]\ncli = "bar"',
+            "[project.optional-dependencies].cli",
+        ),
+    ],
+)
+def test_locked_reports_invalid_local_project_fields(
+    hermetic_roots: Path, capsys: pytest.CaptureFixture[str], edit: str, field: str
+) -> None:
+    source = hermetic_roots / "local"
+    source.mkdir()
+    metadata = source / "pyproject.toml"
+    valid = '[project]\nname="foo"\nversion="2"\n'
+    metadata.write_text(valid, encoding="utf-8")
+    project = hermetic_roots / "pyproject.toml"
+    project.write_text(
+        '[project]\nname="app"\nversion="1"\ndependencies=["foo>=2"]\n'
+        '[[tool.nab.local-sources]]\nname="foo"\npath="local"\n',
+        encoding="utf-8",
+    )
+    lock = hermetic_roots / "pylock.toml"
+    args = ("lock", str(project), "--offline", "--no-cache", "--output", str(lock))
+    assert run(args) == 0
+    saved = lock.read_bytes()
+
+    metadata.write_text(valid + edit, encoding="utf-8")
+    assert run((*args, "--locked")) == 1
+    assert f"{metadata}: {field} must be" in capsys.readouterr().err
+    assert lock.read_bytes() == saved
+
+
 class Registry:
     """Publish new facts through a fresh real in-memory fetch port per command."""
 

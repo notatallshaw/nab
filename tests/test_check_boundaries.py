@@ -97,6 +97,62 @@ def test_packages_are_the_ones_the_release_builds() -> None:
     assert checked == set(check_boundaries.build_dists.PACKAGES)
 
 
+def test_only_the_project_reader_can_parse_toml(
+    workspace: FakeWorkspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = (
+        "import tomli\n"
+        "from tomli import TOMLDecodeError\n"
+        "import tomli as t\n"
+        "import tomllib\n"
+        "from tomli import loads\n"
+        "from tomllib import load\n"
+        "tomli.loads(text)\n"
+        "tomli.TOMLDecodeError\n"
+        "from tomli import *\n"
+    )
+    workspace.add("nab-project", toml_io=source)
+    workspace.add("pkg-a", toml_io=source)
+
+    assert check_boundaries.main() == 1
+    errors = capsys.readouterr().err
+    lines = [line.strip() for line in errors.splitlines() if "parse TOML" in line]
+    path = Path("pkg-a/src/pkg_a/toml_io.py")
+    assert lines == [
+        f"{path}:{line}: parse TOML through nab_project.toml_io"
+        for line in (3, 4, 5, 6, 7, 9)
+    ]
+
+
+def test_only_the_provider_parser_constructs_requirements(
+    workspace: FakeWorkspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = (
+        "from packaging.requirements import Requirement\n"
+        "from ._vendor.packaging.requirements import Requirement as Req\n"
+        "from a.packaging import requirements\n"
+        "from nab_resolver.types import RootRequirement\n"
+        "first = Requirement('a')\n"
+        "second = Req('b')\n"
+        "third = requirements.Requirement('c')\n"
+        "other = RootRequirement('d')\n"
+        "annotation: Requirement\n"
+    )
+    workspace.add("nab-provider", pep508=source)
+    workspace.add("pkg-a", pep508=source)
+
+    assert check_boundaries.main() == 1
+    errors = capsys.readouterr().err
+    lines = [
+        line.strip() for line in errors.splitlines() if "parse requirements" in line
+    ]
+    path = Path("pkg-a/src/pkg_a/pep508.py")
+    assert lines == [
+        f"{path}:{line}: parse requirements through nab_provider.pep508.parse_requirement"
+        for line in (5, 6, 7)
+    ]
+
+
 def test_the_packages_that_publish_a_table_are_pinned() -> None:
     """Pin the constant every other test here replaces.
 

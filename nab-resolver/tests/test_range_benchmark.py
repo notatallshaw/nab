@@ -277,15 +277,16 @@ def test_counting_leaves_range_as_it_found_it(benchmark: ModuleType) -> None:
     original = {name: getattr(Range, name) for name in benchmark.COUNTED_METHODS}
 
     scenario = scenario_of(benchmark, "wrong-package-backtracking")
-    benchmark.count_range_traffic(scenario.build(4))
+    benchmark.resolve_with_counters(scenario.build(4))
 
     assert {
         name: getattr(Range, name) for name in benchmark.COUNTED_METHODS
     } == original
 
 
+@pytest.mark.parametrize("changed_call", [1, 2], ids=["counted", "timed"])
 def test_repeat_that_selects_another_solution_is_reported(
-    benchmark: ModuleType, monkeypatch: pytest.MonkeyPatch
+    benchmark: ModuleType, monkeypatch: pytest.MonkeyPatch, changed_call: int
 ) -> None:
     """The guard that stops one run being averaged over two different answers."""
     real_resolve = benchmark.resolve_once
@@ -293,7 +294,7 @@ def test_repeat_that_selects_another_solution_is_reported(
 
     def drifting(graph: Any) -> Any:
         resolution = real_resolve(graph)
-        if next(resolves) == 0:
+        if next(resolves) != changed_call:
             return resolution
         return replace(resolution, solution={**resolution.solution, "root": -1})
 
@@ -301,6 +302,19 @@ def test_repeat_that_selects_another_solution_is_reported(
 
     scenario = replace(scenario_of(benchmark, "wrong-package-backtracking"), size=4)
     with pytest.raises(RuntimeError, match="different solution"):
+        benchmark.measure(scenario, repeats=1)
+
+
+def test_same_solution_with_a_different_search_is_reported(
+    benchmark: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scenario = replace(scenario_of(benchmark, "wrong-package-backtracking"), size=4)
+    # Both graphs select the same four pins, but the fifth release adds conflicts.
+    graphs = iter([scenario.build(4), scenario.build(5), scenario.build(4)])
+    resolve = benchmark.resolve_once
+    monkeypatch.setattr(benchmark, "resolve_once", lambda _graph: resolve(next(graphs)))
+
+    with pytest.raises(RuntimeError, match="different search"):
         benchmark.measure(scenario, repeats=1)
 
 

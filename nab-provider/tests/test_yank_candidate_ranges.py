@@ -9,13 +9,15 @@ import pytest
 
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.policy import ResolutionStrategy
 from nab_provider.provider import Provider
 from nab_provider.testing import make_coordinator, make_wheel
-from nab_provider.yank_candidates import Candidate
+from nab_provider.yank_candidates import Candidate, CandidateData
 from nab_provider.yank_preference import PreferenceScope
-from nab_provider.yanked_resolution import YankProxyProvider
+from nab_provider.yanked_resolution import MetadataProxy, YankProxyProvider
 from nab_provider.yanking import mark_yanked
 from nab_resolver.ranges import Range
+from nab_resolver.types import RootRequirement
 
 
 class _TrackedFloat(float):
@@ -61,6 +63,67 @@ def test_encoding_keeps_sparse_candidate_identities(
     assert [search.identify(candidate) for candidate in candidates] == [1, 2, 3, 4]
     assert not search.catalogue.facts
     assert not search.catalogue.provider.coordinator.calls_to("request_metadata")
+
+
+@pytest.mark.parametrize(
+    ("strategy", "prerelease"),
+    [(ResolutionStrategy.HIGHEST, "2rc1"), (ResolutionStrategy.LOWEST, "0.9rc1")],
+)
+def test_root_requirement_orders_prereleases_with_final_candidates(
+    strategy: ResolutionStrategy, prerelease: str
+) -> None:
+    port = make_coordinator(
+        [make_wheel("1", package="dep"), make_wheel(prerelease, package="dep")],
+        package="dep",
+    )
+    provider = Provider(port, resolution_strategy=strategy)
+    requirement = Requirement("dep>=0.1rc1")
+    allowed = requirement.specifier.to_range()
+    search = YankProxyProvider(
+        provider,
+        lambda: provider,
+        [RootRequirement("dep", allowed)],
+        [requirement],
+        {},
+        preferences={},
+    )
+    encoded = search.encode_range("dep", allowed)
+
+    chosen = search.choose_version("dep", encoded)
+    assert chosen is not None
+    assert search.items[chosen].version == Version(prerelease)
+
+
+def test_backtracking_restores_the_order_for_the_selected_parent() -> None:
+    provider = Provider(make_coordinator())
+    search = YankProxyProvider(provider, lambda: provider, [], [], {}, preferences={})
+    stable = Candidate("dep", Version("1"), withdrawn=False)
+    preview = Candidate("dep", Version("2rc1"), withdrawn=False)
+    older_dep = Candidate("dep", Version("0.5"), withdrawn=False)
+    search.catalogue.candidates["dep"] = (stable, preview, older_dep)
+    parent = Candidate("app", Version("2"), withdrawn=False)
+    older = Candidate("app", Version("1"), withdrawn=False)
+    parent_id = search.identify(parent)
+    older_id = search.identify(older)
+    requirement = Requirement("dep>=1rc1").specifier.to_range()
+    search.catalogue.facts[parent] = CandidateData(provider, {"dep": requirement}, ())
+    domain = search.get_dependencies(MetadataProxy(parent_id), 0)["dep"]
+
+    search.receive_decision_scan_hint({}, {"app": parent_id})
+    assert search.choose_version("dep", domain) == search.identify(preview)
+
+    # Until the parent clause is propagated, the solver can still probe older_dep.
+    before_propagation = Range.singleton(search.identify(older_dep))
+    assert search.has_satisfying_version("dep", before_propagation)
+
+    search.receive_decision_scan_hint({}, {})
+    assert search.choose_version("dep", domain) == search.identify(stable)
+
+    # The replacement parent first has unread metadata, then no dependency on dep.
+    search.receive_decision_scan_hint({}, {"app": older_id})
+    assert search.choose_version("dep", domain) == search.identify(stable)
+    search.catalogue.facts[older] = CandidateData(provider, {}, ())
+    assert search.choose_version("dep", domain) == search.identify(stable)
 
 
 def test_completed_search_releases_membership_owners() -> None:

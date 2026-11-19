@@ -3,11 +3,17 @@
 The packages checked are the ones ``tasks/build_dists.py`` builds for a release,
 so a distribution cannot join the release without also joining this check.
 
-Five rules:
-
 ``relative``
     Use relative imports for modules in the importing package. A bare
     ``import pkg`` can bind the package itself.
+
+``toml``
+    Parse TOML through ``nab_project.toml_io`` so callers get consistent
+    decode errors. Other modules may use ``tomli.TOMLDecodeError``.
+
+``requirements``
+    Parse PEP 508 requirements through ``nab_provider.pep508.parse_requirement``
+    so callers receive the same error for an invalid requirement.
 
 ``declared``
     A package may import a sibling only when it depends on it. The allowed
@@ -41,8 +47,8 @@ Five rules:
     time rather than by an import statement, so nothing here can see it;
     ``tests/test_workspace_shape.py`` holds that reach instead.
 
-Only the ``src`` trees are walked, since tests are not shipped and may reach
-into what they test. Vendored code is skipped as third-party.
+The check covers installed code in the ``src`` trees. Tests may use private
+interfaces. Vendored third-party code is excluded.
 
 Run directly::
 
@@ -241,6 +247,55 @@ def imported_paths(tree: ast.AST) -> list[tuple[str, int]]:
     return found
 
 
+def _direct_toml_reads(package: Package, path: Path, tree: ast.Module) -> list[int]:
+    """Find parser access outside the reader, including aliases for later calls."""
+    if package.module == "nab_project" and path == package.source / "toml_io.py":
+        return []
+
+    lines = []
+    for node in ast.walk(tree):
+        match node:
+            case ast.Attribute(value=ast.Name(id="tomli"), attr="load" | "loads"):
+                lines.append(node.lineno)
+            case ast.Import(names=names) if any(
+                name.name == "tomllib" or (name.name == "tomli" and name.asname)
+                for name in names
+            ):
+                lines.append(node.lineno)
+            case ast.ImportFrom(module="tomllib", level=0):
+                lines.append(node.lineno)
+            case ast.ImportFrom(module="tomli", names=names, level=0) if any(
+                name.name in {"load", "loads", "*"} for name in names
+            ):
+                lines.append(node.lineno)
+    return sorted(lines)
+
+
+def _direct_requirement_calls(
+    package: Package, path: Path, tree: ast.Module
+) -> list[int]:
+    """Find constructor calls, including calls through an imported alias."""
+    if package.module == "nab_provider" and path == package.source / "pep508.py":
+        return []
+
+    aliases = {
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and (node.module or "").split(".")[-2:] == ["packaging", "requirements"]
+        for alias in node.names
+        if alias.name == "Requirement"
+    }
+    lines = []
+    for node in ast.walk(tree):
+        match node:
+            case ast.Call(func=ast.Name(id=name)) if name in aliases:
+                lines.append(node.lineno)
+            case ast.Call(func=ast.Attribute(attr="Requirement")):
+                lines.append(node.lineno)
+    return sorted(lines)
+
+
 def _vendor_allowed(importer: str, dotted: str) -> bool:
     """Whether ``importer`` naming ``dotted`` is one of the listed allowances.
 
@@ -262,6 +317,16 @@ def violations(package: Package, modules: dict[str, Package]) -> list[str]:
             continue
         tree = ast.parse(path.read_text("utf-8"), str(path))
         location = path.relative_to(REPO_ROOT)
+        found.extend(
+            f"{location}:{line}: parse TOML through nab_project.toml_io"
+            for line in _direct_toml_reads(package, path, tree)
+        )
+        found.extend(
+            f"{location}:{line}: parse requirements through "
+            "nab_provider.pep508.parse_requirement"
+            for line in _direct_requirement_calls(package, path, tree)
+        )
+
         imports = set(imported_paths(tree))
         local_lines = {
             lineno

@@ -5417,7 +5417,9 @@ class TestWriteRequirementsWithHashes:
         )
         assert text.strip() == f"-e {tmp_path.resolve().as_uri()}"
 
-    def test_local_pin_subdirectory_renders_fragment(self, tmp_path: Path) -> None:
+    def test_local_pin_url_points_to_the_project_directory(
+        self, tmp_path: Path
+    ) -> None:
         text = write_requirements_without_hashes(
             LockInput(
                 targets=_one(
@@ -5432,8 +5434,8 @@ class TestWriteRequirementsWithHashes:
                 )
             )
         )
-        url = tmp_path.resolve().as_uri()
-        assert text.strip() == f"foo @ {url}#subdirectory=packages/foo"
+        url = (tmp_path / "packages" / "foo").resolve().as_uri()
+        assert text.strip() == f"foo @ {url}"
 
     def test_local_pin_editable_with_subdirectory(self, tmp_path: Path) -> None:
         text = write_requirements_with_hashes(
@@ -5451,15 +5453,11 @@ class TestWriteRequirementsWithHashes:
                 )
             )
         )
-        url = tmp_path.resolve().as_uri()
-        assert text.strip() == f"-e {url}#subdirectory=packages/foo"
+        url = (tmp_path / "packages" / "foo").resolve().as_uri()
+        assert text.strip() == f"-e {url}"
 
     def test_local_pin_subdirectory_encodes_reserved_char(self, tmp_path: Path) -> None:
-        """A subdirectory with a URL-reserved char is percent-encoded.
-
-        An unencoded space terminates the URL token of the PEP 508
-        ``name @ <url>`` line, so the fragment must stay encoded.
-        """
+        """A space in the project's directory name stays inside the file URL."""
         text = write_requirements_without_hashes(
             LockInput(
                 targets=_one(
@@ -5475,7 +5473,7 @@ class TestWriteRequirementsWithHashes:
             )
         )
         url = tmp_path.resolve().as_uri()
-        assert text.strip() == f"foo @ {url}#subdirectory=my%20pkg"
+        assert text.strip() == f"foo @ {url}/my%20pkg"
 
     def test_vcs_pin_round_trips_url(self) -> None:
         text = write_requirements_with_hashes(

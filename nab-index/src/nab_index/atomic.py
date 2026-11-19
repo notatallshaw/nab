@@ -32,6 +32,7 @@ __all__ = [
     "atomic_write",
     "atomic_write_chunks",
     "atomic_write_text",
+    "create_staging_file",
 ]
 
 _umask_lock = threading.Lock()
@@ -64,12 +65,18 @@ def _default_mode() -> int:
     return 0o666 & ~umask
 
 
-def _temporary_file(path: Path) -> tuple[int, Path]:
-    """Open a staging file exclusively beside the destination."""
+def create_staging_file(path: Path) -> tuple[int, Path]:
+    """Create a private file beside the destination.
+
+    The caller closes the descriptor and removes or renames the file.
+    """
     directory = path.parent.absolute()
+    # A short name fits even when the destination uses the entire filename limit.
+    # Give it a different first character so staging never creates the destination.
+    prefix = "" if path.name.startswith(".") else "."
     for attempt in range(_TEMP_NAME_ATTEMPTS):
         token = urlsafe_b64encode(os.urandom(_TEMP_NAME_BYTES)).decode("ascii")
-        temporary = directory / f"{path.name}.{token}.tmp"
+        temporary = directory / f"{prefix}{token}.tmp"
         sys.audit("tempfile.mkstemp", os.fspath(temporary))
 
         try:
@@ -95,7 +102,7 @@ def _staged(path: Path) -> Generator[int, None, None]:
 
     Cleanup OSErrors do not replace the original failure.
     """
-    fd, tmp_path = _temporary_file(path)
+    fd, tmp_path = create_staging_file(path)
     try:
         try:
             yield fd

@@ -338,6 +338,7 @@ def run_one(
             provider,
             range_type=VersionRange,
             root_version="0",
+            format_range=provider.format_range,
         )
 
         yanked_stats = YankStats()

@@ -69,12 +69,23 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
     from collections.abc import Set as AbstractSet
     from pathlib import Path
+    from typing import TypedDict
+
+    from typing_extensions import NotRequired
 
     from nab_provider._vendor.packaging.markers import Marker
     from nab_provider._vendor.packaging.pylock import Package
     from nab_provider._vendor.packaging.requirements import Requirement
     from nab_provider._vendor.packaging.version import Version
     from nab_provider.target import ResolveTarget
+
+    class _ReferenceRow(TypedDict):
+        """Package fields used to resolve references by name, version or marker."""
+
+        name: str
+        version: NotRequired[str]
+        marker: NotRequired[str]
+        dependencies: NotRequired[Sequence[Mapping[str, object]]]
 
 
 class LockfileSyntaxError(Exception):
@@ -133,13 +144,52 @@ def _reference_value_matches(reference: object, candidate: object) -> bool:
             return type(reference) is type(candidate) and reference == candidate
 
 
+def _uses_identity_fields(reference: Mapping[str, object]) -> bool:
+    """Plain strings and dicts already have their serialized TOML form."""
+    return type(reference) is dict and all(
+        type(key) is str and key in {"name", "version", "marker"} and type(value) is str
+        for key, value in reference.items()
+    )
+
+
+def _identity_rows(lock: Pylock) -> list[_ReferenceRow] | None:
+    """Return package identities if they contain every field a reference names."""
+    fields: set[str] = set()
+    for package in lock.packages:
+        if type(package.name) is not str:
+            return None
+        for reference in package.dependencies or ():
+            if not _uses_identity_fields(reference):
+                return None
+            fields.update(reference)
+
+    rows: list[_ReferenceRow] = []
+    for package in lock.packages:
+        row: _ReferenceRow = {
+            "name": package.name,
+            "dependencies": package.dependencies or (),
+        }
+        if "version" in fields and package.version is not None:
+            row["version"] = str(package.version)
+        if "marker" in fields and package.marker is not None:
+            row["marker"] = str(package.marker)
+        rows.append(row)
+    return rows
+
+
 def resolve_dependency_references(lock: Pylock) -> dict[int, frozenset[int]]:
     """Map package positions to referenced child positions for auditing.
 
     The Pylock must already be schema-valid. References match the serialized
     standard fields, including nested source tables and arrays.
     """
-    packages = toml_io.loads(toml_writer.dumps(lock.to_dict()))["packages"]
+    identities = _identity_rows(lock)
+    # Source tables and arrays match against their serialized TOML values.
+    packages = (
+        toml_io.loads(toml_writer.dumps(lock.to_dict()))["packages"]
+        if identities is None
+        else identities
+    )
     by_name: dict[str, list[int]] = {}
     for index, package in enumerate(packages):
         by_name.setdefault(package["name"], []).append(index)
@@ -298,7 +348,7 @@ def check_direct_requirements(
     contain it. Anything that cannot be reduced to a name and specifier
     against a concrete version is skipped: an inactive or indeterminate
     marker, a URL requirement, a version-less or direct (URL, VCS, directory)
-    pin, and a name carrying more than one versioned pin. Returns the first
+    pin, and a name with more than one package row. Returns the first
     violation, or ``None``.
 
     ``resolve_target`` is the target ``marker_env`` came from: a marker its
@@ -408,20 +458,22 @@ def _versioned_pins(committed: Pylock) -> dict[str, Version]:
     """Map canonical name to version for names with a single concrete pin.
 
     URL, VCS and directory pins are excluded: they have no index version to
-    test a specifier against. A name carrying more than one versioned pin is
-    excluded too: a conflict fork records the same package once per member
-    under a disjoint marker, so no single version stands for the name.
+    test a specifier against. If a name has multiple rows, a marker or
+    source choice decides which row applies.
     """
     versions: dict[str, Version] = {}
-    duplicated: set[str] = set()
+    excluded: set[str] = set()
     for package in committed.packages:
-        if package.version is None or _is_direct_pin(package):
-            continue
-        if package.name in versions:
-            duplicated.add(package.name)
-        versions[package.name] = package.version
-    for name in duplicated:
-        del versions[name]
+        if (
+            package.version is None
+            or _is_direct_pin(package)
+            or package.name in versions
+        ):
+            excluded.add(package.name)
+        else:
+            versions[package.name] = package.version
+    for name in excluded:
+        versions.pop(name, None)
     return versions
 
 
