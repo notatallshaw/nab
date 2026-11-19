@@ -139,7 +139,7 @@ def project_key_path(key: str, kind: SourceKind) -> str:
 
 
 def plan_settings_layer(
-    name: str, settings: Mapping[str, Any], directory: Path
+    name: str, settings: Mapping[str, object], directory: Path
 ) -> Layer:
     """Parse a lock plan's project settings above files and below CLI overrides."""
     values = {}
@@ -826,7 +826,12 @@ def _check_project_file_conflict(
         return
     pyproject_value = by_kind[input_kind]
     project_value = by_kind[SourceKind.PROJECT_TOML]
-    if pyproject_value == project_value:
+    if spec.name in {"plans", "input-sources"}:
+        # These tables keep their TOML fields until a plan selects them.
+        same = toml_io.values_match(pyproject_value, project_value)
+    else:
+        same = pyproject_value == project_value
+    if same:
         return
     report = DiagnosticMessage(
         (

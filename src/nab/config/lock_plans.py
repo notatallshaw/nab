@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from nab_project.dependency_inputs import input_table
 from nab_provider.requirements_file import require_string_list
@@ -23,8 +23,8 @@ class LockPlan(NamedTuple):
     extras: tuple[str, ...]
     dependencies: bool
     build_requirements: bool
-    imports: Mapping[str, Any]
-    settings: dict[str, Any]
+    imports: Mapping[str, Mapping[str, object]]
+    settings: dict[str, object]
     output: str
 
     @classmethod

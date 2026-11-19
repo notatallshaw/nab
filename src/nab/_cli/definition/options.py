@@ -337,7 +337,7 @@ class ProjectKeys(
     )
 
     plans = Key(
-        Layer[Mapping[str, Any]](
+        Layer[Mapping[str, Mapping[str, object]]](
             rdefault=_EMPTY_MAPPING,
             parse=values.parse_input_tables,
             render=hooks.render_input_tables,
@@ -348,7 +348,7 @@ class ProjectKeys(
     )
 
     input_sources = Key(
-        Layer[Mapping[str, Any]](
+        Layer[Mapping[str, Mapping[str, object]]](
             rdefault=_EMPTY_MAPPING,
             parse=values.parse_input_tables,
             render=hooks.render_input_tables,

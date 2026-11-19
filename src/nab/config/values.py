@@ -297,14 +297,14 @@ def parse_default_groups(value: object, where: str) -> tuple[str, ...]:
     return parse_string_list(value, where)
 
 
-def parse_input_tables(value: object, where: str) -> Mapping[str, Any]:
+def parse_input_tables(value: object, where: str) -> Mapping[str, Mapping[str, object]]:
     """Read named declaration tables; their selected contents are checked on use."""
     if not isinstance(value, dict):
         msg = f"{where} must contain named tables"
         raise SourceConfigError(msg)
     result = {}
     for name, item in value.items():
-        if not isinstance(name, str) or not isinstance(item, dict):
+        if not isinstance(name, str) or not toml_io.is_table(item):
             msg = f"{where} must contain named tables"
             raise SourceConfigError(msg)
         try:

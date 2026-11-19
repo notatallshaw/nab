@@ -5,7 +5,7 @@ from __future__ import annotations
 import posixpath
 import re
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import urlsplit
 
 from nab_index.archive_files import source_relative_path
@@ -38,9 +38,9 @@ __all__ = ["dependency_input_requirements", "input_table"]
 _REQUIREMENT_COMMENT = re.compile(r"(?:^|\s)#")
 
 
-def input_table(value: object, where: str) -> dict[str, Any]:
+def input_table(value: object, where: str) -> dict[str, object]:
     """Validate a TOML table before interpreting its declarations."""
-    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+    if not toml_io.is_table(value):
         msg = f"{where} must be a table"
         raise ValueError(msg)
     return value
@@ -157,7 +157,7 @@ def _requirements_files(
 
 
 def _provided_project(
-    document: Mapping[str, Any],
+    document: Mapping[str, object],
     path: str,
     optional: dict[str, Mapping[str, Sequence[str]]],
 ) -> str:

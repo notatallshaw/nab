@@ -430,7 +430,7 @@ def render_workspace(value: Any) -> str:
     return f"members={list(value.members)}"
 
 
-def render_input_tables(value: Mapping[str, Any]) -> str:
+def render_input_tables(value: Mapping[str, Mapping[str, object]]) -> str:
     """Render lock plan or dependency-input declarations as TOML."""
     return dumps_value(value)
 

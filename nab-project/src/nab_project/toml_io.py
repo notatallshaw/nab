@@ -19,9 +19,9 @@ import tomli
 
 if TYPE_CHECKING:
     from pathlib import Path
-    from typing import BinaryIO
+    from typing import BinaryIO, TypeGuard
 
-__all__ = ["load", "load_path", "loads", "values_match"]
+__all__ = ["is_table", "load", "load_path", "loads", "values_match"]
 
 
 def loads(text: str) -> dict[str, Any]:
@@ -54,6 +54,11 @@ def load_path(path: Path) -> dict[str, Any]:
     """
     with path.open("rb") as f:
         return load(f)
+
+
+def is_table(value: object) -> TypeGuard[dict[str, object]]:
+    """Return whether a value is a table with string keys."""
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
 
 
 def values_match(

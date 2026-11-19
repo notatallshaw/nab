@@ -24,7 +24,14 @@ def test_invalid_plans_are_refused(entry: dict[str, object]) -> None:
 
 
 @pytest.mark.parametrize(
-    "value", [None, {"dev": 1}, {"../bad": {}}, {"Dev_Env": {}, "dev-env": {}}]
+    "value",
+    [
+        None,
+        {"dev": 1},
+        {"dev": {1: "not a TOML key"}},
+        {"../bad": {}},
+        {"Dev_Env": {}, "dev-env": {}},
+    ],
 )
 def test_invalid_declaration_table_names_are_refused(value: object) -> None:
     with pytest.raises(SourceConfigError):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from nab_index.urls import strip_userinfo
 from nab_project.dependency_inputs import input_table
@@ -23,10 +23,10 @@ if TYPE_CHECKING:
 
 def prepare_lock_input(
     path: Path,
-    document: Mapping[str, Any],
+    document: Mapping[str, object],
     plan: LockPlan,
     *,
-    sources: Mapping[str, Any],
+    sources: Mapping[str, Mapping[str, object]],
     reader: DependencySourceReader,
     workspace_discovery: bool,
     project_overrides: Mapping[str, object],
@@ -53,8 +53,9 @@ def prepare_lock_input(
     for name, selection in plan.imports.items():
         source = dict(sources[name])
         requirements.update(reader.requirements(source, selection))
-        if "url" in source:
-            source["url"] = strip_userinfo(source["url"])
+        url = source.get("url")
+        if isinstance(url, str):
+            source["url"] = strip_userinfo(url)
         identities[name] = source
 
     local_inputs: dict[Path, str | None] = dict(reader.local_inputs)
