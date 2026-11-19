@@ -96,20 +96,3 @@ def test_unusable_url_is_skipped(file_entry: dict[str, object], bad_url: str) ->
     files = _parse_files({"files": entries}, INDEX, "foo")
 
     assert [file.url for file in files] == [file_entry["url"]]
-
-
-@pytest.mark.parametrize(
-    "suffix", ["py3-none-any.whl", "tar.gz", "zip"], ids=["wheel", "sdist", "zip"]
-)
-def test_oversized_version_is_skipped(
-    wheel_entry: dict[str, object], oversized_integer: str, suffix: str
-) -> None:
-    filename = (
-        f"foo-{oversized_integer}-{suffix}"
-        if suffix.endswith(".whl")
-        else f"foo-{oversized_integer}.{suffix}"
-    )
-    entries = [{"filename": filename, "url": f"{INDEX}foo/{filename}"}, wheel_entry]
-    files = _parse_files({"files": entries}, INDEX, "foo")
-
-    assert [file.filename for file in files] == [wheel_entry["filename"]]

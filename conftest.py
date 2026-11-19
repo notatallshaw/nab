@@ -15,10 +15,7 @@ The property suite under ``nab-*/tests/property*/`` uses explicit
 ``PROPERTY_SETTINGS``/``DEEP_SETTINGS``/``BRUTE_FORCE_SETTINGS``
 decorators so its example budget is independent of the profile.
 
-``cap_writes``, ``deny_access``, ``oversized_integer``,
-``over_nested_marker``, ``refuse_over_nested`` and ``record_parses`` are here
-rather than in one suite's conftest because the workspace suites are all
-packages named ``tests``, so only the umbrella suite can carry one.
+The fixtures here are shared by multiple workspace suites.
 """
 
 from __future__ import annotations

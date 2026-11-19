@@ -17,11 +17,10 @@ import json
 import logging
 import os
 import threading
-from collections.abc import Callable, Coroutine, Mapping
+from asyncio import run as _run
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Any, TypeVar
 
 import pytest
 import urllib3
@@ -50,10 +49,6 @@ _SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
 
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
 
-# Stands in for a body nested past the decoder's guard (``refuse_over_nested``).
-_OVER_NESTED = b"[[[]]]"
-
-_T = TypeVar("_T")
 
 # Constructor form and the trailing-slash form the client normalizes to and
 # feeds _parse_files; the cache maps both to the "pypi" index dir.
@@ -96,10 +91,6 @@ _LISTING_V2_BYTES = json.dumps(
         ],
     }
 ).encode()
-
-
-def _run(coro: Coroutine[Any, Any, _T]) -> _T:
-    return asyncio.run(coro)
 
 
 class _FakeResponse:
@@ -882,15 +873,15 @@ class TestReadPathRebuild:
         self,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
-        refuse_over_nested: Callable[[bytes], AbstractContextManager[None]],
+        over_nested_json: bytes,
     ) -> None:
         cache = _cache(tmp_path)
         files, _ = _warm_bound(cache)
-        cache.put_simple_parsed("pkg", _OVER_NESTED)
+        cache.put_simple_parsed("pkg", over_nested_json)
         transport = _FakeTransport([])
         client = CachedAsyncSimpleClient(transport, cache, _INDEX)
 
-        with refuse_over_nested(_OVER_NESTED), caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.WARNING):
             got = _run(client.get_files("pkg"))
 
         assert got == files
