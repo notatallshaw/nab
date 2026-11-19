@@ -679,8 +679,9 @@ class Resolver(Generic[PackageType, VersionType]):
         self.term_range_by_id: dict[int, RangeProtocol[Any]] = {}
         self.term_range_keepalive: list[RangeProtocol[Any]] = []
 
+        # Root clauses include the virtual package and its own version type.
         self.incompatibilities: list[Incompatibility[Any, Any]] = []
-        self.package_to_incompatibilities: defaultdict[Any, list[int]] = defaultdict(
+        self.package_to_incompatibilities: defaultdict[object, list[int]] = defaultdict(
             list
         )
 
@@ -691,7 +692,9 @@ class Resolver(Generic[PackageType, VersionType]):
 
         # Keyed by (package, dep_package, dep_constraint, dep_positive); used
         # to merge mergeable dependency clauses (pubgrub-rs's merge_dependents).
-        self.dependency_index: dict[Any, int] = {}
+        self.dependency_index: dict[
+            tuple[PackageType, PackageType, RangeProtocol[VersionType], bool], int
+        ] = {}
 
         # Dependency clauses survive backtracking and restarts.
         self.recorded_dependencies: dict[
@@ -1202,17 +1205,19 @@ class Resolver(Generic[PackageType, VersionType]):
         """Create one root incompatibility per requirement, and decide root."""
         for idx, root in enumerate(requirements):
             term_range = self.as_term_range(root.constraint)
-            root_term: Term[Any, Any] = Term(
-                ROOT, self.range_type.singleton(self.root_version), positive=True
+            root_clause: Incompatibility[object, Any] = Incompatibility(
+                [
+                    Term(
+                        ROOT,
+                        self.range_type.singleton(self.root_version),
+                        positive=True,
+                    ),
+                    Term(root.package, term_range, positive=False),
+                ],
+                cause=IncompatibilityCause.ROOT,
+                origin=root.origin,
             )
-            incompat_index.add_incompatibility(
-                self,
-                Incompatibility(
-                    [root_term, Term(root.package, term_range, positive=False)],
-                    cause=IncompatibilityCause.ROOT,
-                    origin=root.origin,
-                ),
-            )
+            incompat_index.append_incompatibility(self, root_clause)
             # First mention fixes the tiebreak, so naming a package twice
             # does not push its decision later.
             self.root_package_order.setdefault(root.package, (0, idx, ""))

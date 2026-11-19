@@ -19,14 +19,10 @@ from .types import Incompatibility, IncompatibilityCause, Term
 
 if TYPE_CHECKING:
     from .resolver import Resolver
+    from .types import PackageType, RangeProtocol, VersionType
 
 
-__all__ = [
-    "add_incompatibility",
-    "dependency_merge_key",
-    "index_dependency",
-    "maybe_merge_dependency",
-]
+__all__ = ["add_incompatibility", "append_incompatibility"]
 
 
 # A dependency-style clause is exactly two terms (parent + dep).
@@ -38,23 +34,40 @@ _NOT_CONTRADICTED = -1
 
 
 def add_incompatibility(
-    resolver: Resolver[Any, Any], incompatibility: Incompatibility[Any, Any]
+    resolver: Resolver[PackageType, VersionType],
+    incompatibility: Incompatibility[PackageType, VersionType],
 ) -> None:
     """Add an incompatibility, merging into an existing clause if possible."""
-    if maybe_merge_dependency(resolver, incompatibility):
+    key = _dependency_merge_key(incompatibility)
+    if key is None:
+        append_incompatibility(resolver, incompatibility)
         return
 
+    existing = resolver.dependency_index.get(key)
+    if existing is None:
+        resolver.dependency_index[key] = append_incompatibility(
+            resolver, incompatibility
+        )
+    else:
+        _merge_dependency(resolver, existing, incompatibility.terms[0])
+
+
+def append_incompatibility(
+    resolver: Resolver[Any, Any],
+    incompatibility: Incompatibility[PackageType, VersionType],
+) -> int:
+    """Store a clause and register each package for unit propagation."""
     index = len(resolver.incompatibilities)
     resolver.incompatibilities.append(incompatibility)
     resolver.clause_contradicted_at.append(_NOT_CONTRADICTED)
     for term in incompatibility.terms:
         resolver.package_to_incompatibilities[term.package].append(index)
-    index_dependency(resolver, incompatibility, index)
+    return index
 
 
-def dependency_merge_key(
-    incompatibility: Incompatibility[Any, Any],
-) -> tuple[Any, Any, Any, bool] | None:
+def _dependency_merge_key(
+    incompatibility: Incompatibility[PackageType, VersionType],
+) -> tuple[PackageType, PackageType, RangeProtocol[VersionType], bool] | None:
     """Return the merge key for a two-term DEPENDENCY clause, else None.
 
     Every DEPENDENCY clause we emit is ``[package_term (positive), dep_term]``,
@@ -80,40 +93,17 @@ def dependency_merge_key(
     )
 
 
-def index_dependency(
-    resolver: Resolver[Any, Any],
-    incompatibility: Incompatibility[Any, Any],
-    index: int,
+def _merge_dependency(
+    resolver: Resolver[PackageType, VersionType],
+    existing_index: int,
+    parent: Term[PackageType, VersionType],
 ) -> None:
-    """Record this incompatibility as the canonical clause for its key."""
-    key = dependency_merge_key(incompatibility)
-    if key is not None:
-        resolver.dependency_index[key] = index
-
-
-def maybe_merge_dependency(
-    resolver: Resolver[Any, Any], incompatibility: Incompatibility[Any, Any]
-) -> bool:
-    """Try to merge ``incompatibility`` into an existing clause.
-
-    Returns ``True`` if a merge happened (caller should not also append).
-    Replaces the existing package term with the union; the dep term stays
-    unchanged so semantics are preserved.
-    """
-    key = dependency_merge_key(incompatibility)
-    if key is None:
-        return False
-
-    existing_index = resolver.dependency_index.get(key)
-    if existing_index is None:
-        return False
-
+    """Extend the parent range of the indexed dependency clause."""
     existing = resolver.incompatibilities[existing_index]
     existing_pkg, existing_dep = existing.terms
-    new_pkg, _ = incompatibility.terms
-    merged_constraint = existing_pkg.constraint | new_pkg.constraint
+    merged_constraint = existing_pkg.constraint | parent.constraint
     if merged_constraint == existing_pkg.constraint:
-        return True
+        return
 
     merged = Incompatibility(
         [
@@ -122,9 +112,7 @@ def maybe_merge_dependency(
         ],
         cause=IncompatibilityCause.DEPENDENCY,
     )
-    # Safe to replace in place: DEPENDENCY clauses have no cause_left/right
-    # references that would break.
+    # Keep the old clause intact for derivations that still refer to it.
     resolver.incompatibilities[existing_index] = merged
     # The union widens the package term, which can lift a contradiction.
     resolver.clause_contradicted_at[existing_index] = _NOT_CONTRADICTED
-    return True

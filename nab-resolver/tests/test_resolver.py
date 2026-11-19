@@ -29,11 +29,7 @@ from nab_resolver.errors import (
     ResolutionStalledError,
     ResolutionTerminatedError,
 )
-from nab_resolver.incompat_index import (
-    add_incompatibility,
-    dependency_merge_key,
-    maybe_merge_dependency,
-)
+from nab_resolver.incompat_index import add_incompatibility
 from nab_resolver.partial_solution import Assignment, PartialSolution
 from nab_resolver.propagate import classify_relation, term_relation
 from nab_resolver.ranges import Range
@@ -1944,7 +1940,7 @@ class TestDependencyMerge:
         resolver._reset(None)
         return resolver
 
-    def test_merge_key_skips_non_dependency_cause(self) -> None:
+    def test_non_dependency_clause_is_stored_without_a_merge_key(self) -> None:
         """A non-DEPENDENCY clause is never mergeable."""
         inc = Incompatibility(
             [
@@ -1953,7 +1949,10 @@ class TestDependencyMerge:
             ],
             cause=IncompatibilityCause.NO_VERSIONS,
         )
-        assert dependency_merge_key(inc) is None
+        resolver = self._resolver()
+        add_incompatibility(resolver, inc)
+        assert resolver.incompatibilities == [inc]
+        assert resolver.dependency_index == {}
 
     def test_merge_key_skips_negative_first_term(self) -> None:
         """A dependency clause whose first term is negative is unmergeable.
@@ -1970,10 +1969,9 @@ class TestDependencyMerge:
             ],
             cause=IncompatibilityCause.DEPENDENCY,
         )
-        assert dependency_merge_key(inc) is None
-        # ``maybe_merge_dependency`` short-circuits on the same key
-        # check, so an unmergeable clause never invokes the merge path.
-        assert not maybe_merge_dependency(r, inc)
+        add_incompatibility(r, inc)
+        assert r.incompatibilities == [inc]
+        assert r.dependency_index == {}
 
     def test_merge_unions_package_ranges(self) -> None:
         """Two clauses with the same dep term merge into one."""
@@ -3377,11 +3375,11 @@ class TestSettledClauseSkip:
         setup_cause = Incompatibility(
             [Term("p", Range.at_least(5))], cause=IncompatibilityCause.NO_VERSIONS
         )
-        stamped = Incompatibility(
+        stamped: Incompatibility[str, int] = Incompatibility(
             [Term("x", Range.singleton(1)), Term("p", Range.at_least(10))],
             cause=IncompatibilityCause.DERIVED,
         )
-        empties_p = Incompatibility(
+        empties_p: Incompatibility[str, int] = Incompatibility(
             [Term("x", Range.singleton(1)), Term("p", Range.less_than(5))],
             cause=IncompatibilityCause.DERIVED,
         )
