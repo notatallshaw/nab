@@ -1,7 +1,10 @@
 """Fetched listings, errors and source metadata kept by the provider."""
 
+from __future__ import annotations
+
 import pytest
 
+from nab_provider.errors import SdistHashMismatchError
 from nab_provider.store import InMemoryIndex, sdist_artifact_key
 from nab_provider.testing import make_wheel
 
@@ -86,3 +89,150 @@ def test_sdist_slots_keep_distinct_artifacts(version: str, url: str) -> None:
     )
 
     assert index.get_sdist_archive("pkg", sdist_artifact_key(version, url)) is None
+
+
+class TestListingsAndRequests:
+    def test_listing_roundtrip(self) -> None:
+        idx = InMemoryIndex()
+        assert idx.get_listing("foo") is None
+        wheels = [
+            make_wheel(v, package="foo", has_metadata=False)
+            for v in ("1.0", "2.0", "3.0")
+        ]
+        idx.store_listing("foo", wheels)
+        assert idx.get_listing("foo") == wheels
+
+    def test_offline_listing_miss_roundtrip(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_listing("foo", [], offline_miss=True)
+        assert idx.get_listing("foo") == []
+        assert idx.is_offline_listing_miss("foo")
+
+    def test_served_empty_listing_is_not_an_offline_miss(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_listing("foo", [])
+        assert not idx.is_offline_listing_miss("foo")
+
+    def test_offline_listing_miss_fires_listing_pending(self) -> None:
+        idx = InMemoryIndex()
+        event, _ = idx.get_or_create_pending("listing:foo")
+        idx.store_listing("foo", [], offline_miss=True)
+        assert event.is_set()
+
+    def test_yank_status_is_visible_with_the_listing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Readers can identify an all-yanked page as soon as the files are visible."""
+        idx = InMemoryIndex()
+        readback: list[str] = []
+
+        class _ReadOnPublish(dict[str, object]):
+            """Classify the page the instant its listing slot becomes readable."""
+
+            def __setitem__(self, key: str, value: object) -> None:
+                super().__setitem__(key, value)
+                assert idx.get_listing(key) == []
+                readback.append(
+                    "yanked" if idx.is_all_yanked_listing(key) else "absent"
+                )
+
+        monkeypatch.setattr(idx, "_listings", _ReadOnPublish())
+        idx.store_listing("foo", [], all_yanked=True)
+
+        assert readback == ["yanked"]
+        assert idx.is_all_yanked_listing("foo")
+
+    def test_pending_event_set_on_listing(self) -> None:
+        idx = InMemoryIndex()
+        event, existed = idx.get_or_create_pending("listing:foo")
+        assert not existed
+        assert not event.is_set()
+        wheels = [make_wheel(package="foo", has_metadata=False)]
+        idx.store_listing("foo", wheels)
+        assert event.is_set()
+        assert idx.get_listing("foo") == wheels
+
+    def test_get_or_create_existing(self) -> None:
+        idx = InMemoryIndex()
+        first, existed1 = idx.get_or_create_pending("key")
+        second, existed2 = idx.get_or_create_pending("key")
+        assert not existed1
+        assert existed2
+        assert first is second
+
+    def test_repeated_request_gets_a_set_event_after_publication(self) -> None:
+        """A published key still reports as existing, and its event is set."""
+        idx = InMemoryIndex()
+        idx.get_or_create_pending("listing:foo")
+        idx.store_listing("foo", [])
+
+        event, existed = idx.get_or_create_pending("listing:foo")
+
+        assert existed
+        assert event.is_set()
+
+    def test_listing_index_roundtrip(self) -> None:
+        """Only an explicit package pin marks the recorded index as pinned."""
+        idx = InMemoryIndex()
+        assert idx.get_listing_index("foo") is None
+        assert idx.pinned_listing_index("foo") is None
+
+        idx.store_listing_index("foo", "primary", pinned=True)
+        assert idx.get_listing_index("foo") == "primary"
+        assert idx.pinned_listing_index("foo") == "primary"
+
+        idx.store_listing_index("foo", "primary")
+        assert idx.get_listing_index("foo") == "primary"
+        assert idx.pinned_listing_index("foo") is None
+
+
+class TestSourceArchives:
+    def test_sdist_pyproject_slot_keeps_only_the_project_table(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_sdist_pyproject(
+            "foo",
+            "1.0",
+            {
+                "project": {"name": "foo"},
+                "build-system": {"requires": ["setuptools"]},
+                "tool": {"mypy": {"strict": True}},
+            },
+        )
+        assert idx.get_sdist_pyproject("foo", "1.0") == {"project": {"name": "foo"}}
+
+    def test_sdist_pyproject_with_no_project_table_reads_as_fetched(self) -> None:
+        """An empty table keeps a fetched pyproject distinct from an absent one."""
+        idx = InMemoryIndex()
+        idx.store_sdist_pyproject("foo", "1.0", {"build-system": {"requires": []}})
+
+        assert idx.get_sdist_pyproject("foo", "1.0") == {}
+        assert idx.get_sdist_pyproject("bar", "1.0") is None
+
+    def test_sdist_archive_pending_event_fires(self) -> None:
+        idx = InMemoryIndex()
+        event, _ = idx.get_or_create_pending("sdist-archive:foo:1.0")
+        assert not event.is_set()
+        idx.store_sdist_archive("foo", "1.0", b"bytes")
+        assert event.is_set()
+        assert idx.get_sdist_archive("foo", "1.0") == b"bytes"
+
+    def test_sdist_archive_without_pending(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_sdist_archive("foo", "1.0", None)
+        assert idx.get_sdist_archive("foo", "1.0") is None
+
+    def test_store_sdist_archive_error_fires_pending(self) -> None:
+        idx = InMemoryIndex()
+        event, _ = idx.get_or_create_pending("sdist-archive:foo:1.0")
+        assert not event.is_set()
+        err = SdistHashMismatchError("boom")
+        idx.store_sdist_archive_error("foo", "1.0", err)
+        assert event.is_set()
+        assert idx.get_sdist_archive_error("foo", "1.0") is err
+        assert idx.get_sdist_archive("foo", "1.0") is None
+
+    def test_store_sdist_archive_error_without_pending(self) -> None:
+        idx = InMemoryIndex()
+        err = SdistHashMismatchError("boom")
+        idx.store_sdist_archive_error("foo", "1.0", err)
+        assert idx.get_sdist_archive_error("foo", "1.0") is err
