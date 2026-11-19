@@ -3013,7 +3013,12 @@ class TestDownloadedBuildWheelPython:
         else:
             with env:
                 output = subprocess.check_output(  # noqa: S603 - interpreter created by this test
-                    [env.python_executable, "-c", "import demo; print(demo.MARK)"],
+                    [
+                        env.python_executable,
+                        "-I",
+                        "-c",
+                        "import demo; print(demo.MARK)",
+                    ],
                     text=True,
                 )
                 assert output.strip() == expected
@@ -3843,10 +3848,11 @@ class TestBuildRequirementPythonFallback:
 
     @staticmethod
     def _installed_distributions(env: NabBuildEnv) -> list[tuple[str, str]]:
-        """Read the distributions actually installed in the isolated interpreter."""
+        """List packages installed in the build environment, ignoring PYTHONPATH."""
         output = subprocess.check_output(  # noqa: S603 - interpreter created by this test
             [
                 env.python_executable,
+                "-I",
                 "-c",
                 (
                     "import importlib.metadata as m, json; "
