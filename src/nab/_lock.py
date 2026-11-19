@@ -266,9 +266,8 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     """Resolve dependencies and emit a lockfile or pin list.
 
     ``pylock`` is the default format. ``requirements`` adds ``--hash`` lines to
-    index pins; ``requirements-without-hashes`` omits those lines. Output
-    defaults to ``pylock.toml`` or ``requirements.txt`` for project inputs.
-    With ``--script``, the defaults are ``pylock.<stem>.toml`` and
+    index pins. For one target, project output defaults to ``pylock.toml`` or
+    ``requirements.txt``. A script writes ``pylock.<stem>.toml`` or
     ``<script>.requirements.txt`` beside the script. ``--output -`` writes stdout.
 
     Groups and extras select project requirements. ``--build-requirements``
@@ -280,10 +279,10 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     still using them during resolution. Use it for hashed requirements, then
     install those members separately from pip's ``--require-hashes`` run.
 
-    Universal requirements output needs a template that renders to a distinct
-    path for every target. It may contain ``{python_version}``,
-    ``{platform_id}``, and ``{selection}``; use pylock when those values cannot
-    separate the targets.
+    With multiple targets, both requirements formats print to stdout by
+    default. To write one file per target, use an output template containing
+    ``{python_version}``, ``{platform_id}``, or ``{selection}``. Use pylock
+    when those values cannot distinguish the targets.
 
     ``--python X.Y`` targets that Python on this machine. It is the short
     form of ``--project-environment-python`` and is not valid in universal
@@ -681,6 +680,7 @@ def _lock_one(
             lock_input,
             format=settings.format,
             output=output,
+            script=path if input_format is InputFormat.SCRIPT else None,
             build_requirements=settings.build_requirements,
             previous_lock=previous_lock,
         )
@@ -721,9 +721,13 @@ def _lock_output(
         build_requirements=settings.build_requirements,
         no_emit_workspace=settings.no_emit_workspace,
     )
-    # Select the effective output before checking lock-only actions.
-    if input_format is InputFormat.SCRIPT and output is None:
-        output = _script_output_path(path, format_name=settings.format)
+    # Saved-lock checks need the script's pylock filename before resolution.
+    if (
+        input_format is InputFormat.SCRIPT
+        and output is None
+        and settings.format == "pylock"
+    ):
+        output = _script_pylock_path(path)
 
     _validate_pylock_output_name(output=output, format=settings.format)
     _validate_lock_mode(
@@ -741,10 +745,8 @@ def _lock_output(
     return output
 
 
-def _script_output_path(path: Path, *, format_name: str) -> Path:
-    """Put a script's default lock beside it using a standard output filename."""
-    if format_name != "pylock":
-        return path.with_name(path.name + ".requirements.txt")
+def _script_pylock_path(path: Path) -> Path:
+    """Choose a PEP 751 filename beside the script."""
     stem = path.stem
     if not stem or "." in stem:
         printer().error(
@@ -759,6 +761,7 @@ def _emit(
     *,
     format: str,  # noqa: A002 - shadows builtin by convention
     output: Path | None,
+    script: Path | None = None,
     build_requirements: bool = False,
     previous_lock: LockPreferences | None = None,
 ) -> None:
@@ -772,6 +775,8 @@ def _emit(
             previous_lock=previous_lock,
         )
     else:
+        if script is not None:
+            default_output = script.with_name(script.name + ".requirements.txt")
         _emit_requirements(
             lock_input, format=format, output=output, default_output=default_output
         )
@@ -1563,7 +1568,8 @@ def _emit_requirements(
         return
 
     target = output if output is not None else default_output
-    template = str(target)
+    # Braces in a script filename are literal unless the user supplies a template.
+    template = str(output) if output is not None else ""
     if not any(var in template for var in TUPLE_TEMPLATE_VARS):
         if multi_target:
             _refuse_untemplated(lock_input, target)

@@ -137,7 +137,12 @@ def test_script_does_not_read_parent_project_or_workspace(
 
 
 @pytest.mark.parametrize("format_name", ["requirements", "requirements-without-hashes"])
-def test_script_requirements_output(script_source: Path, format_name: str) -> None:
+def test_script_requirements_filename_keeps_braces(
+    script_source: Path, format_name: str
+) -> None:
+    script_source = script_source.rename(
+        script_source.with_name("demo-{platform_id}.py")
+    )
     assert run(("lock", "--script", str(script_source), "--format", format_name)) == 0
     written = script_source.with_name(
         script_source.name + ".requirements.txt"
@@ -145,6 +150,27 @@ def test_script_requirements_output(script_source: Path, format_name: str) -> No
     assert "demo==1.0" in written
     assert "child==1.0" in written
     assert ("--hash=sha256:" in written) == (format_name == "requirements")
+
+
+def test_multi_target_script_prints_requirements_by_default(
+    hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    script = _write_script(
+        hermetic_roots / "example.py",
+        dependencies=(),
+        configuration=(
+            '[tool.nab.matrix]\npython="==3.12"\n'
+            'platforms=["linux_x86_64", "windows_amd64"]\n'
+        ),
+    )
+    assert (
+        run(("lock", "--script", str(script), "--offline", "--format", "requirements"))
+        == 0
+    )
+    lines = capsys.readouterr().out.splitlines()
+    assert "# py312-linux_x86_64" in lines
+    assert "# py312-windows_amd64" in lines
+    assert not script.with_name("example.py.requirements.txt").exists()
 
 
 def test_script_standard_output(

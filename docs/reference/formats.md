@@ -22,11 +22,11 @@ For project inputs, `--output` defaults to `pylock.toml` for `pylock` and `requi
 requirements formats. With `--build-requirements`, the defaults are `pylock.build.toml` and
 `build-requirements.txt`. Pass `--output -` for stdout.
 
-With `--script path/to/example.py`, defaults are `path/to/pylock.example.toml` and
-`path/to/example.py.requirements.txt`.
+With `--script path/to/example.py`, the default lockfile is `path/to/pylock.example.toml`. For a
+single target, the default requirements file is `path/to/example.py.requirements.txt`.
 
-A universal project requirements resolve has no default file because one pip requirements file
-cannot represent every target. It prints to stdout unless `--output` names a template.
+When a project or script resolves for multiple targets, both requirements formats print one block
+per target to stdout by default. Use an output template to get a separate file for each target.
 
 A requirements `--output` template writes one file per target. The variables are `{python_version}`,
 `{platform_id}`, and `{selection}`, which names the conflict fork a target belongs to (`extra-cpu`,
@@ -53,9 +53,8 @@ Universal mode (`[tool.nab].mode = "universal"`) is supported for all three form
   A minor split at a micro boundary contributes one entry per slice. See [Lockfiles](lockfile.md)
   and [Universal resolution](../explanation/universal.md).
 
-- `requirements` and `requirements-without-hashes` emit a `# label` block per target, followed by
-  that target's pins. pip cannot use the combined output as one hash-checked requirements file; use
-  an output template to create one file per target.
+- When either requirements format prints multiple targets together, each target's pins follow a
+  `# label` header. Use an output template to create separate requirements files for pip.
 
 If any target fails, nab writes no lock or requirements output. The report goes to stderr and the
 command exits `1`; see [Resolution failures](diagnostics.md).
