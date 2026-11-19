@@ -61,10 +61,21 @@ def dispatch(
     paused something for startup has a place to put it back.
     """
     try:
-        output.begin(_options(parsed.options))
+        options = _options(parsed.options)
     except output.OutputOptionError as exc:
         return _USAGE_STATUS, f"error: {exc}"
 
+    with output.command_output(options):
+        return _invoke(parsed, table, path_dests, resume)
+
+
+def _invoke(
+    parsed: Parsed,
+    table: dict[str, tuple[str, str, str]],
+    path_dests: dict[str, tuple[str, ...]],
+    resume: Callable[[], None],
+) -> tuple[int, str]:
+    """Load the selected command and pass it the converted arguments."""
     module_name, function_name, _summary = table[parsed.command]
     module = __import__(module_name, fromlist=(function_name,))
     resume()

@@ -7534,17 +7534,24 @@ class TestMainWiresOutputOptions:
         stderr = _TtyStderr()
         monkeypatch.setattr(sys, "stderr", stderr)
 
+        printers: list[Printer] = []
+
+        def resolve(*_args: object, **_kwargs: object) -> ResolveResult:
+            printers.append(nab_output.printer())
+            logger = logging.getLogger("nab_project")
+            logger.debug("engine debug")
+            logger.info("engine detail")
+            logger.warning("engine note")
+            return _stub_resolve_result(pins={})
+
         with (
-            patch(
-                "nab._resolve.resolve_for_targets",
-                return_value=_stub_resolve_result(pins={}),
-            ),
+            patch("nab._resolve.resolve_for_targets", side_effect=resolve),
             patch("nab._lock.write_lock"),
         ):
             main()
 
-        assert nab_output._printer is not None
-        return nab_output._printer, stderr
+        (printer,) = printers
+        return printer, stderr
 
     def test_default_run_reports_the_written_lockfile(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -7567,9 +7574,6 @@ class TestMainWiresOutputOptions:
     ) -> None:
         """Without ``-v`` an engine INFO record is dropped and a WARNING shows."""
         _printer, stderr = self._run_lock(tmp_path, monkeypatch)
-        logger = logging.getLogger("nab_project")
-        logger.info("engine detail")
-        logger.warning("engine note")
         assert "engine detail" not in stderr.getvalue()
         assert "warning: engine note" in stderr.getvalue()
 
@@ -7577,9 +7581,9 @@ class TestMainWiresOutputOptions:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``-vv`` reaches both the log handler and printer."""
-        printer, _stderr = self._run_lock(tmp_path, monkeypatch, "-vv")
+        printer, stderr = self._run_lock(tmp_path, monkeypatch, "-vv")
         assert printer.verbosity is Verbosity.DEBUG
-        assert logging.getLogger("nab_project").getEffectiveLevel() == logging.DEBUG
+        assert "engine debug" in stderr.getvalue()
 
     def test_color_always_paints_the_run_summary(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -7594,7 +7598,6 @@ class TestMainWiresOutputOptions:
     ) -> None:
         """The handler is installed with the printer's colour decision."""
         _printer, stderr = self._run_lock(tmp_path, monkeypatch, "--color", "always")
-        logging.getLogger("nab_project").warning("engine note")
         assert f"{YELLOW}warning:{RESET} engine note" in stderr.getvalue()
 
     def test_log_records_stay_plain_with_color_off(
@@ -7602,7 +7605,6 @@ class TestMainWiresOutputOptions:
     ) -> None:
         """With colour off the handler emits a plain ``warning:`` token."""
         _printer, stderr = self._run_lock(tmp_path, monkeypatch)
-        logging.getLogger("nab_project").warning("engine note")
         assert "warning: engine note" in stderr.getvalue()
         assert "\033[" not in stderr.getvalue()
 
@@ -7639,9 +7641,9 @@ class TestMainWiresOutputOptions:
     ) -> None:
         """``NAB_VERBOSITY`` applies, so ``main`` reads the real environment."""
         monkeypatch.setenv("NAB_VERBOSITY", "debug")
-        printer, _stderr = self._run_lock(tmp_path, monkeypatch)
+        printer, stderr = self._run_lock(tmp_path, monkeypatch)
         assert printer.verbosity is Verbosity.DEBUG
-        assert logging.getLogger("nab_project").getEffectiveLevel() == logging.DEBUG
+        assert "engine debug" in stderr.getvalue()
 
     def test_env_no_progress_blocks_progress(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
