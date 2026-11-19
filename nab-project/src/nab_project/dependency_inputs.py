@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import posixpath
+import re
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any, NamedTuple
 from urllib.parse import urlsplit
@@ -32,6 +33,9 @@ if TYPE_CHECKING:
     from nab_provider._vendor.packaging.requirements import Requirement
 
 __all__ = ["dependency_input_requirements", "input_table"]
+
+# A hash inside a URL is part of the requirement.
+_REQUIREMENT_COMMENT = re.compile(r"(?:^|\s)#")
 
 
 def input_table(value: object, where: str) -> dict[str, Any]:
@@ -117,11 +121,16 @@ def _requirements_file(
         raise ValueError(msg)
     result = []
     for line in read(path).splitlines():
-        text = line.split(" #", 1)[0].strip()
-        if not text or text.startswith("#"):
+        text = _REQUIREMENT_COMMENT.split(line, maxsplit=1)[0].strip()
+        if not text:
             continue
-        if text.startswith(("-r ", "--requirement ")):
-            relative = text.split(maxsplit=1)[1]
+
+        fields = text.split(maxsplit=1)
+        if fields[0] in {"-r", "--requirement"}:
+            if len(fields) == 1:
+                msg = f"{path}: {fields[0]} needs a file name"
+                raise ValueError(msg)
+            relative = fields[1]
             child = source_relative_path(
                 posixpath.normpath(str(PurePosixPath(path).parent / relative))
             )

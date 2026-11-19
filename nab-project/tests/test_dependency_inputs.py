@@ -77,12 +77,18 @@ def test_group_only_input_needs_no_project_table(tmp_path: Path) -> None:
     ) == ["pytest"]
 
 
+@pytest.mark.parametrize("directive", ["-r", "--requirement"])
+@pytest.mark.parametrize("separator", [" ", "\t"], ids=["space", "tab"])
 def test_requirements_file_includes_are_relative_and_comments_do_not_truncate_urls(
     tmp_path: Path,
+    directive: str,
+    separator: str,
 ) -> None:
     files = {
-        "tests/requirements.txt": ("# comment\n-r nested.txt\npytest # comment"),
-        "tests/nested.txt": "remote @ https://example.org/a.whl#sha256=abc",
+        "tests/requirements.txt": (
+            f"# comment\n{directive}{separator}nested requirements.txt\npytest{separator}# comment"
+        ),
+        "tests/nested requirements.txt": "remote @ https://example.org/a.whl#sha256=abc",
     }
     declaration = {"projects": [], "requirements-files": ["tests/requirements.txt"]}
     assert dependency_input_requirements(
@@ -94,6 +100,15 @@ def test_dynamic_dependencies_are_not_silently_treated_as_empty(tmp_path: Path) 
     text = '[project]\nname="project"\ndynamic=["dependencies"]\n'
     with pytest.raises(ValueError, match="dynamic"):
         dependency_input_requirements({}, lambda path: text, root=tmp_path)
+
+
+def test_include_without_a_file_identifies_the_directive(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="requirements.txt: -r needs a file name"):
+        dependency_input_requirements(
+            {"requirements-files": ["requirements.txt"]},
+            lambda path: "-r  # add a filename here",
+            root=tmp_path,
+        )
 
 
 def test_relative_requirements_includes_can_use_a_parent_inside_the_source(
