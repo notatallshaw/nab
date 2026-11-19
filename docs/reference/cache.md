@@ -130,7 +130,8 @@ nab cache verify
 ```
 
 `nab cache verify` walks the record buckets read-only and lists on stdout every entry that will not
-parse, including a parsed blob that is not decodable, exiting 1 when the listing is not empty.
+parse, including a parsed blob that is not decodable. It also lists any directories it could not
+read, checks the remaining directories and exits 1 if it found a problem.
 
 It checks current record checksums and payload structure, not freshness: a stale-but-valid parsed
 blob is not corrupt, since the digest binding retires it at read time. Clones and extracted archives

@@ -248,6 +248,16 @@ class CachePolicy(HashableRecord):
         return current - self.fetched_at < self.max_age
 
 
+def _entry_mode(path: Path, on_error: Callable[[OSError], None] | None) -> int | None:
+    """Inspect a cache entry without following links or hiding a failed stat."""
+    try:
+        return path.lstat().st_mode
+    except OSError as exc:
+        if on_error is not None:
+            on_error(exc)
+        return None
+
+
 def _is_entry_bucket(name: str) -> bool:
     """Whether ``name`` is a bucket of records nab writes and parses."""
     return name == dependency_input_cache.BUCKET or name.startswith(
@@ -666,7 +676,7 @@ class OnDiskCache:
     def _root_children(self) -> list[Path]:
         try:
             return list(self._root.iterdir())
-        except OSError:
+        except FileNotFoundError:
             return []
 
     def _bucket_dirs(self) -> list[Path]:
@@ -689,20 +699,33 @@ class OnDiskCache:
             child for child in self._root_children() if _is_entry_bucket(child.name)
         ]
 
-    def iter_cache_entries(self) -> Iterator[Path]:
+    def iter_cache_entries(
+        self, *, on_error: Callable[[OSError], None] | None = None
+    ) -> Iterator[Path]:
         """Yield each entry file inside the record buckets.
 
         A symlinked bucket or a symlinked file is skipped, never followed
-        out of the tree.
+        out of the tree. If supplied, on_error receives directory read failures.
         """
-        for bucket in self._entry_bucket_dirs():
-            if bucket.is_symlink() or not bucket.is_dir():
+        try:
+            buckets = self._entry_bucket_dirs()
+        except OSError as exc:
+            if on_error is not None:
+                on_error(exc)
+            return
+
+        for bucket in buckets:
+            mode = _entry_mode(bucket, on_error)
+            if mode is None or not stat.S_ISDIR(mode):
                 continue
-            for dirpath, _dirnames, filenames in os.walk(bucket, followlinks=False):
+            for dirpath, _dirnames, filenames in os.walk(
+                bucket, onerror=on_error, followlinks=False
+            ):
                 base = Path(dirpath)
                 for name in filenames:
                     entry = base / name
-                    if not entry.is_symlink():
+                    mode = _entry_mode(entry, on_error)
+                    if mode is not None and not stat.S_ISLNK(mode):
                         yield entry
 
     def read_cache_entry(self, path: Path) -> str | None:
@@ -766,9 +789,13 @@ class OnDiskCache:
         """
         removed: list[str] = []
         for bucket in self._bucket_dirs():
-            if bucket.is_symlink():
+            try:
+                mode = bucket.lstat().st_mode
+            except FileNotFoundError:
+                continue
+            if stat.S_ISLNK(mode):
                 bucket.unlink()
-            elif bucket.is_dir():
+            elif stat.S_ISDIR(mode):
                 try:
                     shutil.rmtree(bucket)
                 except PermissionError:

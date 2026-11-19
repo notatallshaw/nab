@@ -1091,8 +1091,54 @@ class TestIterCacheEntries:
         cache = OnDiskCache(tmp_path / "gone", "https://pypi.org/simple")
         assert list(cache.iter_cache_entries()) == []
 
+    def test_file_stat_error_is_reported_without_skipping_its_neighbors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cache = _populate(tmp_path)
+        blocked = next(cache.iter_cache_entries())
+        original = Path.lstat
+        error = PermissionError(str(blocked))
+
+        def inspect(path: Path) -> os.stat_result:
+            if path == blocked:
+                raise error
+            return original(path)
+
+        monkeypatch.setattr(Path, "lstat", inspect)
+        errors: list[OSError] = []
+        remaining = list(cache.iter_cache_entries(on_error=errors.append))
+        assert remaining
+        assert blocked not in remaining
+        assert errors == [error]
+        assert list(cache.iter_cache_entries()) == remaining
+
+    def test_enumeration_can_report_a_root_read_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "")
+        error = PermissionError("cannot list cache")
+
+        def denied(path: Path) -> list[Path]:
+            raise error
+
+        monkeypatch.setattr(Path, "iterdir", denied)
+        errors: list[OSError] = []
+        assert list(cache.iter_cache_entries()) == []
+        assert list(cache.iter_cache_entries(on_error=errors.append)) == []
+        assert errors == [error]
+        with pytest.raises(PermissionError, match="cannot list cache"):
+            cache.clear_cache()
+
 
 class TestClearCache:
+    def test_clear_skips_a_bucket_removed_after_enumeration(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "")
+        missing = tmp_path / SIMPLE_BUCKET
+        monkeypatch.setattr(Path, "iterdir", lambda _root: iter([missing]))
+        assert cache.clear_cache() == []
+
     def test_removes_dir_buckets_and_returns_names(self, tmp_path: Path) -> None:
         cache = _populate(tmp_path)
         removed = cache.clear_cache()
