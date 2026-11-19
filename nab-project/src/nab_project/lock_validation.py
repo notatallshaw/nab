@@ -25,7 +25,9 @@ from nab_provider.policy import (
     ResolutionStrategy,
 )
 from nab_provider.requirements_file import (
+    InvalidProjectTableError,
     expand_extra_requirements,
+    require_string_list,
     resolve_groups_to_requirements,
 )
 from nab_provider.serialization import SimpleSerialization
@@ -242,7 +244,19 @@ def selection_inputs_digest(inputs: Mapping[str, Any]) -> str:
     return validation_digest(selection_inputs)
 
 
-def _project_inputs(path: Path) -> dict[str, Any]:
+def _local_optional_dependencies(value: object, path: Path) -> dict[str, list[str]]:
+    """Keep each extra's original requirement strings in the saved fingerprint."""
+    source = f"{path}: [project.optional-dependencies]"
+    if not isinstance(value, dict):
+        message = f"{source} must be a table"
+        raise InvalidProjectTableError(message)
+    return {
+        extra: require_string_list(requirements, f"{source}.{extra}")
+        for extra, requirements in value.items()
+    }
+
+
+def _project_inputs(path: Path) -> dict[str, object]:
     """Read local dependency inputs without executing a backend."""
     try:
         data = toml_io.load_path(path)
@@ -250,20 +264,27 @@ def _project_inputs(path: Path) -> dict[str, Any]:
         return {"dynamic": ["metadata"]}
     project = data.get("project", {})
     if not isinstance(project, dict):
-        message = f"{path}: project must be a table"
-        raise TypeError(message)
-    fields = {
+        message = f"{path}: [project] must be a table"
+        raise InvalidProjectTableError(message)
+
+    fields: dict[str, object] = {
         name: project[name]
-        for name in (
-            "name",
-            "version",
-            "requires-python",
-            "dependencies",
-            "optional-dependencies",
-        )
+        for name in ("name", "version", "requires-python")
         if name in project
     }
-    dynamic = set(project.get("dynamic", [])) & set(
+    if "dependencies" in project:
+        fields["dependencies"] = require_string_list(
+            project["dependencies"], f"{path}: [project].dependencies"
+        )
+    if "optional-dependencies" in project:
+        fields["optional-dependencies"] = _local_optional_dependencies(
+            project["optional-dependencies"], path
+        )
+
+    declared = require_string_list(
+        project.get("dynamic", []), f"{path}: [project].dynamic"
+    )
+    dynamic = set(declared) & (
         fields.keys()
         | {"dependencies", "optional-dependencies", "requires-python", "version"}
     )

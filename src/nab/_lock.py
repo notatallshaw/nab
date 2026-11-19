@@ -1105,7 +1105,13 @@ def _check_saved(
             input_format=run.input_format,
             project_input=run.project_input,
         )
-    except (OSError, ValueError, LookupError, RecursionError) as exc:
+    except (
+        OSError,
+        ValueError,
+        LookupError,
+        RecursionError,
+        InvalidProjectTableError,
+    ) as exc:
         printer().error(
             DiagnosticMessage(
                 f"--locked: cannot verify {target}: {exc}",

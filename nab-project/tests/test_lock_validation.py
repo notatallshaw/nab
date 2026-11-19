@@ -39,6 +39,7 @@ from nab_provider.policy import (
     ResolutionStrategy,
 )
 from nab_provider.records import IndexConfig
+from nab_provider.requirements_file import InvalidProjectTableError
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, MatrixInclude, ResolveTarget
 from nab_provider.testing import make_metadata, make_wheel
@@ -462,17 +463,31 @@ def test_unknown_input_type_is_not_silently_stringified(tmp_path: Path) -> None:
         _value(object(), tmp_path)
 
 
-def test_unreadable_or_malformed_local_metadata_is_not_ignored(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("document", "field"),
+    [
+        ('project="invalid"', "[project]"),
+        (
+            '[project]\noptional-dependencies="invalid"',
+            "[project.optional-dependencies]",
+        ),
+    ],
+)
+def test_local_metadata_requires_project_tables(
+    tmp_path: Path, document: str, field: str
+) -> None:
     source = tmp_path / "local"
     source.mkdir()
-    _project(source).write_text('project="invalid"')
+    metadata = _project(source)
+    metadata.write_text(document, encoding="utf-8")
     root = _project(tmp_path)
-    with pytest.raises(TypeError, match="project must be a table"):
+    with pytest.raises(InvalidProjectTableError) as caught:
         snapshot_inputs(
             root,
             ResolveInputs(local_sources=(LocalSource("app", str(source)),)),
             _targets(),
         )
+    assert str(caught.value) == f"{metadata}: {field} must be a table"
 
 
 def test_legacy_local_metadata_requires_backend_validation(tmp_path: Path) -> None:
