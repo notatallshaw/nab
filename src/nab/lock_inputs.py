@@ -67,6 +67,12 @@ def prepare_lock_input(
     view = copy.deepcopy(dict(document))
     project = input_table(view.setdefault("project", {}), "project")
     project["dependencies"] = sorted(requirements)
+
+    # The plan supplies a complete list even when it excludes runtime dependencies.
+    dynamic = project.get("dynamic")
+    if isinstance(dynamic, list) and "dependencies" in dynamic:
+        project["dynamic"] = [field for field in dynamic if field != "dependencies"]
+
     view.pop("dependency-groups", None)
     return PreparedProjectInput(
         path,

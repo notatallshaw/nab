@@ -86,23 +86,30 @@ class TestReadPyprojectDependencies:
         p.write_text('[project]\nname = "foo"\ndynamic = ["version"]\n')
         assert read_pyproject_dependencies(p) == []
 
-    def test_dynamic_dependencies_raises(self, tmp_path: Path) -> None:
-        """dynamic = ['dependencies'] is unsupported, not an empty dep set."""
-        p = tmp_path / "pyproject.toml"
-        p.write_text('[project]\nname = "foo"\ndynamic = ["dependencies"]\n')
-        with pytest.raises(InvalidProjectRequirementError, match="dynamic"):
-            read_pyproject_dependencies(p)
-
-    def test_static_dependencies_win_over_dynamic_listing(self, tmp_path: Path) -> None:
-        """A present static key is read even if dynamic also lists it."""
+    @pytest.mark.parametrize(
+        "declaration", ["", "dependencies = []", 'dependencies = ["requests"]']
+    )
+    def test_dynamic_dependencies_require_the_backend(
+        self, tmp_path: Path, declaration: str
+    ) -> None:
         p = tmp_path / "pyproject.toml"
         p.write_text(
-            '[project]\nname = "foo"\n'
-            'dynamic = ["dependencies"]\n'
-            'dependencies = ["requests"]\n'
+            f'[project]\nname = "foo"\ndynamic = ["dependencies"]\n{declaration}\n'
         )
-        deps = read_pyproject_dependencies(p)
-        assert [d.name for d in deps] == ["requests"]
+        with pytest.raises(InvalidProjectRequirementError, match="declared dynamic"):
+            read_pyproject_dependencies(p)
+
+    @pytest.mark.parametrize("dynamic", ['"dependencies"', '["description", 1]'])
+    def test_malformed_dynamic_declaration_is_reported(
+        self, tmp_path: Path, dynamic: str
+    ) -> None:
+        p = tmp_path / "pyproject.toml"
+        p.write_text(f'[project]\ndependencies = ["requests"]\ndynamic = {dynamic}\n')
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"\[project\]\.dynamic must be an array of strings",
+        ):
+            read_pyproject_dependencies(p)
 
     def test_malformed_dependency_string_raises(self, tmp_path: Path) -> None:
         """A malformed PEP 508 string raises InvalidProjectRequirementError."""

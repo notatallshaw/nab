@@ -4,6 +4,11 @@
 [dependency metadata](https://packaging.python.org/en/latest/specifications/core-metadata/). Nab
 first tries to read static metadata.
 
+When a lock includes the root project’s runtime dependencies, Nab reads them from `pyproject.toml`.
+If `[project].dynamic` includes `"dependencies"`, the backend may add requirements to any already
+listed. To lock the project, declare its complete dependency list and remove `"dependencies"` from
+`[project].dynamic`.
+
 ## Build permissions
 
 A source's effective policy determines which metadata builds are allowed:

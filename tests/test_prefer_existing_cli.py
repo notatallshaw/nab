@@ -454,8 +454,11 @@ def test_reuse_declines_the_existing_file_index_fingerprint_collision(
 
 
 @pytest.mark.parametrize("policy", ["resolve", "prefer-existing", "reuse"])
+@pytest.mark.parametrize(
+    "declared", ["", 'dependencies=["a"]\n'], ids=["omitted", "partial"]
+)
 def test_dynamic_root_dependencies_never_use_a_hidden_backend(
-    registry: Registry, policy: str
+    registry: Registry, policy: str, declared: str
 ) -> None:
     assert registry.command() == 0
 
@@ -471,7 +474,7 @@ def test_dynamic_root_dependencies_never_use_a_hidden_backend(
         "    return info.name\n"
     )
     text = registry.project.read_text().replace(
-        'dependencies=["a"]', 'dynamic=["dependencies"]'
+        'dependencies=["a"]', declared + 'dynamic=["dependencies"]'
     )
     text = text.replace(
         'build-policy="never"',

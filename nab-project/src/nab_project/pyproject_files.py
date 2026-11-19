@@ -73,8 +73,7 @@ def project_dependencies(document: Mapping[str, Any]) -> list[Requirement]:
     PEP 621 makes the key optional, so an absent ``dependencies`` reads as an
     empty list. A missing ``[project]`` raises :class:`MissingProjectTableError`;
     one that is not a table raises :class:`InvalidProjectTableError`. A malformed
-    dependency string raises :class:`InvalidProjectRequirementError`, as does a dynamic
-    ``dependencies``.
+    dependency or a dynamic list raises :class:`InvalidProjectRequirementError`.
     """
     try:
         project = document["project"]
@@ -85,15 +84,14 @@ def project_dependencies(document: Mapping[str, Any]) -> list[Requirement]:
         raise InvalidProjectTableError(msg)
 
     source = "[project].dependencies"
-    if "dependencies" not in project:
-        dynamic = project.get("dynamic")
-        if isinstance(dynamic, list) and "dependencies" in dynamic:
-            msg = (
-                "[project].dependencies is declared dynamic; computing it"
-                " requires the build backend, which the root-project lock"
-                " path does not support"
-            )
-            raise InvalidProjectRequirementError(msg)
+    dynamic = require_string_list(project.get("dynamic", []), "[project].dynamic")
+    if "dependencies" in dynamic:
+        msg = (
+            "[project].dependencies is declared dynamic. The build backend may add "
+            "requirements beyond those listed in pyproject.toml."
+        )
+        raise InvalidProjectRequirementError(msg)
+
     dep_strings = require_string_list(project.get("dependencies", []), source)
     return parse_requirements(dep_strings, source)
 
