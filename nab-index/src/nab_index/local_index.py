@@ -519,38 +519,40 @@ def _merging_bases(base_url: str, anchors: list[Anchor]) -> list[str] | None:
     return None
 
 
+def _wheelhouse_project(filename: str) -> str | None:
+    """Read the project name from a wheel or sdist filename."""
+    # Wheels escape dashes in project names. Sdist names can contain them.
+    if filename.endswith(".whl"):
+        return _canonical(filename.partition("-")[0])
+    if filename.endswith((".tar.gz", ".zip")):
+        return _canonical(filename.rpartition("-")[0])
+    return None
+
+
 def _scan_flat_wheelhouse(
     root: Path,
-    package: str,
+    canonical: str,
 ) -> _ScanResult:
-    """Find all dists for ``package`` in a flat directory of files.
+    """Find files for one canonical project name in a flat wheelhouse.
 
     Entries are sorted because the listing order breaks ties between dists at
     one version, and ``iterdir`` order comes from the filesystem.
 
-    One directory serves every package, so a file that does not name
-    ``package`` says nothing about it. A flat directory has no yank marks
-    and no page that named ``package``'s files.
+    A flat directory has no yank marks or package listing page.
     """
-    canonical = _canonical(package)
     files: list[WheelFile | SdistFile] = []
     zip_sdists: set[str] = set()
 
-    for entry in sorted(root.iterdir()):
+    matches = (
+        entry
+        for entry in root.iterdir()
+        if _wheelhouse_project(entry.name) == canonical
+    )
+    for entry in sorted(matches):
         if not _is_file(entry):
             continue
 
-        # Wheels escape dashes in project names. Sdist names can contain them.
         filename = entry.name
-        if filename.endswith(".whl"):
-            project = filename.partition("-")[0]
-        elif filename.endswith((".tar.gz", ".zip")):
-            project = filename.rpartition("-")[0]
-        else:
-            continue
-        if _canonical(project) != canonical:
-            continue
-
         record = _make_record(
             filename,
             entry.as_uri(),
@@ -822,7 +824,7 @@ class LocalIndexClient:
                     zip_sdists=frozenset(),
                 )
             else:
-                scan = _scan_flat_wheelhouse(self._root, package)
+                scan = _scan_flat_wheelhouse(self._root, canonical)
         except OSError as exc:
             msg = f"cannot read local index {self._root}: {exc}"
             raise UnreadableLocalIndexError(msg) from exc

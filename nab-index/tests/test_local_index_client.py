@@ -759,21 +759,17 @@ class TestFlatWheelhouse:
         assert not isinstance(caught.value, OSError)
         assert "Permission denied" in str(caught.value)
 
-    def test_unreadable_entry_of_another_package_raises_index_error(
+    def test_unreadable_entry_for_another_package_is_ignored(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # A wheelhouse serves every package from one directory, so an entry
-        # naming none of them still fails the listing.
-        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
-        denied = tmp_path / "bar-2.0-py3-none-any.whl"
-        denied.write_bytes(b"")
-
-        _swallow_is_file_errors(monkeypatch)
-        _deny_access(monkeypatch, "stat", denied)
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        wheel.touch()
+        other = tmp_path / "bar-1.0-py3-none-any.whl"
+        other.touch()
+        _deny_access(monkeypatch, "stat", other)
 
         client = LocalIndexClient(tmp_path.as_uri())
-        with pytest.raises(UnreadableLocalIndexError):
-            run(client.get_files("foo"))
+        assert [file.filename for file in run(client.get_files("foo"))] == [wheel.name]
 
     def test_symlink_cycle_entry_is_skipped(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -784,7 +780,7 @@ class TestFlatWheelhouse:
         privilege the Windows CI runner does not have.
         """
         (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
-        cycle = tmp_path / "cycle-link"
+        cycle = tmp_path / "foo-2.0-py3-none-any.whl"
         cycle.write_bytes(b"")
 
         loop = OSError(errno.ELOOP, "Too many levels of symbolic links", str(cycle))
