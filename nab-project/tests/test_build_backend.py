@@ -27,6 +27,7 @@ from nab_provider._provider.metadata_resolver import (
     extend_with_extras,
     parse_pyproject_deps,
 )
+from nab_provider._vendor.packaging.requirements import InvalidRequirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import parse_metadata
@@ -299,8 +300,12 @@ class TestExtractStaticMetadata:
             f'[project]\nname = "foo"\nversion = "1.0"\n'
             f'dependencies = ["bar ; {over_nested_marker}"]\n',
         )
-        with pytest.raises(InvalidProjectRequirementError, match="invalid requirement"):
+        with pytest.raises(
+            InvalidProjectRequirementError, match="nested too deeply"
+        ) as caught:
             extract_static_metadata(tmp_path)
+        assert isinstance(caught.value.__cause__, InvalidRequirement)
+        assert isinstance(caught.value.__cause__.__cause__, RecursionError)
 
     def test_over_nested_marker_on_an_optional_dep_raises(
         self, tmp_path: Path, over_nested_marker: str
