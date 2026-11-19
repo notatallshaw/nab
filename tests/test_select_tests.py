@@ -47,6 +47,10 @@ assert GIT is not None
         ("docs/reference/cli.md", ["project", "umbrella"]),
         ("README.md", ["umbrella"]),
         ("conftest.py", list(WORKSPACES)),
+        (
+            "nab-project/test-support/nab_test_support/tests/conftest.py",
+            list(WORKSPACES),
+        ),
         ("pyproject.toml", list(WORKSPACES)),
         ("noxfile.py", list(WORKSPACES)),
         ("pylock.dev.toml", list(WORKSPACES)),
@@ -284,6 +288,10 @@ def test_pr_comparison_writes_selected_arguments(
         (["nab-index/src/nab_index/client.py"], {"benchmarks", "dists"}),
         (["nab-markersets/tests/test_sets.py"], {"standalone"}),
         (["nab-project/benchmarks/scenarios.py"], {"benchmarks"}),
+        (
+            ["nab-project/test-support/nab_test_support/tests/conftest.py"],
+            {"benchmarks", "dists", "standalone"},
+        ),
         (["tasks/build_dists.py"], {"dists"}),
         (["tasks/check_installed.py"], {"dists"}),
         (["docs/index.md", "pyproject.toml"], {"benchmarks", "dists", "standalone"}),

@@ -125,6 +125,13 @@ def _workspace_mapping(
     return workspaces
 
 
+def _selection_root(path: str) -> str | None:
+    """Shared pytest fixtures can affect a run for any package."""
+    if path.startswith("nab-project/test-support/") and path.endswith(".py"):
+        return None
+    return path.split("/", 1)[0]
+
+
 def select_workspaces(
     paths: Iterable[str],
     workspaces: dict[str, tuple[list[str], list[str], list[str]]],
@@ -136,7 +143,7 @@ def select_workspaces(
     }
     members.discard(".")
     for path in paths:
-        package = path.split("/", 1)[0]
+        package = _selection_root(path)
         # Test modules run in the sessions that collect them. Shared fixtures
         # and package code still select every downstream consumer.
         if Path(path).name.startswith("test_") and path.endswith(".py"):
@@ -209,7 +216,7 @@ def auxiliary_outputs(paths: list[str] | None) -> dict[str, str]:
     if not paths:
         selected = jobs
     for path in paths or []:
-        package = path.split("/", 1)[0]
+        package = _selection_root(path)
         if _benchmark(path):
             selected.add("benchmarks")
         elif _documentation(path):
