@@ -49,6 +49,39 @@ def test_semantic_root_changes_are_refused_but_comments_are_not(tmp_path: Path) 
         prepared.read(path)
 
 
+def test_unchanged_nan_survives_comments_and_table_reordering(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text('[project]\nname="root"\n[tool.example]\nvalues=[{limit=nan}]\n')
+    original = toml_io.load_path(path)
+    prepared = PreparedProjectInput(
+        path, original, original, identity={}, local_inputs={}
+    )
+
+    assert prepared.read(path)["project"] == {"name": "root"}
+    path.write_text(
+        '[tool.example]\nvalues=[{limit=nan}] # unlimited\n[project]\nname="root"\n'
+    )
+    assert prepared.read(path)["project"] == {"name": "root"}
+
+
+@pytest.mark.parametrize(
+    ("before", "after"), [("true", "1"), ("1", "1.0"), ("nan", "inf")]
+)
+def test_changed_toml_values_are_refused(
+    tmp_path: Path, before: str, after: str
+) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text(f"[tool.example]\nvalues=[{{limit={before}}}]\n")
+    original = toml_io.load_path(path)
+    prepared = PreparedProjectInput(
+        path, original, original, identity={}, local_inputs={}
+    )
+
+    path.write_text(f"[tool.example]\nvalues=[{{limit={after}}}]\n")
+    with pytest.raises(InputChangedError, match="project inputs changed"):
+        prepared.read(path)
+
+
 @pytest.mark.parametrize("change", ["edit", "delete", "create"])
 def test_watched_local_files_and_configuration_presence_are_checked(
     tmp_path: Path, change: str

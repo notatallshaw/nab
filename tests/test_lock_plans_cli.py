@@ -107,13 +107,32 @@ def test_local_source_groups_are_prepared_without_rebinding_relative_sources(
     assert command(named, "--plan", "dev", "--locked") == 1
 
 
+def test_named_lock_accepts_nan_in_another_tools_settings(named: Registry) -> None:
+    with named.project.open("a") as file:
+        file.write("[tool.example]\nthreshold = nan\n")
+
+    assert command(named, "--plan", "dev") == 0
+    assert command(named, "--plan", "dev", "--locked") == 0
+
+
 @pytest.mark.parametrize("format_name", ["pylock", "requirements-without-hashes"])
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [('test=["a"]', 'test=["b"]'), ("dependencies=true", "dependencies=1")],
+)
 def test_source_change_during_resolution_preserves_the_previous_lock(
     named: Registry,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     format_name: str,
+    old: str,
+    new: str,
 ) -> None:
+    named.project.write_text(
+        named.project.read_text().replace(
+            "[tool.nab.plans.dev]", "[tool.nab.plans.dev]\ndependencies=true"
+        )
+    )
     args = ("--plan", "dev", "--format", format_name)
     assert command(named, *args) == 0
     output = named.project.with_name(
@@ -124,9 +143,7 @@ def test_source_change_during_resolution_preserves_the_previous_lock(
 
     def changed(transport: object, **kwargs: object) -> nullcontext[FakeFetchPort]:
         result = original(transport, **kwargs)
-        named.project.write_text(
-            named.project.read_text().replace('test=["a"]', 'test=["b"]')
-        )
+        named.project.write_text(named.project.read_text().replace(old, new))
         return result
 
     monkeypatch.setattr("nab_project.resolve.FetchCoordinator", changed)
