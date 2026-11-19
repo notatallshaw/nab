@@ -184,21 +184,3 @@ python_version = "3.12"
 platform_system = "Linux"
 datetime = "2026-03-17 16:27:57"
 requirements = ["flashinfer-jit-cache==0.5.3+cu130"]
-
-[uv-issue-19308-pyqt5-marker-pin]
-# https://github.com/astral-sh/uv/issues/19308
-# required-environments + per-platform pyqt5 / pyqt5-qt5 / pyqt5-sip
-# pinning is ignored on Windows.  Move out of unsupported once nab
-# supports universal-environment markers.
-unsupported_reason = "universal_resolution"
-python_version = "3.12"
-platform_system = "Windows"
-datetime = "2026-05-06 23:43:33"
-requirements = [
-    "pyqt5-qt5==5.15.2 ; sys_platform == 'win32' and platform_machine == 'AMD64'",
-    "pyqt5==5.15.9 ; sys_platform == 'win32' and platform_machine == 'AMD64'",
-    "pyqt5-sip==12.11.1 ; sys_platform == 'win32' and platform_machine == 'AMD64'",
-    "pyqt5-qt5==5.15.18 ; sys_platform != 'win32'",
-    "pyqt5==5.15.11 ; sys_platform != 'win32'",
-    "pyqt5-sip==12.18.0 ; sys_platform != 'win32'",
-]
