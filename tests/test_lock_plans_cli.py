@@ -212,6 +212,36 @@ def test_invalid_plan_name_identifies_the_setting(
     assert "--plan 'bad name' is not a valid lock plan name" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    ("declaration", "problem"),
+    [
+        ('[tool.nab.plans.build.settings]\nstrategy="lowest"', "strategy"),
+        ("[tool.nab.plans.build.settings]\nresolution=42", "resolution"),
+        ('[tool.nab.plans.build.inputs.missing]\ngroups=["test"]', "missing"),
+    ],
+)
+def test_invalid_later_plan_preserves_existing_locks(
+    named: Registry, capsys: pytest.CaptureFixture[str], declaration: str, problem: str
+) -> None:
+    assert command(named, "--plan", "dev") == 0
+    lock = named.project.with_name("pylock.dev.toml")
+    previous = lock.read_bytes()
+    coordinator_count = len(named.coordinators)
+    named.add_release()
+    with named.project.open("a") as file:
+        file.write(declaration + "\n")
+
+    assert command(named, "--all-plans") == 1
+    assert lock.read_bytes() == previous
+    assert len(named.coordinators) == coordinator_count
+    message = capsys.readouterr().err
+    assert "'build'" in message
+    assert problem in message
+
+    assert command(named, "--plan", "dev") == 0
+    assert {p["version"] for p in toml_io.load_path(lock)["packages"]} == {"2"}
+
+
 def test_batch_output_collisions_fail_before_writing(named: Registry) -> None:
     named.project.write_text(
         named.project.read_text()

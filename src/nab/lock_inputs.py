@@ -51,9 +51,6 @@ def prepare_lock_input(
     requirements = {str(req) for req in roots}
     identities = {}
     for name, selection in plan.imports.items():
-        if name not in sources:
-            msg = f"unknown input source {name!r} in plan {plan.name!r}"
-            raise ValueError(msg)
         source = dict(sources[name])
         requirements.update(reader.requirements(source, selection))
         if "url" in source:

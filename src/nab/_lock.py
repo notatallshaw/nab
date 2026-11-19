@@ -349,31 +349,35 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     if input_format is InputFormat.SCRIPT and (selected_plan is not None or all_plans):
         printer().error("lock plans require a project, not a script")
         raise SystemExit(1)
-    names = tuple(ladder["plans"].value) if all_plans else (selected_plan,)
-    if all_plans and (not names or output is not None):
+    if all_plans and (not ladder["plans"].value or output is not None):
         printer().error("--all-plans needs declared plans and cannot use --output")
         raise SystemExit(1)
-    if all_plans:
-        from .config.lock_plans import validate_plan_outputs  # noqa: PLC0415
+
+    plans: tuple[LockPlan | None, ...] = (None,)
+    if all_plans or selected_plan is not None:
+        from .config.lock_plans import read_lock_plans  # noqa: PLC0415
 
         try:
-            validate_plan_outputs(
+            plans = read_lock_plans(
                 path,
                 ladder["plans"].value,
+                ladder["input-sources"].value,
                 settings.format,
+                selected=None if all_plans else selected_plan,
             )
-        except (ValueError, TypeError) as exc:
-            printer().error(exc)
+        except (OSError, ValueError, TypeError) as exc:
+            printer().error(exc, prefix="input error: ")
             raise SystemExit(1) from None
+
     actions = _LockActions(python, upgrade, locked, reproduce)
-    for name in names:
+    for declaration in plans:
         _lock_one(
             path,
             overrides,
             actions,
             output=output,
             input_format=input_format,
-            plan_name=name,
+            plan=declaration,
             initial_ladder=ladder,
         )
 
@@ -415,17 +419,16 @@ def _prepare_lock_configuration(
     overrides: Mapping[str, object],
     *,
     output: Path | None,
-    plan_name: str | None,
+    plan: LockPlan | None,
     ladder: dict[str, EffectiveValue],
 ) -> _LockConfiguration:
     """Prepare configured sources before entering the ordinary resolution phases."""
-    if plan_name is None:
+    if plan is None:
         return _LockConfiguration(ladder, None, None, output)
 
     # Ordinary locks do not load archive or plan readers.
     from nab_project.dependency_sources import DependencySourceReader  # noqa: PLC0415
 
-    from .config.lock_plans import LockPlan  # noqa: PLC0415
     from .lock_inputs import prepare_lock_input  # noqa: PLC0415 - named plans only
 
     # Named locks always install their declared selection.
@@ -446,7 +449,6 @@ def _prepare_lock_configuration(
         )
         raise ValueError(msg)
     settings = _layered_run_settings(ladder)
-    plan = LockPlan.read(plan_name, ladder["plans"].value, settings.format)
     reader = DependencySourceReader(
         path.parent,
         _resolve_effective_cache_dir(settings.cache_dir, cache=settings.cache),
@@ -487,7 +489,7 @@ def _lock_one(
     *,
     output: Path | None,
     input_format: InputFormat,
-    plan_name: str | None,
+    plan: LockPlan | None,
     initial_ladder: dict[str, EffectiveValue],
 ) -> None:
     """Run one effective project selection using the normal resolver and writer."""
@@ -498,7 +500,7 @@ def _lock_one(
             path,
             overrides,
             output=output,
-            plan_name=plan_name,
+            plan=plan,
             ladder=initial_ladder,
         )
     except (
@@ -592,7 +594,7 @@ def _lock_one(
         input_format=input_format,
         lock_policy=settings.lock_policy,
         project_input=project_input,
-        plan_name=plan_name,
+        plan_name=plan.name if plan is not None else None,
     )
 
     provenance = _build_provenance(

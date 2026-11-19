@@ -19,7 +19,7 @@ from nab.config.values import SourceConfigError, parse_input_tables
     ],
 )
 def test_invalid_plans_are_refused(entry: dict[str, object]) -> None:
-    with pytest.raises((ValueError, TypeError, SourceConfigError)):
+    with pytest.raises((ValueError, TypeError), match="lock plan 'dev'"):
         LockPlan.read("dev", {"dev": entry}, "pylock")
 
 
