@@ -6,7 +6,6 @@ import hashlib
 import io
 import tarfile
 from contextlib import nullcontext
-from pathlib import Path
 
 import pytest
 
@@ -15,15 +14,13 @@ from nab_project import toml_io, toml_writer
 from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider.testing import FakeFetchPort
 
-from .test_prefer_existing_cli import Registry
+from .lock_registry import Registry
 
 
 @pytest.fixture
-def named(hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch) -> Registry:
-    """Serve the project's dependency listings and metadata from the test registry."""
-    value = Registry(hermetic_roots)
-    monkeypatch.setattr("nab_project.resolve.FetchCoordinator", value.coordinator)
-    value.project.write_text(
+def named(registry: Registry) -> Registry:
+    """Declare a test plan and a build plan in the temporary project."""
+    registry.project.write_text(
         '[project]\nname="app"\nversion="1"\nrequires-python=">=3.10"\n'
         '[dependency-groups]\ntest=["a"]\nrelease=["b"]\n'
         '[build-system]\nrequires=["b"]\n'
@@ -31,7 +28,7 @@ def named(hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch) -> Registry:
         '[tool.nab.plans.dev]\ngroups=["test"]\n'
         '[tool.nab.plans.build]\ngroups=["release"]\nbuild-requirements=true\n'
     )
-    return value
+    return registry
 
 
 def command(value: Registry, *args: str) -> int:
@@ -51,9 +48,9 @@ def test_plan_defaults_to_its_project_directory_and_checks_without_fetching(
     assert "--plan" in doc["tool"]["nab"]["command-line"]
     assert not list(named.project.parent.glob(".nab-lock-*.toml"))
 
-    ports = len(named.ports)
+    coordinator_count = len(named.coordinators)
     assert command(named, "--plan", "dev", "--locked") == 0
-    assert len(named.ports) == ports
+    assert len(named.coordinators) == coordinator_count
     assert output.read_bytes() == saved
 
 
@@ -195,7 +192,7 @@ def test_invalid_selections_report_errors_without_a_traceback(
 ) -> None:
     assert command(named, *args) == 1
     assert "Traceback" not in capsys.readouterr().err
-    assert not named.ports
+    assert not named.coordinators
     assert not list(named.project.parent.glob("pylock.*.toml"))
 
 
@@ -224,7 +221,7 @@ def test_batch_output_collisions_fail_before_writing(named: Registry) -> None:
         )
     )
     assert command(named, "--all-plans") == 1
-    assert not named.ports
+    assert not named.coordinators
     assert not named.project.with_name("pylock.shared.toml").exists()
 
 
@@ -291,7 +288,7 @@ def test_named_project_policy_refusals_are_reported(
     with named.project.open("a") as file:
         file.write("[tool.nab.plans.dev.settings]\n" + settings + "\n")
     assert command(named, "--plan", "dev") == 1
-    assert not named.ports
+    assert not named.coordinators
 
 
 def test_a_script_cannot_select_a_plan(named: Registry) -> None:
@@ -346,7 +343,7 @@ def test_batch_refuses_outputs_that_are_not_files(named: Registry, output: str) 
         )
     )
     assert command(named, "--all-plans") == 1
-    assert not named.ports
+    assert not named.coordinators
 
 
 @pytest.fixture
@@ -402,7 +399,7 @@ def test_named_plans_refuse_conflicting_explicit_selection_controls(
     arguments: tuple[str, ...],
 ) -> None:
     assert command(named, "--plan", "dev", *arguments) == 1
-    assert not named.ports
+    assert not named.coordinators
 
 
 def test_a_shared_docs_group_works_without_runtime_or_backend_metadata(
@@ -498,7 +495,7 @@ def test_invalid_runtime_selection_is_rejected(named: Registry) -> None:
     document["tool"]["nab"]["plans"]["dev"]["dependencies"] = "false"
     named.project.write_text(toml_writer.dumps(document))
     assert command(named, "--plan", "dev") == 1
-    assert not named.ports
+    assert not named.coordinators
 
 
 def test_separate_plans_lock_incompatible_tool_environments(named: Registry) -> None:
@@ -575,7 +572,7 @@ def test_complete_plan_refuses_declared_alternatives_before_resolving(
     document["tool"]["nab"]["plans"]["dev"]["groups"] = ["test", "release"]
     named.project.write_text(toml_writer.dumps(document))
     assert command(named, "--plan", "dev") == 1
-    assert not named.ports
+    assert not named.coordinators
     document["tool"]["nab"]["plans"]["dev"]["groups"] = ["test"]
     named.project.write_text(toml_writer.dumps(document))
     assert command(named, "--plan", "dev") == 0
