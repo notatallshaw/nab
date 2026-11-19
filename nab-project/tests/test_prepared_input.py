@@ -34,6 +34,23 @@ def test_views_are_independent_and_do_not_change_normal_source_reads(
         )
 
 
+def test_deeply_nested_values_are_checked_for_changes(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    key = ".".join(["child"] * 600)
+    path.write_text(f"{key} = [1]\n")
+    original = toml_io.load_path(path)
+    prepared = PreparedProjectInput(
+        path, original, original, identity={}, local_inputs={}
+    )
+
+    path.write_text(f"{key} = [1] # comment\n")
+    prepared.read(path)
+
+    path.write_text(f"{key} = [true]\n")
+    with pytest.raises(InputChangedError):
+        prepared.read(path)
+
+
 def test_semantic_root_changes_are_refused_but_comments_are_not(tmp_path: Path) -> None:
     path = tmp_path / "pyproject.toml"
     path.write_text('[project]\nname="original"\n')

@@ -9,8 +9,9 @@ substituted error points at the start.
 
 from __future__ import annotations
 
-__lazy_modules__ = ("tomli",)
+__lazy_modules__ = ("copy", "tomli")
 
+import copy
 from collections.abc import Mapping
 from math import isnan
 from typing import TYPE_CHECKING, Any
@@ -18,10 +19,12 @@ from typing import TYPE_CHECKING, Any
 import tomli
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
     from typing import BinaryIO, TypeGuard
 
 __all__ = [
+    "copy_table",
     "is_table",
     "load",
     "load_path",
@@ -87,26 +90,85 @@ def is_table(value: object) -> TypeGuard[dict[str, object]]:
     return isinstance(value, dict) and all(isinstance(key, str) for key in value)
 
 
+def copy_table(document: Mapping[str, object]) -> dict[str, object]:
+    """Copy a parsed TOML table without using one Python frame per nested value."""
+    result = dict(document)
+    pending: list[dict[str, object] | list[object]] = [result]
+    memo: dict[int, object] = {id(document): result}
+
+    def copy_value(value: object) -> object:
+        if id(value) in memo:
+            return memo[id(value)]
+
+        # Copy the container now and fill its nested values on the work list.
+        child: dict[str, object] | list[object]
+        if type(value) is dict:
+            child = dict(value)
+        elif type(value) is list:
+            child = list(value)
+        else:
+            return copy.deepcopy(value, memo)
+        memo[id(value)] = child
+        pending.append(child)
+        return child
+
+    while pending:
+        container = pending.pop()
+        if isinstance(container, dict):
+            for key, value in container.items():
+                container[key] = copy_value(value)
+        else:
+            for index, value in enumerate(container):
+                container[index] = copy_value(value)
+    return result
+
+
 def values_match(
     expected: object, actual: object, *, allow_extra_keys: bool = False
 ) -> bool:
     """Compare TOML values, optionally matching only the specified table keys."""
-    if isinstance(actual, dict) and isinstance(expected, Mapping):
-        if not allow_extra_keys and len(expected) != len(actual):
-            return False
-        return all(
-            key in actual
-            and values_match(value, actual[key], allow_extra_keys=allow_extra_keys)
-            for key, value in expected.items()
-        )
-    if isinstance(actual, list) and isinstance(expected, list):
-        return len(expected) == len(actual) and all(
-            values_match(left, right, allow_extra_keys=allow_extra_keys)
-            for left, right in zip(expected, actual, strict=True)
-        )
+    # Keep one iterator per open table or array, including for wide documents.
+    pending: list[Iterator[tuple[object, object]]] = [iter(((expected, actual),))]
+    seen: dict[tuple[int, int], tuple[object, object]] = {}
+    while pending:
+        pair = next(pending[-1], None)
+        if pair is None:
+            pending.pop()
+            continue
 
-    # A NaN read twice compares unequal in Python. Conversely, True, 1 and
-    # 1.0 compare equal even though they are different TOML types.
-    if isinstance(expected, float) and isnan(expected):
-        return isinstance(actual, float) and isnan(actual)
-    return type(expected) is type(actual) and expected == actual
+        left, right = pair
+        if isinstance(left, Mapping) and isinstance(right, dict):
+            if not allow_extra_keys and len(left) != len(right):
+                return False
+            children = _table_pairs(left, right)
+        elif isinstance(left, list) and isinstance(right, list):
+            if len(left) != len(right):
+                return False
+            children = zip(left, right, strict=True)
+        elif _same_scalar(left, right):
+            continue
+        else:
+            return False
+
+        # A mapping may create a fresh value on lookup. Keep compared pairs
+        # alive while using their identities to skip shared containers.
+        key = (id(left), id(right))
+        if key not in seen:
+            seen[key] = pair
+            pending.append(children)
+    return True
+
+
+def _table_pairs(
+    expected: Mapping[str, object], actual: dict[str, object]
+) -> Iterator[tuple[object, object]]:
+    missing = object()
+    for key, value in expected.items():
+        yield value, actual.get(key, missing)
+
+
+def _same_scalar(left: object, right: object) -> bool:
+    # A NaN read twice compares unequal; Python equates true, 1 and 1.0.
+    if isinstance(left, float) and isnan(left):
+        return isinstance(right, float) and isnan(right)
+    return type(left) is type(right) and left == right

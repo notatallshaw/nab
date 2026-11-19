@@ -54,6 +54,20 @@ def test_plan_defaults_to_its_project_directory_and_checks_without_fetching(
     assert output.read_bytes() == saved
 
 
+def test_plan_can_lock_with_a_deep_table_from_another_tool(named: Registry) -> None:
+    # TOML accepts this dotted key, but recursively copying its tables exhausts
+    # the Python stack while preparing a plan.
+    key = ".".join(["child"] * 600)
+    with named.project.open("a", encoding="utf-8") as stream:
+        stream.write(f"[tool.other]\n{key}=1\n")
+
+    assert command(named, "--plan", "dev") == 0
+    output = named.project.with_name("pylock.dev.toml")
+    saved = output.read_bytes()
+    assert command(named, "--plan", "dev", "--locked") == 0
+    assert output.read_bytes() == saved
+
+
 def test_all_plans_keep_build_inputs_separate_and_reuse_relative_cutoff(
     named: Registry,
 ) -> None:

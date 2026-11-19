@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 from typing import TYPE_CHECKING, Any
 
 from . import toml_io
@@ -29,9 +28,9 @@ class PreparedProjectInput:
     ) -> None:
         """Own the declaration snapshot and the local files read to prepare it."""
         self.path = path.parent.resolve() / path.name
-        self._original: Mapping[str, object] | bytes = copy.deepcopy(dict(original))
-        self._document = copy.deepcopy(dict(document))
-        self.identity = copy.deepcopy(dict(identity))
+        self._original: Mapping[str, object] | bytes = toml_io.copy_table(original)
+        self._document = toml_io.copy_table(document)
+        self.identity = toml_io.copy_table(identity)
         self._local_inputs = dict(local_inputs)
 
     def read(self, path: Path) -> dict[str, Any]:
@@ -58,4 +57,4 @@ class PreparedProjectInput:
             if actual != expected:
                 msg = f"project inputs changed while locking: {source}"
                 raise InputChangedError(msg)
-        return copy.deepcopy(self._document)
+        return toml_io.copy_table(self._document)

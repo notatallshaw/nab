@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 from typing import TYPE_CHECKING
 
 from nab_index.urls import strip_userinfo
@@ -64,8 +63,9 @@ def prepare_lock_input(
         local_inputs[configuration] = configuration.read_text(encoding="utf-8")
     except FileNotFoundError:
         local_inputs[configuration] = None
-    view = copy.deepcopy(dict(document))
-    project = input_table(view.setdefault("project", {}), "project")
+    view = dict(document)
+    project = dict(input_table(view.get("project", {}), "project"))
+    view["project"] = project
     project["dependencies"] = sorted(requirements)
 
     # The plan supplies a complete list even when it excludes runtime dependencies.
