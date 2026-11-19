@@ -6,6 +6,7 @@ import base64
 import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -35,6 +36,16 @@ def task() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_failed_command_shows_its_error(
+    task: ModuleType, tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    command = "import sys; sys.exit('update branch has changed')"
+    with pytest.raises(subprocess.CalledProcessError):
+        task.run(tmp_path, sys.executable, "-c", command)
+
+    assert capfd.readouterr().err.strip() == "update branch has changed"
 
 
 @pytest.mark.parametrize(

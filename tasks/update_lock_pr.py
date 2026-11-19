@@ -39,7 +39,7 @@ def run(root: Path, *command: str, payload: Mapping[str, object] | None = None) 
         cwd=root,
         input=json.dumps(payload) if payload is not None else None,
         text=True,
-        capture_output=True,
+        stdout=subprocess.PIPE,
         check=True,
     )
     return result.stdout.strip()
