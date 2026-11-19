@@ -136,6 +136,12 @@ def test_rewrite_requirement_updates_workspace_pins() -> None:
     )
 
 
+def test_workspace_pin_preserves_extras_and_the_python_marker() -> None:
+    requirement = 'nab-index[httpx]==0.0.2; python_version < "3.12"'
+    result = release._rewrite_requirement(requirement, "0.0.3")
+    assert result == 'nab-index[httpx]==0.0.3; python_version < "3.12"'
+
+
 def test_rewrite_requirement_leaves_third_party_alone() -> None:
     assert release._rewrite_requirement("tomli>=2.0", "0.0.3") == "tomli>=2.0"
     assert release._rewrite_requirement("packaging>=24.0", "0.0.3") == "packaging>=24.0"

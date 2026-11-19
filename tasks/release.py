@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 import tomlkit
 from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
@@ -93,8 +94,9 @@ def _rewrite_requirement(dependency: str, version: str) -> str:
     requirement = Requirement(dependency)
     if canonicalize_name(requirement.name) not in _WORKSPACE:
         return dependency
-    extras = f"[{','.join(sorted(requirement.extras))}]" if requirement.extras else ""
-    return f"{requirement.name}{extras}{cross_pin(version)}"
+    requirement.specifier = SpecifierSet(cross_pin(version))
+    requirement.url = None
+    return str(requirement)
 
 
 def _version_module(version: str) -> str:
