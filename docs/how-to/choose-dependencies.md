@@ -94,10 +94,10 @@ Selected sets normally resolve together, so their requirements must be compatibl
 [conflicting extras or groups](../explanation/conflicts.md) when they are alternatives that need
 separate pins in one lock.
 
-The lock can offer extras and groups for an installer to select. Check the installer's selection
-support: pip currently uses default groups and no extras.
-[Lockfile extras and groups](../reference/lockfile-groups.md) explains those conditions and how
-`base-group` and `build-group` separate runtime and build dependencies.
+The lock can offer extras and groups at installation time. With pip 26.3 or newer, use
+`-r 'pylock.toml[cli]'` to include the locked `cli` extra. See [Use a lock](use-the-lock.md) for
+group selection. [Lockfile extras and groups](../reference/lockfile-groups.md) explains those
+conditions and how `base-group` and `build-group` separate runtime and build dependencies.
 
 ## Constrain versions without adding a dependency
 

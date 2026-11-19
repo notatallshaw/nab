@@ -74,5 +74,5 @@ groups.
 
 The requirements formats carry no selection markers, so they emit build requirements as ordinary
 pins. Use `nab lock --build-requirements` to write a separate build lock when the consumer cannot
-select groups. pip 26.3 and newer can select named groups from a Pylock file; see
-[Use a lock](../how-to/use-the-lock.md).
+select groups. With pip 26.3 or newer, you can select locked extras and named groups at installation
+time. See [Use a lock](../how-to/use-the-lock.md).
