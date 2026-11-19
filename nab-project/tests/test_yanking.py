@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from cProfile import Profile
 from functools import partial
 from itertools import permutations
 from typing import TYPE_CHECKING, Any
+from unittest.mock import ANY, patch
 
 if TYPE_CHECKING:
     from nab_project.resolve import TargetResult
@@ -1098,17 +1098,12 @@ def test_live_trial_preserves_a_complete_alternative_after_an_offline_miss() -> 
     )
     mark_offline_metadata(search, "dep", "1")
 
-    with Profile() as profile:
+    with patch.object(search, "run_query", wraps=search.run_query) as query:
         pins, _ = search.resolve()
 
     assert pins == {"app": Version("1")}
     assert search.catalogue.unavailable
-    query_calls = sum(
-        entry.callcount
-        for entry in profile.getstats()
-        if entry.code is YankProxyProvider.run_query.__code__
-    )
-    assert query_calls == 1
+    query.assert_called_once_with(ANY, live_trial=True)
 
 
 @pytest.mark.parametrize("offline", [False, True])
@@ -1122,18 +1117,16 @@ def test_live_trial_failure_does_not_retry_admission(offline: bool) -> None:
             "dep", [], offline_miss=True
         )
 
-    with Profile() as profile, pytest.raises(ResolutionError) as caught:
+    with (
+        patch.object(search, "run_query", wraps=search.run_query) as query,
+        pytest.raises(ResolutionError) as caught,
+    ):
         search.resolve()
 
     assert isinstance(caught.value, IncompletePreferenceError) is offline
     if offline:
         assert "missing offline" in str(caught.value)
-    query_calls = sum(
-        entry.callcount
-        for entry in profile.getstats()
-        if entry.code is YankProxyProvider.run_query.__code__
-    )
-    assert query_calls == 1
+    query.assert_called_once_with(ANY, live_trial=True)
     assert not any(candidate.withdrawn for candidate in search.catalogue.facts)
 
 
