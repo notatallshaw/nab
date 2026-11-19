@@ -66,13 +66,17 @@ def is_dev_version(version: str) -> bool:
         return False
 
 
-def is_release_version(version: str) -> bool:
-    """Return whether the version parses and is neither a dev nor a local version."""
+def normalized_release_version(version: str) -> str:
+    """Return a public release version in the form used by distribution filenames."""
     try:
         parsed = Version(version)
-    except InvalidVersion:
-        return False
-    return not parsed.is_devrelease and parsed.local is None
+    except InvalidVersion as exc:
+        msg = f"{version!r} is not a valid version"
+        raise SystemExit(msg) from exc
+    if parsed.is_devrelease or parsed.local is not None:
+        msg = f"{version!r} is not a public release version"
+        raise SystemExit(msg)
+    return str(parsed)
 
 
 def next_dev_version(release: str) -> str:
@@ -146,7 +150,7 @@ def check_release(tag: str) -> None:
     """Verify the working tree is a clean release matching ``tag``.
 
     The ``vX.Y.Z`` tag has to match every package version, that version must
-    not be a dev version, every cross-pin has to be exactly ``==X.Y.Z``, and
+    be a public release version, every cross-pin has to be exactly ``==X.Y.Z``, and
     every version literal has to hold it.
     """
     if not tag.startswith("v"):
@@ -157,9 +161,7 @@ def check_release(tag: str) -> None:
     if version != expected:
         msg = f"tag {tag!r} does not match package version {version!r}"
         raise SystemExit(msg)
-    if is_dev_version(version):
-        msg = f"refusing to release a dev version {version!r}"
-        raise SystemExit(msg)
+    normalized_release_version(version)
     wanted = cross_pin(version)
     for path in PYPROJECT_PATHS:
         document = tomlkit.parse(path.read_text(encoding="utf-8"))
@@ -190,9 +192,7 @@ def _plan(
     release: str, current: str, next_dev: str | None
 ) -> tuple[str, str, str, str]:
     """Validate inputs and return ``(release, dev, branch, tag)``."""
-    if not is_release_version(release):
-        msg = f"{release!r} is not a release version"
-        raise SystemExit(msg)
+    normalized_release_version(release)
     if not is_dev_version(current):
         msg = f"current version is {current!r}, expected a .dev version"
         raise SystemExit(msg)

@@ -104,12 +104,15 @@ def test_is_dev_version() -> None:
     assert not release.is_dev_version("not-a-version")
 
 
-def test_is_release_version() -> None:
-    assert release.is_release_version("0.0.3")
-    assert release.is_release_version("0.0.3rc1")
-    assert not release.is_release_version("0.0.3.dev0")
-    assert not release.is_release_version("0.0.3+local")
-    assert not release.is_release_version("not-a-version")
+def test_normalized_release_version() -> None:
+    assert release.normalized_release_version("0.0.3") == "0.0.3"
+    assert release.normalized_release_version("0.0.3-rc1") == "0.0.3rc1"
+
+
+@pytest.mark.parametrize("version", ["0.0.3.dev0", "0.0.3+local", "not-a-version"])
+def test_unpublishable_version_is_rejected(version: str) -> None:
+    with pytest.raises(SystemExit, match="version"):
+        release.normalized_release_version(version)
 
 
 def test_next_dev_version() -> None:
@@ -208,12 +211,13 @@ def test_check_release_rejects_tag_mismatch(
         release.check_release("v0.0.4")
 
 
-def test_check_release_rejects_dev(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("version", ["0.0.3.dev0", "0.0.3+local"])
+def test_check_release_rejects_unpublishable_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str
 ) -> None:
-    _use_tree(tmp_path, monkeypatch, "0.0.3.dev0", "0.0.3.dev0")
-    with pytest.raises(SystemExit, match="dev version"):
-        release.check_release("v0.0.3.dev0")
+    _use_tree(tmp_path, monkeypatch, version, version)
+    with pytest.raises(SystemExit, match="not a public release version"):
+        release.check_release(f"v{version}")
 
 
 def test_check_release_rejects_stale_pin(
@@ -251,7 +255,7 @@ def test_plan_respects_explicit_next_dev() -> None:
 
 
 def test_plan_rejects_non_release_version() -> None:
-    with pytest.raises(SystemExit, match="not a release version"):
+    with pytest.raises(SystemExit, match="not a public release version"):
         release._plan("0.0.3.dev0", "0.0.2.dev0", None)
 
 
