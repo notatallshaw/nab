@@ -340,7 +340,7 @@ def get_extra_dependencies(
     deferred = provider.deferred_url_extras.get(base_cache_key, {}).get(extra)
     if deferred:
         req, url = deferred[0]
-        refuse_url_dep(provider, req, url)
+        refuse_url_dep(provider, extra_key, req.name, url)
 
     extra_map = provider.extra_deps_map.get(base_cache_key, {})
     if extra not in extra_map:

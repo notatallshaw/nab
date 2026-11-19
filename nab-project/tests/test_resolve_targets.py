@@ -1478,14 +1478,14 @@ class TestBuildResolverInputs:
             )
 
     def test_admitted_vcs_url_raises_not_implemented(self) -> None:
-        """An admitted VCS requirement still has no resolver path."""
+        """An allowed Git URL in a root requirement gets a source declaration hint."""
         env = _linux_311().marker_env
         vcs = VcsConfig(
             policy=VcsPolicy.ALLOW,
             allowed_schemes=frozenset({"git+https"}),
             allowed_repos=("https://example.com/",),
         )
-        with pytest.raises(NotImplementedError, match="not implemented"):
+        with pytest.raises(NotImplementedError, match="to vcs-sources"):
             build_resolver_inputs(
                 _reqs(f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"),
                 vcs,

@@ -2869,7 +2869,7 @@ class TestResolvePyprojectVcs:
             'allowed-repos = ["https://github.com/"]\n',
         )
 
-        with pytest.raises(NotImplementedError, match="not implemented"):
+        with pytest.raises(NotImplementedError, match="to vcs-sources"):
             _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,

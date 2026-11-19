@@ -3936,7 +3936,7 @@ class TestTransitiveDirectUrlDep:
                 allowed_repos=("https://example.com/",),
             ),
         )
-        with pytest.raises(NotImplementedError, match="not implemented"):
+        with pytest.raises(NotImplementedError, match="foo declares a Git URL for bar"):
             provider.get_dependencies("foo", V("1.0"))
 
     def test_marker_gated_url_dep_not_applying_is_skipped(self) -> None:
@@ -4027,7 +4027,9 @@ class TestTransitiveDirectUrlDep:
             ),
         )
         provider.get_dependencies("foo", V("1.0"))
-        with pytest.raises(NotImplementedError, match="not implemented"):
+        with pytest.raises(
+            NotImplementedError, match=r"foo\[uvloop\] declares a Git URL for bar"
+        ):
             provider.get_dependencies("foo[uvloop]", V("1.0"))
 
     def test_root_requested_extra_url_dep_refused_eagerly(self) -> None:
