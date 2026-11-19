@@ -21,6 +21,8 @@ from nab import _run
 from nab.config.ladder import OPTIONS, SourceRoots
 from nab.output import reset_run
 
+from .lock_registry import Registry
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from contextlib import AbstractContextManager
@@ -93,6 +95,14 @@ def hermetic_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("NAB_RESOLUTION", raising=False)
 
     return project_dir
+
+
+@pytest.fixture
+def registry(hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch) -> Registry:
+    """Serve the project's wheel listings and metadata from memory."""
+    value = Registry(hermetic_roots)
+    monkeypatch.setattr("nab_project.resolve.FetchCoordinator", value.coordinator)
+    return value
 
 
 @contextmanager

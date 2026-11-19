@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-import json
-import os
-import subprocess
-import sys
-
-_PROBE = """
 import io
 import json
 import logging
+import os
+import subprocess
+import sys
+from pathlib import Path
 
-from nab_project._testing.yanking import graph_port
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import render_lock
 from nab_project.resolve import build_lock_input, resolve_with_coordinator
@@ -21,55 +18,57 @@ from nab_provider.policy import BuildPolicy, DecisionOrder
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix
 
-port = graph_port(
-    [
-        ("alpha", "1", True, ['bravo==1; extra == "x"', 'bravo==1; extra == "y"']),
-        ("bravo", "1", True, []),
-        ("zulu", "1", False, ["alpha==1"]),
-    ],
-    provided_extras={("alpha", "1", True): ("x", "y")},
-)
-stream = io.StringIO()
-logger = logging.getLogger("nab_project._resolve.engine")
-logger.addHandler(logging.StreamHandler(stream))
-logger.setLevel(logging.WARNING)
+from .yanked_releases import make_release_coordinator
 
-inputs = ResolveInputs(
-    build_policy=BuildPolicy.NEVER, decision_order=DecisionOrder.STABLE
-)
-targets = Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)).expand()
-result = resolve_with_coordinator(
-    port,
-    targets,
-    [Requirement(req) for req in ("alpha[x]==1", "alpha[y]", "zulu")],
-    inputs=inputs,
-)
 
-assert result.success, [str(target.error) for target in result.target_results]
-assert {
-    name: str(version) for name, version in result.target_results[0].pins.items()
-} == {
-    "alpha": "1",
-    "bravo": "1",
-    "zulu": "1",
-}
-
-print(
-    json.dumps(
-        {
-            "warnings": stream.getvalue(),
-            "lock": render_lock(build_lock_input(result, inputs=inputs)),
-        }
+def _resolve_with_yanked_releases() -> dict[str, str]:
+    coordinator = make_release_coordinator(
+        [
+            ("alpha", "1", True, ['bravo==1; extra == "x"', 'bravo==1; extra == "y"']),
+            ("bravo", "1", True, []),
+            ("zulu", "1", False, ["alpha==1"]),
+        ],
+        provided_extras={("alpha", "1", True): ("x", "y")},
     )
-)
-"""
+    stream = io.StringIO()
+    logger = logging.getLogger("nab_project._resolve.engine")
+    logger.addHandler(logging.StreamHandler(stream))
+    logger.setLevel(logging.WARNING)
+
+    inputs = ResolveInputs(
+        build_policy=BuildPolicy.NEVER, decision_order=DecisionOrder.STABLE
+    )
+    targets = Matrix(
+        python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+    ).expand()
+    result = resolve_with_coordinator(
+        coordinator,
+        targets,
+        [Requirement(req) for req in ("alpha[x]==1", "alpha[y]", "zulu")],
+        inputs=inputs,
+    )
+
+    assert result.success, [str(target.error) for target in result.target_results]
+    assert {
+        name: str(version) for name, version in result.target_results[0].pins.items()
+    } == {
+        "alpha": "1",
+        "bravo": "1",
+        "zulu": "1",
+    }
+
+    return {
+        "warnings": stream.getvalue(),
+        "lock": render_lock(build_lock_input(result, inputs=inputs)),
+    }
 
 
 def test_sibling_extra_yank_warnings_ignore_hash_seed() -> None:
     outputs = []
     for seed in (0, 1):
-        result = subprocess.run(  # noqa: S603 - fixed interpreter and inline probe
-            [sys.executable, "-B", "-c", _PROBE],
+        result = subprocess.run(
+            [sys.executable, "-B", "-m", "tests.test_yank_warning_determinism"],
+            cwd=Path(__file__).resolve().parents[1],
             env=dict(
                 os.environ,
                 PYTHONHASHSEED=str(seed),
@@ -97,3 +96,7 @@ def test_sibling_extra_yank_warnings_ignore_hash_seed() -> None:
     }
     assert len(warnings) == 2
     assert warnings[1] in grounded_bravo_warnings
+
+
+if __name__ == "__main__":
+    json.dump(_resolve_with_yanked_releases(), sys.stdout)

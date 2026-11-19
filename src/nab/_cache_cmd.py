@@ -5,9 +5,8 @@
 by path and reason, exiting 1 when it found any. ``clear`` removes every
 bucket nab owns, including the cloned and extracted source trees.
 
-``verify`` and ``clear`` descend only into the buckets nab owns, never
-follow a symlink out of the root, and refuse a root that holds foreign
-files.
+A populated root must contain a recognized cache bucket. Both commands leave
+unrelated entries in that root alone.
 """
 
 from __future__ import annotations
@@ -23,6 +22,7 @@ __lazy_modules__ = (
 
 import sys
 from pathlib import Path
+from stat import S_ISDIR
 from typing import get_args
 
 from nab_index.cache import OnDiskCache, is_recognized_bucket
@@ -89,7 +89,15 @@ def _verify(root: Path) -> None:
     _refuse_foreign_root(root)
     cache = OnDiskCache(root, "")
     corrupt = 0
-    for entry in cache.iter_cache_entries():
+
+    def unreadable_directory(error: OSError) -> None:
+        nonlocal corrupt
+        printer().data(
+            f"{error.filename or root}: unreadable: {error.strerror or error}\n"
+        )
+        corrupt += 1
+
+    for entry in cache.iter_cache_entries(on_error=unreadable_directory):
         reason = cache.read_cache_entry(entry)
         if reason is not None:
             printer().data(f"{entry}: {reason}\n")
@@ -102,8 +110,23 @@ def _verify(root: Path) -> None:
 def _clear(root: Path) -> None:
     _refuse_foreign_root(root)
     cache = OnDiskCache(root, "")
-    removed = cache.clear_cache()
+    try:
+        removed = cache.clear_cache()
+    except OSError as exc:
+        printer().error(
+            f"cannot clear cache: {exc.filename or root}: {exc.strerror or exc}"
+        )
+        raise SystemExit(1) from None
     printer().done(f"Cleared {root} ({len(removed)} buckets)")
+
+
+def _is_cache_bucket(path: Path) -> bool:
+    if not is_recognized_bucket(path.name):
+        return False
+    try:
+        return S_ISDIR(path.stat().st_mode)
+    except FileNotFoundError:
+        return False
 
 
 def _refuse_foreign_root(root: Path) -> None:
@@ -113,13 +136,18 @@ def _refuse_foreign_root(root: Path) -> None:
     cache, so a maintenance verb refuses it. A recognized name on a plain
     file does not make the root a cache. A missing or empty root passes.
     """
-    if root.exists() and not root.is_dir():
-        printer().error(f"{root} is not a directory")
-        sys.exit(1)
-    if root.is_dir():
+    try:
         children = list(root.iterdir())
-        if children and not any(
-            is_recognized_bucket(c.name) and c.is_dir() for c in children
-        ):
-            printer().error(f"{root} does not look like a nab cache directory")
-            sys.exit(1)
+        if not children or any(_is_cache_bucket(child) for child in children):
+            return
+    except FileNotFoundError:
+        return
+    except NotADirectoryError:
+        printer().error(f"{root} is not a directory")
+        raise SystemExit(1) from None
+    except OSError as exc:
+        printer().error(f"cannot inspect cache {root}: {exc.strerror or exc}")
+        raise SystemExit(1) from None
+
+    printer().error(f"{root} does not look like a nab cache directory")
+    sys.exit(1)

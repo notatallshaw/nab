@@ -65,7 +65,6 @@ from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.transport import HttpError, IdleClosableTransport
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_markersets._compat import get_int_max_str_digits
-from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.download import DownloadError, DownloadResult
 from nab_project.fetch import DEFAULT_MAX_CONCURRENCY, FetchCoordinator
 from nab_project.lockfile import (
@@ -104,8 +103,9 @@ from nab_provider.records import WheelFile
 from nab_provider.requirements_file import InvalidProjectRequirementError
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import IntractableMarkerError, ResolveTarget, host_environment
-from nab_provider.testing import make_metadata, make_wheel
+from nab_provider.testing import FakeFetchPort, make_metadata, make_wheel
 from nab_resolver.errors import ResolutionError
+from nab_test_support.coordinator import make_coordinator
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
@@ -6269,6 +6269,26 @@ class TestGroupAndExtraSelection:
             )
         assert "not found" in capsys.readouterr().err
 
+    @pytest.mark.parametrize("command", ["lock", "download"])
+    def test_all_extras_refuses_a_backend_defined_table(
+        self,
+        hermetic_roots: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        command: str,
+    ) -> None:
+        monkeypatch.chdir(hermetic_roots)
+        project = hermetic_roots / "pyproject.toml"
+        project.write_text(
+            '[project]\nname="demo"\nversion="1"\ndynamic=["optional-dependencies"]\n',
+            encoding="utf-8",
+        )
+        assert run((command, str(project), "--all-extras", "--offline")) == 1
+        assert (
+            "[project.optional-dependencies] is declared dynamic"
+            in capsys.readouterr().err
+        )
+
     def test_all_extras_missing_file_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -7327,6 +7347,55 @@ class TestClosedStandardStreams:
     process outright, so every test here patches it.
     """
 
+    def test_lost_diagnostics_only_affect_the_current_call(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(sys, "stderr", None)
+        with pytest.raises(SystemExit) as error:
+            main(["unknown-command"])
+        assert error.value.code == 120
+        assert sys.stderr is None
+
+        main(["--version"])
+        assert capsys.readouterr().out == f"nab {nab_version.__version__}\n"
+        assert sys.stderr is None
+
+    @pytest.mark.parametrize("detached", [False, True], ids=["closed", "detached"])
+    def test_run_with_an_unavailable_stdout_returns_write_failure(
+        self, monkeypatch: pytest.MonkeyPatch, *, detached: bool
+    ) -> None:
+        stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        if detached:
+            stream.detach().close()
+        else:
+            stream.close()
+        monkeypatch.setattr(sys, "stdout", stream)
+        assert run(("--help",)) == 120
+        assert sys.stdout is stream
+
+    def test_empty_write_to_missing_stderr_keeps_success(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "stderr", None)
+
+        def empty_write() -> None:
+            sys.stderr.write("")
+
+        assert run(("cache", "dir", "--cache-dir", str(tmp_path)), empty_write) == 0
+        assert sys.stderr is None
+
+    def test_redirected_stderr_is_restored_after_an_exception(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "stderr", None)
+
+        def interrupted() -> None:
+            raise RuntimeError("callback failed")
+
+        with pytest.raises(RuntimeError, match="callback failed"):
+            run(("cache", "dir", "--cache-dir", str(tmp_path)), interrupted)
+        assert sys.stderr is None
+
     def test_closed_stdout_exits_120(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``--version`` with no stdout exits 120 instead of crashing."""
         monkeypatch.setattr(sys, "argv", ["nab", "--version"])
@@ -7420,6 +7489,19 @@ class TestClosedStandardStreams:
 class TestSystemExitStatus:
     """Tests for mapping a ``SystemExit`` code to a process status."""
 
+    def test_text_exit_without_stderr_reports_lost_output(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "stderr", None)
+        assert _system_exit_status("boom") == 120
+
+    def test_text_exit_with_unencodable_stderr_reports_lost_output(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stream = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
+        monkeypatch.setattr(sys, "stderr", stream)
+        assert _system_exit_status("café") == 120
+
     def test_bare_exit_is_zero(self) -> None:
         """``sys.exit()`` raises ``SystemExit(None)``, which means success."""
         assert _system_exit_status(None) == 0
@@ -7472,17 +7554,24 @@ class TestMainWiresOutputOptions:
         stderr = _TtyStderr()
         monkeypatch.setattr(sys, "stderr", stderr)
 
+        printers: list[Printer] = []
+
+        def resolve(*_args: object, **_kwargs: object) -> ResolveResult:
+            printers.append(nab_output.printer())
+            logger = logging.getLogger("nab_project")
+            logger.debug("engine debug")
+            logger.info("engine detail")
+            logger.warning("engine note")
+            return _stub_resolve_result(pins={})
+
         with (
-            patch(
-                "nab._resolve.resolve_for_targets",
-                return_value=_stub_resolve_result(pins={}),
-            ),
+            patch("nab._resolve.resolve_for_targets", side_effect=resolve),
             patch("nab._lock.write_lock"),
         ):
             main()
 
-        assert nab_output._printer is not None
-        return nab_output._printer, stderr
+        (printer,) = printers
+        return printer, stderr
 
     def test_default_run_reports_the_written_lockfile(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -7505,9 +7594,6 @@ class TestMainWiresOutputOptions:
     ) -> None:
         """Without ``-v`` an engine INFO record is dropped and a WARNING shows."""
         _printer, stderr = self._run_lock(tmp_path, monkeypatch)
-        logger = logging.getLogger("nab_project")
-        logger.info("engine detail")
-        logger.warning("engine note")
         assert "engine detail" not in stderr.getvalue()
         assert "warning: engine note" in stderr.getvalue()
 
@@ -7515,9 +7601,9 @@ class TestMainWiresOutputOptions:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``-vv`` reaches both the log handler and printer."""
-        printer, _stderr = self._run_lock(tmp_path, monkeypatch, "-vv")
+        printer, stderr = self._run_lock(tmp_path, monkeypatch, "-vv")
         assert printer.verbosity is Verbosity.DEBUG
-        assert logging.getLogger("nab_project").getEffectiveLevel() == logging.DEBUG
+        assert "engine debug" in stderr.getvalue()
 
     def test_color_always_paints_the_run_summary(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -7532,7 +7618,6 @@ class TestMainWiresOutputOptions:
     ) -> None:
         """The handler is installed with the printer's colour decision."""
         _printer, stderr = self._run_lock(tmp_path, monkeypatch, "--color", "always")
-        logging.getLogger("nab_project").warning("engine note")
         assert f"{YELLOW}warning:{RESET} engine note" in stderr.getvalue()
 
     def test_log_records_stay_plain_with_color_off(
@@ -7540,7 +7625,6 @@ class TestMainWiresOutputOptions:
     ) -> None:
         """With colour off the handler emits a plain ``warning:`` token."""
         _printer, stderr = self._run_lock(tmp_path, monkeypatch)
-        logging.getLogger("nab_project").warning("engine note")
         assert "warning: engine note" in stderr.getvalue()
         assert "\033[" not in stderr.getvalue()
 
@@ -7577,9 +7661,9 @@ class TestMainWiresOutputOptions:
     ) -> None:
         """``NAB_VERBOSITY`` applies, so ``main`` reads the real environment."""
         monkeypatch.setenv("NAB_VERBOSITY", "debug")
-        printer, _stderr = self._run_lock(tmp_path, monkeypatch)
+        printer, stderr = self._run_lock(tmp_path, monkeypatch)
         assert printer.verbosity is Verbosity.DEBUG
-        assert logging.getLogger("nab_project").getEffectiveLevel() == logging.DEBUG
+        assert "engine debug" in stderr.getvalue()
 
     def test_env_no_progress_blocks_progress(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -7825,25 +7909,27 @@ class TestMakeTransport:
         assert f"{backend} is not installed" in capsys.readouterr().err
 
     @pytest.mark.parametrize("backend", ["httpx", "httpx2"])
-    def test_optional_backend_missing_exits_with_hint(
+    def test_optional_transport_import_failure_names_the_cause(
         self,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
         backend: str,
     ) -> None:
-        """A missing optional backend exits with an installation hint."""
+        """A broken adapter reports the original import error."""
         original_import = builtins.__import__
 
         def fake_import(name: str, *args: object, **kwargs: object) -> object:
             if name == f"nab_index.{backend}_async_transport":
-                raise ImportError(name)
+                raise ImportError("incompatible dependency")
             return original_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
         with pytest.raises(SystemExit) as info:
             _make_transport(backend)
         assert info.value.code == 1
-        assert f"nab[{backend}]" in capsys.readouterr().err
+        assert f"cannot initialize {backend} transport: incompatible dependency" in (
+            capsys.readouterr().err
+        )
 
     @pytest.mark.parametrize("backend", ["httpx", "httpx2"])
     def test_optional_backend_without_h2_exits_with_hint(
@@ -8083,14 +8169,8 @@ class TestResolveTransport:
         pyproject = _make_pyproject(
             tmp_path, '[project]\nname = "root"\nversion = "0"\ndependencies = []\n'
         )
-        original_import = builtins.__import__
+        monkeypatch.setitem(sys.modules, "httpx", None)
 
-        def fake_import(name: str, *args: object, **kwargs: object) -> object:
-            if name == "nab_index.httpx_async_transport":
-                raise ImportError(name)
-            return original_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", fake_import)
         with pytest.raises(SystemExit) as info:
             lock(
                 pyproject,

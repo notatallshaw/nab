@@ -21,7 +21,7 @@ __lazy_modules__ = (
     "nab_index.transport",
     "nab_project._build_remote",
     "nab_project._sources",
-    "nab_project._toml",
+    "nab_project.toml_io",
     "nab_provider._vendor.packaging.utils",
     "nab_provider.fetch_port",
     "nab_provider.metadata",
@@ -85,7 +85,7 @@ from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 from . import _fetch_requests as fetch_requests
 from ._build_remote import build_remote_sdist
 from ._sources import materialize_source
-from ._toml import parse_pyproject_table
+from .toml_io import loads_if_valid
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -1390,19 +1390,10 @@ class FetchCoordinator:
         client: CachedAsyncSimpleClient | LocalIndexClient | MultiIndexClient,
         package: str,
     ) -> None:
-        """Record which configured index served ``package``'s listing.
+        """Record the listing's index and whether a package rule selected it.
 
-        Single-client configurations always serve from the lone
-        configured index.  Multi-client configurations consult the
-        router's per-package route cache; an empty cache (e.g. an
-        index returned no listing on every walk) falls back to the
-        first configured index name so consumers always see
-        something.
-
-        The router also says whether a routing override chose that index,
-        which the name alone cannot: an empty walk records the first
-        configured index too.  A route over a lone index holds no other
-        index back, so it is not recorded as a pin.
+        If no index served the package, attribute its empty listing to the
+        first configured index. A rule over a lone index excludes no alternatives.
         """
         if isinstance(client, MultiIndexClient):
             routed = client.route_for(package)
@@ -1473,7 +1464,7 @@ class FetchCoordinator:
         # pending event, and a released waiter reads the pyproject slot
         # with no further synchronisation.
         if pyproject is not None:
-            table = parse_pyproject_table(pyproject)
+            table = loads_if_valid(pyproject)
             self.index.store_sdist_pyproject(req.package, source_key, table)
             self._release_archive_if_metadata_is_static(req.package, source_key, table)
         self.index.store_sdist_metadata(req.package, source_key, pkg_info)

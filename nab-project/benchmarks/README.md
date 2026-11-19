@@ -153,9 +153,12 @@ unused. The comparison tool shows the difference when both runs recorded it.
 
 ## Scenario shape
 
-Each single-environment scenario is a top-level TOML table keyed by name. It requires `requirements`
-and a fixed `datetime`, used as the `uploaded-prior-to` cutoff. Optional settings include
-constraints, marker overlays, distribution policy, and build policy.
+A runnable single-environment scenario declares its `python_version` and `requirements` in a named
+TOML table. Set `datetime` to fix the upload cutoff. Optional settings include `constraints`,
+`marker_environment`, `indexes` and `build_packages`.
+
+To skip a scenario, set `unsupported_reason` to a string explaining why it cannot run. Omit the
+field to run the scenario.
 
 Use an explicit UTC cutoff when comparing a scenario with pip. For example, the Nab benchmark reads
 `datetime = "2025-06-06 12:35:16"` as UTC. Run pip with `--uploaded-prior-to 2025-06-06T12:35:16Z`

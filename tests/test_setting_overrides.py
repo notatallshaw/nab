@@ -27,7 +27,7 @@ from nab_project.input_source import InputFormat
 from nab_project.toml_writer import dumps_value
 from nab_provider.errors import ConfigError
 
-from .test_prefer_existing_cli import Registry
+from .lock_registry import Registry
 
 _STRUCTURED = (
     ("plans", '{dev={groups=["test"]}}'),
@@ -193,11 +193,7 @@ def test_whole_value_replaces_file_table_and_explain_reports_winner(
     assert "merged" not in output
 
 
-def test_metadata_assignment_reaches_resolution_and_replay(
-    hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    registry = Registry(hermetic_roots)
-    monkeypatch.setattr("nab_project.resolve.FetchCoordinator", registry.coordinator)
+def test_metadata_assignment_reaches_resolution_and_replay(registry: Registry) -> None:
     argument = "project.packages={a={dependencies=[]}}"
 
     assert registry.command("--setting", argument) == 0
@@ -219,20 +215,15 @@ def test_metadata_assignment_reaches_resolution_and_replay(
     assert registry.versions() == {"a": "1"}
 
 
-def test_user_assignment_selects_reuse_without_transport(
-    hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    registry = Registry(hermetic_roots)
-    monkeypatch.setattr("nab_project.resolve.FetchCoordinator", registry.coordinator)
-
+def test_user_assignment_selects_reuse_without_transport(registry: Registry) -> None:
     assert registry.command() == 0
 
     registry.add_release()
-    ports_before = len(registry.ports)
+    coordinators_before = len(registry.coordinators)
 
     assert registry.command("--setting", 'user.lock-policy="reuse"') == 0
     assert registry.versions() == {"a": "1", "b": "1"}
-    assert len(registry.ports) == ports_before
+    assert len(registry.coordinators) == coordinators_before
 
 
 @pytest.mark.parametrize(
@@ -271,13 +262,11 @@ def test_every_user_setting_reaches_the_run_controls(spec: Opt, tmp_path: Path) 
 @pytest.mark.parametrize("source", ["file", "environment"])
 @pytest.mark.parametrize("select_all", [False, True])
 def test_configured_group_and_extra_selection_changes_the_lock(
-    hermetic_roots: Path,
+    registry: Registry,
     monkeypatch: pytest.MonkeyPatch,
     source: str,
     select_all: bool,
 ) -> None:
-    registry = Registry(hermetic_roots)
-    monkeypatch.setattr("nab_project.resolve.FetchCoordinator", registry.coordinator)
     registry.declarations.update({"c": {"1": ()}, "d": {"1": ()}})
     with registry.project.open("a") as f:
         f.write(
@@ -307,18 +296,16 @@ def test_configured_group_and_extra_selection_changes_the_lock(
 
 
 def test_configured_output_format_changes_the_written_artifact(
-    hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch
+    registry: Registry,
 ) -> None:
-    registry = Registry(hermetic_roots)
-    monkeypatch.setattr("nab_project.resolve.FetchCoordinator", registry.coordinator)
-    registry.output = hermetic_roots / "requirements-{platform_id}.txt"
+    registry.output = registry.project.with_name("requirements-{platform_id}.txt")
     registry.project.with_name("nab.toml").write_text(
         'format="requirements-without-hashes"\n'
     )
 
     assert registry.command() == 0
 
-    outputs = list(hermetic_roots.glob("requirements-*.txt"))
+    outputs = list(registry.project.parent.glob("requirements-*.txt"))
 
     assert len(outputs) == 2
 
@@ -372,12 +359,9 @@ def test_replayed_user_flags_preserve_explicit_false_and_whole_selections() -> N
 
 
 def test_assignment_provenance_and_notice_omit_url_credentials(
-    hermetic_roots: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    registry: Registry,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    registry = Registry(hermetic_roots)
-    monkeypatch.setattr("nab_project.resolve.FetchCoordinator", registry.coordinator)
     argument = 'project.indexes=[{name="pypi",url="https://example-user:example-password@current.example/simple/"}]'
 
     assert registry.command("--setting", argument) == 0
@@ -396,14 +380,12 @@ def test_invalid_toggle_values_are_not_rendered_as_commands() -> None:
 
 @pytest.mark.parametrize("value", ['"unknown"', "17"])
 def test_invalid_configured_format_stops_before_resolution(
-    hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch, value: str
+    registry: Registry, value: str
 ) -> None:
-    registry = Registry(hermetic_roots)
-    monkeypatch.setattr("nab_project.resolve.FetchCoordinator", registry.coordinator)
     registry.project.with_name("nab.toml").write_text(f"format={value}\n")
 
     assert registry.command() == 1
-    assert not registry.ports
+    assert not registry.coordinators
 
 
 def test_invalid_assignment_url_is_not_echoed_into_the_notice(

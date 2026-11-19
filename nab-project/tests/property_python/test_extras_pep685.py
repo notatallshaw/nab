@@ -19,7 +19,6 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from nab_index.client import WheelFile
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import (
     ExtrasMode,
@@ -29,6 +28,7 @@ from nab_provider.provider import (
     split_extra,
 )
 from nab_provider.target import ResolveTarget
+from nab_test_support.coordinator import make_coordinator
 
 from .strategies import PROPERTY_SETTINGS
 

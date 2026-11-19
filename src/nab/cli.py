@@ -6,10 +6,9 @@ exit status. The page, refusal, and a command's parting message leave
 through :func:`run`'s one write per stream, so output that cannot be
 written becomes a status rather than a traceback.
 
-Nothing on this path imports a command module, ``pathlib`` or ``typing``.
-The four modules :func:`_load` reaches are loaded only by the line that
-needs them, and the command module itself is
-:mod:`nab._cli.dispatch`'s to import.
+With open standard streams, ``--version`` imports no command module,
+``pathlib`` or ``typing``. Help, diagnostics and dispatch load their own modules
+when the command line needs them.
 """
 
 from __future__ import annotations
@@ -82,11 +81,26 @@ def run(argv: tuple[str, ...], resume: Callable[[], None] = _nothing) -> int:
     """Run one command line and report the status it ends with.
 
     Write the returned stdout and stderr payloads once each. A failed
-    payload write returns status 120 instead of raising.
+    payload write returns status 120. If a standard stream is unavailable,
+    only a command that writes to it loses output.
 
     ``resume`` runs when the line reaches a command module, and not at
     all on a page or a refusal.
     """
+    missing_stdout = _unavailable(sys.stdout)
+    missing_stderr = _unavailable(sys.stderr)
+    if missing_stdout or missing_stderr:
+        # Keep redirection and its imports off the ordinary startup path.
+        from ._cli.closed_streams import redirect_unavailable  # noqa: PLC0415
+
+        with redirect_unavailable(stdout=missing_stdout, stderr=missing_stderr) as sink:
+            status = _run_command(argv, resume)
+            return _FLUSH_FAILED_EXIT_CODE if sink.written else status
+    return _run_command(argv, resume)
+
+
+def _run_command(argv: tuple[str, ...], resume: Callable[[], None]) -> int:
+    """Dispatch the command and write its final output to the current streams."""
     status, out, err = _outcome(argv, resume)
 
     try:
@@ -94,7 +108,7 @@ def run(argv: tuple[str, ...], resume: Callable[[], None] = _nothing) -> int:
             sys.stdout.write(out)
         if err:
             sys.stderr.write(err)
-    except OSError:
+    except (OSError, ValueError):
         return _FLUSH_FAILED_EXIT_CODE
 
     return status
@@ -177,11 +191,7 @@ def main(argv: list[str] | None = None, resume: Callable[[], None] = _nothing) -
     ``resume`` runs when the line reaches a command module, and not at
     all on a page or a refusal.
     """
-    _replace_closed_std_streams()
-
     status = run(tuple(sys.argv[1:] if argv is None else argv), resume)
-    if _output_was_dropped():
-        status = _FLUSH_FAILED_EXIT_CODE
 
     if status:
         raise SystemExit(status)
@@ -197,60 +207,36 @@ def _system_exit_status(code: object) -> int:
         return 0
     if isinstance(code, int):
         return code
-    sys.stderr.write(f"{code}\n")
+    if _unavailable(sys.stderr):
+        return _FLUSH_FAILED_EXIT_CODE
+    try:
+        sys.stderr.write(f"{code}\n")
+    except (OSError, ValueError):
+        return _FLUSH_FAILED_EXIT_CODE
     return 1
 
 
-class _ClosedStream(io.StringIO):
-    """Stands in for a standard stream CPython left unset.
-
-    ``sys.stdout`` and ``sys.stderr`` are ``None`` when their descriptor was
-    closed before the process started. Text written here reaches no
-    descriptor; the subclass exists so a buffer nab installed can be told
-    apart from one a caller redirected the stream to.
-    """
-
-    __slots__ = ()
-
-
-def _replace_closed_std_streams() -> None:
-    """Give each standard stream CPython left unset something to write to."""
-    if sys.stdout is None:
-        sys.stdout = _ClosedStream()
-    if sys.stderr is None:
-        sys.stderr = _ClosedStream()
-
-
-def _output_was_dropped() -> bool:
-    """Report whether the run wrote to a stream that could not take it.
-
-    A write advances the buffer's position, so a stream still at zero took
-    nothing and lost nothing.
-    """
-    return any(
-        isinstance(stream, _ClosedStream) and stream.tell() > 0
-        for stream in (sys.stdout, sys.stderr)
-    )
+def _unavailable(stream: object) -> bool:
+    """Recognize missing, closed and detached standard streams."""
+    if isinstance(stream, io.IOBase):
+        try:
+            return stream.closed
+        except ValueError:
+            # TextIOWrapper cannot query a buffer its caller detached.
+            return True
+    return stream is None
 
 
 def _flush_std_streams() -> bool:
-    """Flush stdout and stderr, reporting whether both landed.
-
-    stderr is flushed even when stdout fails, so a command that could not
-    write its result still gets its error out.
-    """
+    """Flush both available streams even if the first flush fails."""
     flushed = True
-
-    try:
-        sys.stdout.flush()
-    except OSError:
-        flushed = False
-
-    try:
-        sys.stderr.flush()
-    except OSError:
-        flushed = False
-
+    for stream in (sys.stdout, sys.stderr):
+        if _unavailable(stream):
+            continue
+        try:
+            stream.flush()
+        except (OSError, ValueError):
+            flushed = False
     return flushed
 
 

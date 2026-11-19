@@ -43,6 +43,7 @@ from nab_index.cached_client import CachedAsyncSimpleClient, ParsedCacheStats
 from nab_index.client import SdistFile, WheelFile, _parse_files
 from nab_index.parsed_listing import corruption_reason, decode, encode
 from nab_index.urllib3_async_transport import _Urllib3Response
+from nab_provider.errors import IndexAccessError
 
 # Derived so a bucket-version bump does not need every path updated.
 _SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
@@ -606,10 +607,10 @@ class TestWritePathParsedBlob:
         assert cache.get_simple_parsed("pkg") == old_blob
         assert _decoded(old_blob, policy) == files
 
-    def test_revalidate_304_from_a_new_page_retires_the_blob(
+    def test_revalidate_304_from_a_new_page_rebuilds_the_blob(
         self, tmp_path: Path
     ) -> None:
-        """A moved page re-resolves relative entries, so the old blob is retired."""
+        """Relative entries in the refetched page use its new location."""
         cache = _cache(tmp_path)
         listing = dict(_LISTING)
         listing["files"] = [dict(row, url=row["filename"]) for row in _LISTING["files"]]
@@ -633,7 +634,12 @@ class TestWritePathParsedBlob:
                     status=304,
                     headers={"etag": "e1", "cache-control": "max-age=600"},
                     url=moved,
-                )
+                ),
+                _FakeResponse(
+                    body,
+                    headers={"etag": "e1", "cache-control": "max-age=600"},
+                    url=moved,
+                ),
             ]
         )
         client = CachedAsyncSimpleClient(transport, cache, _INDEX)
@@ -646,13 +652,13 @@ class TestWritePathParsedBlob:
         assert new_body == body
         assert policy.page_url == moved
         assert policy.body_digest == digest
-        # The blob is still on disk but no longer binds, so the next read
-        # rebuilds it against the new page rather than serving stale URLs.
-        assert cache.get_simple_parsed("pkg") == old_blob
         assert decode(old_blob, policy) is None
+        new_blob = cache.get_simple_parsed("pkg")
+        assert new_blob is not None
+        assert _decoded(new_blob, policy) == first
         second = _run(client.get_files("pkg"))
         assert all(record.url.startswith(moved) for record in [*first, *second])
-        assert len(transport.calls) == 1
+        assert len(transport.calls) == 2
 
 
 _SURROGATE_REQUIRES_PYTHON = ">=3.8\ud800"
@@ -1026,6 +1032,25 @@ class TestReadPathCorruptBody:
 
 
 class TestReadPathOffline:
+    def test_old_rows_cannot_hide_an_incompatible_json_page(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _cache(tmp_path)
+        body = json.dumps({**_LISTING, "meta": {"api-version": "2.0"}}).encode()
+        digest = cache.put_simple("pkg", body, _FRESH)
+        files = _parse_files(_LISTING, _INDEX_NORM, "pkg")
+
+        # Format 9 stored rows before Nab checked the page's API version.
+        header, rows = json.loads(encode(files, digest))
+        header[0] = 9
+        cache.put_simple_parsed("pkg", json.dumps([header, rows]).encode())
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX, offline=True)
+
+        with pytest.raises(IndexAccessError, match="requires Simple API version 2.0"):
+            _run(client.get_files("pkg"))
+        assert not transport.calls
+
     def test_offline_parsed_hit_without_body_or_network(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         files, _ = _warm_bound(cache, fresh=False)

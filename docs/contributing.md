@@ -2,6 +2,26 @@
 
 Working on nab itself, rather than installing it as a tool, starts from the workspace check-out.
 
+## Pull request titles
+
+Use `type(package): summary` for a change to a shipped package. Use `fix`, `feat`, `perf`, or
+`refactor` to describe the change. Use `build(package)` for changes to a distribution's dependencies
+or contents. Name each affected distribution once, in alphabetical order, separated by commas.
+
+For tests, documentation, CI, benchmarks, or repository tooling alone, use `test:`, `docs:`, `ci:`,
+`bench:`, `build:`, or `chore:`. Choose the prefix from the PR's own diff. A fix with regression
+tests still uses `fix(package)`.
+
+```text
+fix(nab-index): retry an empty package listing
+fix(nab,nab-project): resolve workspace paths beside the project
+test: cover nested dependency groups
+docs: explain workspace discovery
+```
+
+Write a short imperative summary. Use the same convention for new commit subjects when it fits the
+individual commit.
+
 ## Development install
 
 nab uses [hatch] as its environment manager. Install it, then clone the repository and let it do the
@@ -57,8 +77,10 @@ shared through `tests/ruff.toml`.
 
 Reuse `nab_provider.testing.make_wheel`, `make_sdist` and `make_metadata` for ordinary record and
 metadata setup. They construct real objects; targets, policies and the dependency scenario belong at
-the caller. Project lock tests can use the artifact factories in `nab_project._testing.artifacts`.
-Keep deliberately malformed records and archive layouts explicit.
+the caller. Project lock tests can use the artifact factories in
+`nab-project/tests/lock_artifacts.py`. For project and CLI tests that read local wheels or build
+source distributions, use `nab_test_support.coordinator.make_coordinator`. Keep deliberately
+malformed records and archive layouts explicit.
 
 For example, a sidecar-backed listing can be set up with:
 

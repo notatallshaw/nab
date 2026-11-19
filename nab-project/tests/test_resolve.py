@@ -24,8 +24,6 @@ from nab_project._resolve.engine import (
     _ResolveObserver,
     _walk_no_versions_packages,
 )
-from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
-from nab_project._testing.yanking import graph_port
 from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
@@ -82,7 +80,7 @@ from nab_provider.requirements_file import (
 )
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
-from nab_provider.testing import make_metadata, make_wheel
+from nab_provider.testing import FakeFetchPort, make_metadata, make_wheel
 from nab_provider.vcs_admission import VcsPolicy
 from nab_resolver.errors import (
     ResolutionError,
@@ -94,6 +92,9 @@ from nab_resolver.errors import (
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
+from nab_test_support.coordinator import make_coordinator
+
+from .yanked_releases import make_release_coordinator
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -280,7 +281,7 @@ def _malformed_group_pyproject(tmp_path: Path) -> Path:
 @pytest.fixture
 def python_marker_fetch_port() -> FakeFetchPort:
     """Serve leaf dependencies on both sides of the Python 3.12 boundary."""
-    return graph_port(
+    return make_release_coordinator(
         (
             (
                 "foo",
@@ -1059,7 +1060,7 @@ class TestResolvePyproject:
             '[project]\ndependencies = ["foo===custom", "bar>=1.0"]\n',
         )
 
-        coordinator = graph_port(
+        coordinator = make_release_coordinator(
             (
                 ("foo", "1.0", False, ()),
                 ("bar", "1.0", False, ()),
@@ -1118,7 +1119,7 @@ class TestResolvePyproject:
             '[tool.nab]\nconstraints = ["bar<2.0", "skip===custom"]\n',
         )
 
-        coordinator = graph_port(
+        coordinator = make_release_coordinator(
             (
                 ("foo", "2.0", False, ("bar>=1.0",)),
                 ("bar", "1.0", False, ()),
@@ -1165,7 +1166,7 @@ class TestResolvePyproject:
             '[project]\ndependencies = ["requests[security]>=2.0"]\n',
         )
 
-        coordinator = graph_port(
+        coordinator = make_release_coordinator(
             (
                 (
                     "requests",
@@ -1427,7 +1428,7 @@ class TestResolvePyproject:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text('[project]\ndependencies = ["foo"]\n')
 
-        coordinator = graph_port(
+        coordinator = make_release_coordinator(
             (
                 ("foo", "2.0", False, ("urllib3>=1.0",)),
                 ("urllib3", "1.0", False, ()),
@@ -2560,9 +2561,10 @@ class TestResolveUniversalPyproject:
 
         expected_pins = {
             "3.10.0": {"base": V("1.0"), "foo": V("1.0")},
+            "3.10.4.dev0": {"base": V("1.0")},
             "3.10.4": {"base": V("1.0"), "foo": V("2.0")},
         }
-        assert len(result.target_results) == 2
+        assert len(result.target_results) == 3
         assert {
             tr.target.marker_env["python_full_version"]: tr.pins
             for tr in result.target_results
@@ -2869,7 +2871,7 @@ class TestResolvePyprojectVcs:
             'allowed-repos = ["https://github.com/"]\n',
         )
 
-        with pytest.raises(NotImplementedError, match="not implemented"):
+        with pytest.raises(NotImplementedError, match="to vcs-sources"):
             _resolved(
                 pyproject,
                 _FAKE_TRANSPORT,
@@ -3416,26 +3418,21 @@ class TestBuildResolverInputs:
         )
         assert "try: use pkg[extra] to select an extra" in record.message
 
-    def test_warning_cause_holds_when_the_extra_was_selected(
+    def test_selected_project_extra_does_not_bind_markers_on_base_requirements(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """The cause it gives is true on a run that did select the extra.
-
-        ``--extras fast`` folds the extra's entries into the requirement list
-        and leaves the marker environment alone, so blaming an inactive extra
-        would send the user after a flag they already passed.
-        """
         selected = expand_extra_requirements(
-            {"fast": ['foo<2.0 ; extra == "fast"']}, "proj", ["fast"]
+            {"fast": ["bar"]}, "proj", ["fast"], bind_extra_markers=True
         )
         with caplog.at_level("WARNING", logger="nab_provider.resolver_inputs"):
-            build_resolver_inputs(
-                selected,
+            result = build_resolver_inputs(
+                [Requirement('foo<2.0; extra == "fast"'), *selected],
                 VcsConfig(),
                 environment={},
                 marker_holds=dependency_marker_holds,
             )
 
+        assert set(result.ranges) == {"bar"}
         (record,) = caplog.records
         assert (
             "Selecting an extra or group adds its requirements directly"
@@ -6099,20 +6096,17 @@ class TestLockDeclaresItsEnvironment:
         assert set(below.pins) == {"foo"}
         assert set(above.pins) == {"foo", "bar"}
 
-        rows = {
-            "below" if 'python_full_version < "3.12.4"' in str(m) else "above": str(m)
-            for m in lock_input.environments
-        }
-        assert set(rows) == {"below", "above"}
-        assert 'python_full_version >= "3.12.4.dev0"' in rows["above"]
-
-        # The two rows are disjoint and together cover the whole minor.
-        low = {**_PY312_ENV, "python_full_version": "3.12.1"}
-        high = {**_PY312_ENV, "python_full_version": "3.12.5"}
-        assert Marker(rows["below"]).evaluate(low)
-        assert not Marker(rows["below"]).evaluate(high)
-        assert Marker(rows["above"]).evaluate(high)
-        assert not Marker(rows["above"]).evaluate(low)
+        rows = lock_input.environments
+        assert len(rows) == 2
+        for version, expected in [
+            ("3.12.1", below),
+            ("3.12.4rc1", below),
+            ("3.12.4", above),
+            ("3.12.5", above),
+        ]:
+            env = {**_PY312_ENV, "python_full_version": version}
+            assert sum(row.evaluate(env) for row in rows) == 1
+            assert Marker(expected.target.environment_marker_string).evaluate(env)
 
 
 _BASE_GROUP = '[tool.nab]\nbase-group = "default"\n'
@@ -8099,7 +8093,7 @@ class TestFetchWidth:
 def test_terminal_solver_graphs_do_not_acquire_no_versions_diagnostics(
     error_type: type[ResolutionTerminatedError],
 ) -> None:
-    provider = Provider(graph_port([("missing-pkg", "1", False, [])]))
+    provider = Provider(make_release_coordinator([("missing-pkg", "1", False, [])]))
     bounds = VersionRange.singleton(V("2"))
     assert provider.choose_version("missing-pkg", bounds) is None
     assert provider.get_no_versions_reason("missing-pkg", bounds) is not None

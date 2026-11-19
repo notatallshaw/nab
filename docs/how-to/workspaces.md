@@ -3,9 +3,8 @@
 > [!WARNING]
 > Workspace support is experimental. Discovery rules and member validation may change.
 
-A workspace is a parent project that declares one or more in-tree members. When `nab lock` runs
-against a member (or the root itself), the resolver prefers the in-tree members over PyPI for any
-package whose canonical name matches a member's `[project].name`.
+A workspace supplies local projects to the resolver. When a dependency has the same canonical name
+as a workspace member, Nab prefers the member's directory over the configured package indexes.
 
 ## Declaring a workspace
 
@@ -30,12 +29,12 @@ of the project-directory `nab.toml` instead:
 members = ["packages/core", "packages/extras", "tools/cli"]
 ```
 
-`members` is a list of literal directory paths relative to the workspace root. Globs (`*`, `?`, `[`)
-are rejected; spell out each member.
+List each member's directory in `members`. Relative paths start at the workspace root. Nab rejects
+globs such as `packages/*`.
 
 Every listed member must contain a `pyproject.toml` with a `[project].name`. Two members cannot
-share the same canonical name (`Foo_Bar` and `foo-bar` collide). Both raise
-`WorkspaceDiscoveryError` at config-parse time.
+share the same canonical name (`Foo_Bar` and `foo-bar` collide). Nab reports a missing or duplicate
+name when reading the workspace configuration.
 
 ## How discovery works
 
@@ -45,11 +44,19 @@ workspace root.
 
 When `nab lock <member>/pyproject.toml` is invoked and the member declares no workspace of its own,
 nab walks upwards from the member's directory for the first ancestor that declares one, in either
-file: `[tool.nab.workspace]` in its `pyproject.toml`, or `[workspace]` in its `nab.toml`. The
-`pyproject.toml` is checked first.
+file: `[tool.nab.workspace]` in its `pyproject.toml`, or `[workspace]` in its `nab.toml`. Nab checks
+`pyproject.toml` first and skips directories and named pipes during this search. If the project file
+is a symlink, the search starts in the directory containing the link.
 
-Each member of the matched workspace contributes a local source. The provider prefers those local
-sources over PyPI for any requirement whose canonical name matches.
+A project anywhere under the root can use the workspace's local packages, even if that project is
+absent from `members`. To resolve an example against its own sources and indexes, turn off workspace
+discovery for that lock.
+
+```bash
+nab lock examples/demo/pyproject.toml --no-workspace-discovery
+```
+
+Explicit `[[tool.nab.local-sources]]` entries in the example project still apply.
 
 ## Members lock as editable installs
 

@@ -40,23 +40,24 @@ def _test_matrix(paths: list[str] | None, *, quick: bool) -> list[dict[str, str]
     if quick:
         return [{"os": "ubuntu", "python": newest}]
 
-    versions = [*PYTHON_VERSIONS, newest + "t"]
+    free_threaded = newest + "t"
+    versions = [*PYTHON_VERSIONS, free_threaded]
     patches = ["3.10.4"]
     if not paths:
         # Main and manual runs also cover the older free-threaded and patch releases.
         versions.append("3.14t")
         patches.extend(("3.11.0", "3.12.0", "3.13.0", "3.14.0"))
-    return [
+    matrix = [
         *({"os": "ubuntu", "python": version} for version in versions),
         *(
             {"os": "ubuntu", "python": version, "runner": "ubuntu-24.04"}
             for version in patches
         ),
-        *(
-            {"os": os_name, "python": oldest, "second": newest}
-            for os_name in ("macos", "windows")
-        ),
     ]
+    for os_name in ("macos", "windows"):
+        matrix.append({"os": os_name, "python": oldest, "second": newest})
+        matrix.append({"os": os_name, "python": free_threaded})
+    return matrix
 
 
 def _benchmark_matrix(paths: list[str] | None) -> list[dict[str, str | bool]]:

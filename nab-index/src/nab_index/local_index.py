@@ -218,8 +218,9 @@ def _scan_pep503_directory(
         msg = f"{index_html} is not valid UTF-8: {exc}"
         raise MalformedLocalListingError(msg) from exc
 
-    anchors, base_href = read_page(text)
-    base_url = _page_base_url(index_html, base_href)
+    page_url = index_html.as_uri()
+    anchors, base_href = read_page(text, page_url)
+    base_url = _page_base_url(page_url, base_href)
     bases = _merging_bases(base_url, anchors)
 
     files: list[WheelFile | SdistFile] = []
@@ -260,6 +261,7 @@ def _scan_pep503_directory(
             link.hashes,
             canonical,
             has_metadata=metadata_declaration(anchor.metadata) is not None,
+            upload_time=anchor.upload_time,
         )
         if record is not None:
             files = _append_record(files, record, yanked=anchor.yanked)
@@ -293,7 +295,7 @@ def _append_record(
     return files
 
 
-def _page_base_url(index_html: Path, base_href: str | None) -> str:
+def _page_base_url(page_url: str, base_href: str | None) -> str:
     """Return the URI a page's relative anchors resolve against.
 
     RFC 3986 section 5.1.3: the base is the URI the page was read from, not
@@ -302,14 +304,13 @@ def _page_base_url(index_html: Path, base_href: str | None) -> str:
     loudly rather than falling back to the page URL, which would resolve each
     link to a different file than the page names.
     """
-    page_url = index_html.as_uri()
     if base_href is None:
         return page_url
 
     try:
         return urljoin(page_url, base_href)
     except ValueError as exc:
-        msg = f"{index_html} has an unparseable <base href>: {exc}"
+        msg = f"{page_url} has an unparseable <base href>: {exc}"
         raise MalformedLocalListingError(msg) from exc
 
 
@@ -518,38 +519,40 @@ def _merging_bases(base_url: str, anchors: list[Anchor]) -> list[str] | None:
     return None
 
 
+def _wheelhouse_project(filename: str) -> str | None:
+    """Read the project name from a wheel or sdist filename."""
+    # Wheels escape dashes in project names. Sdist names can contain them.
+    if filename.endswith(".whl"):
+        return _canonical(filename.partition("-")[0])
+    if filename.endswith((".tar.gz", ".zip")):
+        return _canonical(filename.rpartition("-")[0])
+    return None
+
+
 def _scan_flat_wheelhouse(
     root: Path,
-    package: str,
+    canonical: str,
 ) -> _ScanResult:
-    """Find all dists for ``package`` in a flat directory of files.
+    """Find files for one canonical project name in a flat wheelhouse.
 
     Entries are sorted because the listing order breaks ties between dists at
     one version, and ``iterdir`` order comes from the filesystem.
 
-    One directory serves every package, so a file that does not name
-    ``package`` says nothing about it. A flat directory has no yank marks
-    and no page that named ``package``'s files.
+    A flat directory has no yank marks or package listing page.
     """
-    canonical = _canonical(package)
     files: list[WheelFile | SdistFile] = []
     zip_sdists: set[str] = set()
 
-    for entry in sorted(root.iterdir()):
+    matches = (
+        entry
+        for entry in root.iterdir()
+        if _wheelhouse_project(entry.name) == canonical
+    )
+    for entry in sorted(matches):
         if not _is_file(entry):
             continue
 
-        # Wheels escape dashes in project names. Sdist names can contain them.
         filename = entry.name
-        if filename.endswith(".whl"):
-            project = filename.partition("-")[0]
-        elif filename.endswith((".tar.gz", ".zip")):
-            project = filename.rpartition("-")[0]
-        else:
-            continue
-        if _canonical(project) != canonical:
-            continue
-
         record = _make_record(
             filename,
             entry.as_uri(),
@@ -634,6 +637,7 @@ def _make_record(
     expected: str,
     *,
     has_metadata: bool,
+    upload_time: str | None = None,
 ) -> WheelFile | SdistFile | None:
     """Build a file record, or ``None`` for unusable filenames.
 
@@ -652,7 +656,7 @@ def _make_record(
             version=version,
             requires_python=requires_python,
             has_metadata=has_metadata,
-            upload_time=None,
+            upload_time=upload_time,
             hashes=hashes,
             local_path=local_path,
         )
@@ -666,7 +670,7 @@ def _make_record(
             url=file_url,
             version=version,
             requires_python=requires_python,
-            upload_time=None,
+            upload_time=upload_time,
             hashes=hashes,
             local_path=local_path,
         )
@@ -820,7 +824,7 @@ class LocalIndexClient:
                     zip_sdists=frozenset(),
                 )
             else:
-                scan = _scan_flat_wheelhouse(self._root, package)
+                scan = _scan_flat_wheelhouse(self._root, canonical)
         except OSError as exc:
             msg = f"cannot read local index {self._root}: {exc}"
             raise UnreadableLocalIndexError(msg) from exc

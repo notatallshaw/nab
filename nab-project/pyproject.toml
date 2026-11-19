@@ -51,7 +51,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.sdist]
 exclude = ["/benchmarks", "/tests/benchmark", "/tests/test_deterministic_smoke_core.py"]
 
-# The checkout imports the fixtures as a plugin. In the archive, pytest finds
-# its config at the root and the same fixtures in tests/conftest.py.
+# Put the shared pytest plugin and test helpers beside the archived tests.
 [tool.hatch.build.targets.sdist.sources]
-"test-support/nab_test_support" = ""
+"test-support" = ""

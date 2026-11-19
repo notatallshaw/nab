@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "collections",
     "collections.abc",
     "nab_provider._vendor.packaging.errors",
     "nab_provider._vendor.packaging.markers",
@@ -13,14 +14,20 @@ __lazy_modules__ = (
     "nab_provider.resolver_inputs",
 )
 
+from collections import deque
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
-from ._vendor.packaging.dependency_groups import resolve_dependency_groups
+from ._vendor.packaging.dependency_groups import DependencyGroupResolver
 from ._vendor.packaging.errors import ExceptionGroup
 from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.utils import canonicalize_name
-from .marker_holds import dependency_marker_holds, intractable_as_error, marker_set
+from .marker_holds import (
+    dependency_marker_holds,
+    intractable_as_error,
+    marker_set,
+    marker_uses_extra,
+)
 from .pep508 import NESTED_MARKER_MESSAGE, parse_requirement
 from .project_requirements import (
     InvalidProjectRequirementError,
@@ -45,6 +52,7 @@ __all__ = [
     "expand_group_includes",
     "expand_project_requirements",
     "expand_self_extras",
+    "iter_group_requirements",
     "parse_project_requirement",
     "parse_requirements",
     "raise_for_unsatisfiable",
@@ -53,7 +61,7 @@ __all__ = [
     "self_extra_markers",
 ]
 
-_GROUP_LOADER_FILE = resolve_dependency_groups.__code__.co_filename
+_GROUP_LOADER_FILE = DependencyGroupResolver.resolve.__code__.co_filename
 
 
 class InvalidProjectTableError(TypeError):
@@ -118,9 +126,9 @@ def expand_self_extras(
     canonical_deps = _canonicalize_optional_deps(optional_deps)
     out: list[str] = []
     seen: set[str] = set()
-    worklist: list[str] = [canonicalize_name(s) for s in selected]
+    worklist: deque[str] = deque(map(canonicalize_name, selected))
     while worklist:
-        extra = worklist.pop(0)
+        extra = worklist.popleft()
         if extra in seen:
             continue
         seen.add(extra)
@@ -248,11 +256,11 @@ def expand_extra_requirements(
     canonical_deps = _canonicalize_optional_deps(optional_deps)
     out: list[Requirement] = []
     visited: set[tuple[str, frozenset[str]]] = set()
-    worklist: list[tuple[str, frozenset[str]]] = [
+    worklist: deque[tuple[str, frozenset[str]]] = deque(
         (canonicalize_name(s), frozenset()) for s in selected
-    ]
+    )
     while worklist:
-        extra, gates = worklist.pop(0)
+        extra, gates = worklist.popleft()
         if (extra, gates) in visited:
             continue
         visited.add((extra, gates))
@@ -309,25 +317,27 @@ def _self_ref_edges(
 
 def expand_project_requirements(
     requirements: Sequence[Requirement],
-    projects: Mapping[str, Mapping[str, Sequence[str]]],
+    projects: Mapping[str, Mapping[str, Sequence[str]] | None],
 ) -> list[Requirement]:
     """Replace references to supplied projects with their selected extra dependencies.
 
     The projects themselves are installed separately. Conditions on local references
     also apply to the dependencies of their extras across project boundaries.
+    A ``None`` table means the build backend determines that project's extras.
     """
     local = {
-        canonicalize_name(name): _canonicalize_optional_deps(optional)
+        canonicalize_name(name): None
+        if optional is None
+        else _canonicalize_optional_deps(optional)
         for name, optional in projects.items()
     }
-    pending = [(requirement, frozenset[str]()) for requirement in requirements]
+    pending = deque((requirement, frozenset[str]()) for requirement in requirements)
     visited: set[tuple[str, str, frozenset[str]]] = set()
     result: list[Requirement] = []
     while pending:
-        requirement, gates = pending.pop(0)
+        requirement, gates = pending.popleft()
         name = canonicalize_name(requirement.name)
-        optional = local.get(name)
-        if optional is None:
+        if name not in local:
             # Keep the caller's parsed requirements unchanged.
             emitted = parse_requirement(str(requirement))
             if gates:
@@ -339,7 +349,14 @@ def expand_project_requirements(
             raise InvalidProjectRequirementError(msg)
         if requirement.marker is not None:
             gates = gates | {str(requirement.marker)}
+        optional = local[name]
         for extra in sorted({canonicalize_name(extra) for extra in requirement.extras}):
+            if optional is None:
+                msg = (
+                    f"The build backend may extend the {extra!r} extra of {name!r} "
+                    "because [project.optional-dependencies] is declared dynamic."
+                )
+                raise InvalidProjectRequirementError(msg)
             key = (name, extra, gates)
             if key in visited:
                 continue
@@ -361,7 +378,7 @@ def _project_extra_requirements(
     result = []
     for child in parse_requirements(optional[extra], f"{name}[{extra}]"):
         edge = gates
-        if child.marker is not None:
+        if child.marker is not None and marker_uses_extra(child.marker):
             residual = _environment_residual(child.marker, extra)
             if residual is False:
                 continue
@@ -402,9 +419,9 @@ def expand_group_includes(
 
     out: list[str] = []
     seen: set[str] = set()
-    worklist = [canonicalize_name(s) for s in selected]
+    worklist = deque(map(canonicalize_name, selected))
     while worklist:
-        group = worklist.pop(0)
+        group = worklist.popleft()
         if group in seen:
             continue
         seen.add(group)
@@ -443,19 +460,19 @@ def _too_deep_error(exc: RecursionError) -> InvalidProjectRequirementError:
     return InvalidProjectRequirementError(msg)
 
 
-def resolve_groups_to_requirements(
+def iter_group_requirements(
     groups: Mapping[str, Sequence[str | Mapping[str, str]]],
     selected: Sequence[str],
-) -> list[Requirement]:
-    """Resolve selected PEP 735 groups and return their combined requirements.
-
-    Unknown groups raise LookupError. Invalid group data or excessive nesting
-    raises InvalidProjectRequirementError.
-    """
+) -> Iterator[tuple[str, list[Requirement]]]:
+    """Yield each selected group's name and requirements in selection order."""
     if not selected:
-        return []
+        return
+
     try:
-        resolved = resolve_dependency_groups(groups, *selected)
+        resolver = DependencyGroupResolver(groups)
+        resolved = [
+            (name, [str(req) for req in resolver.resolve(name)]) for name in selected
+        ]
     except RecursionError as exc:
         raise _too_deep_error(exc) from exc
     except ExceptionGroup as group:
@@ -464,4 +481,23 @@ def resolve_groups_to_requirements(
             raise LookupError(detail) from group
         msg = f"invalid [dependency-groups]: {detail}"
         raise InvalidProjectRequirementError(msg) from group
-    return parse_requirements(resolved, "[dependency-groups]")
+
+    # Parse fresh requirements for each group using Nab's version checks.
+    for name, requirements in resolved:
+        yield name, parse_requirements(requirements, "[dependency-groups]")
+
+
+def resolve_groups_to_requirements(
+    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    selected: Sequence[str],
+) -> list[Requirement]:
+    """Combine the requirements of the selected PEP 735 groups in order.
+
+    Unknown groups raise LookupError. Invalid group data or excessive nesting
+    raises InvalidProjectRequirementError.
+    """
+    return [
+        requirement
+        for _, requirements in iter_group_requirements(groups, selected)
+        for requirement in requirements
+    ]

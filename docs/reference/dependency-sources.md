@@ -6,9 +6,10 @@
 resolves is a `[[tool.nab.vcs-sources]]` entry, described under "Pinned VCS sources" below.
 
 A direct-URL requirement (`pkg @ git+https://...`) at the project root or in a dependency's metadata
-passes the same policy checks, then fails the resolve, because nab has no resolver path for that
-form. A requirement whose marker excludes it, or one behind an extra the resolve never requests,
-never reaches those checks. See [Add a VCS dependency](../how-to/vcs.md).
+must pass the same policy checks. Even when the URL is allowed, nab cannot resolve it in that form.
+For a root requirement, keep the package name in the dependencies and move the URL to
+`[[tool.nab.vcs-sources]]`. A requirement whose marker excludes it, or one behind an extra the
+resolve never requests, never reaches those checks. See [Add a VCS dependency](../how-to/vcs.md).
 
 ```toml
 [tool.nab.vcs]

@@ -107,8 +107,10 @@ Routing, version selectors and metadata replacements are package-only settings.
 window stays hidden until it expires. Metadata and artifacts cached by hash are unaffected.
 
 Package and index overrides have equal precedence. If both set a field for a candidate version, the
-resolve fails. Remove one setting. Outside the package selector's version range, only the index
-setting applies.
+resolve fails. Remove the field from one override. If that leaves the entry without a policy, remove
+the entire entry. Outside the package selector's version range, only the index setting applies. See
+[Conflicting package and index policies](../how-to/multi-index.md#conflicting-package-and-index-policies)
+for an example.
 
 ## Cooldown exceptions
 

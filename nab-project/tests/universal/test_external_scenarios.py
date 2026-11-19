@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from nab_index.client import WheelFile
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.build_policy import enforce_build_policy_for_targets
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import build_pylock
@@ -14,6 +13,7 @@ from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import BuildPolicy
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
+from nab_test_support.coordinator import make_coordinator
 
 _PLATFORM_WHEEL_SHA256 = (
     "170f4c280ebc110a306ff320681729df2ce8545154e5c829c1e8b182cf2fff79"

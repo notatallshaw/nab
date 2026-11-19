@@ -51,11 +51,19 @@ Use `--output` to choose another PEP 751 filename, or `--output -` to write the 
 standard output. A script with a dotted stem such as `fetch.data.py` needs an explicit output such
 as `--output pylock.fetch-data.toml`.
 
-The existing [output formats] also apply to scripts:
+For a single target, both requirements formats default to `fetch.py.requirements.txt` beside the
+script. Use `--output` to choose another filename.
 
 ```bash
 nab lock --script fetch.py --format requirements --output requirements.txt
-nab lock --script fetch.py --format requirements-without-hashes --output pins.txt
+```
+
+For multiple targets, both formats print to stdout. Use an [output template][output formats] to
+write one file per target.
+
+```bash
+nab lock --script fetch.py --format requirements-without-hashes \
+    --output 'pins-{python_version}-{platform_id}.txt'
 ```
 
 ## Configure and download script dependencies

@@ -4,8 +4,9 @@ A resolve drops dependencies whose PEP 508 markers are false on its [target](tar
 The resulting pins therefore belong to that environment, or to the targets declared by a matrix.
 
 The top-level `environments` entries record that scope. A PEP 751 consumer refuses a lock that does
-not cover its environment. nab also refuses to emit a lock whose declaration misses a resolved
-target and names the uncovered interpreter.
+not cover its environment. Nab checks that the rows cover every resolved target. If a custom
+declaration uses a version substring and coverage cannot be verified, use version comparisons that
+describe the supported range.
 
 ## Recorded marker values
 
@@ -30,13 +31,12 @@ dependencies = [
 ]
 ```
 
-A consulted `python_full_version` boundary inside the minor splits it into slices. On a 3.13 target,
-`pytest ; python_full_version >= "3.13.4"` creates `< "3.13.4"` and `>= "3.13.4.dev0"` slices; only
-the upper one includes `pytest`.
+The dependency above first applies on 3.13.4. It is absent on 3.13.4rc1. The lower row uses
+`<= "3.13.4"` together with `!= "3.13.4"` to include prereleases of that patch. The upper row uses
+`>= "3.13.4"`.
 
-The bounds meet at `3.13.4.dev0` with no gap or overlap. A verbatim `< "3.13.4"` / `>= "3.13.4"`
-pair would exclude prereleases such as `3.13.4rc1` from both slices. Starting the upper slice at
-`3.13.4.dev0` gives those interpreters the 3.13.4 pins.
+A dependency with `python_full_version < "3.13.4"` changes earlier. PEP 440 excludes prereleases of
+3.13.4 from that comparison, so its upper row starts at 3.13.4.dev0.
 
 ### CPython implementation versions
 
@@ -44,15 +44,15 @@ On CPython, `implementation_version` matches `python_full_version` and can split
 way. A slice that consulted it carries both sets of bounds; otherwise it carries only
 `python_full_version`.
 
-For example, `implementation_version >= "3.13.4"` gives the lower slice matching `< "3.13.4"`
-clauses and the upper slice matching `>= "3.13.4.dev0"` clauses for both variables.
+For example, both variables use the final-release boundary for `implementation_version >= "3.13.4"`.
+Nab checks those bounds against the same CPython version. On PyPy the implementation version is
+independent of the Python language version.
 
 ### Unsplit targets
 
 A minor with no marker boundary uses a plain `python_version == "3.13"` row with no
-`python_full_version` clause: a marker whose boundary lies outside the minor, or a prerelease of the
-minor's floor (`<= "3.11.0a6"`), reads the same for every real micro, so it names no in-minor
-boundary and its dependency is simply kept or dropped for the whole minor.
+`python_full_version` clause: a marker outside the target minor gives the same answer on every
+patch.
 
 To resolve one patch release without splitting it:
 
@@ -61,23 +61,22 @@ To resolve one patch release without splitting it:
 "3.13" = "3.13.4"
 ```
 
-nab does not split a target pinned to an exact patch release, including the host interpreter and
+Nab does not split a target pinned to an exact patch release, including the host interpreter and
 `[tool.nab.matrix.python-patches]` entries. It resolves that release once and records a
 `python_version == "X.Y"` environment row.
 
 ### Unsupported boundaries
 
-On a minor-interval target, a consulted full-version marker must describe intervals. nab rejects:
+On a minor-interval target, a consulted full-version marker must describe intervals. Nab rejects:
 
 - membership (`in` or `not in`), verbatim `===`, non-version strings, and comparisons with another
   variable;
 - invalid PEP 440 operands such as `< "3.12.*"` or `~= "3"`;
 - the pre- and post-release boundaries listed below.
 
-A prerelease literal is an error on `<`, `>=`, `==`, `!=` and `~=`, and a literal that is only a
-post-release on `>=`, `==`, `!=` and `~=`. Every other operator lands the boundary on a real micro:
-`<= "3.12.4rc1"` and `> "3.12.4rc1"` cut at 3.12.4, and `< "3.12.4.post1"`, `<= "3.12.4.post1"` and
-`> "3.12.4.post1"` at 3.12.5.
+For a literal above the first final release in the minor, a prerelease is an error on `<`, `>=`,
+`==`, `!=` and `~=`, and a literal that is only a post-release on `>=`, `==`, `!=` and `~=`. For
+example, `> "3.12.4rc1"` starts at 3.12.4rc2.dev0, and `> "3.12.4.post1"` starts at 3.12.5.dev0.
 
 ## Unrecorded marker values
 

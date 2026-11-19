@@ -759,21 +759,17 @@ class TestFlatWheelhouse:
         assert not isinstance(caught.value, OSError)
         assert "Permission denied" in str(caught.value)
 
-    def test_unreadable_entry_of_another_package_raises_index_error(
+    def test_unreadable_entry_for_another_package_is_ignored(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # A wheelhouse serves every package from one directory, so an entry
-        # naming none of them still fails the listing.
-        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
-        denied = tmp_path / "bar-2.0-py3-none-any.whl"
-        denied.write_bytes(b"")
-
-        _swallow_is_file_errors(monkeypatch)
-        _deny_access(monkeypatch, "stat", denied)
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        wheel.touch()
+        other = tmp_path / "bar-1.0-py3-none-any.whl"
+        other.touch()
+        _deny_access(monkeypatch, "stat", other)
 
         client = LocalIndexClient(tmp_path.as_uri())
-        with pytest.raises(UnreadableLocalIndexError):
-            run(client.get_files("foo"))
+        assert [file.filename for file in run(client.get_files("foo"))] == [wheel.name]
 
     def test_symlink_cycle_entry_is_skipped(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -784,7 +780,7 @@ class TestFlatWheelhouse:
         privilege the Windows CI runner does not have.
         """
         (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
-        cycle = tmp_path / "cycle-link"
+        cycle = tmp_path / "foo-2.0-py3-none-any.whl"
         cycle.write_bytes(b"")
 
         loop = OSError(errno.ELOOP, "Too many levels of symbolic links", str(cycle))
@@ -1039,6 +1035,47 @@ class TestPep503Directory:
         package_dir.mkdir()
         (package_dir / "index.html").write_text(body, encoding="utf-8")
         return package_dir
+
+    @pytest.mark.parametrize(
+        "prefix", ["", "https://files.example/"], ids=["local", "remote"]
+    )
+    def test_page_keeps_advertised_upload_times(
+        self, tmp_path: Path, prefix: str
+    ) -> None:
+        wheel = "foo-1.0-py3-none-any.whl"
+        sdist = "foo-2.0.tar.gz"
+        undated = "foo-3.0.tar.gz"
+        stamp = "2025-01-01T00:00:00Z"
+        package_dir = self._make_index(
+            tmp_path,
+            f'<a href="{prefix}{wheel}" data-upload-time="{stamp}">{wheel}</a>'
+            f'<a href="{prefix}{sdist}" data-upload-time="{stamp}">{sdist}</a>'
+            f'<a href="{prefix}{undated}">{undated}</a>',
+        )
+        if not prefix:
+            for filename in (wheel, sdist, undated):
+                (package_dir / filename).touch()
+
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert {file.filename: file.upload_time for file in files} == {
+            wheel: stamp,
+            sdist: stamp,
+            undated: None,
+        }
+
+    def test_incompatible_local_page_identifies_its_version(
+        self, tmp_path: Path
+    ) -> None:
+        package_dir = self._make_index(
+            tmp_path, '<meta name="pypi:repository-version" content="2.0">'
+        )
+        client = LocalIndexClient(tmp_path.as_uri())
+        with pytest.raises(
+            IndexAccessError, match="requires Simple API version 2.0"
+        ) as error:
+            run(client.get_files("foo"))
+        assert (package_dir / "index.html").as_uri() in str(error.value)
 
     def test_parses_anchor_tags(self, tmp_path: Path) -> None:
         body = (

@@ -94,3 +94,16 @@ class TestLoadPathFailures:
         document.write_bytes(b"count = [")
         with pytest.raises(tomli.TOMLDecodeError, match="Invalid value"):
             toml_io.load_path(document)
+
+
+def test_shared_containers_are_copied_once_and_remain_independent() -> None:
+    item = {"tags": ["build"]}
+    source = {"first": item, "second": item}
+    result = toml_io.copy_table(source)
+
+    assert result["first"] is result["second"]
+    assert result["first"] is not item
+    assert toml_io.values_match(source, result)
+
+    item["tags"].append("test")
+    assert not toml_io.values_match(source, result)

@@ -19,7 +19,6 @@ import pytest
 
 from nab_index.client import WheelFile
 from nab_index.multi_index import IndexConfig
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.fetch import IndexRoute
 from nab_provider._vendor.packaging.tags import Tag
 from nab_provider._vendor.packaging.version import Version
@@ -27,6 +26,7 @@ from nab_provider.provider import Provider, ProviderStats
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.target import ResolveTarget
 from nab_resolver.resolver import ResolverStats
+from nab_test_support.coordinator import make_coordinator
 
 # The runner scripts loaded here import their siblings by bare name.
 pytestmark = [
@@ -36,10 +36,10 @@ pytestmark = [
 
 _BENCHMARKS = Path(__file__).resolve().parents[2] / "benchmarks"
 _STANDARD_FILES = 14
-_STANDARD_SCENARIOS = 553
+_STANDARD_SCENARIOS = 552
 _RUNNABLE_SCENARIOS = 529
-_UNSUPPORTED_SCENARIOS = 24
-_TOTAL_EXECUTION_IDENTITIES = 1_659
+_UNSUPPORTED_SCENARIOS = 23
+_TOTAL_EXECUTION_IDENTITIES = 1_656
 _OUT_OF_SCOPE_ECOSYSTEM_SCENARIOS = {
     "ecosystem:dask-bottleneck-2024",
     "ecosystem:gradio-client-sync",
@@ -3175,6 +3175,24 @@ requires_matching_host = "yes"
         module.load_standard_corpus([path])
 
 
+@pytest.mark.parametrize("value", ["false", '""', '"   "'])
+def test_invalid_reason_cannot_skip_a_benchmark(tmp_path: Path, value: str) -> None:
+    path = tmp_path / "quick.toml"
+    path.write_text(
+        '[example]\npython_version = "3.12"\nrequirements = []\n'
+        f"unsupported_reason = {value}\n",
+        encoding="utf-8",
+    )
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    message = "quick:example: unsupported_reason must be a non-empty string"
+    with pytest.raises(ValueError, match=message):
+        standard.load_standard_corpus([path])
+    definition = standard.tomllib.loads(path.read_text(encoding="utf-8"))["example"]
+    with pytest.raises(ValueError, match=message):
+        canary.median_run(definition, 1, scenario_name="quick:example")
+
+
 @pytest.mark.parametrize(
     "unsupported_reason",
     [None, "not runnable"],
@@ -4546,6 +4564,7 @@ def test_profile_runner_accepts_an_explicit_strategy() -> None:
 )
 def test_profile_main_validates_schema_before_host_capture(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
     field: str,
     value: object,
     message: str,
@@ -4564,8 +4583,64 @@ def test_profile_main_validates_schema_before_host_capture(
 
     monkeypatch.setattr(module.sc.BenchmarkHost, "current", classmethod(fail_host))
 
-    with pytest.raises((TypeError, ValueError), match=re.escape(message)):
+    with pytest.raises(SystemExit) as exc:
         module.main()
+    assert exc.value.code == 2
+    assert message in capsys.readouterr().err
+
+
+def test_profile_rejects_an_unsupported_scenario_with_its_reason() -> None:
+    profile = _harness("_profile_runner")
+    scenario = {"unsupported_reason": "requires a Windows-only distribution"}
+    with pytest.raises(
+        SystemExit, match="example:.*requires a Windows-only distribution"
+    ):
+        profile.build_inputs("example", scenario)
+
+
+@pytest.mark.parametrize(
+    ("system", "selected"), [("linux", "linux-dep"), ("win32", "windows-dep")]
+)
+def test_benchmark_roots_follow_markers_on_project_extras(
+    system: str, selected: str
+) -> None:
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    quoted_extra = 'quoted-dep; os_name != "extra"'
+    scenario = {
+        "python_version": "3.12",
+        "requirements": ["base"],
+        "marker_environment": {"sys_platform": system},
+        "project_name": "example",
+        "project_extras": ["all"],
+        "optional_dependencies": {
+            "all": [
+                quoted_extra,
+                'example[linux]; sys_platform == "linux"',
+                'example[windows]; sys_platform == "win32"',
+            ],
+            "linux": ['linux-dep; extra == "linux"', 'excluded; extra == "windows"'],
+            "windows": [
+                'windows-dep; extra == "windows"',
+                'excluded; extra != "windows"',
+            ],
+        },
+    }
+    prepared, canary_run, profile_inputs = _prepare_runner_parity(
+        standard, canary, profile, scenario=scenario
+    )
+    assert quoted_extra in prepared.requirement_strings
+    roots = standard.parse_requirements(
+        prepared.requirement_strings,
+        marker_environment=dict(prepared.target.marker_env),
+    )
+    for requirements in (
+        roots,
+        canary_run.requirements,
+        profile_inputs["requirements"],
+    ):
+        assert set(requirements) == {"base", "quoted-dep", selected}
 
 
 def test_standard_canary_and_profile_build_the_same_project_config() -> None:

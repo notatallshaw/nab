@@ -1,24 +1,10 @@
 """ASCII URL recognition agrees with the standard parser's round trip."""
 
-from urllib.parse import urljoin, urlsplit, urlunsplit
-
 import pytest
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 from nab_index import client
 
-BASE = "https://index.example/simple/pkg/"
-
-
-def expected_url(raw: str) -> str | None:
-    try:
-        joined = raw if raw.startswith(("https://", "http://")) else urljoin(BASE, raw)
-        normalized = urlunsplit(urlsplit(joined))
-        normalized.encode()
-    except ValueError:
-        return None
-    return normalized
+from .url_normalization import BASE, expected_url
 
 
 @pytest.mark.parametrize(
@@ -65,25 +51,6 @@ def test_normalized_ascii_http_urls_skip_parsing(
     ],
 )
 def test_other_urls_keep_the_full_normalization(raw: str) -> None:
-    assert client._resolve_file_url(raw, BASE) == expected_url(raw)
-
-
-@settings(max_examples=1000, deadline=None)
-@given(st.sampled_from(["http://", "https://", "", "HTTPS://"]), st.text(max_size=100))
-def test_url_resolution_matches_parser_oracle(prefix: str, suffix: str) -> None:
-    raw = prefix + suffix
-
-    assert client._resolve_file_url(raw, BASE) == expected_url(raw)
-
-
-@settings(max_examples=1000, deadline=None)
-@given(
-    st.sampled_from(["http://", "https://"]),
-    st.text(alphabet=st.characters(max_codepoint=127), max_size=100),
-)
-def test_ascii_resolution_matches_parser_oracle(prefix: str, suffix: str) -> None:
-    raw = prefix + suffix
-
     assert client._resolve_file_url(raw, BASE) == expected_url(raw)
 
 

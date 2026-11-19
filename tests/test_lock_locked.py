@@ -22,7 +22,6 @@ from nab._lock import _join_command, _join_for_cmd, _quote_for_cmd
 from nab.cli import run
 from nab_index.client import WheelFile
 from nab_markersets._compat import get_int_max_str_digits
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.lockfile import (
     IndexPin,
     SdistArtifact,
@@ -32,6 +31,9 @@ from nab_project.lockfile import (
 from nab_project.resolve import ResolveResult, TargetResult
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.target import ResolveTarget
+from nab_test_support.coordinator import make_coordinator
+
+from .lock_registry import Registry
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
@@ -446,14 +448,42 @@ def test_changed_requires_python_fires_without_resolving(
     mock.assert_not_called()
 
 
+def test_optional_dependency_markers_use_the_selected_extra(registry: Registry) -> None:
+    registry.declarations = {"included": {"1": ()}, "excluded": {"1": ()}}
+    registry.project.write_text(
+        '[project]\nname="app"\nversion="1"\ndependencies=[]\n'
+        "[project.optional-dependencies]\n"
+        """fast = ['included; extra == "fast"', 'excluded; extra != "fast"']\n""",
+        encoding="utf-8",
+    )
+    assert registry.command("--extras", "fast") == 0
+    assert registry.versions() == {"included": "1"}
+    assert registry.command("--extras", "fast", "--locked") == 0
+
+    saved = registry.output.read_bytes()
+    project = registry.project.read_text(encoding="utf-8")
+    registry.project.write_text(
+        project.replace("excluded;", "unused;"), encoding="utf-8"
+    )
+    assert registry.command("--extras", "fast", "--locked") == 0
+    assert registry.output.read_bytes() == saved
+
+    registry.project.write_text(
+        project.replace("included;", "included>=2;"), encoding="utf-8"
+    )
+    assert registry.command("--extras", "fast", "--locked") == 1
+    assert registry.output.read_bytes() == saved
+
+
+@pytest.mark.parametrize("requirement", ["bar>=2", 'bar>=2; extra == "dev"'])
 def test_selected_extra_specifier_fires_without_resolving(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], requirement: str
 ) -> None:
     pyproject = _write_pyproject(
         tmp_path,
         '[project]\nname = "proj"\ndependencies = ["foo"]\n'
         "[project.optional-dependencies]\n"
-        'dev = ["bar>=2"]\n',
+        f"dev = ['{requirement}']\n",
     )
     out = tmp_path / "pylock.toml"
     _write_lock(

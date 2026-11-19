@@ -62,7 +62,6 @@ from nab_project._build.runner import (
     build_wheel_for_install,
     run_build_backend,
 )
-from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.build_backend import extract_metadata
 from nab_project.download import DownloadError, DownloadResult, iter_artifacts
 from nab_project.inputs import ResolveInputs
@@ -91,10 +90,11 @@ from nab_provider.provider import (
 )
 from nab_provider.tags import PlatformSpec, TagSet
 from nab_provider.target import ResolveTarget
-from nab_provider.testing import make_metadata, make_wheel, pkg_override
+from nab_provider.testing import FakeFetchPort, make_metadata, make_wheel, pkg_override
 from nab_provider.value import replace
 from nab_resolver.diagnostics import error_message
 from nab_resolver.errors import ResolutionError, ResolutionLimitError
+from nab_test_support.coordinator import make_coordinator
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
@@ -1184,6 +1184,14 @@ class TestParseMetadata:
     """Direct unit tests for :func:`_parse_metadata` cover error paths
     that are awkward to reach through ``run_build_backend`` end-to-end.
     """
+
+    def test_future_major_metadata_is_refused(self, tmp_path: Path) -> None:
+        path = tmp_path / "METADATA"
+        path.write_text(
+            "Metadata-Version: 3.0\nName: foo\nVersion: 1\n", encoding="utf-8"
+        )
+        with pytest.raises(BuildBackendError, match="foo 1 declares Metadata-Version"):
+            runner_mod._parse_metadata(path)
 
     def test_missing_metadata_file_raises(self, tmp_path: Path) -> None:
         from nab_project._build.runner import _parse_metadata
@@ -3005,7 +3013,12 @@ class TestDownloadedBuildWheelPython:
         else:
             with env:
                 output = subprocess.check_output(  # noqa: S603 - interpreter created by this test
-                    [env.python_executable, "-c", "import demo; print(demo.MARK)"],
+                    [
+                        env.python_executable,
+                        "-I",
+                        "-c",
+                        "import demo; print(demo.MARK)",
+                    ],
                     text=True,
                 )
                 assert output.strip() == expected
@@ -3835,10 +3848,11 @@ class TestBuildRequirementPythonFallback:
 
     @staticmethod
     def _installed_distributions(env: NabBuildEnv) -> list[tuple[str, str]]:
-        """Read the distributions actually installed in the isolated interpreter."""
+        """List packages installed in the build environment, ignoring PYTHONPATH."""
         output = subprocess.check_output(  # noqa: S603 - interpreter created by this test
             [
                 env.python_executable,
+                "-I",
                 "-c",
                 (
                     "import importlib.metadata as m, json; "

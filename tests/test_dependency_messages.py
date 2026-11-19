@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
-from zipfile import ZipFile
 
 import pytest
 
@@ -20,7 +19,10 @@ from nab_project.resolve import ResolveResult, TargetResult
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
+from nab_provider.testing import make_metadata
 from nab_resolver.errors import ResolutionError
+
+from ._local_artifacts import make_wheel_archive
 
 if TYPE_CHECKING:
     from _pytest.capture import CaptureFixture
@@ -33,14 +35,18 @@ def _project(directory: Path) -> Path:
         ("child", "2.4", ()),
         ("child", "2.8", ()),
     ):
-        fields = ["Metadata-Version: 2.4", f"Name: {name}", f"Version: {version}"]
-        if name == "parent":
-            fields.append("Provides-Extra: feature")
-        fields.extend(f"Requires-Dist: {requirement}" for requirement in requirements)
-        with ZipFile(directory / f"{name}-{version}-py3-none-any.whl", "w") as archive:
-            archive.writestr(
-                f"{name}-{version}.dist-info/METADATA", "\n".join(fields) + "\n\n"
-            )
+        metadata = make_metadata(
+            name,
+            version,
+            *requirements,
+            metadata_version="2.4",
+            provides_extra=("feature",) if name == "parent" else (),
+        )
+        filename = f"{name}-{version}-py3-none-any.whl"
+        (directory / filename).write_bytes(
+            make_wheel_archive(name, version, metadata, "py3-none-any")
+        )
+
     path = directory / "pyproject.toml"
     path.write_text(
         '[project]\nname="root"\nversion="0"\ndependencies=["parent[feature]"]\n'

@@ -1260,7 +1260,7 @@ class TestGetFiles:
         cache.put_simple(
             "pkg",
             LISTING_BYTES,
-            CachePolicy(fetched_at=0, max_age=1, etag="old-etag"),
+            _stale_etag_policy(etag="old-etag"),
         )
         transport = _FakeTransport(
             [
@@ -1299,7 +1299,7 @@ class TestGetFiles:
         cache.put_simple(
             "pkg",
             LISTING_BYTES,
-            CachePolicy(fetched_at=0, max_age=60, etag="v1"),
+            _stale_etag_policy(max_age=60),
         )
         transport = _FakeTransport(
             [_FakeResponse(b"", status=304, headers={"etag": "v1"})]
@@ -1323,7 +1323,7 @@ class TestGetFiles:
         cache.put_simple(
             "pkg",
             LISTING_BYTES,
-            CachePolicy(fetched_at=0, max_age=60, etag="v1"),
+            _stale_etag_policy(max_age=60),
         )
         transport = _FakeTransport(
             [
@@ -1375,7 +1375,7 @@ class TestGetFiles:
         cache.put_simple(
             "pkg",
             LISTING_BYTES,
-            CachePolicy(fetched_at=0, max_age=1, etag="old"),
+            _stale_etag_policy(etag="old"),
         )
         transport = _FakeTransport(
             [_FakeResponse(b"", status=304, headers={"etag": "new"})]
@@ -1522,14 +1522,27 @@ class TestGetFiles:
         assert [file.filename for file in files] == ["pkg-1.0-py3-none-any.whl"]
         assert parsed == ["pkg"]
 
-    def test_stale_revalidates_no_etag_omits_header(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        "unsolicited", [False, True], ids=["ok", "unsolicited-304"]
+    )
+    def test_stale_revalidates_no_etag_omits_header(
+        self, tmp_path: Path, *, unsolicited: bool
+    ) -> None:
         cache = _make_cache(tmp_path)
         cache.put_simple(
             "pkg",
             LISTING_BYTES,
-            CachePolicy(fetched_at=0, max_age=1, etag=None),
+            CachePolicy(
+                fetched_at=0,
+                max_age=1,
+                etag=None,
+                page_url="https://pypi.org/simple/pkg/",
+            ),
         )
-        transport = _FakeTransport([_FakeResponse(b"", status=304, headers={})])
+        responses = [_FakeResponse(LISTING_BYTES)]
+        if unsolicited:
+            responses.insert(0, _FakeResponse(b"", status=304))
+        transport = _FakeTransport(responses)
 
         async def go() -> list:
             client = CachedAsyncSimpleClient(transport, cache)
@@ -1538,10 +1551,11 @@ class TestGetFiles:
             finally:
                 await client.aclose()
 
-        asyncio.run(go())
-        sent = transport.calls[0][1]
-        assert sent is not None
-        assert "If-None-Match" not in sent
+        assert asyncio.run(go())
+        assert len(transport.calls) == (2 if unsolicited else 1)
+        assert all(
+            "If-None-Match" not in (fields or {}) for _, fields in transport.calls
+        )
 
     def test_stale_revalidates_non_ascii_etag_unconditionally(
         self, tmp_path: Path
@@ -1551,7 +1565,7 @@ class TestGetFiles:
         cache.put_simple(
             "pkg",
             LISTING_BYTES,
-            CachePolicy(fetched_at=0, max_age=1, etag='"é"'),
+            _stale_etag_policy(etag='"é"'),
         )
         transport = _FakeTransport(
             [_FakeResponse(LISTING_BYTES, headers={"etag": '"é"'})]
@@ -1573,7 +1587,7 @@ class TestGetFiles:
         cache.put_simple(
             "pkg",
             LISTING_BYTES,
-            CachePolicy(fetched_at=0, max_age=1, etag='"é"'),
+            _stale_etag_policy(etag='"é"'),
         )
         transport = _FakeTransport(
             [_FakeResponse(LISTING_BYTES, headers={"etag": '"ok"'})]
@@ -1614,7 +1628,7 @@ class TestGetFiles:
         cache.put_simple(
             "pkg",
             LISTING_BYTES,
-            CachePolicy(fetched_at=0, max_age=1, etag='"abc\r\n def"'),
+            _stale_etag_policy(etag='"abc\r\n def"'),
         )
         transport = _FakeTransport(
             [_FakeResponse(LISTING_BYTES, headers={"etag": '"ok"'})]
@@ -1966,7 +1980,7 @@ class TestResponseAge:
         cache.put_simple(
             "pkg",
             LISTING_BYTES,
-            CachePolicy(fetched_at=0, max_age=60, etag="v1"),
+            _stale_etag_policy(max_age=60),
         )
         transport = _FakeTransport(
             [_FakeResponse(b"", status=304, headers={"etag": "v1", "age": "30"})]
@@ -2184,9 +2198,7 @@ class TestExpiresFreshness:
     ) -> None:
         self._freeze(monkeypatch)
         cache = _make_cache(tmp_path)
-        cache.put_simple(
-            "pkg", LISTING_BYTES, CachePolicy(fetched_at=0, max_age=60, etag="v1")
-        )
+        cache.put_simple("pkg", LISTING_BYTES, _stale_etag_policy(max_age=60))
         transport = _FakeTransport(
             [
                 _FakeResponse(
@@ -2428,27 +2440,61 @@ class TestRedirectedProjectPage:
 
         assert wheel.url == self._EXPECTED_URL
 
-    def test_304_revalidation_adopts_the_redirect_target(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("body", "content_type"),
+        [
+            (_RELATIVE_LISTING, "application/vnd.pypi.simple.v1+json"),
+            (
+                b'<a href="pkg-1.0-py3-none-any.whl">pkg-1.0-py3-none-any.whl</a>',
+                "text/html",
+            ),
+        ],
+    )
+    def test_304_from_a_different_page_fetches_its_listing(
+        self, tmp_path: Path, body: bytes, content_type: str
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        headers = {
+            "Content-Type": content_type,
+            "ETag": '"v1"',
+            "Cache-Control": "max-age=0",
+        }
+        initial = _FakeTransport([_FakeResponse(body, headers=headers)])
+        (first,) = self._run(initial, cache)
+        assert first.version == "1.0"
+
+        replacement = body.replace(b"1.0-py3", b"2.0-py3")
+        moved = _FakeTransport(
+            [
+                _FakeResponse(b"", status=304, headers=headers, url=self._MOVED_PAGE),
+                _FakeResponse(replacement, headers=headers, url=self._MOVED_PAGE),
+            ]
+        )
+        (second,) = self._run(moved, cache)
+
+        assert second.version == "2.0"
+        assert second.url == self._MOVED_PAGE + "pkg-2.0-py3-none-any.whl"
+        conditional, unconditional = (fields or {} for _, fields in moved.calls)
+        assert conditional["If-None-Match"] == '"v1"'
+        assert "If-None-Match" not in unconditional
+        stored = cache.get_simple("pkg")
+        assert stored is not None
+        assert stored[1].page_url == self._MOVED_PAGE
+
+    def test_old_policy_without_a_page_url_fetches_the_current_listing(
+        self, tmp_path: Path
+    ) -> None:
         cache = _make_cache(tmp_path)
         cache.put_simple(
             "pkg",
             self._RELATIVE_LISTING,
-            CachePolicy(fetched_at=0, max_age=1, etag="v1"),
+            CachePolicy(fetched_at=0, max_age=1, etag='"v1"'),
         )
-        transport = _FakeTransport(
-            [
-                _FakeResponse(
-                    b"", status=304, headers={"etag": "v1"}, url=self._MOVED_PAGE
-                )
-            ]
-        )
-
+        replacement = self._RELATIVE_LISTING.replace(b"1.0-py3", b"2.0-py3")
+        transport = _FakeTransport([_FakeResponse(replacement, url=self._MOVED_PAGE)])
         (wheel,) = self._run(transport, cache)
-
-        assert wheel.url == self._EXPECTED_URL
-        cached = cache.get_simple("pkg")
-        assert cached is not None
-        assert cached[1].page_url == self._MOVED_PAGE
+        assert wheel.version == "2.0"
+        assert "If-None-Match" not in (transport.calls[0][1] or {})
 
     def test_200_revalidation_adopts_the_redirect_target(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
@@ -3044,7 +3090,9 @@ class TestSerializationPin:
         cache.put_simple(
             "pkg",
             LISTING_BYTES,
-            CachePolicy(fetched_at=0, max_age=1, etag="old-etag"),
+            _stale_etag_policy(
+                etag="old-etag", page_url=self._INDEX.rstrip("/") + "/pkg/"
+            ),
         )
         _, transport = self._fetch(cache, SimpleSerialization.JSON)
         sent = transport.calls[0][1]
@@ -4549,9 +4597,14 @@ def _stale_policy() -> CachePolicy:
     return CachePolicy(fetched_at=0, max_age=1, etag=None)
 
 
-def _stale_etag_policy() -> CachePolicy:
-    """A stale policy carrying the ETag a 304 answers."""
-    return CachePolicy(fetched_at=0, max_age=1, etag="v1")
+def _stale_etag_policy(
+    *,
+    max_age: int = 1,
+    etag: str = "v1",
+    page_url: str = "https://pypi.org/simple/pkg/",
+) -> CachePolicy:
+    """A stale listing with its original page URL and ETag."""
+    return CachePolicy(fetched_at=0, max_age=max_age, etag=etag, page_url=page_url)
 
 
 class TestNegativeCaching:
@@ -5175,9 +5228,7 @@ class TestAssumeFreshFloor:
     ) -> None:
         monkeypatch.setattr(time, "time", lambda: 200.0)
         cache = _make_cache(tmp_path)
-        cache.put_simple(
-            "pkg", LISTING_BYTES, CachePolicy(fetched_at=0, max_age=1, etag="old")
-        )
+        cache.put_simple("pkg", LISTING_BYTES, _stale_etag_policy(etag="old"))
         transport = _FakeTransport(
             [_FakeResponse(b"", status=304, headers={"etag": "old"})]
         )
@@ -5190,9 +5241,7 @@ class TestAssumeFreshFloor:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_simple(
-            "pkg", LISTING_BYTES, CachePolicy(fetched_at=0, max_age=1, etag="old")
-        )
+        cache.put_simple("pkg", LISTING_BYTES, _stale_etag_policy(etag="old"))
         transport = _FakeTransport(
             [_FakeResponse(b"", status=304, headers={"etag": "old"})]
         )
@@ -5412,7 +5461,7 @@ class TestRepeatedCacheControlLines:
 
     def test_304_reads_max_age_instead_of_the_heuristic(self, tmp_path: Path) -> None:
         response = _FakeResponse(b"", status=304, headers=_field_lines(*self._LINES))
-        seed = CachePolicy(fetched_at=0, max_age=1, etag="v1")
+        seed = _stale_etag_policy()
 
         policy = self._stored_policy(tmp_path, response, seed)
 
@@ -5444,9 +5493,7 @@ def _revalidation_client(
     cache: OnDiskCache, requests: int = 1
 ) -> CachedAsyncSimpleClient:
     """Seed a stale listing and return a client whose requests all revalidate it."""
-    cache.put_simple(
-        "pkg", LISTING_BYTES, CachePolicy(fetched_at=0, max_age=0, etag="old")
-    )
+    cache.put_simple("pkg", LISTING_BYTES, _stale_etag_policy(max_age=0, etag="old"))
     responses = [
         _FakeResponse(b"", status=304, headers={"cache-control": "max-age=0"})
         for _ in range(requests)

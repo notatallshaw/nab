@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from typing import TYPE_CHECKING
 
+from nab_index import dependency_input_cache
 from nab_index.archive_files import read_archive_files, source_relative_path
-from nab_index.atomic import atomic_write_text
 from nab_index.client import verify_sdist_hash
 from nab_index.urls import strip_userinfo
 from nab_provider.archive import ArchiveRequest
@@ -20,29 +18,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = ["DependencySourceReader"]
-
-
-def _cached_text(path: Path, archive_hash: str, relative: str) -> str | None:
-    """Accept a cached declaration only when its identity and content hash agree."""
-    try:
-        raw_text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        return None
-    try:
-        record = json.loads(raw_text)
-    except ValueError:
-        return None
-    if not isinstance(record, dict):
-        return None
-    text = record.get("content")
-    if (
-        not isinstance(text, str)
-        or record.get("archive-sha256") != archive_hash
-        or record.get("path") != relative
-        or record.get("content-sha256") != hashlib.sha256(text.encode()).hexdigest()
-    ):
-        return None
-    return text
 
 
 def _archive_input(declaration: Mapping[str, object]) -> tuple[ArchiveRequest, str]:
@@ -77,7 +52,7 @@ class DependencySourceReader:
         """Keep cache and network policy for one input preparation operation."""
         self.root = root
         self.cache_dir = (
-            None if cache_dir is None else cache_dir / "dependency-inputs-v1"
+            None if cache_dir is None else cache_dir / dependency_input_cache.BUCKET
         )
         self.fetch = fetch
         self.offline = offline
@@ -108,21 +83,24 @@ class DependencySourceReader:
                 raise ValueError(msg)
             return _local_reader((self.root / local).resolve(), self.local_inputs)
         request, digest = _archive_input(declaration)
+        return self._archive_reader(request, digest)
+
+    def _archive_reader(
+        self, request: ArchiveRequest, digest: str
+    ) -> Callable[[str], str]:
+        """Share one verified archive across the files read from this source."""
         url = request.url
         verified_archive: bytes | None = None
 
         def read_archive(relative: str) -> str:
             nonlocal verified_archive
             relative = source_relative_path(relative)
-            key = hashlib.sha256(relative.encode()).hexdigest()
-            cache = (
-                None
-                if self.cache_dir is None
-                else self.cache_dir / digest / (key + ".json")
-            )
-            cached = None if cache is None else _cached_text(cache, digest, relative)
-            if cached is not None:
-                return cached
+            if self.cache_dir is not None:
+                cached = dependency_input_cache.read_text(
+                    self.cache_dir, digest, relative
+                )
+                if cached is not None:
+                    return cached
             if self.offline:
                 msg = (
                     f"dependency input {strip_userinfo(url)}: {relative} is not cached"
@@ -134,18 +112,9 @@ class DependencySourceReader:
                 verified_archive = data
 
             text = read_archive_files(verified_archive, [relative])[relative]
-            if cache is not None:
-                cache.parent.mkdir(parents=True, exist_ok=True)
-                atomic_write_text(
-                    cache,
-                    json.dumps(
-                        {
-                            "archive-sha256": digest,
-                            "path": relative,
-                            "content": text,
-                            "content-sha256": hashlib.sha256(text.encode()).hexdigest(),
-                        }
-                    ),
+            if self.cache_dir is not None:
+                dependency_input_cache.write_text(
+                    self.cache_dir, digest, relative, text
                 )
             return text
 

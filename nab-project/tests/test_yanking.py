@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from cProfile import Profile
 from functools import partial
 from itertools import permutations
 from typing import TYPE_CHECKING, Any
+from unittest.mock import ANY, patch
 
 if TYPE_CHECKING:
     from nab_project.resolve import TargetResult
@@ -16,8 +16,6 @@ import sys
 
 import pytest
 
-from nab_project._testing.coordinator_fake import make_coordinator
-from nab_project._testing.yanking import Extras, ReleaseRow, graph_port
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import IndexPin, build_pylock
 from nab_project.resolve import build_lock_input, resolve_with_coordinator
@@ -50,6 +48,9 @@ from nab_resolver.errors import (
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause
+from nab_test_support.coordinator import make_coordinator
+
+from .yanked_releases import ReleaseExtras, ReleaseRow, make_release_coordinator
 
 
 def run_graph(
@@ -58,14 +59,14 @@ def run_graph(
     *,
     targets: Sequence[ResolveTarget] | None = None,
     constraints: Sequence[str] = (),
-    provided_extras: Extras | None = None,
+    provided_extras: ReleaseExtras | None = None,
     resolution: ResolutionStrategy | None = None,
     overrides: Sequence[PackageOverride] = (),
     marker_holds: MarkerHolds | None = None,
     include_dependency_requirements: bool = False,
 ) -> tuple[list[TargetResult], FakeFetchPort]:
     """Resolve the fixture through the same entry point as the CLI."""
-    port = graph_port(releases, provided_extras)
+    port = make_release_coordinator(releases, provided_extras)
     result = resolve_with_coordinator(
         port,
         [ResolveTarget.for_host()] if targets is None else targets,
@@ -482,7 +483,9 @@ def test_proxy_error_without_a_conflict_report_is_incomplete(
 
 
 def test_unknown_offline_listing_does_not_certify_fallback() -> None:
-    port = graph_port([("dep", "2+live", False, ["missing"]), ("dep", "2", True, [])])
+    port = make_release_coordinator(
+        [("dep", "2+live", False, ["missing"]), ("dep", "2", True, [])]
+    )
     port.index.store_listing("missing", [], offline_miss=True)
     result = resolve_with_coordinator(
         port, [ResolveTarget.for_host()], [Requirement("dep==2")]
@@ -500,7 +503,7 @@ def test_deep_admission_uses_no_recursive_solver_stack() -> None:
         (f"p{i}", "1", i == count - 1, [f"p{i + 1}==1"] if i + 1 < count else [])
         for i in range(count)
     ]
-    port = graph_port(releases)
+    port = make_release_coordinator(releases)
     target = ResolveTarget.for_host()
     roots = [Requirement("p0")]
     prepared = build_resolver_inputs(
@@ -597,7 +600,7 @@ def test_source_install_requires_permission_for_the_install_artifact(
     root: str,
     succeeds: bool,
 ) -> None:
-    wheel_port = graph_port([("dep", "2", False, [])])
+    wheel_port = make_release_coordinator([("dep", "2", False, [])])
     live = wheel_port.index.get_listing("dep")
     assert live is not None
     port = make_coordinator(
@@ -629,7 +632,9 @@ def test_source_install_requires_permission_for_the_install_artifact(
 
 
 def test_yanked_fallback_keeps_equivalent_wheel_metadata_for_source_install() -> None:
-    port = graph_port([("pkg", "1", False, []), ("helper", "1", True, [])])
+    port = make_release_coordinator(
+        [("pkg", "1", False, []), ("helper", "1", True, [])]
+    )
     files = port.index.get_listing("pkg")
     assert files is not None
     port.index.store_listing("pkg", [*files, make_sdist("1.0", package="pkg")])
@@ -667,7 +672,7 @@ def test_yanked_fallback_keeps_equivalent_wheel_metadata_for_source_install() ->
 def test_yanked_source_uses_preferred_wheel_metadata_without_building(
     wheel_yanked: bool, universal: bool
 ) -> None:
-    port = graph_port(
+    port = make_release_coordinator(
         [("dep", "2", wheel_yanked, ["leaf==1"]), ("leaf", "1", False, [])]
     )
     files = port.index.get_listing("dep")
@@ -714,7 +719,7 @@ def test_yanked_source_uses_preferred_wheel_metadata_without_building(
 
 
 def test_rejected_live_metadata_still_splits_the_universal_lock() -> None:
-    port = graph_port(
+    port = make_release_coordinator(
         [
             ("dep", "2+live", False, ['missing; python_full_version < "3.12.4"']),
             ("dep", "2", True, []),
@@ -758,7 +763,7 @@ def graph_search(
     extras_mode: ExtrasMode = ExtrasMode.BACKTRACK,
 ) -> YankProxyProvider:
     """Create a real provider search for admission-proof and metadata-boundary tests."""
-    port = graph_port(releases)
+    port = make_release_coordinator(releases)
     target = ResolveTarget.for_host()
     requirements = [Requirement(root) for root in roots]
     prepared = build_resolver_inputs(
@@ -1098,17 +1103,12 @@ def test_live_trial_preserves_a_complete_alternative_after_an_offline_miss() -> 
     )
     mark_offline_metadata(search, "dep", "1")
 
-    with Profile() as profile:
+    with patch.object(search, "run_query", wraps=search.run_query) as query:
         pins, _ = search.resolve()
 
     assert pins == {"app": Version("1")}
     assert search.catalogue.unavailable
-    query_calls = sum(
-        entry.callcount
-        for entry in profile.getstats()
-        if entry.code is YankProxyProvider.run_query.__code__
-    )
-    assert query_calls == 1
+    query.assert_called_once_with(ANY, live_trial=True)
 
 
 @pytest.mark.parametrize("offline", [False, True])
@@ -1122,18 +1122,16 @@ def test_live_trial_failure_does_not_retry_admission(offline: bool) -> None:
             "dep", [], offline_miss=True
         )
 
-    with Profile() as profile, pytest.raises(ResolutionError) as caught:
+    with (
+        patch.object(search, "run_query", wraps=search.run_query) as query,
+        pytest.raises(ResolutionError) as caught,
+    ):
         search.resolve()
 
     assert isinstance(caught.value, IncompletePreferenceError) is offline
     if offline:
         assert "missing offline" in str(caught.value)
-    query_calls = sum(
-        entry.callcount
-        for entry in profile.getstats()
-        if entry.code is YankProxyProvider.run_query.__code__
-    )
-    assert query_calls == 1
+    query.assert_called_once_with(ANY, live_trial=True)
     assert not any(candidate.withdrawn for candidate in search.catalogue.facts)
 
 

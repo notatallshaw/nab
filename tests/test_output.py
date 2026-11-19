@@ -5,10 +5,12 @@ from __future__ import annotations
 import io
 import logging
 import sys
+from contextlib import ExitStack
 
 import pytest
 
 from nab import env
+from nab.cli import run
 from nab.output import (
     ColorChoice,
     OutputOptionError,
@@ -18,6 +20,7 @@ from nab.output import (
     Verbosity,
     _isatty,
     begin,
+    command_output,
     install_log_handler,
     logging_level_for,
     options_from_flags,
@@ -492,6 +495,73 @@ def test_begin_routes_log_records_through_the_run_printer(
     _emit_record("nab_project.demo", logging.WARNING, "mid-run")
 
     assert capsys.readouterr().err == "warning: mid-run\n"
+
+
+@pytest.mark.parametrize("interrupt", [False, True], ids=["return", "exception"])
+def test_embedded_command_restores_host_logging(*, interrupt: bool) -> None:
+    logger = logging.getLogger("nab_provider")
+    host_stream = io.StringIO()
+    handler = logging.StreamHandler(host_stream)
+    prior_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
+    def resume() -> None:
+        if interrupt:
+            raise RuntimeError("interrupted")
+
+    try:
+        argv = ("-qq", "cache", "dir", "--cache-dir", ".")
+        if interrupt:
+            with pytest.raises(RuntimeError, match="interrupted"):
+                run(argv, resume)
+        else:
+            assert run(argv, resume) == 0
+
+        logger.info("host message after the command")
+        assert host_stream.getvalue() == "host message after the command\n"
+        assert logger.level == logging.INFO
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(prior_level)
+
+
+def test_nested_command_restores_the_outer_printer() -> None:
+    previous = _begin_run(quiet=1)
+
+    def resume() -> None:
+        outer = printer()
+        assert run(("-qq", "cache", "dir", "--cache-dir", ".")) == 0
+        assert printer() is outer
+
+    assert run(("-v", "cache", "dir", "--cache-dir", "."), resume) == 0
+    assert printer() is previous
+
+
+def test_overlapping_commands_keep_the_last_active_printer() -> None:
+    prior = _begin_run(quiet=1)
+    logger = logging.getLogger("nab_project")
+    handlers = list(logger.handlers)
+    with ExitStack() as first, ExitStack() as second:
+        first.enter_context(command_output(_options(verbose=1)))
+        second.enter_context(command_output(_options(quiet=2)))
+        current = printer()
+        first.close()
+        assert printer() is current
+
+    assert printer() is prior
+    assert logger.handlers == handlers
+
+
+def test_host_can_change_its_own_logger_level_during_a_command() -> None:
+    logger = logging.getLogger("nab_provider")
+    previous = logger.level
+    try:
+        with command_output(_options(verbose=1)):
+            logger.setLevel(logging.CRITICAL)
+        assert logger.level == logging.CRITICAL
+    finally:
+        logger.setLevel(previous)
 
 
 def test_reset_run_drops_the_run_printer() -> None:

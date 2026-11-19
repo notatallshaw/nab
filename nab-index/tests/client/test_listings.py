@@ -11,6 +11,7 @@ from nab_index.client import (
     _parse_files,
 )
 from nab_index.transport import HttpError
+from nab_provider.errors import IndexAccessError
 
 INDEX = "https://example.com/"
 
@@ -32,6 +33,37 @@ def test_malformed_body_raises_index_error(body: object) -> None:
         _parse_files(body, INDEX, "foo")
 
     assert isinstance(caught.value, HttpError)
+
+
+@pytest.mark.parametrize("version", ["2.0", "010.2"])
+def test_newer_repository_major_version_is_refused(version: str) -> None:
+    with pytest.raises(
+        IndexAccessError, match=f"requires Simple API version {version}"
+    ):
+        _parse_files({"meta": {"api-version": version}, "files": []}, INDEX, "foo")
+
+
+@pytest.mark.parametrize("version", ["1", "1.0rc1", 2])
+def test_invalid_repository_versions_are_reported(version: str | int) -> None:
+    with pytest.raises(IndexAccessError, match="invalid Simple API version"):
+        _parse_files({"meta": {"api-version": version}, "files": []}, INDEX, "foo")
+
+
+def test_newer_minor_version_warns_and_reads_the_listing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    assert (
+        _parse_files({"meta": {"api-version": "01.05"}, "files": []}, INDEX, "foo")
+        == []
+    )
+    assert "Simple API version 01.05" in caplog.text
+
+
+def test_missing_version_in_metadata_keeps_the_files() -> None:
+    filename = "foo-1.0-py3-none-any.whl"
+    data = {"meta": {}, "files": [{"filename": filename, "url": filename}]}
+    (wheel,) = _parse_files(data, INDEX, "foo")
+    assert wheel.filename == filename
 
 
 def test_empty_listing() -> None:

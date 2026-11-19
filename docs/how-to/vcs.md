@@ -89,9 +89,18 @@ PEP 508 lets you write a direct-URL requirement under `[project].dependencies`:
 dependencies = ["my-fork @ git+https://github.com/myorg/my-fork.git@<sha>"]
 ```
 
-The admission check (allowed schemes, allowed repos, required pin) fires on this form too, but the
-resolver path is not implemented for the project-root case: nab raises `NotImplementedError`. Use a
-`[[tool.nab.vcs-sources]]` entry instead.
+To lock this dependency with nab, keep `my-fork` in the dependency list and move its URL to
+`[[tool.nab.vcs-sources]]`. Keep any extras or environment marker on the dependency. The repository
+uses the [same VCS policy](#pinned-vcs-sources).
+
+```toml
+[project]
+dependencies = ["my-fork"]
+
+[[tool.nab.vcs-sources]]
+name = "my-fork"
+url = "git+https://github.com/myorg/my-fork.git@<sha>"
+```
 
 ## What nab records in the lock
 

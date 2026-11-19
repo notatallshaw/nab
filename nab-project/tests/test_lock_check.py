@@ -14,7 +14,6 @@ import pytest
 
 from nab_project import toml_io, toml_writer
 from nab_project._resolve.engine import InstallContexts
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.inputs import ResolveInputs
 from nab_project.lock_check import (
     LockConsistencyError,
@@ -46,6 +45,7 @@ from nab_provider.records import IndexConfig
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, MatrixInclude, ResolveTarget
 from nab_provider.testing import make_metadata, make_wheel, pkg_override
+from nab_test_support.coordinator import make_coordinator
 
 
 def _saved(

@@ -15,16 +15,24 @@ pip 26.1 and newer can install the dependencies selected from a PEP 751 lock:
 python -m pip install -r pylock.toml
 ```
 
-pip selects packages for the current interpreter and platform, uses the lock's default dependency
-groups, and selects no extras.
+This command selects packages for the current interpreter and platform, including the lock's default
+dependency groups.
 
-With pip 26.3 or newer, select a named group with:
+With pip 26.3 or newer, add an extra listed in the lock by appending its name in brackets. For
+example, this installs the `cli` extra along with the default groups.
+
+```bash
+python -m pip install -r 'pylock.toml[cli]'
+```
+
+Use `--group` to select a named group in place of the lock’s default groups.
 
 ```bash
 python -m pip install --group pylock.toml:dev
 ```
 
-The command installs the locked dependencies, not the project that produced the lock. See
+Use both options in one command to install the extra, default groups and named group together. These
+commands install the project's locked dependencies. See
 [Selecting what to lock](../reference/selection.md) before using extras, non-default groups, or
 workspace members.
 

@@ -64,13 +64,14 @@ def test_changed_path_selects_its_consumers(path: str, expected: list[str]) -> N
     assert select_tests.select_workspaces([path], WORKSPACES) == expected
 
 
-def test_native_platforms_share_one_runner_per_os() -> None:
+def test_code_changes_run_free_threaded_python_on_all_platforms() -> None:
     paths = ["nab-index/src/nab_index/client.py"]
     outputs = select_tests.job_outputs(["project", "umbrella"], WORKSPACES, paths)
     cells = json.loads(outputs["test-matrix"])["include"]
     for os_name in ("macos", "windows"):
         assert [row for row in cells if row["os"] == os_name] == [
-            {"os": os_name, "python": "3.10", "second": "3.15"}
+            {"os": os_name, "python": "3.10", "second": "3.15"},
+            {"os": os_name, "python": "3.15t"},
         ]
     linux = {row["python"] for row in cells if row["os"] == "ubuntu"}
     assert linux == {*select_tests.PYTHON_VERSIONS, "3.15t", "3.10.4"}

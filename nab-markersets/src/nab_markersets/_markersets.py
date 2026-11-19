@@ -1927,6 +1927,29 @@ def _map_leaves(node: Formula, replace: Callable[[AtomLeaf], Formula]) -> Formul
     return make_or(_map_leaves(child, replace) for child in node.children)
 
 
+def with_cpython_implementation_version(node: Formula) -> Formula:
+    """Evaluate implementation-version predicates on the full Python version."""
+
+    def substitute(leaf: AtomLeaf) -> Formula:
+        atom = leaf.atom
+        if atom.variable != "implementation_version":
+            return leaf
+
+        return AtomLeaf(
+            Atom(
+                atom.kind,
+                "python_full_version",
+                "python_full_version",
+                atom.op,
+                atom.literal,
+                swapped=atom.swapped,
+                positive=atom.positive,
+            )
+        )
+
+    return _map_leaves(node, substitute)
+
+
 def _substitute_values(node: Formula, lookup: Callable[[Atom], bool | None]) -> Formula:
     """Keep predicates whose truth is unknown and substitute the rest."""
 

@@ -6,7 +6,6 @@ from functools import partial
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.policy import ExtrasMode
@@ -25,6 +24,7 @@ from nab_provider.yanked_resolution import (
 from nab_provider.yanking import mark_yanked
 from nab_resolver.errors import ResolutionError
 from nab_resolver.types import Incompatibility
+from nab_test_support.coordinator import make_coordinator
 
 from .yanking_model import Artifact, Case, Key, Node, Solution, live_completions
 
@@ -58,6 +58,14 @@ class Observation:
         candidate: Candidate,
         artifacts: dict[Key, Artifact],
     ) -> None:
+        self.live_trial = search.live_trial
+        # Metadata requests have a single solver value, zero.
+        self.metadata_requested = any(
+            isinstance(package, MetadataProxy)
+            and search.items[package.candidate] == candidate
+            and 0 in allowed
+            for package, allowed in search.positive.items()
+        )
         self.inherited = search.scope.live
         self.target = node_for(candidate.package)
         self.artifact = artifacts[candidate.base, candidate.label, candidate.withdrawn]
@@ -211,6 +219,13 @@ class Harness:
     def check_preparations(self, valid: frozenset[Solution]) -> None:
         """Validate permission and live alternatives using only the graph model."""
         for observation in self.observations:
+            if observation.live_trial:
+                # Backtracking can demand metadata before a new package decision.
+                # This first query may only read files that have not been yanked.
+                assert not observation.artifact.withdrawn, observation
+                assert observation.metadata_requested, observation
+                continue
+
             selection = {
                 node.name: artifact for node, artifact in observation.selected.items()
             }

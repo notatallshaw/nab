@@ -337,7 +337,7 @@ class ProjectKeys(
     )
 
     plans = Key(
-        Layer[Mapping[str, Any]](
+        Layer[Mapping[str, Mapping[str, object]]](
             rdefault=_EMPTY_MAPPING,
             parse=values.parse_input_tables,
             render=hooks.render_input_tables,
@@ -348,7 +348,7 @@ class ProjectKeys(
     )
 
     input_sources = Key(
-        Layer[Mapping[str, Any]](
+        Layer[Mapping[str, Mapping[str, object]]](
             rdefault=_EMPTY_MAPPING,
             parse=values.parse_input_tables,
             render=hooks.render_input_tables,
@@ -614,7 +614,7 @@ class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
     plan = Value[str | None](
         key=Layer[str | None](
             rdefault=None,
-            parse=values.parse_base_group,
+            parse=values.parse_plan_name,
             render=hooks.render_optional_text,
             sample="dev",
         ),

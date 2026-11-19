@@ -6,7 +6,6 @@ from functools import partial
 
 import pytest
 
-from nab_project._testing.yanking import graph_port
 from nab_project.diagnostics import ResolutionMessage
 from nab_project.resolve import resolve_with_coordinator
 from nab_provider._vendor.packaging.requirements import Requirement
@@ -22,13 +21,15 @@ from nab_provider.yanked_resolution import YankProxyProvider
 from nab_resolver.errors import ResolutionError
 from nab_resolver.types import RootRequirement
 
+from .yanked_releases import make_release_coordinator
+
 
 @pytest.mark.parametrize("dependency", ["leaf", "leaf[x]"])
 @pytest.mark.parametrize("refusal", ["zip", "python", "absent"])
 def test_admission_failure_reports_transitive_listing_refusal(
     dependency: str, refusal: str
 ) -> None:
-    port = graph_port(
+    port = make_release_coordinator(
         [("mid", str(version), False, [dependency]) for version in range(1, 4)]
         + [("timeout", "2", True, []), ("timeout", "2", False, [])]
     )
@@ -77,7 +78,7 @@ def test_admission_failure_reports_transitive_listing_refusal(
 
 
 def test_failure_uses_the_dependency_range_before_suggesting_zip_permission() -> None:
-    port = graph_port(
+    port = make_release_coordinator(
         [("mid", str(version), False, ["leaf>=2"]) for version in range(1, 4)]
         + [("timeout", "2", True, []), ("timeout", "2", False, [])]
     )
@@ -99,7 +100,9 @@ def test_failure_uses_the_dependency_range_before_suggesting_zip_permission() ->
 
 
 def test_failure_ignores_rejections_outside_its_proof() -> None:
-    port = graph_port([("mid", "1", False, ["missing"]), ("discarded", "1", False, [])])
+    port = make_release_coordinator(
+        [("mid", "1", False, ["missing"]), ("discarded", "1", False, [])]
+    )
     url = "https://example.test/discarded-1-False.whl.metadata"
     port.index.store_metadata("discarded", "1", "invalid metadata", metadata_url=url)
     declarations = [Requirement("mid")]
@@ -127,7 +130,7 @@ def test_failure_ignores_rejections_outside_its_proof() -> None:
 
 
 def test_failure_reports_each_relevant_metadata_rejection() -> None:
-    port = graph_port(
+    port = make_release_coordinator(
         [("mid", str(version), False, ["broken"]) for version in range(1, 4)]
         + [("timeout", "2", True, []), ("timeout", "2", False, [])]
         + [("broken", version, False, []) for version in ("1", "2")]
@@ -159,7 +162,9 @@ def test_failure_reports_each_relevant_metadata_rejection() -> None:
 def test_root_failure_with_a_nonempty_listing_reports_the_original_domain(
     name: str,
 ) -> None:
-    port = graph_port([("leaf", "1", False, [])], {("leaf", "1", False): ("x",)})
+    port = make_release_coordinator(
+        [("leaf", "1", False, [])], {("leaf", "1", False): ("x",)}
+    )
     declarations = [Requirement(name + ">=2")]
     inputs = build_resolver_inputs(
         declarations,
@@ -183,7 +188,7 @@ def test_root_failure_with_a_nonempty_listing_reports_the_original_domain(
 def test_an_earlier_broad_failure_does_not_supply_a_zip_remedy_for_a_narrow_root() -> (
     None
 ):
-    port = graph_port([])
+    port = make_release_coordinator([])
     port.index.store_listing(
         "leaf",
         [SdistFile("leaf-1.zip", "https://example.test/leaf-1.zip", "1", None, None)],
@@ -215,7 +220,7 @@ def test_an_earlier_broad_failure_does_not_supply_a_zip_remedy_for_a_narrow_root
 
 
 def test_install_artifact_identity_failure_does_not_invent_a_listing_refusal() -> None:
-    port = graph_port([("leaf", "1", False, [])])
+    port = make_release_coordinator([("leaf", "1", False, [])])
     files = port.index.get_listing("leaf")
     assert files is not None
     port.index.store_listing("leaf", [*files, make_sdist("1.0", package="leaf")])

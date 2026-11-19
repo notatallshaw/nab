@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from nab_project.dependency_inputs import input_table
 from nab_provider.requirements_file import require_string_list
@@ -23,17 +23,18 @@ class LockPlan(NamedTuple):
     extras: tuple[str, ...]
     dependencies: bool
     build_requirements: bool
-    imports: Mapping[str, Any]
-    settings: dict[str, Any]
+    imports: Mapping[str, Mapping[str, object]]
+    settings: dict[str, object]
     output: str
 
     @classmethod
-    def read(cls, name: str, plans: Mapping[str, Any], format_name: str) -> LockPlan:
+    def read(cls, name: str, plans: Mapping[str, object], format_name: str) -> LockPlan:
         """Validate the selected declaration before accessing its inputs."""
         if name not in plans:
             msg = f"unknown lock plan {name!r}; declared: {sorted(plans)}"
             raise ValueError(msg)
-        table = input_table(plans[name], f"lock plan {name!r}")
+        where = f"lock plan {name!r}"
+        table = input_table(plans[name], where)
         unknown = table.keys() - {
             "groups",
             "extras",
@@ -44,13 +45,13 @@ class LockPlan(NamedTuple):
             "output",
         }
         if unknown:
-            msg = f"unknown lock plan keys: {sorted(unknown)}"
+            msg = f"{where}: unknown keys {sorted(unknown)}"
             raise ValueError(msg)
 
         build = table.get("build-requirements", False)
         dependencies = table.get("dependencies", not build)
         if not isinstance(build, bool) or not isinstance(dependencies, bool):
-            msg = "build-requirements and dependencies must be booleans"
+            msg = f"{where}: build-requirements and dependencies must be booleans"
             raise TypeError(msg)
         default = (
             f"pylock.{name}.toml"
@@ -59,16 +60,16 @@ class LockPlan(NamedTuple):
         )
         output = table.get("output", default)
         if not isinstance(output, str) or not output or output == "-":
-            msg = "a lock plan needs a file output"
+            msg = f"{where}: output must be a file path"
             raise ValueError(msg)
         return cls(
             name,
-            tuple(require_string_list(table.get("groups", []), "plan groups")),
-            tuple(require_string_list(table.get("extras", []), "plan extras")),
+            tuple(require_string_list(table.get("groups", []), f"{where} groups")),
+            tuple(require_string_list(table.get("extras", []), f"{where} extras")),
             dependencies,
             build,
-            parse_input_tables(table.get("inputs", {}), "plan inputs"),
-            input_table(table.get("settings", {}), "plan settings"),
+            parse_input_tables(table.get("inputs", {}), f"{where} inputs"),
+            input_table(table.get("settings", {}), f"{where} settings"),
             output,
         )
 
@@ -87,15 +88,32 @@ class LockPlan(NamedTuple):
         return Layer(layer.origin, values, layer.raw)
 
 
-def validate_plan_outputs(
-    path: Path, plans: Mapping[str, Any], format_name: str
-) -> None:
-    """Refuse colliding batch destinations before writing the first file."""
-    seen = set()
-    for name in plans:
-        plan = LockPlan.read(name, plans, format_name)
-        destination = (path.parent / plan.output).resolve()
-        if destination in seen:
-            msg = f"multiple lock plans write {destination}"
-            raise ValueError(msg)
-        seen.add(destination)
+def read_lock_plans(
+    path: Path,
+    declarations: Mapping[str, object],
+    sources: Mapping[str, object],
+    format_name: str,
+    *,
+    selected: str | None,
+) -> tuple[LockPlan, ...]:
+    """Read one named plan or check all batch declarations before the first write."""
+    names = declarations if selected is None else (selected,)
+    plans = []
+    destinations: dict[Path, str] = {}
+    for name in names:
+        plan = LockPlan.read(name, declarations, format_name)
+        for source in plan.imports:
+            if source not in sources:
+                msg = f"unknown input source {source!r} in plan {name!r}"
+                raise ValueError(msg)
+
+        if selected is None:
+            # A later plan's settings can be checked without reading its source files.
+            plan_settings_layer(name, plan.settings, path.parent)
+            destination = (path.parent / plan.output).resolve()
+            if (previous := destinations.get(destination)) is not None:
+                msg = f"lock plans {previous!r} and {name!r} both write {destination}"
+                raise ValueError(msg)
+            destinations[destination] = name
+        plans.append(plan)
+    return tuple(plans)

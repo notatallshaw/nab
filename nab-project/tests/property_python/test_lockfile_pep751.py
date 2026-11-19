@@ -18,7 +18,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nab_project._testing.artifacts import make_sdist_artifact, make_wheel_artifact
+from ..lock_artifacts import make_sdist_artifact, make_wheel_artifact
 
 if sys.version_info >= (3, 11):
     import tomllib

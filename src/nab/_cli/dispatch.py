@@ -8,6 +8,7 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "nab",
+    "nab.config.values",
     "os.path",
     "pathlib",
 )
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from .. import output
+from ..config.values import parse_path
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -59,10 +61,21 @@ def dispatch(
     paused something for startup has a place to put it back.
     """
     try:
-        output.begin(_options(parsed.options))
+        options = _options(parsed.options)
     except output.OutputOptionError as exc:
         return _USAGE_STATUS, f"error: {exc}"
 
+    with output.command_output(options):
+        return _invoke(parsed, table, path_dests, resume)
+
+
+def _invoke(
+    parsed: Parsed,
+    table: dict[str, tuple[str, str, str]],
+    path_dests: dict[str, tuple[str, ...]],
+    resume: Callable[[], None],
+) -> tuple[int, str]:
+    """Load the selected command and pass it the converted arguments."""
     module_name, function_name, _summary = table[parsed.command]
     module = __import__(module_name, fromlist=(function_name,))
     resume()
@@ -71,27 +84,15 @@ def dispatch(
     values = dict(parsed.values)
     if values.get("script") is not None and "path" in parsed.supplied:
         return _USAGE_STATUS, "error: a project path and --script cannot be combined"
-    file_dests = _FILE_DESTS.get(parsed.command, ())
     for dest in path_dests.get(parsed.command, ()):
         value = values[dest]
         if isinstance(value, str):
             if dest == "script" and value.startswith(("http://", "https://")):
                 return _USAGE_STATUS, "error: --script requires a local file path"
-            # Path discards trailing separators and "." components.
-            if dest in file_dests and basename(value) in ("", "."):  # noqa: PTH119
-                return _FAILED_STATUS, (
-                    f"error: expected a file path, got a directory path: {value}"
-                )
-            path = Path(value)
-            if (
-                parsed.command == "lock"
-                and dest == "output"
-                and value != "-"
-                and path == Path("-")
-            ):
-                # Path strips the explicit ./ prefix; only bare - selects stdout.
-                path = path.absolute()
-            values[dest] = path
+            try:
+                values[dest] = _command_path(parsed.command, dest, value)
+            except ValueError as exc:
+                return _FAILED_STATUS, f"error: {exc}"
 
     try:
         command(**values)
@@ -99,6 +100,21 @@ def dispatch(
         return _status(exc.code)
 
     return 0, ""
+
+
+def _command_path(command: str, dest: str, value: str) -> Path:
+    """Check the original path argument before Path discards parts of it."""
+    if dest == "cache_dir":
+        return parse_path(value, "--cache-dir")
+    if dest in _FILE_DESTS.get(command, ()) and basename(value) in ("", "."):  # noqa: PTH119
+        msg = f"expected a file path, got a directory path: {value}"
+        raise ValueError(msg)
+
+    path = Path(value)
+    if command == "lock" and dest == "output" and value != "-" and path == Path("-"):
+        # Path strips the explicit ./ prefix; only bare - selects stdout.
+        return path.absolute()
+    return path
 
 
 def _options(values: dict[str, object]) -> output.OutputOptions:

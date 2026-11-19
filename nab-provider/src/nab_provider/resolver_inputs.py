@@ -218,8 +218,8 @@ def build_resolver_inputs(
         if req.url is not None:
             admit_vcs_url(req.url, vcs)
             msg = (
-                f"VCS {kind} admitted by policy but resolver path is not"
-                f" implemented: {req.name} @ {req.url}"
+                f"move the Git URL for {req.name} to vcs-sources "
+                f"and keep the rest of the {kind}"
             )
             raise NotImplementedError(msg)
 

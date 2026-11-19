@@ -6,11 +6,12 @@ from typing import TYPE_CHECKING, TypeVar
 
 from nab_project import toml_io, toml_writer
 from nab_project._lockfile import pylock
-from nab_project._testing.artifacts import make_wheel_artifact
 from nab_project.lockfile import IndexPin, LockInput, PinShape, TargetLock
 from nab_provider._vendor.packaging.markers import Marker
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget, environment_declaration
+
+from .lock_artifacts import make_wheel_artifact
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, ValuesView

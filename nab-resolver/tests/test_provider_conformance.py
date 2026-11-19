@@ -1,16 +1,13 @@
 """Run real resolver entry points against an independent finite-domain oracle."""
 
 from collections.abc import Mapping
-from math import prod
 
 import pytest
-from hypothesis import given
-from hypothesis import strategies as st
 
 from nab_resolver._compat import override
 from nab_resolver.errors import ResolutionError, ResolutionLimitError
 from nab_resolver.ranges import Range
-from nab_resolver.resolver import BaseProvider, Solution
+from nab_resolver.resolver import Solution
 from nab_resolver.testing import (
     ProviderConformanceError,
     ProviderScenario,
@@ -24,69 +21,8 @@ from nab_resolver.types import (
     Term,
 )
 
+from .conformance_fixture import FixtureProvider, Graph, check_fixture
 from .property.providers import FuzzProvider
-
-Graph = dict[str, dict[int, dict[str, Range[int]]]]
-
-
-class FixtureProvider(BaseProvider[str, int]):
-    """Adapt a finite fixture with ordinary newest-first candidate ordering."""
-
-    def __init__(self, graph: Graph) -> None:
-        self.graph = graph
-
-    def choose_version(
-        self, package: str, version_range: RangeProtocol[int]
-    ) -> int | None:
-        return next(
-            (
-                version
-                for version in sorted(self.graph.get(package, {}), reverse=True)
-                if version in version_range
-            ),
-            None,
-        )
-
-    def has_satisfying_version(
-        self, package: str, version_range: RangeProtocol[int]
-    ) -> bool:
-        return self.choose_version(package, version_range) is not None
-
-    def get_dependencies(
-        self, package: str, version: int
-    ) -> Mapping[str, RangeProtocol[int]]:
-        return self.graph[package][version]
-
-    def prioritize(
-        self,
-        package: str,
-        version_range: RangeProtocol[int],
-        conflict_counts: Mapping[str, int],
-        culprit_counts: Mapping[str, int] | None = None,
-    ) -> int:
-        return len(self.graph.get(package, {}))
-
-    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
-        return None
-
-
-def check_fixture(
-    graph: Graph,
-    provider: type[FixtureProvider] = FixtureProvider,
-    *,
-    constraints: dict[str, Range[int]] | None = None,
-) -> None:
-    """Exercise one test provider through the public third-party check."""
-    scenario = ProviderScenario[str, int](
-        "custom", {"app": Range.full()}, graph, constraints=constraints
-    )
-    check_provider(
-        lambda _scenario: provider(graph),
-        scenario,
-        range_type=Range,
-        root_version=0,
-        max_combinations=prod(max(1, len(versions)) for versions in graph.values()),
-    )
 
 
 @pytest.mark.parametrize(
@@ -277,19 +213,6 @@ def test_display_membership_is_checked() -> None:
 
     with pytest.raises(ProviderConformanceError, match="display narrowing"):
         check_fixture({"app": {1: {"missing": Range.full()}}}, Dropping)
-
-
-@given(
-    st.lists(st.tuples(st.integers(0, 3), st.integers(0, 3)), min_size=2, max_size=2)
-)
-def test_generated_backtracking_fixtures(bounds: list[tuple[int, int]]) -> None:
-    graph: Graph = {"app": {}, "lib": {1: {}, 2: {}}}
-
-    for version, interval_bounds in enumerate(bounds, start=1):
-        lower, upper = sorted(interval_bounds)
-        graph["app"][version] = {"lib": Range.between(lower, upper)}
-
-    check_fixture(graph)
 
 
 def test_full_query_cannot_invent_an_unlisted_version() -> None:

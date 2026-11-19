@@ -115,7 +115,7 @@ from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
     expand_extra_requirements,
-    resolve_groups_to_requirements,
+    iter_group_requirements,
 )
 from nab_provider.target import IntractableMarkerError, UnevaluableMarkerError
 from nab_provider.value import Record, replace
@@ -266,9 +266,8 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     """Resolve dependencies and emit a lockfile or pin list.
 
     ``pylock`` is the default format. ``requirements`` adds ``--hash`` lines to
-    index pins; ``requirements-without-hashes`` omits those lines. Output
-    defaults to ``pylock.toml`` or ``requirements.txt`` for project inputs.
-    With ``--script``, the defaults are ``pylock.<stem>.toml`` and
+    index pins. For one target, project output defaults to ``pylock.toml`` or
+    ``requirements.txt``. A script writes ``pylock.<stem>.toml`` or
     ``<script>.requirements.txt`` beside the script. ``--output -`` writes stdout.
 
     Groups and extras select project requirements. ``--build-requirements``
@@ -280,10 +279,10 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     still using them during resolution. Use it for hashed requirements, then
     install those members separately from pip's ``--require-hashes`` run.
 
-    Universal requirements output needs a template that renders to a distinct
-    path for every target. It may contain ``{python_version}``,
-    ``{platform_id}``, and ``{selection}``; use pylock when those values cannot
-    separate the targets.
+    With multiple targets, both requirements formats print to stdout by
+    default. To write one file per target, use an output template containing
+    ``{python_version}``, ``{platform_id}``, or ``{selection}``. Use pylock
+    when those values cannot distinguish the targets.
 
     ``--python X.Y`` targets that Python on this machine. It is the short
     form of ``--project-environment-python`` and is not valid in universal
@@ -338,8 +337,8 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         cli_environment_platform=project_environment_platform,
         cli_environment_implementation=project_environment_implementation,
     )
-    if plan is not None and all_plans:
-        printer().error("--plan and --all-plans are mutually exclusive")
+    if all_plans and "plan" in overrides:
+        printer().error("choose a single lock plan or use --all-plans")
         raise SystemExit(1)
     ladder = _checked_ladder(
         read_config_ladder(path, overrides, input_format=input_format)
@@ -349,31 +348,35 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     if input_format is InputFormat.SCRIPT and (selected_plan is not None or all_plans):
         printer().error("lock plans require a project, not a script")
         raise SystemExit(1)
-    names = tuple(ladder["plans"].value) if all_plans else (selected_plan,)
-    if all_plans and (not names or output is not None):
+    if all_plans and (not ladder["plans"].value or output is not None):
         printer().error("--all-plans needs declared plans and cannot use --output")
         raise SystemExit(1)
-    if all_plans:
-        from .config.lock_plans import validate_plan_outputs  # noqa: PLC0415
+
+    plans: tuple[LockPlan | None, ...] = (None,)
+    if all_plans or selected_plan is not None:
+        from .config.lock_plans import read_lock_plans  # noqa: PLC0415
 
         try:
-            validate_plan_outputs(
+            plans = read_lock_plans(
                 path,
                 ladder["plans"].value,
+                ladder["input-sources"].value,
                 settings.format,
+                selected=None if all_plans else selected_plan,
             )
-        except (ValueError, TypeError) as exc:
-            printer().error(exc)
+        except (OSError, ValueError, TypeError) as exc:
+            printer().error(exc, prefix="input error: ")
             raise SystemExit(1) from None
+
     actions = _LockActions(python, upgrade, locked, reproduce)
-    for name in names:
+    for declaration in plans:
         _lock_one(
             path,
             overrides,
             actions,
             output=output,
             input_format=input_format,
-            plan_name=name,
+            plan=declaration,
             initial_ladder=ladder,
         )
 
@@ -415,17 +418,16 @@ def _prepare_lock_configuration(
     overrides: Mapping[str, object],
     *,
     output: Path | None,
-    plan_name: str | None,
+    plan: LockPlan | None,
     ladder: dict[str, EffectiveValue],
 ) -> _LockConfiguration:
     """Prepare configured sources before entering the ordinary resolution phases."""
-    if plan_name is None:
+    if plan is None:
         return _LockConfiguration(ladder, None, None, output)
 
     # Ordinary locks do not load archive or plan readers.
     from nab_project.dependency_sources import DependencySourceReader  # noqa: PLC0415
 
-    from .config.lock_plans import LockPlan  # noqa: PLC0415
     from .lock_inputs import prepare_lock_input  # noqa: PLC0415 - named plans only
 
     # Named locks always install their declared selection.
@@ -446,7 +448,6 @@ def _prepare_lock_configuration(
         )
         raise ValueError(msg)
     settings = _layered_run_settings(ladder)
-    plan = LockPlan.read(plan_name, ladder["plans"].value, settings.format)
     reader = DependencySourceReader(
         path.parent,
         _resolve_effective_cache_dir(settings.cache_dir, cache=settings.cache),
@@ -487,7 +488,7 @@ def _lock_one(
     *,
     output: Path | None,
     input_format: InputFormat,
-    plan_name: str | None,
+    plan: LockPlan | None,
     initial_ladder: dict[str, EffectiveValue],
 ) -> None:
     """Run one effective project selection using the normal resolver and writer."""
@@ -498,7 +499,7 @@ def _lock_one(
             path,
             overrides,
             output=output,
-            plan_name=plan_name,
+            plan=plan,
             ladder=initial_ladder,
         )
     except (
@@ -592,7 +593,7 @@ def _lock_one(
         input_format=input_format,
         lock_policy=settings.lock_policy,
         project_input=project_input,
-        plan_name=plan_name,
+        plan_name=plan.name if plan is not None else None,
     )
 
     provenance = _build_provenance(
@@ -679,6 +680,7 @@ def _lock_one(
             lock_input,
             format=settings.format,
             output=output,
+            script=path if input_format is InputFormat.SCRIPT else None,
             build_requirements=settings.build_requirements,
             previous_lock=previous_lock,
         )
@@ -719,9 +721,13 @@ def _lock_output(
         build_requirements=settings.build_requirements,
         no_emit_workspace=settings.no_emit_workspace,
     )
-    # Select the effective output before checking lock-only actions.
-    if input_format is InputFormat.SCRIPT and output is None:
-        output = _script_output_path(path, format_name=settings.format)
+    # Saved-lock checks need the script's pylock filename before resolution.
+    if (
+        input_format is InputFormat.SCRIPT
+        and output is None
+        and settings.format == "pylock"
+    ):
+        output = _script_pylock_path(path)
 
     _validate_pylock_output_name(output=output, format=settings.format)
     _validate_lock_mode(
@@ -739,10 +745,8 @@ def _lock_output(
     return output
 
 
-def _script_output_path(path: Path, *, format_name: str) -> Path:
-    """Put a script's default lock beside it using a standard output filename."""
-    if format_name != "pylock":
-        return path.with_name(path.name + ".requirements.txt")
+def _script_pylock_path(path: Path) -> Path:
+    """Choose a PEP 751 filename beside the script."""
     stem = path.stem
     if not stem or "." in stem:
         printer().error(
@@ -757,6 +761,7 @@ def _emit(
     *,
     format: str,  # noqa: A002 - shadows builtin by convention
     output: Path | None,
+    script: Path | None = None,
     build_requirements: bool = False,
     previous_lock: LockPreferences | None = None,
 ) -> None:
@@ -770,6 +775,8 @@ def _emit(
             previous_lock=previous_lock,
         )
     else:
+        if script is not None:
+            default_output = script.with_name(script.name + ".requirements.txt")
         _emit_requirements(
             lock_input, format=format, output=output, default_output=default_output
         )
@@ -1350,17 +1357,19 @@ def _active_root_requirements(  # noqa: PLR0913 - independent root sources and s
         for extra in extras:
             roots.extend(
                 RootRequirement(requirement=req, source=f"the {extra!r} extra")
-                for req in expand_extra_requirements(optional, project_name, [extra])
+                for req in expand_extra_requirements(
+                    optional, project_name, [extra], bind_extra_markers=True
+                )
             )
 
-    effective_groups = dict.fromkeys(
-        active_group_names(groups, default_groups, base_group, build_group)
+    effective_groups = active_group_names(
+        groups, default_groups, base_group, build_group
     )
     if effective_groups:
         table = input_dependency_groups(document)
-        for group in effective_groups:
-            requirements = resolve_groups_to_requirements(table, [group])
-            if group not in groups:
+        requested_groups = set(groups)
+        for group, requirements in iter_group_requirements(table, effective_groups):
+            if group not in requested_groups:
                 continue
             roots.extend(
                 RootRequirement(
@@ -1561,7 +1570,8 @@ def _emit_requirements(
         return
 
     target = output if output is not None else default_output
-    template = str(target)
+    # Braces in a script filename are literal unless the user supplies a template.
+    template = str(output) if output is not None else ""
     if not any(var in template for var in TUPLE_TEMPLATE_VARS):
         if multi_target:
             _refuse_untemplated(lock_input, target)

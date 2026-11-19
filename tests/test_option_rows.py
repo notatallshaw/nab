@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import enum
 from pathlib import Path
+from types import NoneType
 from typing import Literal, NewType
 
 import pytest
@@ -156,6 +157,11 @@ class TestWhatTheTypeParameterSays:
     def test_a_literal_and_its_enum_give_the_same_tokens(self) -> None:
         assert shape(StrategyFlag).choices == shape(Strategy).choices
 
+    def test_none_in_a_literal_makes_the_choice_nullable(self) -> None:
+        read = shape(Literal["all", None])  # noqa: PYI061 - exercise None inside Literal
+        assert read.choices == ("all",)
+        assert read.nullable
+
     def test_a_row_with_no_value_has_no_type_parameter(self) -> None:
         assert type_argument(Count(help="how loud")) is None
 
@@ -283,6 +289,30 @@ class TestWhatIsRefusedAsTheTableIsBuilt:
             output = Value(help="where to write the lock")
 
         assert "output reads a value, so it needs a vtype" in _refused(Fixture)
+
+    def test_container_annotation_is_not_a_nullable_scalar(self) -> None:
+        class Fixture(Table, on=GLOBAL):
+            values = Operand[tuple[int, NoneType]](help="a pair of values")
+
+        with pytest.raises(ValueError, match="values holds"):
+            build_option(_only(Fixture))
+
+    def test_integer_literal_does_not_declare_a_text_choice(self) -> None:
+        class Fixture(Table, on=GLOBAL):
+            level = Verb[Literal["all", 1]](help="which level to use")
+
+        with pytest.raises(ValueError, match="level.*string"):
+            build_option(_only(Fixture))
+
+    def test_empty_enum_cannot_declare_an_unrestricted_choice(self) -> None:
+        class Empty(enum.Enum):
+            pass
+
+        class Fixture(Table, on=GLOBAL):
+            mode = Verb[Empty](help="which mode to use")
+
+        with pytest.raises(ValueError, match="mode.*at least one string choice"):
+            build_option(_only(Fixture))
 
     def test_a_type_no_token_converts_to_names_the_row(self) -> None:
         class Fixture(Table, on=GLOBAL, docs="reference/cli.md"):

@@ -27,7 +27,6 @@ from nab_markersets.markersets import MarkerSet
 from nab_project import resolve as resolve_mod
 from nab_project._resolve import engine as engine_mod
 from nab_project._resolve.engine import _EngineSettings, _resolve_one_target, _run_pass
-from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
@@ -94,8 +93,9 @@ from nab_provider.requirements_file import expand_extra_requirements
 from nab_provider.resolver_inputs import ProxyConstraints
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
-from nab_provider.testing import make_metadata, make_sdist, make_wheel
+from nab_provider.testing import FakeFetchPort, make_metadata, make_sdist, make_wheel
 from nab_resolver.errors import ResolutionError
+from nab_test_support.coordinator import make_coordinator
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -1478,14 +1478,14 @@ class TestBuildResolverInputs:
             )
 
     def test_admitted_vcs_url_raises_not_implemented(self) -> None:
-        """An admitted VCS requirement still has no resolver path."""
+        """An allowed Git URL in a root requirement gets a source declaration hint."""
         env = _linux_311().marker_env
         vcs = VcsConfig(
             policy=VcsPolicy.ALLOW,
             allowed_schemes=frozenset({"git+https"}),
             allowed_repos=("https://example.com/",),
         )
-        with pytest.raises(NotImplementedError, match="not implemented"):
+        with pytest.raises(NotImplementedError, match="to vcs-sources"):
             build_resolver_inputs(
                 _reqs(f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"),
                 vcs,
@@ -3447,13 +3447,10 @@ class TestMicroBoundaryNarrowing:
         )
 
         assert result.success
-        versions = {
-            tr.target.label: str(tr.pins["bar"]) for tr in result.target_results
-        }
-        assert versions == {
-            "py310-linux_x86_64-pf3100": "1.0",
-            "py310-linux_x86_64-pf3104": "2.0",
-        }
+        pins = {tr.target.python_full_version: tr.pins for tr in result.target_results}
+        assert str(pins["3.10.0"]["bar"]) == "1.0"
+        assert "bar" not in pins["3.10.4.dev0"]
+        assert str(pins["3.10.4"]["bar"]) == "2.0"
 
         pylock = build_pylock(build_lock_input(result, inputs=_no_build()))
         pylock.validate()

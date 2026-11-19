@@ -874,6 +874,33 @@ def test_implementation_version_is_version_or_string_twin() -> None:
             assert marker.evaluate(env) == Marker(text).evaluate(env), (text, value)
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        'implementation_version >= "3.12.4"',
+        '"3.12.4" > implementation_version',
+        'implementation_version not in "3.12.4 3.13.0"',
+        '"rc" in implementation_version',
+        'python_version == "3.12" and (implementation_version < "3.12.4" or os_name == "implementation_version")',
+    ],
+)
+def test_cpython_implementation_version_uses_the_same_interpreter(text: str) -> None:
+    marker = Marker(text)
+    original = ms(text)
+    bound = original.with_cpython_implementation_version()
+    complement = (~original).with_cpython_implementation_version()
+    for version in ("3.12.3", "3.12.4", "3.12.4rc1", "3.13.0"):
+        for os_name in ("posix", "implementation_version"):
+            env = {
+                "python_full_version": version,
+                "python_version": version.rsplit(".", 1)[0],
+                "os_name": os_name,
+            }
+            expected = marker.evaluate({**env, "implementation_version": version})
+            assert bound.evaluate(env) == expected
+            assert complement.evaluate(env) != expected
+
+
 def test_python_minor_and_full_version_are_disjoint() -> None:
     high = ms('python_full_version >= "3.10.0"')
     low = ms('python_version < "3.10"')

@@ -24,6 +24,7 @@ _TESTS = Path(__file__).resolve().parent
 _ROOT = _TESTS.parent
 _MANIFEST = tomli.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 _SDIST = _MANIFEST["tool"]["hatch"]["build"]["targets"]["sdist"]
+_EXCLUDED_MODULES = frozenset(_SDIST["exclude"])
 
 # Stands in for a path component that is not a string literal.
 _UNKNOWN = "*"
@@ -39,8 +40,8 @@ def _suite_modules() -> list[Path]:
     """The Python files that make up the suite, shipped and excluded alike."""
     return [
         _ROOT / "conftest.py",
-        _ROOT / "nab-project/test-support/nab_test_support/tests/conftest.py",
-        *sorted(_TESTS.glob("*.py")),
+        *sorted((_ROOT / "nab-project/test-support/nab_test_support").rglob("*.py")),
+        *sorted(_TESTS.rglob("*.py")),
     ]
 
 
@@ -152,7 +153,7 @@ def _is_shipped(relative: str) -> bool:
         return True
 
     parts = PurePosixPath(relative).parts
-    if _UNKNOWN in parts or ".." in parts:
+    if relative in _EXCLUDED_MODULES or _UNKNOWN in parts or ".." in parts:
         return False
 
     for entry in _SDIST["only-include"]:
@@ -180,7 +181,7 @@ def test_modules_reaching_outside_are_exactly_the_excluded_ones() -> None:
             )
         )
     }
-    excluded = set(_SDIST["exclude"]) & {_relative(module) for module in modules}
+    excluded = _EXCLUDED_MODULES.intersection(_relative(module) for module in modules)
 
     assert set(reaching) == excluded, (
         f"reads files the sdist does not carry: {reaching}; "

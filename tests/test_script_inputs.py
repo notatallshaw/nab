@@ -9,7 +9,6 @@ import sys
 from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING
-from zipfile import ZipFile
 
 import pytest
 import tomli
@@ -26,33 +25,20 @@ from nab_provider._vendor.packaging.tags import Tag
 from nab_provider.errors import ConfigError
 from nab_provider.testing import make_metadata
 
+from ._local_artifacts import make_wheel_archive, publish_artifacts
+
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from nab_provider.records import SdistFile, WheelFile
 
 
-def _wheel(directory: Path, name: str, version: str, *dependencies: str) -> Path:
-    """Write a real wheel usable by both the local index and pip."""
-    path = directory / f"{name}-{version}-py3-none-any.whl"
-    dist_info = f"{name}-{version}.dist-info"
-    with ZipFile(path, "w") as archive:
-        archive.writestr(f"{name}/__init__.py", f'__version__ = "{version}"\n')
-        archive.writestr(
-            f"{dist_info}/METADATA", make_metadata(name, version, *dependencies)
-        )
-        archive.writestr(
-            f"{dist_info}/WHEEL",
-            "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
-        )
-        archive.writestr(f"{dist_info}/RECORD", "")
-    package_dir = directory / name
-    package_dir.mkdir(exist_ok=True)
-    listing = package_dir / "index.html"
-    previous = listing.read_text() if listing.exists() else ""
-    listing.write_text(
-        previous
-        + f'<a href="../{path.name}#sha256={sha256(path.read_bytes()).hexdigest()}">{path.name}</a>\n'
-    )
-    return path
+def _script_wheels() -> Iterator[tuple[str, str, bytes]]:
+    """Give each script index the same packages and dependency edge."""
+    for name, dependencies in (("child", ()), ("demo", ("child==1.0",))):
+        filename = f"{name}-1.0-py3-none-any.whl"
+        metadata = make_metadata(name, "1.0", *dependencies)
+        yield name, filename, make_wheel_archive(name, "1.0", metadata, "py3-none-any")
 
 
 def _write_script(
@@ -83,9 +69,8 @@ def script_source(hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     directory.mkdir()
     monkeypatch.setenv("NAB_CACHE_DIR", str(directory / "cache"))
     wheels = directory / "wheels"
-    wheels.mkdir()
-    _wheel(wheels, "child", "1.0")
-    _wheel(wheels, "demo", "1.0", "child==1.0")
+    for name, filename, payload in _script_wheels():
+        publish_artifacts(wheels, name, {filename: payload})
     return _write_script(
         directory / "example.py",
         configuration=(
@@ -137,7 +122,12 @@ def test_script_does_not_read_parent_project_or_workspace(
 
 
 @pytest.mark.parametrize("format_name", ["requirements", "requirements-without-hashes"])
-def test_script_requirements_output(script_source: Path, format_name: str) -> None:
+def test_script_requirements_filename_keeps_braces(
+    script_source: Path, format_name: str
+) -> None:
+    script_source = script_source.rename(
+        script_source.with_name("demo-{platform_id}.py")
+    )
     assert run(("lock", "--script", str(script_source), "--format", format_name)) == 0
     written = script_source.with_name(
         script_source.name + ".requirements.txt"
@@ -145,6 +135,27 @@ def test_script_requirements_output(script_source: Path, format_name: str) -> No
     assert "demo==1.0" in written
     assert "child==1.0" in written
     assert ("--hash=sha256:" in written) == (format_name == "requirements")
+
+
+def test_multi_target_script_prints_requirements_by_default(
+    hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    script = _write_script(
+        hermetic_roots / "example.py",
+        dependencies=(),
+        configuration=(
+            '[tool.nab.matrix]\npython="==3.12"\n'
+            'platforms=["linux_x86_64", "windows_amd64"]\n'
+        ),
+    )
+    assert (
+        run(("lock", "--script", str(script), "--offline", "--format", "requirements"))
+        == 0
+    )
+    lines = capsys.readouterr().out.splitlines()
+    assert "# py312-linux_x86_64" in lines
+    assert "# py312-windows_amd64" in lines
+    assert not script.with_name("example.py.requirements.txt").exists()
 
 
 def test_script_standard_output(
@@ -428,15 +439,13 @@ def test_relative_file_index_preserves_symlink_base(
 ) -> None:
     packages = hermetic_roots / "packages"
     packages.mkdir()
-    _wheel(packages, "child", "1.0")
-    _wheel(packages, "demo", "1.0", "child==1.0")
 
     stored_index = tmp_path / "storage" / "simple"
-    for name in ("demo", "child"):
+    for name, filename, payload in _script_wheels():
+        (packages / filename).write_bytes(payload)
         page_dir = stored_index / name
         page_dir.mkdir(parents=True)
-        filename = f"{name}-1.0-py3-none-any.whl"
-        digest = sha256((packages / filename).read_bytes()).hexdigest()
+        digest = sha256(payload).hexdigest()
         (page_dir / "index.html").write_text(
             f'<a href="../../packages/{filename}#sha256={digest}">{name}</a>\n'
         )

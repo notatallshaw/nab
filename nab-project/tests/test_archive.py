@@ -32,7 +32,6 @@ from nab_index.transport import HttpError
 from nab_markersets._compat import get_int_max_str_digits
 from nab_project import _sources as sources
 from nab_project._sources import _fetch_archive_bytes, _SourceCopyError
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.download import (
     DownloadEntry,
     DownloadError,
@@ -55,6 +54,7 @@ from nab_provider.provider import (
     UnsupportedSdistError,
 )
 from nab_provider.target import ResolveTarget
+from nab_test_support.coordinator import make_coordinator
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"

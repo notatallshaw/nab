@@ -21,6 +21,11 @@ Older `sdist-v2/` and `sdist-v1/` records are carried forward when the current b
 | `sdist-v2/`         | the retired binary records                                 |
 | `sdist-v1/`         | the same records in the retired JSON format                |
 
+Named lock plans that import dependency declarations from a source archive also use
+`dependency-inputs-v1/`. Each record holds one declaration file, keyed by the archive hash and the
+file's relative path. `nab cache verify` checks that identity and the content checksum.
+`nab cache clear` removes these records along with the index cache.
+
 ### Index records
 
 A matching `sdist-v2/` binary record or `sdist-v1/` JSON record is copied into `sdist-v3/` when the
@@ -31,7 +36,7 @@ buffered atomic replacement, and reads reject incomplete or changed records. Aft
 shutdown a cache entry may need rebuilding or refetching. Lockfile write synchronization is
 unchanged.
 
-Record buckets are keyed per index, so two indexes never share an entry.
+Index response records are keyed per index, so two indexes never share an entry.
 
 For the same archive URL, equivalent versions such as `1` and `1.0` share an sdist record. Older
 artifact records are reused when the requested version text matches their stored key, then made
@@ -67,10 +72,13 @@ source trees in a temporary directory and discards them at the end.
 A listing follows a small subset of RFC 9111. The `.policy` sidecar records when the body was
 fetched and its `max-age`.
 
-A fresh entry is served directly; a stale one is revalidated with `If-None-Match`, and a
-`304 Not Modified` slides the window forward without refetching the body. A listing the index marks
-`no-cache` or `no-store` gets no window at all, so every online read revalidates it unless an
-`assume-fresh-seconds` floor (see [Package and index policy](package-policy.md)) still covers it.
+A fresh entry is served directly. Nab sends `If-None-Match` when a stale entry records both the
+original page URL and a usable ETag. A `304 Not Modified` from that page refreshes the cached
+listing. If a redirect now leads to a different page, Nab fetches its body even if it uses the same
+ETag.
+
+A listing marked `no-cache` or `no-store` gets no freshness window. Each online read revalidates it
+unless an [assume-fresh-seconds](package-policy.md) setting still covers it.
 
 Metadata and sdist records are immutable: cached once, never revalidated. A 404 is remembered
 briefly so a repeated lookup of an absent name is answered from cache, offline included. One the
@@ -93,8 +101,8 @@ listing body + policy digest
 ```
 
 The `simple-parsed-v2/` bucket stores those records so a warm hit rehydrates them and never reads
-the large raw body. A stale entry is served the same way once the index answers `304 Not Modified`,
-since that confirms the body the blob is bound to.
+the large raw body. A stale entry is served the same way once the original page answers
+`304 Not Modified`, since that confirms the body the blob is bound to.
 
 ### When a parsed listing is rebuilt
 
@@ -102,9 +110,8 @@ Each parsed blob is bound to the exact body it came from by a `body_digest` that
 carries. On a hit the digests and response page URLs are compared. A body or page change invalidates
 the blob and forces a rebuild from the raw body.
 
-A revalidation that lands on a different page retires the blob too, since a relative entry resolves
-against the page URL and a move changes every file URL the records hold. A blob is also rebuilt when
-it was written by a different nab build, or is corrupt.
+A redirect to a different page requires a new listing. Its relative file URLs resolve against the
+new page. A blob is also rebuilt when it was written by a different nab build, or is corrupt.
 
 The raw body remains authoritative. The accelerator is a derived copy, and a rebuild reparses the
 body on disk.
@@ -123,7 +130,8 @@ nab cache verify
 ```
 
 `nab cache verify` walks the record buckets read-only and lists on stdout every entry that will not
-parse, including a parsed blob that is not decodable, exiting 1 when the listing is not empty.
+parse, including a parsed blob that is not decodable. It also lists any directories it could not
+read, checks the remaining directories and exits 1 if it found a problem.
 
 It checks current record checksums and payload structure, not freshness: a stale-but-valid parsed
 blob is not corrupt, since the digest binding retires it at read time. Clones and extracted archives

@@ -1,8 +1,8 @@
 # Indexes
 
-`[[tool.nab.indexes]]` declares the ordered list of named package indexes. Order is significant: nab
-consults them left to right and takes the *first* one that lists a given package (presence-based,
-matching uv's `--index-strategy first-index` default).
+Nab checks the indexes in `[[tool.nab.indexes]]` in order. The first index that lists a package
+supplies its releases. To choose an index for a specific package, see
+[Lock with multiple indexes](../how-to/multi-index.md).
 
 ```toml
 [[tool.nab.indexes]]
@@ -38,13 +38,22 @@ nab caches listings separately for each `serialization` setting.
 `serialization` is not settable on a `file://` index, `"negotiate"` included. A local index is read
 from disk with no `Accept` negotiation, so the key is rejected.
 
+Nab reads Simple API version 1 pages. An unversioned page is treated as version 1.0. A newer minor
+version produces a warning. A higher major version stops the lock, even if another configured index
+has the package.
+
+Nab checks HTML pages when it downloads them. Listings cached by older releases contain the file
+records without the original HTML version tag. That tag can be checked the next time Nab downloads
+the page.
+
 ### HTML limitations
 
 Pinning `html` gives up the extra data PEP 700 defines for the JSON listing. Two of those losses
 matter:
 
-- A PEP 503 page carries no upload time. Unless the index emits the non-standard `data-upload-time`
-  attribute, every file it serves is excluded once `uploaded-prior-to` applies.
-- A page publishes its hashes in the URL fragment. A file whose only fragment digest is md5 gives
-  `nab lock` nothing to record, and the PEP 751 and requirements writers then fail on the missing
-  hash.
+- HTML has no standard upload-time field. Nab reads the non-standard `data-upload-time` attribute on
+  both HTTP and local HTML pages. A cutoff excludes remote files with no reported time.
+  [Files on disk remain eligible](reproducibility.md#fixed-upload-cutoffs).
+- HTML pages publish file hashes in URL fragments. If a wheel has only an MD5 hash,
+  `--format pylock` and `--format requirements` report a missing hash.
+  `--format requirements-without-hashes` can still write the version pin.

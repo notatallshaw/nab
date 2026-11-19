@@ -20,6 +20,9 @@ nab-resolver <----> nab-provider ----> nab-markersets
                      nab-index
 ```
 
+`nab_provider.fetch_port.FetchPort` is the interface the provider uses to ask for package files and
+metadata. Nab supplies a `FetchCoordinator` that handles those requests using `nab-index`.
+
 The CLI loads configuration and writes output; `nab-project` orchestrates resolution and builds
 lockfile data. Except for `nab-resolver`'s documented API, library APIs are experimental: pin exact
 versions when embedding them.
@@ -47,9 +50,11 @@ installed projects and carries their extra conditions. Imported project configur
 backends are never executed.
 
 The CLI compiles lock plan configuration into project declarations. `nab-project` owns the prepared
-declaration view and checks its original inputs during resolution and saved-lock validation. Its
-selection planner checks conflicts and combines the selected roots for one installation. The
-provider binds selected extra markers while preserving their environment conditions.
+declaration view and checks its original inputs during resolution and saved-lock validation.
+`nab-index` stores the declaration files read from source archives so cache maintenance and offline
+reads use the same record format. The project’s selection planner checks conflicts and combines the
+selected roots for one installation. The provider binds selected extra markers while preserving
+their environment conditions.
 
 `nab-project` also emits its generated TOML. Its writer uses a fixed layout for locks and synthetic
 build projects; it does not preserve source formatting or comments. Datetime values use a `T`
@@ -122,41 +127,30 @@ result = resolve_for_targets(
 )
 ```
 
-`metadata_versions` controls newest versions fetched after a listing; `lookahead_versions` controls
-extra versions fetched before a pipelined scan. Zero disables extra prefetch, leaving candidate
-checks active. Omitted fields inherit transport recommendations, or defaults for custom transports
-without them. The index recommends windows, the project snapshots settings, and the provider owns
-lookahead.
+`metadata_versions` sets how many of the newest versions to prefetch when an index listing arrives.
+`lookahead_versions` sets how many extra versions to prefetch before scanning candidates. Set either
+to zero to disable that prefetch. Nab still fetches metadata it needs to decide whether a candidate
+can be used. An omitted setting uses the transport's recommendation if it has one.
 
-The provider supplies root-version bounds through optional `MetadataPrefetchHints`. The project
-layer uses those predicates to skip listing-arrival metadata for excluded versions; required
-requests stay unfiltered. The callbacks retain independent version ranges.
+The fetch coordinator can use four optional interfaces to decide what to prefetch.
 
-Optional `MetadataArtifactHints` supplies the provider's wheel ranking for those guesses. The
-project applies it within the existing version window; required requests and sibling checks keep
-their normal selection rules. The selector retains target context without retaining the provider.
+- `MetadataPrefetchHints` limits requests for root packages to versions allowed by their root
+  requirements.
+- `MetadataArtifactHints` chooses a wheel within each release using the provider's wheel ranking for
+  the target.
+- `MetadataPrefetchAdmission` skips a release when every candidate wheel for that request rules out
+  the target Python. Missing or malformed Python bounds allow the request. A skipped release leaves
+  its place in the window empty. See
+  [how Nab compares Python versions](../reference/target-environment.md).
+- `MetadataPrefetchDeferral` lets Nab wait for a dependency's version range before prefetching a
+  prerelease. `first_matching_version` then applies the same selection rules as a required request,
+  including explicit prerelease requests and prerelease-only fallback. `prefetch_in_range` requests
+  metadata for that candidate. Later constraints can trigger ordinary fetches and lookahead.
 
-`MetadataPrefetchAdmission` supplies a pure declared-target test for default listing-arrival
-guesses. The provider refuses a group only when every candidate's known Python support excludes the
-target; missing or malformed bounds remain admitted. The project applies the hint inside its
-existing window without replacing declined versions. Explicit windows, custom providers and
-overrides still make their speculative guesses; legacy ports need no new capability. Required
-metadata reads keep their normal selection rules. Admission uses the
-[normal language-minor comparison](../reference/target-environment.md), including patch-pinned
-targets.
-
-`MetadataPrefetchDeferral` lets the provider postpone default prerelease guesses until it has a
-positive dependency range. The provider's `first_matching_version` uses the same admission and
-strategy as demand selection over its prepared listing, including explicit prerelease opt-ins and
-prerelease-only fallback. `prefetch_in_range` resumes the deferred request without expanding the
-listing-arrival window. Explicit `PrefetchSettings.metadata_versions`, legacy fetch ports and custom
-provider subclasses retain their existing speculative behavior. Once the deferred candidate is
-chosen, later constraint changes leave further requests to demand and lookahead rather than guessing
-successive older releases.
-
-Default transitive guesses are skipped when a version preference is present. Explicit windows,
-legacy ports, custom providers, overrides and lowest ordering still make speculative guesses when a
-preference is present.
+Custom fetch coordinators can implement just the interfaces they use. The last two optimizations
+apply to the default prefetch window and the built-in provider. Package overrides disable the
+Python-bound check. A version preference also postpones default prefetch for a transitive
+dependency, except when overrides or lowest-version ordering apply.
 
 ## Cache-only fetches
 
@@ -212,31 +206,21 @@ The CLI selects the policy and reports whether the saved lock was reused.
 
 ```python
 from nab_provider.provider import Provider
-from nab_provider.records import WheelFile
-from nab_provider.testing import make_coordinator
 from nab_provider.ranges import VersionRange
+from nab_provider.testing import make_coordinator, make_metadata, make_wheel
 from nab_resolver.resolver import Resolver
 
-
-def wheel(name: str, version: str) -> WheelFile:
-    return WheelFile(
-        filename=f"{name}-{version}-py3-none-any.whl",
-        url=f"https://example.invalid/{name}-{version}-py3-none-any.whl",
-        version=version,
-        requires_python=None,
-        has_metadata=True,
-        upload_time=None,
-    )
-
-
-port = make_coordinator(
-    listings={"app": [wheel("app", "1.0")], "lib": [wheel("lib", "2.0")]},
+coordinator = make_coordinator(
+    listings={
+        "app": [make_wheel("1.0", package="app")],
+        "lib": [make_wheel("2.0", package="lib")],
+    },
     metadata_by_version={
-        "1.0": "Metadata-Version: 2.1\nName: app\nVersion: 1.0\nRequires-Dist: lib\n",
-        "2.0": "Metadata-Version: 2.1\nName: lib\nVersion: 2.0\n",
+        "1.0": make_metadata("app", "1.0", "lib"),
+        "2.0": make_metadata("lib", "2.0"),
     },
 )
-provider = Provider(port)
+provider = Provider(coordinator)
 resolver = Resolver(
     provider,
     range_type=VersionRange,
@@ -246,12 +230,12 @@ resolver = Resolver(
 print(resolver.resolve({"app": VersionRange.full()}))
 ```
 
-`nab_provider.testing` supplies the in-memory `FetchPort`. A real host implements that interface
-using its own HTTP session and download code. The fetcher stores queued results in the shared index.
-`materialize_source(request)` returns the source tree and its metadata directly.
-`build_sdist_metadata(...)` returns the built metadata. The provider caches it by sdist version and
-URL and checks it for each target. Use `nab_project.resolve.resolve_for_targets` when resolving a
-project.
+Here `make_coordinator` supplies an in-memory implementation of `FetchPort`. To use your own HTTP
+session and downloader, provide an implementation of that interface. The fetcher stores queued
+results in the shared index. `materialize_source(request)` returns the source tree and its metadata
+directly. `build_sdist_metadata(...)` returns the built metadata. The provider caches it by sdist
+version and URL and checks it for each target. Use `nab_project.resolve.resolve_for_targets` when
+resolving a project.
 
 ### Collect active dependency declarations
 

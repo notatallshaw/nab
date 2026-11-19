@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import errno
+import json
+import os
+import shutil
+from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from pathlib import Path
 
@@ -12,6 +16,7 @@ from nab import _run as nab_run
 from nab._cache_cmd import cache_command
 from nab.cli import run
 from nab.config.ladder import SourceRoots
+from nab_index import dependency_input_cache
 from nab_index.cache import (
     CACHE_VERSION_SDIST,
     CACHE_VERSION_SIMPLE,
@@ -139,6 +144,21 @@ class TestCacheDir:
         captured = capsys.readouterr()
         assert captured.out == f"{target}\n"
         assert captured.err == ""
+
+    @pytest.mark.parametrize("value", ["", "   "])
+    def test_explicit_blank_cache_dir_is_refused(
+        self, value: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _run_cache(["dir", "--cache-dir", value], status=1)
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "--cache-dir must be a non-empty path" in captured.err
+
+    def test_explicit_working_directory_is_accepted(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _run_cache(["dir", "--cache-dir", "."])
+        assert capsys.readouterr().out == ".\n"
 
     def test_prints_even_when_missing(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -496,6 +516,95 @@ class TestCacheSourceTrees:
         assert list(root.iterdir()) == []
         _run_cache(["clear", "--cache-dir", str(root)])
         assert str(root) in capsys.readouterr().err
+
+
+def test_verify_and_clear_dependency_input_records(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "cache"
+    bucket = root / dependency_input_cache.BUCKET
+    digest = "a" * 64
+    dependency_input_cache.write_text(bucket, digest, "pyproject.toml", "[project]")
+    (record,) = bucket.rglob("*.json")
+    notes = root / "notes.txt"
+    notes.write_text("keep")
+
+    _run_cache(["verify", "--cache-dir", str(root)])
+    assert not capsys.readouterr().out
+
+    data = json.loads(record.read_text())
+    data["content"] = "changed"
+    record.write_text(json.dumps(data))
+    _run_cache(["verify", "--cache-dir", str(root)], status=1)
+    assert f"{record}: dependency input checksum mismatch" in capsys.readouterr().out
+
+    _run_cache(["clear", "--cache-dir", str(root)])
+    assert not bucket.exists()
+    assert notes.read_text() == "keep"
+
+
+def test_disappearing_bucket_does_not_identify_a_foreign_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    missing = tmp_path / SIMPLE_BUCKET
+    monkeypatch.setattr(Path, "iterdir", lambda _root: iter([missing]))
+    _run_cache(["verify", "--cache-dir", str(tmp_path)], status=1)
+    assert "does not look like a nab cache directory" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("action", ["verify", "clear"])
+def test_root_listing_error_names_the_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    action: str,
+) -> None:
+    def denied(path: Path) -> Iterator[Path]:
+        raise PermissionError(errno.EACCES, "permission denied", str(path))
+
+    monkeypatch.setattr(Path, "iterdir", denied)
+    _run_cache([action, "--cache-dir", str(tmp_path)], status=1)
+    assert f"cannot inspect cache {tmp_path}" in capsys.readouterr().err
+
+
+def test_verify_reports_a_directory_it_cannot_scan_and_checks_other_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "cache"
+    blocked = root / "metadata-v2" / "unavailable"
+    blocked.mkdir(parents=True)
+    invalid = root / "sdist-v1" / "bad.json"
+    invalid.parent.mkdir()
+    invalid.write_bytes(b"not JSON")
+    scandir = os.scandir
+
+    def scan(
+        path: str | Path | int,
+    ) -> AbstractContextManager[Iterator[os.DirEntry[str]]]:
+        if path == blocked or path == str(blocked):
+            raise PermissionError(errno.EACCES, "permission denied", str(blocked))
+        return scandir(path)
+
+    monkeypatch.setattr(os, "scandir", scan)
+    _run_cache(["verify", "--cache-dir", str(root)], status=1)
+    report = capsys.readouterr().out
+    assert f"{blocked}: unreadable: permission denied" in report
+    assert str(invalid) in report
+
+
+def test_clear_reports_bucket_removal_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bucket = tmp_path / SIMPLE_BUCKET
+    bucket.mkdir()
+
+    def busy(path: Path) -> None:
+        raise OSError(errno.EBUSY, "directory busy", str(path))
+
+    monkeypatch.setattr(shutil, "rmtree", busy)
+    _run_cache(["clear", "--cache-dir", str(tmp_path)], status=1)
+    assert str(bucket) in capsys.readouterr().err
+    assert bucket.is_dir()
 
 
 class TestCacheUnknownAction:

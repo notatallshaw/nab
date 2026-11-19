@@ -4,6 +4,15 @@
 [dependency metadata](https://packaging.python.org/en/latest/specifications/core-metadata/). Nab
 first tries to read static metadata.
 
+When a lock includes the root project’s runtime dependencies, Nab reads them from `pyproject.toml`.
+If `[project].dynamic` includes `"dependencies"`, the backend may add requirements to any already
+listed. To lock the project, declare its complete dependency list and remove `"dependencies"` from
+`[project].dynamic`.
+
+Selecting a project extra requires a static `[project.optional-dependencies]` table. If the backend
+may extend that table, you can still lock static runtime dependencies and independently declared
+groups by leaving the extras unselected.
+
 ## Build permissions
 
 A source's effective policy determines which metadata builds are allowed:
@@ -37,6 +46,9 @@ Nab reads these sources before considering a backend:
 | Wheel                                                         | `METADATA`, from a sidecar, range request or full download                                                        |
 | Index sdist                                                   | PEP 643 static dependency fields in `PKG-INFO`, or static dependency declarations in the bundled `pyproject.toml` |
 | Local checkout, workspace member, VCS clone or direct archive | Static `[project]` fields in `pyproject.toml`                                                                     |
+
+Nab reads Core Metadata through version 2.6. When it encounters a later 2.x version in `METADATA` or
+`PKG-INFO`, it warns and reads the fields it recognizes. It rejects a higher major version.
 
 For PEP 643 sdists, `Requires-Dist` and `Provides-Extra` must not be listed in `Dynamic`. If the
 archive marks `Requires-Python` as dynamic, Nab reads the Python requirement from its bundled

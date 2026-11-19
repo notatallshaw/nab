@@ -19,12 +19,19 @@ from nab.config.values import SourceConfigError, parse_input_tables
     ],
 )
 def test_invalid_plans_are_refused(entry: dict[str, object]) -> None:
-    with pytest.raises((ValueError, TypeError, SourceConfigError)):
+    with pytest.raises((ValueError, TypeError), match="lock plan 'dev'"):
         LockPlan.read("dev", {"dev": entry}, "pylock")
 
 
 @pytest.mark.parametrize(
-    "value", [None, {"dev": 1}, {"../bad": {}}, {"Dev_Env": {}, "dev-env": {}}]
+    "value",
+    [
+        None,
+        {"dev": 1},
+        {"dev": {1: "not a TOML key"}},
+        {"../bad": {}},
+        {"Dev_Env": {}, "dev-env": {}},
+    ],
 )
 def test_invalid_declaration_table_names_are_refused(value: object) -> None:
     with pytest.raises(SourceConfigError):

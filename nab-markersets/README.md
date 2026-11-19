@@ -16,8 +16,9 @@ True
 ```
 
 `MarkerSet` represents an absent marker as all supported environments and a contradiction as no
-environments. It can also represent complements that PEP 508 cannot serialize. `witness` returns an
-environment satisfying the set; the example below finds one where two markers differ.
+environments. It can also represent complements that PEP 508 cannot serialize. `witness()` finds a
+matching environment or returns `None` if the search finds none. Use `is_empty()` to prove
+emptiness.
 
 ```pycon
 >>> minor = MarkerSet.from_marker('python_version >= "3.11"')

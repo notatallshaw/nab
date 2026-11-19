@@ -43,6 +43,7 @@ from benchmark_config import (
     build_benchmark_config,
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
+    expand_project_extras,
     parse_scenario_build_packages,
     parse_scenario_index_routes,
     parse_scenario_indexes,
@@ -50,6 +51,7 @@ from benchmark_config import (
     parse_scenario_requirement_strings,
     parse_scenario_vcs_config,
     parse_trust_unverified_sdist_deps,
+    parse_unsupported_reason,
     retry_yanked_resolution,
     validate_scenario_build_policy,
     validate_scenario_settings,
@@ -593,7 +595,7 @@ def load_standard_corpus(files: list[Path]) -> list[StandardScenario]:
             row.name,
             row.definition,
         )
-        if "unsupported_reason" not in row.definition:
+        if parse_unsupported_reason(row.logical_key, row.definition) is None:
             validate_scenario_build_policy(
                 row.name,
                 marker_environment,
@@ -622,7 +624,7 @@ def standard_run_plan(
     targets: dict[str, ResolveTarget] = {}
     inapplicable: list[str] = []
     for row in rows:
-        if "unsupported_reason" in row.definition:
+        if parse_unsupported_reason(row.logical_key, row.definition) is not None:
             continue
         marker_environment = parse_marker_environment(row.name, row.definition)
         requires_matching_host = parse_requires_matching_host(
@@ -761,40 +763,6 @@ def get_git_source_state() -> dict[str, str | bool | None]:
         else None
     )
     return {"commit": commit, "dirty": dirty, "diff_hash": diff_hash}
-
-
-def expand_project_extras(
-    project_name: str,
-    requested_extras: list[str],
-    optional_dependencies: dict[str, list[str]],
-) -> list[str]:
-    """Flatten the requested project extras into PEP 508 requirement strings.
-
-    Self-references like ``eval_framework[all]`` are resolved by recursing
-    on the named extras.  Cycles are broken via a normalized visited set.
-    Unknown extra names contribute no deps.
-    """
-    canonical_project = canonicalize_name(project_name)
-    norm_optional = {canonicalize_name(k): v for k, v in optional_dependencies.items()}
-    visited: set[str] = set()
-    out: list[str] = []
-
-    def visit(extra: str) -> None:
-        norm = canonicalize_name(extra)
-        if norm in visited:
-            return
-        visited.add(norm)
-        for dep_str in norm_optional.get(norm, []):
-            req = Requirement(dep_str)
-            if canonicalize_name(req.name) == canonical_project:
-                for sub_extra in sorted(req.extras):
-                    visit(sub_extra)
-            else:
-                out.append(dep_str)
-
-    for extra in requested_extras:
-        visit(extra)
-    return out
 
 
 def parse_requirements(
@@ -1459,7 +1427,7 @@ def prepare_standard_execution(
     constraint_strings = requirement_inputs.constraints
     marker_environment = parse_marker_environment(scenario_name, scenario)
     build_policy_overrides = parse_scenario_build_packages(scenario_name, scenario)
-    if "unsupported_reason" not in scenario:
+    if parse_unsupported_reason(scenario_name, scenario) is None:
         validate_scenario_build_policy(
             scenario_name,
             marker_environment,
@@ -1474,6 +1442,7 @@ def prepare_standard_execution(
                 project_name,
                 project_extras,
                 project_metadata.optional_dependencies,
+                marker_environment=target.marker_env,
             )
         )
     uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None

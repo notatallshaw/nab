@@ -181,8 +181,25 @@ class TestPresenceBased:
         )
         assert run(client.get_files("foo")) == []
 
+    def test_package_added_to_a_later_index_after_a_miss(self, tmp_path: Path) -> None:
+        first = tmp_path / "first"
+        second = tmp_path / "second"
+        first.mkdir()
+        second.mkdir()
+        clients = {
+            "first": LocalIndexClient(first.as_uri()),
+            "second": LocalIndexClient(second.as_uri()),
+        }
+        router = MultiIndexClient(clients, ["first", "second"], {})
+
+        assert run(router.get_files("demo")) == []
+        wheel = second / "demo-1-py3-none-any.whl"
+        wheel.touch()
+        assert [file.url for file in run(router.get_files("demo"))] == [wheel.as_uri()]
+        assert router.route_for("demo") == "second"
+
     def test_unreadable_only_reported_from_any_walked_index(self) -> None:
-        """An empty walk routes to the first index, so every client is asked."""
+        """A later index can explain why the combined listing is empty."""
         first = FakeClient({})
         second = FakeClient({})
         second.unreadable.add("foo")

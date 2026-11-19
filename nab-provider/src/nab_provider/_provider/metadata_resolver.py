@@ -1444,7 +1444,7 @@ def _handle_url_dep(
         return
 
     if _url_dep_is_active(provider, package, req_extras):
-        refuse_url_dep(provider, req, url)
+        refuse_url_dep(provider, package, req.name, url)
     else:
         for extra_name in req_extras:
             deferred_url_extras.setdefault(extra_name, []).append((req, url))
@@ -1540,12 +1540,12 @@ def _url_dep_is_active(provider: Provider, package: str, req_extras: set[str]) -
     return any((package, extra) in provider.root_extras for extra in req_extras)
 
 
-def refuse_url_dep(provider: Provider, req: Requirement, url: str) -> None:
-    """Refuse a direct-URL requirement, or raise ``NotImplementedError``."""
+def refuse_url_dep(provider: Provider, package: str, dependency: str, url: str) -> None:
+    """Check VCS policy before reporting the unsupported dependency."""
     admit_vcs_url(url, provider.vcs_config)
     msg = (
-        f"VCS dependency admitted by policy but resolver path is not"
-        f" implemented: {req.name} @ {url}"
+        f"{package} declares a Git URL for {dependency}. "
+        "Nab cannot resolve Git URLs in package dependency metadata."
     )
     raise NotImplementedError(msg)
 

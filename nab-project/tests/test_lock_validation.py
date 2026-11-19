@@ -10,7 +10,6 @@ from pathlib import Path
 import pytest
 
 from nab_project import toml_io
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.input_source import InputFormat
 from nab_project.inputs import ResolveInputs
 from nab_project.lock_validation import (
@@ -43,6 +42,7 @@ from nab_provider.requirements_file import InvalidProjectTableError
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, MatrixInclude, ResolveTarget
 from nab_provider.testing import make_metadata, make_wheel
+from nab_test_support.coordinator import make_coordinator
 
 
 def _project(tmp_path: Path, text: str = "") -> Path:

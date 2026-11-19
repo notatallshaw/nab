@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
-from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.fetch import FetchCoordinator
 from nab_provider.fetch_port import (
     FetchPort,
@@ -22,6 +21,8 @@ from nab_provider.fetch_port import (
     Waitable,
 )
 from nab_provider.store import sdist_artifact_key
+from nab_provider.testing import FakeFetchPort
+from nab_test_support.coordinator import make_coordinator
 
 PROJECT_SRC = Path(inspect.getfile(FetchCoordinator)).parent
 PROVIDER_SRC = Path(inspect.getfile(FetchPort)).parent

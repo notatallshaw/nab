@@ -11,11 +11,13 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "contextlib",
+    "logging",
     "nab_provider._vendor.packaging.specifiers",
     "nab_provider._vendor.packaging.version",
     "nab_provider.pep508",
 )
 
+import logging
 import re
 from contextlib import suppress
 from functools import lru_cache
@@ -35,6 +37,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DEPENDENCY_FIELDS",
     "WheelMetadata",
+    "check_metadata_version",
     "intern_version",
     "metadata_deps_are_static",
     "metadata_header_block",
@@ -98,12 +101,42 @@ DEPENDENCY_FIELDS = frozenset({"requires-dist", "provides-extra"})
 _MIN_STATIC_METADATA_VERSION = (2, 2)
 
 
+def check_metadata_version(value: str | None, name: str, version: str) -> None:
+    """Reject newer major Core Metadata formats and warn about newer minor versions."""
+    if value is None:
+        return
+
+    # Compare decimal components as text so even very long versions can be reported.
+    major, _, tail = value.strip().partition(".")
+    major = major.lstrip("0") or "0"
+    if major.isascii() and major.isdecimal() and major not in {"0", "1", "2"}:
+        msg = (
+            f"{name} {version} declares Metadata-Version {value!r}. "
+            "Nab supports Core Metadata through 2.6."
+        )
+        raise ValueError(msg)
+
+    minor = tail.partition(".")[0].lstrip("0") or "0"
+    if (
+        major == "2"
+        and minor.isascii()
+        and minor.isdecimal()
+        and minor not in {"0", "1", "2", "3", "4", "5", "6"}
+    ):
+        logging.getLogger(__name__).warning(
+            "%s %s declares Metadata-Version %r. "
+            "Nab supports Core Metadata through 2.6.",
+            name,
+            version,
+            value,
+        )
+
+
 def metadata_deps_are_static(metadata: WheelMetadata) -> bool:
     """Return True when a distribution's dependency fields are final.
 
-    Per :pep:`643` the values are trustworthy only at Metadata-Version
-    2.2 or later with no dependency field marked ``Dynamic``. Below 2.2
-    an sdist's declared dependencies may change when it is built.
+    :pep:`643` guarantees static dependencies for 2.x metadata from 2.2 onward
+    when no dependency field is marked ``Dynamic``.
     """
     if metadata.metadata_version is None:
         return False
@@ -111,7 +144,8 @@ def metadata_deps_are_static(metadata: WheelMetadata) -> bool:
         major, minor = (int(p) for p in metadata.metadata_version.split(".")[:2])
     except ValueError:
         return False
-    if (major, minor) < _MIN_STATIC_METADATA_VERSION:
+    supported_major, first_static_minor = _MIN_STATIC_METADATA_VERSION
+    if major != supported_major or minor < first_static_minor:
         return False
     return not (DEPENDENCY_FIELDS & metadata.dynamic)
 
@@ -373,6 +407,9 @@ def parse_metadata(data: str | bytes) -> WheelMetadata:
         err = "METADATA missing required Version field"
         raise ValueError(err)
 
+    metadata_version = _first(fields, "metadata-version")
+    check_metadata_version(metadata_version, name, version_str)
+
     requires_python_str = _first(fields, "requires-python")
     requires_python = None
     if requires_python_str:
@@ -393,7 +430,6 @@ def parse_metadata(data: str | bytes) -> WheelMetadata:
 
     provides_extra = [e.strip() for e in fields.get("provides-extra", ())]
 
-    metadata_version = _first(fields, "metadata-version")
     # PEP 643 field names are case-insensitive, and RFC 822 makes surrounding
     # whitespace insignificant.
     dynamic = frozenset(d.strip().lower() for d in fields.get("dynamic", ()))

@@ -577,7 +577,7 @@ class TestCliRefusals:
         err = capsys.readouterr().err
 
         assert expected in err
-        assert f"pip install nab[{backend}]" in err
+        assert f"install 'nab[{backend}]' in the environment that runs Nab" in err
         assert "Traceback" not in err
 
     def test_unknown_cache_action_exits_two(self, tmp_path: Path) -> None:

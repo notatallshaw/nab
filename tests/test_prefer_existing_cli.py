@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from shlex import split
@@ -15,14 +14,8 @@ from nab import _lock
 from nab.cli import run
 from nab_project import toml_io, toml_writer
 from nab_project.lock_policy import LockPolicy
-from nab_provider.records import DistFile, IndexConfig
-from nab_provider.testing import (
-    FakeFetchPort,
-    make_coordinator,
-    make_metadata,
-    make_wheel,
-)
-from nab_provider.yanking import append_yanked_file
+
+from .lock_registry import Registry
 
 if TYPE_CHECKING:
     from nab_provider.target import ResolveTarget
@@ -65,97 +58,6 @@ def test_locked_reports_invalid_local_project_fields(
     assert lock.read_bytes() == saved
 
 
-class Registry:
-    """Publish new facts through a fresh real in-memory fetch port per command."""
-
-    def __init__(self, directory: Path) -> None:
-        """Write a two-target project and its initial package declarations."""
-        self.project = directory / "pyproject.toml"
-        self.output = directory / "pylock.toml"
-        self.declarations = {"a": {"1": ("b==1",)}, "b": {"1": ()}}
-        self.requires_python: dict[tuple[str, str], str] = {}
-        self.withdrawn: set[tuple[str, str]] = set()
-        self.domain = "https://current.example"
-        self.digest = "b" * 64
-        self.upload_time: str | None = None
-        self.ports: list[FakeFetchPort] = []
-        self.project.write_text(
-            '[project]\nname="example"\nversion="1"\nrequires-python=">=3.12,<3.13"\n'
-            'dependencies=["a"]\n[tool.nab]\nbuild-policy="never"\ndecision-order="stable"\n'
-            '[tool.nab.matrix]\npython=">=3.12,<3.13"\nplatforms=["linux_x86_64","windows_amd64"]\n'
-        )
-
-    def coordinator(
-        self, _transport: object, **_kwargs: object
-    ) -> nullcontext[FakeFetchPort]:
-        """Publish current declarations through a fresh port for each command."""
-        listings: dict[str, list[DistFile]] = {}
-        metadata: dict[str, str] = {}
-        for package, versions in self.declarations.items():
-            files: list[DistFile] = []
-            for version, dependencies in versions.items():
-                filename = f"{package.replace('-', '_')}-{version}-py3-none-any.whl"
-                wheel = make_wheel(
-                    version,
-                    package=package.replace("-", "_"),
-                    url=f"{self.domain}/{filename}",
-                    hashes=(("sha256", self.digest),),
-                    upload_time=self.upload_time,
-                )
-                assert wheel.metadata_url is not None
-                metadata[wheel.metadata_url] = make_metadata(
-                    package,
-                    version,
-                    *dependencies,
-                    requires_python=self.requires_python.get((package, version)),
-                )
-                if (package, version) in self.withdrawn:
-                    files = append_yanked_file(files, wheel, reason="withdrawn")
-                else:
-                    files.append(wheel)
-            listings[package] = files
-
-        port = make_coordinator(listings=listings, metadata_by_url=metadata)
-        if self.domain != "https://current.example":
-            port.indexes = [IndexConfig("changed", self.domain + "/simple/")]
-            for package in listings:
-                port.index.store_listing_index(package, "changed")
-
-        self.ports.append(port)
-
-        return nullcontext(port)
-
-    def command(self, *arguments: str) -> int:
-        return run(
-            (
-                "--no-progress",
-                "lock",
-                str(self.project),
-                "--output",
-                str(self.output),
-                *arguments,
-            )
-        )
-
-    def versions(self) -> dict[str, str]:
-        return {
-            package["name"]: package["version"]
-            for package in toml_io.load_path(self.output)["packages"]
-        }
-
-    def add_release(self) -> None:
-        self.declarations["a"]["2"] = ("b==2",)
-        self.declarations["b"]["2"] = ()
-
-
-@pytest.fixture
-def registry(hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch) -> Registry:
-    """Route real CLI commands through a fresh port per invocation."""
-    value = Registry(hermetic_roots)
-    monkeypatch.setattr("nab_project.resolve.FetchCoordinator", value.coordinator)
-    return value
-
-
 def test_opt_in_keeps_valid_prior_choices_and_requests_current_metadata(
     registry: Registry,
 ) -> None:
@@ -166,7 +68,7 @@ def test_opt_in_keeps_valid_prior_choices_and_requests_current_metadata(
     assert registry.command("--lock-policy", "prefer-existing") == 0
 
     assert registry.versions() == {"a": "1", "b": "1"}
-    assert registry.ports[-1].calls_to("request_metadata")
+    assert registry.coordinators[-1].calls_to("request_metadata")
 
 
 def test_default_still_selects_new_highest_releases(registry: Registry) -> None:
@@ -202,15 +104,15 @@ def test_file_and_environment_lock_policy_use_saved_versions(
         directory.mkdir(exist_ok=True)
         (directory / "nab.toml").write_text(f'lock-policy = "{policy}"\n')
 
-    ports_before = len(registry.ports)
+    coordinators_before = len(registry.coordinators)
 
     assert registry.command() == 0
     assert registry.versions() == {"a": "1", "b": "1"}
 
     if policy == "reuse":
-        assert len(registry.ports) == ports_before
+        assert len(registry.coordinators) == coordinators_before
     else:
-        assert registry.ports[-1].calls_to("request_metadata")
+        assert registry.coordinators[-1].calls_to("request_metadata")
 
 
 def test_explicit_resolve_overrides_environment_and_file_reuse(
@@ -233,7 +135,7 @@ def test_invalid_file_lock_policy_is_rejected_before_transport(
     registry.project.with_name("nab.toml").write_text(f"lock-policy = {value}\n")
 
     assert registry.command() == 1
-    assert not registry.ports
+    assert not registry.coordinators
     assert "lock-policy" in capsys.readouterr().err
 
 
@@ -244,10 +146,10 @@ def test_configured_reuse_preserves_mode_restrictions(
     assert registry.command() == 0
 
     registry.project.with_name("nab.toml").write_text('lock-policy = "reuse"\n')
-    ports_before = len(registry.ports)
+    coordinators_before = len(registry.coordinators)
 
     assert registry.command(argument) == 1
-    assert len(registry.ports) == ports_before
+    assert len(registry.coordinators) == coordinators_before
 
 
 def test_config_inspection_reports_file_and_cli_lock_policy(
@@ -412,7 +314,7 @@ def test_reuse_keeps_a_valid_file_without_remote_discovery(
 
     before = registry.output.read_bytes()
     identity = registry.output.stat()
-    ports = len(registry.ports)
+    coordinator_count = len(registry.coordinators)
     if change == "release":
         registry.add_release()
     elif change == "metadata":
@@ -438,7 +340,7 @@ def test_reuse_keeps_a_valid_file_without_remote_discovery(
 
     assert registry.output.read_bytes() == before
     assert (after.st_ino, after.st_mtime_ns) == (identity.st_ino, identity.st_mtime_ns)
-    assert len(registry.ports) == ports
+    assert len(registry.coordinators) == coordinator_count
 
 
 def test_reuse_accepts_compatible_bounds_without_rewriting(registry: Registry) -> None:
@@ -450,12 +352,12 @@ def test_reuse_accepts_compatible_bounds_without_rewriting(registry: Registry) -
             'dependencies=["a"]', 'dependencies=["a>=1"]'
         )
     )
-    ports = len(registry.ports)
+    coordinator_count = len(registry.coordinators)
 
     assert registry.command("--lock-policy", "reuse") == 0
 
     assert registry.output.read_bytes() == before
-    assert len(registry.ports) == ports
+    assert len(registry.coordinators) == coordinator_count
 
 
 def test_reuse_miss_uses_current_preferred_resolution(registry: Registry) -> None:
@@ -469,13 +371,13 @@ def test_reuse_miss_uses_current_preferred_resolution(registry: Registry) -> Non
             'dependencies=["a"]', 'dependencies=["a", "new"]'
         )
     )
-    ports = len(registry.ports)
+    coordinator_count = len(registry.coordinators)
 
     assert registry.command("--lock-policy", "reuse") == 0
 
-    assert len(registry.ports) == ports + 1
+    assert len(registry.coordinators) == coordinator_count + 1
     assert registry.versions() == {"a": "1", "b": "2", "new": "1"}
-    assert registry.ports[-1].calls_to("request_metadata")
+    assert registry.coordinators[-1].calls_to("request_metadata")
 
 
 @pytest.mark.parametrize("contents", [None, "not valid TOML [", 'lock-version="999"'])
@@ -508,12 +410,12 @@ def test_nondefault_policy_restrictions_precede_valid_hits(
     assert registry.command() == 0
 
     before = registry.output.read_bytes()
-    ports = len(registry.ports)
+    coordinator_count = len(registry.coordinators)
 
     assert registry.command("--lock-policy", policy, *arguments) == 1
 
     assert registry.output.read_bytes() == before
-    assert len(registry.ports) == ports
+    assert len(registry.coordinators) == coordinator_count
 
 
 def test_reuse_refuses_reproduction(registry: Registry) -> None:
@@ -539,21 +441,24 @@ def test_reuse_declines_the_existing_file_index_fingerprint_collision(
 
     assert registry.command() == 0
 
-    ports = len(registry.ports)
+    coordinator_count = len(registry.coordinators)
     registry.project.write_text(text.replace(first.as_uri(), second.as_uri()))
     registry.digest = "c" * 64
 
     assert registry.command("--lock-policy", "reuse") == 0
 
-    assert len(registry.ports) == ports + 1
+    assert len(registry.coordinators) == coordinator_count + 1
 
     for package in toml_io.load_path(registry.output)["packages"]:
         assert all(wheel["hashes"]["sha256"] == "c" * 64 for wheel in package["wheels"])
 
 
 @pytest.mark.parametrize("policy", ["resolve", "prefer-existing", "reuse"])
+@pytest.mark.parametrize(
+    "declared", ["", 'dependencies=["a"]\n'], ids=["omitted", "partial"]
+)
 def test_dynamic_root_dependencies_never_use_a_hidden_backend(
-    registry: Registry, policy: str
+    registry: Registry, policy: str, declared: str
 ) -> None:
     assert registry.command() == 0
 
@@ -569,7 +474,7 @@ def test_dynamic_root_dependencies_never_use_a_hidden_backend(
         "    return info.name\n"
     )
     text = registry.project.read_text().replace(
-        'dependencies=["a"]', 'dynamic=["dependencies"]'
+        'dependencies=["a"]', declared + 'dynamic=["dependencies"]'
     )
     text = text.replace(
         'build-policy="never"',
@@ -606,11 +511,11 @@ def test_upgrade_uses_live_resolution_and_reanchors_even_with_reuse(
     old_anchor = datetime(2000, 1, 1, tzinfo=timezone.utc)
     document["tool"]["nab"]["created-at"] = old_anchor
     registry.output.write_text(toml_writer.dumps(document))
-    ports = len(registry.ports)
+    coordinator_count = len(registry.coordinators)
 
     assert registry.command("--lock-policy", "reuse", "--upgrade") == 0
 
-    assert len(registry.ports) == ports + 1
+    assert len(registry.coordinators) == coordinator_count + 1
     assert toml_io.load_path(registry.output)["tool"]["nab"]["created-at"] != old_anchor
 
 
@@ -620,7 +525,7 @@ def test_reuse_checks_current_declared_policy_and_source(
 ) -> None:
     assert registry.command() == 0
 
-    ports = len(registry.ports)
+    coordinator_count = len(registry.coordinators)
     arguments: tuple[str, ...] = ()
     if change == "metadata-assumption":
         arguments = ("--project-assume-consistent-metadata",)
@@ -634,8 +539,8 @@ def test_reuse_checks_current_declared_policy_and_source(
 
     assert registry.command("--lock-policy", "reuse", *arguments) == 0
 
-    assert len(registry.ports) == ports + 1
-    assert registry.ports[-1].calls_to("request_metadata")
+    assert len(registry.coordinators) == coordinator_count + 1
+    assert registry.coordinators[-1].calls_to("request_metadata")
 
     if change == "http-index":
         for package in toml_io.load_path(registry.output)["packages"]:

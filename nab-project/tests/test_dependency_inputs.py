@@ -77,12 +77,18 @@ def test_group_only_input_needs_no_project_table(tmp_path: Path) -> None:
     ) == ["pytest"]
 
 
+@pytest.mark.parametrize("directive", ["-r", "--requirement"])
+@pytest.mark.parametrize("separator", [" ", "\t"], ids=["space", "tab"])
 def test_requirements_file_includes_are_relative_and_comments_do_not_truncate_urls(
     tmp_path: Path,
+    directive: str,
+    separator: str,
 ) -> None:
     files = {
-        "tests/requirements.txt": ("# comment\n-r nested.txt\npytest # comment"),
-        "tests/nested.txt": "remote @ https://example.org/a.whl#sha256=abc",
+        "tests/requirements.txt": (
+            f"# comment\n{directive}{separator}nested requirements.txt\npytest{separator}# comment"
+        ),
+        "tests/nested requirements.txt": "remote @ https://example.org/a.whl#sha256=abc",
     }
     declaration = {"projects": [], "requirements-files": ["tests/requirements.txt"]}
     assert dependency_input_requirements(
@@ -94,6 +100,15 @@ def test_dynamic_dependencies_are_not_silently_treated_as_empty(tmp_path: Path) 
     text = '[project]\nname="project"\ndynamic=["dependencies"]\n'
     with pytest.raises(ValueError, match="dynamic"):
         dependency_input_requirements({}, lambda path: text, root=tmp_path)
+
+
+def test_include_without_a_file_identifies_the_directive(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="requirements.txt: -r needs a file name"):
+        dependency_input_requirements(
+            {"requirements-files": ["requirements.txt"]},
+            lambda path: "-r  # add a filename here",
+            root=tmp_path,
+        )
 
 
 def test_relative_requirements_includes_can_use_a_parent_inside_the_source(
@@ -117,11 +132,48 @@ def test_requirements_includes_cannot_escape_the_source(
         )
 
 
-def test_cyclic_requirement_includes_are_refused(tmp_path: Path) -> None:
+def test_shared_requirements_files_are_read_once_per_import(tmp_path: Path) -> None:
+    files = {
+        "dev.txt": "-r base.txt\nruff",
+        "ci.txt": "-r ./base.txt\npytest",
+        "base.txt": "packaging",
+    }
+    paths = ["dev.txt", "ci.txt", "base.txt"]
+    reads: list[str] = []
+
+    def read(path: str) -> str:
+        reads.append(path)
+        return files[path]
+
+    result = dependency_input_requirements(
+        {"requirements-files": paths}, read, root=tmp_path
+    )
+    assert result == ["packaging", "pytest", "ruff"]
+    assert reads == ["dev.txt", "base.txt", "ci.txt"]
+
+    files["base.txt"] = "new-base"
+    assert dependency_input_requirements(
+        {"requirements-files": paths}, read, root=tmp_path
+    ) == ["new-base", "pytest", "ruff"]
+
+
+def test_nested_requirement_files_do_not_use_python_call_depth(tmp_path: Path) -> None:
+    def read(path: str) -> str:
+        index = int(path)
+        return "pytest" if index == 1200 else f"-r {index + 1}"
+
+    assert dependency_input_requirements(
+        {"requirements-files": ["0"]}, read, root=tmp_path
+    ) == ["pytest"]
+
+
+@pytest.mark.parametrize("included", ["requirements.txt", "shared.txt"])
+def test_cyclic_requirement_includes_are_refused(tmp_path: Path, included: str) -> None:
+    files = {"requirements.txt": f"-r {included}", "shared.txt": "-r requirements.txt"}
     with pytest.raises(ValueError, match="cyclic requirements"):
         dependency_input_requirements(
-            {"projects": [], "requirements-files": ["requirements.txt"]},
-            lambda path: "-r requirements.txt",
+            {"requirements-files": ["requirements.txt"]},
+            files.__getitem__,
             root=tmp_path,
         )
 
@@ -202,6 +254,32 @@ def test_duplicate_project_identities_are_compared_after_normalization(
             files.__getitem__,
             root=tmp_path,
         )
+
+
+@pytest.mark.parametrize("requirement", ["worker", "worker[fast]"])
+def test_import_reads_dynamic_extras_only_if_another_project_requests_them(
+    tmp_path: Path, requirement: str
+) -> None:
+    files = {
+        "pyproject.toml": f'[project]\nname="app"\ndependencies=["{requirement}"]\n',
+        "worker/pyproject.toml": (
+            '[project]\nname="worker"\ndependencies=["base"]\n'
+            'dynamic=["optional-dependencies"]\n[project.optional-dependencies]\n'
+            'fast=["partial"]\n'
+        ),
+    }
+    declaration = {
+        "projects": [{"dependencies": True}, {"path": "worker", "dependencies": True}]
+    }
+    if requirement == "worker":
+        assert dependency_input_requirements(
+            declaration, files.__getitem__, root=tmp_path
+        ) == ["base"]
+    else:
+        with pytest.raises(
+            InvalidProjectRequirementError, match=r"'fast' extra of 'worker'.*dynamic"
+        ):
+            dependency_input_requirements(declaration, files.__getitem__, root=tmp_path)
 
 
 def test_selected_extras_can_be_imported_without_runtime_or_build_requirements(

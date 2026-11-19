@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import gc
 import importlib
-import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -13,6 +12,7 @@ from pathlib import Path
 import pytest
 import tomli
 
+import nab
 from nab._entry import console_entry
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 _TYPING_PROBE = """
 import sys
 
+sys.path.insert(0, sys.argv[1])
 import nab._entry
 
 assert "typing" not in sys.modules, "importing nab._entry loaded typing"
@@ -140,11 +141,9 @@ def test_the_entry_module_loads_no_typing() -> None:
     collector off. Only a fresh interpreter can see it: the test session has
     ``typing`` loaded before collection starts.
     """
-    # coverage's .pth imports coverage, and so typing, in any child it starts.
-    env = dict(os.environ)
-    env.pop("COVERAGE_PROCESS_START", None)
-    env.pop("COVERAGE_PROCESS_CONFIG", None)
-
+    # Hatch's virtualenv and coverage can import typing during site initialization.
+    # Add the tested installation explicitly after starting without those hooks.
+    package_root = Path(nab.__file__).resolve().parent.parent
     subprocess.run(  # noqa: S603 - the probe is this file's own source
-        [sys.executable, "-c", _TYPING_PROBE], check=True, env=env
+        [sys.executable, "-I", "-S", "-c", _TYPING_PROBE, str(package_root)], check=True
     )

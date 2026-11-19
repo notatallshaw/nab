@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from nab_project.toml_writer import dumps
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -37,14 +39,35 @@ def _workspace(root: Path) -> None:
     (child / "pyproject.toml").write_text(declaration)
 
 
-def _lock(root: Path, name: str, version: str) -> None:
+def _lock(
+    root: Path,
+    name: str,
+    *pins: tuple[str, str | None],
+    **settings: object,
+) -> None:
+    packages = []
+    for version, marker in pins:
+        wheel = {
+            "url": f"https://example.com/backend-{version}-py3-none-any.whl",
+            "hashes": {"sha256": "a" * 64},
+        }
+        package = {"name": "backend", "version": version, "wheels": [wheel]}
+        if marker is not None:
+            package["marker"] = marker
+        packages.append(package)
+
     path = root / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        'lock-version="1.0"\ncreated-by="test"\n[[packages]]\nname="backend"\n'
-        f'version="{version}"\n[[packages.wheels]]\n'
-        f'url="https://example.com/backend-{version}-py3-none-any.whl"\n'
-        '[packages.wheels.hashes]\nsha256="' + "a" * 64 + '"\n'
+        dumps(
+            {
+                "lock-version": "1.0",
+                "created-by": "test",
+                **settings,
+                "packages": packages,
+            }
+        ),
+        encoding="utf-8",
     )
 
 
@@ -69,8 +92,8 @@ def test_generation_uses_the_active_python_and_preserves_failure(
     tmp_path: Path, task: ModuleType, monkeypatch: pytest.MonkeyPatch, exit_code: int
 ) -> None:
     _workspace(tmp_path)
-    _lock(tmp_path, "pylock.dev.toml", "1")
-    _lock(tmp_path, ".github/requirements/pylock.build.toml", "1")
+    _lock(tmp_path, "pylock.dev.toml", ("1", None))
+    _lock(tmp_path, ".github/requirements/pylock.build.toml", ("1", None))
     calls = []
 
     def invoke(
@@ -95,11 +118,62 @@ def test_shared_version_mismatch_is_refused(
     tmp_path: Path, task: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _workspace(tmp_path)
-    _lock(tmp_path, "pylock.dev.toml", "2")
-    _lock(tmp_path, ".github/requirements/pylock.build.toml", "1")
+    _lock(tmp_path, "pylock.dev.toml", ("2", None))
+    _lock(tmp_path, ".github/requirements/pylock.build.toml", ("1", None))
     monkeypatch.setattr(
         task.subprocess,
         "run",
         lambda command, **kwargs: subprocess.CompletedProcess(command, 0),
     )
     assert task.main(["--locked"], tmp_path) == 1
+
+
+def test_shared_versions_cannot_swap_at_a_python_boundary(
+    tmp_path: Path, task: ModuleType
+) -> None:
+    earlier = 'python_full_version < "3.12.4"'
+    later = 'python_full_version >= "3.12.4"'
+    _lock(tmp_path, "pylock.dev.toml", ("1", earlier), ("2", later))
+    _lock(
+        tmp_path, ".github/requirements/pylock.build.toml", ("2", earlier), ("1", later)
+    )
+
+    with pytest.raises(ValueError, match="backend"):
+        task.check_shared_pins(tmp_path)
+
+
+def test_separate_package_markers_allow_different_pins(
+    tmp_path: Path, task: ModuleType
+) -> None:
+    _lock(tmp_path, "pylock.dev.toml", ("1", 'python_full_version < "3.12.4"'))
+    _lock(
+        tmp_path,
+        ".github/requirements/pylock.build.toml",
+        ("2", 'python_full_version >= "3.12.4"'),
+    )
+
+    task.check_shared_pins(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("limited", "other"),
+    [
+        (".github/requirements/pylock.build.toml", "pylock.dev.toml"),
+        ("pylock.dev.toml", ".github/requirements/pylock.build.toml"),
+    ],
+)
+@pytest.mark.parametrize(
+    "limits",
+    [{"requires-python": ">=3.12"}, {"environments": ['python_version >= "3.12"']}],
+)
+def test_differences_outside_the_lock_targets_are_ignored(
+    tmp_path: Path,
+    task: ModuleType,
+    limited: str,
+    other: str,
+    limits: dict[str, object],
+) -> None:
+    _lock(tmp_path, other, ("1", 'python_version < "3.12"'))
+    _lock(tmp_path, limited, ("2", None), **limits)
+
+    task.check_shared_pins(tmp_path)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 from typing import TYPE_CHECKING, Any
 
 from . import toml_io
@@ -29,9 +28,9 @@ class PreparedProjectInput:
     ) -> None:
         """Own the declaration snapshot and the local files read to prepare it."""
         self.path = path.parent.resolve() / path.name
-        self._original = copy.deepcopy(dict(original))
-        self._document = copy.deepcopy(dict(document))
-        self.identity = copy.deepcopy(dict(identity))
+        self._original: Mapping[str, object] | bytes = toml_io.copy_table(original)
+        self._document = toml_io.copy_table(document)
+        self.identity = toml_io.copy_table(identity)
         self._local_inputs = dict(local_inputs)
 
     def read(self, path: Path) -> dict[str, Any]:
@@ -39,9 +38,17 @@ class PreparedProjectInput:
         if path.parent.resolve() / path.name != self.path:
             msg = f"prepared input belongs to {self.path}, not {path}"
             raise InputChangedError(msg)
-        if toml_io.load_path(self.path) != self._original:
-            msg = f"project inputs changed while locking: {self.path}"
-            raise InputChangedError(msg)
+        contents = self.path.read_bytes()
+        original = self._original
+        if contents != original:
+            if isinstance(original, bytes):
+                original = toml_io.loads(original.decode())
+            if not toml_io.values_match(original, toml_io.loads(contents.decode())):
+                msg = f"project inputs changed while locking: {self.path}"
+                raise InputChangedError(msg)
+            # Keep the verified file bytes so unchanged reads need no TOML parsing.
+            self._original = contents
+
         for source, expected in self._local_inputs.items():
             try:
                 actual = source.read_text(encoding="utf-8")
@@ -50,4 +57,4 @@ class PreparedProjectInput:
             if actual != expected:
                 msg = f"project inputs changed while locking: {source}"
                 raise InputChangedError(msg)
-        return copy.deepcopy(self._document)
+        return toml_io.copy_table(self._document)

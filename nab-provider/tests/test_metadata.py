@@ -6,7 +6,6 @@ import email.parser
 
 import pytest
 
-from nab_markersets._compat import get_int_max_str_digits
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import (
@@ -19,9 +18,22 @@ from nab_provider.metadata import (
     validate_specifier_versions,
 )
 
-requires_int_limit = pytest.mark.skipif(
-    get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
-)
+from .integer_limits import AT_DIGIT_LIMIT, OVER_DIGIT_LIMIT, requires_int_limit
+
+
+def test_new_major_metadata_version_is_rejected() -> None:
+    with pytest.raises(ValueError, match=r"foo 1\.0 declares Metadata-Version '3\.0'"):
+        parse_metadata("Metadata-Version: 3.0\nName: foo\nVersion: 1.0\n")
+
+
+def test_new_minor_metadata_version_keeps_dependencies(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    parsed = parse_metadata(
+        "Metadata-Version: 2.7\nName: foo\nVersion: 1.0\nRequires-Dist: dep\n"
+    )
+    assert [req.name for req in parsed.requires_dist] == ["dep"]
+    assert "foo 1.0 declares Metadata-Version '2.7'" in caplog.text
 
 
 def test_parses_minimal_metadata() -> None:
@@ -329,6 +341,11 @@ class TestMetadataDepsAreStatic:
         md = parse_metadata("Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n")
         assert metadata_deps_are_static(md) is False
 
+    def test_future_major_cannot_establish_static_dependencies(self) -> None:
+        md = parse_metadata("Metadata-Version: 2.2\nName: foo\nVersion: 1.0\n")
+        md.metadata_version = "3.0"
+        assert not metadata_deps_are_static(md)
+
     def test_missing_metadata_version_is_not_static(self) -> None:
         md = parse_metadata("Metadata-Version: 2.2\nName: foo\nVersion: 1.0\n")
         md.metadata_version = None
@@ -337,10 +354,6 @@ class TestMetadataDepsAreStatic:
     def test_unparseable_metadata_version_is_not_static(self) -> None:
         md = parse_metadata("Metadata-Version: 2.x\nName: foo\nVersion: 1.0\n")
         assert metadata_deps_are_static(md) is False
-
-
-_AT_LIMIT = "1" * (get_int_max_str_digits() or 4300)
-_OVERSIZED = _AT_LIMIT + "1"
 
 
 class TestValidateSpecifierVersions:
@@ -360,7 +373,7 @@ class TestValidateSpecifierVersions:
             "<4,>=3.9",
             ">1!2.0",
             "==1.0.0.dev1",
-            f"=={_AT_LIMIT}",
+            f"=={AT_DIGIT_LIMIT}",
         ],
     )
     def test_accepts_every_legal_clause(self, spec: str) -> None:
@@ -371,17 +384,17 @@ class TestValidateSpecifierVersions:
     @pytest.mark.parametrize(
         "spec",
         [
-            pytest.param(f">={_OVERSIZED}", id="release"),
-            pytest.param(f">={_OVERSIZED}!1.0", id="epoch"),
-            pytest.param(f">=1.0rc{_OVERSIZED}", id="pre"),
+            pytest.param(f">={OVER_DIGIT_LIMIT}", id="release"),
+            pytest.param(f">={OVER_DIGIT_LIMIT}!1.0", id="epoch"),
+            pytest.param(f">=1.0rc{OVER_DIGIT_LIMIT}", id="pre"),
             pytest.param(
-                f">=1.0.post{_OVERSIZED}",
+                f">=1.0.post{OVER_DIGIT_LIMIT}",
                 id="post",
             ),
-            pytest.param(f">=1.0.dev{_OVERSIZED}", id="dev"),
-            pytest.param(f"==1.0+{_OVERSIZED}", id="local"),
-            pytest.param(f"=={_OVERSIZED}.*", id="wildcard"),
-            pytest.param(f"==={_OVERSIZED}", id="arbitrary"),
+            pytest.param(f">=1.0.dev{OVER_DIGIT_LIMIT}", id="dev"),
+            pytest.param(f"==1.0+{OVER_DIGIT_LIMIT}", id="local"),
+            pytest.param(f"=={OVER_DIGIT_LIMIT}.*", id="wildcard"),
+            pytest.param(f"==={OVER_DIGIT_LIMIT}", id="arbitrary"),
         ],
     )
     def test_rejects_oversized_digit_run(self, spec: str) -> None:
@@ -403,7 +416,7 @@ class TestOversizedClauseVersions:
         """Requires-Python fails under its own guard, which names the field."""
         text = (
             "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
-            f"Requires-Python: >=3.{_OVERSIZED}\n"
+            f"Requires-Python: >=3.{OVER_DIGIT_LIMIT}\n"
         )
         with pytest.raises(ValueError, match="invalid Requires-Python"):
             parse_metadata(text)
@@ -413,7 +426,7 @@ class TestOversizedClauseVersions:
         """A dep clause fails with the raw ``int()`` conversion error."""
         text = (
             "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
-            f"Requires-Dist: click>=8.{_OVERSIZED}\n"
+            f"Requires-Dist: click>=8.{OVER_DIGIT_LIMIT}\n"
         )
         with pytest.raises(ValueError, match="Exceeds the limit"):
             parse_metadata(text)

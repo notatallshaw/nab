@@ -18,17 +18,11 @@ from nab_provider.overrides import PackageOverride
 from nab_provider.policy import DistPolicy
 from nab_provider.provider import ListingFilterCache, Provider
 from nab_provider.records import DistFile
-from nab_provider.tags import PlatformSpec, TagSet
-from nab_provider.target import ResolveTarget
+from nab_provider.tags import TagSet
 from nab_provider.testing import make_coordinator, make_metadata, make_sdist, make_wheel
 from nab_provider.yanking import append_yanked_file
 
-
-def target(python: str = "3.12", platform: str = "linux_x86_64") -> ResolveTarget:
-    """Return a declared CPython target for the provider tests."""
-    return ResolveTarget.for_declared(
-        python_version=python, spec=PlatformSpec(platform)
-    )
+from .declared_target import target
 
 
 def test_release_groups_keep_aliases_and_reject_different_local_versions() -> None:

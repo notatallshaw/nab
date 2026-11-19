@@ -6,7 +6,6 @@ import hashlib
 import io
 import tarfile
 from contextlib import nullcontext
-from pathlib import Path
 
 import pytest
 
@@ -15,15 +14,13 @@ from nab_project import toml_io, toml_writer
 from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider.testing import FakeFetchPort
 
-from .test_prefer_existing_cli import Registry
+from .lock_registry import Registry
 
 
 @pytest.fixture
-def named(hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch) -> Registry:
-    """Route indexed dependency reads through a fresh real fetch port."""
-    value = Registry(hermetic_roots)
-    monkeypatch.setattr("nab_project.resolve.FetchCoordinator", value.coordinator)
-    value.project.write_text(
+def named(registry: Registry) -> Registry:
+    """Declare a test plan and a build plan in the temporary project."""
+    registry.project.write_text(
         '[project]\nname="app"\nversion="1"\nrequires-python=">=3.10"\n'
         '[dependency-groups]\ntest=["a"]\nrelease=["b"]\n'
         '[build-system]\nrequires=["b"]\n'
@@ -31,7 +28,7 @@ def named(hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch) -> Registry:
         '[tool.nab.plans.dev]\ngroups=["test"]\n'
         '[tool.nab.plans.build]\ngroups=["release"]\nbuild-requirements=true\n'
     )
-    return value
+    return registry
 
 
 def command(value: Registry, *args: str) -> int:
@@ -51,9 +48,23 @@ def test_plan_defaults_to_its_project_directory_and_checks_without_fetching(
     assert "--plan" in doc["tool"]["nab"]["command-line"]
     assert not list(named.project.parent.glob(".nab-lock-*.toml"))
 
-    ports = len(named.ports)
+    coordinator_count = len(named.coordinators)
     assert command(named, "--plan", "dev", "--locked") == 0
-    assert len(named.ports) == ports
+    assert len(named.coordinators) == coordinator_count
+    assert output.read_bytes() == saved
+
+
+def test_plan_can_lock_with_a_deep_table_from_another_tool(named: Registry) -> None:
+    # TOML accepts this dotted key, but recursively copying its tables exhausts
+    # the Python stack while preparing a plan.
+    key = ".".join(["child"] * 600)
+    with named.project.open("a", encoding="utf-8") as stream:
+        stream.write(f"[tool.other]\n{key}=1\n")
+
+    assert command(named, "--plan", "dev") == 0
+    output = named.project.with_name("pylock.dev.toml")
+    saved = output.read_bytes()
+    assert command(named, "--plan", "dev", "--locked") == 0
     assert output.read_bytes() == saved
 
 
@@ -110,13 +121,32 @@ def test_local_source_groups_are_prepared_without_rebinding_relative_sources(
     assert command(named, "--plan", "dev", "--locked") == 1
 
 
+def test_named_lock_accepts_nan_in_another_tools_settings(named: Registry) -> None:
+    with named.project.open("a") as file:
+        file.write("[tool.example]\nthreshold = nan\n")
+
+    assert command(named, "--plan", "dev") == 0
+    assert command(named, "--plan", "dev", "--locked") == 0
+
+
 @pytest.mark.parametrize("format_name", ["pylock", "requirements-without-hashes"])
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [('test=["a"]', 'test=["b"]'), ("dependencies=true", "dependencies=1")],
+)
 def test_source_change_during_resolution_preserves_the_previous_lock(
     named: Registry,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     format_name: str,
+    old: str,
+    new: str,
 ) -> None:
+    named.project.write_text(
+        named.project.read_text().replace(
+            "[tool.nab.plans.dev]", "[tool.nab.plans.dev]\ndependencies=true"
+        )
+    )
     args = ("--plan", "dev", "--format", format_name)
     assert command(named, *args) == 0
     output = named.project.with_name(
@@ -127,9 +157,7 @@ def test_source_change_during_resolution_preserves_the_previous_lock(
 
     def changed(transport: object, **kwargs: object) -> nullcontext[FakeFetchPort]:
         result = original(transport, **kwargs)
-        named.project.write_text(
-            named.project.read_text().replace('test=["a"]', 'test=["b"]')
-        )
+        named.project.write_text(named.project.read_text().replace(old, new))
         return result
 
     monkeypatch.setattr("nab_project.resolve.FetchCoordinator", changed)
@@ -183,6 +211,9 @@ def test_archive_inputs_follow_offline_cache_and_backend_controls(
         pytest.param(("--plan", "missing"), id="unknown-lock"),
         pytest.param(("--plan", "dev", "--all-plans"), id="mixed-selections"),
         pytest.param(
+            ("--all-plans", "--setting", 'user.plan="dev"'), id="plan-setting-and-all"
+        ),
+        pytest.param(
             ("--all-plans", "--output", "pylock.other.toml"), id="batch-output"
         ),
     ],
@@ -192,7 +223,54 @@ def test_invalid_selections_report_errors_without_a_traceback(
 ) -> None:
     assert command(named, *args) == 1
     assert "Traceback" not in capsys.readouterr().err
-    assert not named.ports
+    assert not named.coordinators
+    assert not list(named.project.parent.glob("pylock.*.toml"))
+
+
+def test_all_plans_overrides_an_environment_default(
+    named: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("NAB_PLAN", "dev")
+    assert command(named, "--all-plans") == 0
+    assert named.project.with_name("pylock.dev.toml").is_file()
+    assert named.project.with_name("pylock.build.toml").is_file()
+
+
+def test_invalid_plan_name_identifies_the_setting(
+    named: Registry, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert command(named, "--plan", "bad name") == 1
+    assert "--plan 'bad name' is not a valid lock plan name" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("declaration", "problem"),
+    [
+        ('[tool.nab.plans.build.settings]\nstrategy="lowest"', "strategy"),
+        ("[tool.nab.plans.build.settings]\nresolution=42", "resolution"),
+        ('[tool.nab.plans.build.inputs.missing]\ngroups=["test"]', "missing"),
+    ],
+)
+def test_invalid_later_plan_preserves_existing_locks(
+    named: Registry, capsys: pytest.CaptureFixture[str], declaration: str, problem: str
+) -> None:
+    assert command(named, "--plan", "dev") == 0
+    lock = named.project.with_name("pylock.dev.toml")
+    previous = lock.read_bytes()
+    coordinator_count = len(named.coordinators)
+    named.add_release()
+    with named.project.open("a") as file:
+        file.write(declaration + "\n")
+
+    assert command(named, "--all-plans") == 1
+    assert lock.read_bytes() == previous
+    assert len(named.coordinators) == coordinator_count
+    message = capsys.readouterr().err
+    assert "'build'" in message
+    assert problem in message
+
+    assert command(named, "--plan", "dev") == 0
+    assert {p["version"] for p in toml_io.load_path(lock)["packages"]} == {"2"}
 
 
 def test_batch_output_collisions_fail_before_writing(named: Registry) -> None:
@@ -204,7 +282,7 @@ def test_batch_output_collisions_fail_before_writing(named: Registry) -> None:
         )
     )
     assert command(named, "--all-plans") == 1
-    assert not named.ports
+    assert not named.coordinators
     assert not named.project.with_name("pylock.shared.toml").exists()
 
 
@@ -271,7 +349,7 @@ def test_named_project_policy_refusals_are_reported(
     with named.project.open("a") as file:
         file.write("[tool.nab.plans.dev.settings]\n" + settings + "\n")
     assert command(named, "--plan", "dev") == 1
-    assert not named.ports
+    assert not named.coordinators
 
 
 def test_a_script_cannot_select_a_plan(named: Registry) -> None:
@@ -326,7 +404,7 @@ def test_batch_refuses_outputs_that_are_not_files(named: Registry, output: str) 
         )
     )
     assert command(named, "--all-plans") == 1
-    assert not named.ports
+    assert not named.coordinators
 
 
 @pytest.fixture
@@ -382,7 +460,7 @@ def test_named_plans_refuse_conflicting_explicit_selection_controls(
     arguments: tuple[str, ...],
 ) -> None:
     assert command(named, "--plan", "dev", *arguments) == 1
-    assert not named.ports
+    assert not named.coordinators
 
 
 def test_a_shared_docs_group_works_without_runtime_or_backend_metadata(
@@ -478,7 +556,7 @@ def test_invalid_runtime_selection_is_rejected(named: Registry) -> None:
     document["tool"]["nab"]["plans"]["dev"]["dependencies"] = "false"
     named.project.write_text(toml_writer.dumps(document))
     assert command(named, "--plan", "dev") == 1
-    assert not named.ports
+    assert not named.coordinators
 
 
 def test_separate_plans_lock_incompatible_tool_environments(named: Registry) -> None:
@@ -555,7 +633,7 @@ def test_complete_plan_refuses_declared_alternatives_before_resolving(
     document["tool"]["nab"]["plans"]["dev"]["groups"] = ["test", "release"]
     named.project.write_text(toml_writer.dumps(document))
     assert command(named, "--plan", "dev") == 1
-    assert not named.ports
+    assert not named.coordinators
     document["tool"]["nab"]["plans"]["dev"]["groups"] = ["test"]
     named.project.write_text(toml_writer.dumps(document))
     assert command(named, "--plan", "dev") == 0
@@ -597,6 +675,28 @@ def test_named_plan_selects_its_own_build_roots(
     )
     assert {p.name for p, _ in lock.select()} == {"runtime"}
     assert command(named, "--plan", "dev", "--locked") == 0
+
+
+def test_named_plan_refuses_partial_extras_but_still_locks_runtime(
+    features: Registry, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert command(features, "--plan", "http") == 0
+    output = features.project.with_name("pylock.http.toml")
+    saved = output.read_bytes()
+    document = toml_io.load_path(features.project)
+    document["project"]["dynamic"] = ["optional-dependencies"]
+    features.project.write_text(toml_writer.dumps(document))
+
+    assert command(features, "--plan", "http", "--locked") == 1
+    assert "optional-dependencies" in capsys.readouterr().err
+    assert output.read_bytes() == saved
+    assert command(features, "--plan", "http") == 1
+    assert output.read_bytes() == saved
+
+    del document["tool"]["nab"]["plans"]["http"]["extras"]
+    features.project.write_text(toml_writer.dumps(document))
+    assert command(features, "--plan", "http") == 0
+    assert {pkg["name"] for pkg in toml_io.load_path(output)["packages"]} == {"runtime"}
 
 
 @pytest.mark.parametrize("build", [False, True])

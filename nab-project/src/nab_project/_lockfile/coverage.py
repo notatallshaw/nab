@@ -64,11 +64,7 @@ def _reference_pins(target: ResolveTarget) -> dict[str, str]:
 
 
 class CoverageError(ValueError):
-    """A resolved target has no covering ``environments`` row.
-
-    The error names one uncovered interpreter as a concrete point so the
-    producer can widen the declaration or drop the target.
-    """
+    """The lock's environment rows could not be shown to cover a resolved target."""
 
 
 def validate_marker_coverage(
@@ -81,9 +77,9 @@ def validate_marker_coverage(
 ) -> None:
     """Confirm the emitted rows cover every target the resolve ran.
 
-    Asks the algebra for a point the declared rows miss; a witness is a
-    real interpreter the declaration would refuse.  Targets on one platform
-    share a restriction, so they are asked as a single question.
+    First check the targets on each platform together. If that fails, check
+    their known Python versions individually and report an uncovered interpreter
+    when the marker algebra can identify one.
 
     An empty ``environments`` returns early: an omitted field declares
     support for every environment, so it must not be read as the empty set.
@@ -99,11 +95,15 @@ def validate_marker_coverage(
     if environment_sets is None:
         environment_sets = [MarkerSet.from_marker(marker) for marker in environments]
     covered = reduce(MarkerSet.union, environment_sets, MarkerSet.empty())
-    covered = _project_implementation_version(
-        covered,
-        environments,
-        targets,
-        uses_implementation_version=uses_implementation_version,
+    if uses_implementation_version is None:
+        uses_implementation_version = any(
+            "implementation_version" in variable_names(row) for row in environments
+        )
+    # CPython reports its language version as its implementation version.
+    cpython_covered = (
+        covered.with_cpython_implementation_version()
+        if uses_implementation_version
+        else covered
     )
 
     for pins, references in _references_by_pins(targets).items():
@@ -112,35 +112,63 @@ def validate_marker_coverage(
         # Complementing the whole matrix carries every row's atoms on every
         # axis at once and overruns the cell budget.  Restricting first leaves
         # a single-platform residual denoting the same set.
-        covered_here = covered.restrict(env)
+        rows = (
+            cpython_covered if env.get("implementation_name") == "cpython" else covered
+        )
+        covered_here = rows.restrict(env)
 
-        # Restricting the question too is sound: a group's pins are a subset
-        # of every reference's own == clauses at the same values, since both
-        # read the target's marker_env and the reference only ever adds the
-        # python axes _reference_pins leaves open.  So this drops conjuncts
-        # the reference already fixes rather than narrowing what is asked.
+        requested = [
+            (target, MarkerSet.from_marker(marker).restrict(env))
+            for target, marker in references
+        ]
         asked = reduce(
-            MarkerSet.union,
-            (MarkerSet.from_marker(marker) for marker in references),
-            MarkerSet.empty(),
-        ).restrict(env)
+            MarkerSet.union, (row for _, row in requested), MarkerSet.empty()
+        )
+        if asked.is_subset(covered_here, store=store):
+            continue
 
-        witness = (asked & ~covered_here).witness(store=store)
-        if witness is not None:
-            # The residual carries no pins, so env restores them for the message.
-            raise CoverageError(_coverage_message({**env, **witness}))
+        for target, reference in requested:
+            _check_target_coverage(target, reference, covered_here, env, store)
+
+
+def _check_target_coverage(
+    target: ResolveTarget,
+    reference: MarkerSet,
+    covered: MarkerSet,
+    pins: dict[str, str],
+    store: DecisionStore | None,
+) -> None:
+    """Prove coverage of one target or explain why the declaration failed."""
+    # Substring tests on versions can be decided directly on a known value.
+    # An open minor still needs coverage for every possible full version.
+    known = {"python_version": target.python_version}
+    if not target.is_minor_interval:
+        known["python_full_version"] = target.python_full_version
+    missing = reference - covered.restrict(known)
+    if missing.is_empty(store=store):
+        return
+
+    witness = missing.witness(store=store)
+    if witness is not None:
+        raise CoverageError(_coverage_message({**pins, **witness}))
+
+    msg = (
+        f"cannot verify that the lock environments cover {target.label}. "
+        "Use version comparisons that describe the supported interpreters."
+    )
+    raise CoverageError(msg)
 
 
 def _references_by_pins(
     targets: Sequence[ResolveTarget],
-) -> dict[tuple[tuple[str, str], ...], list[str]]:
+) -> dict[tuple[tuple[str, str], ...], list[tuple[ResolveTarget, str]]]:
     """Group the distinct target references by the platform axes they pin.
 
     Targets differing only in Python version pin the same axes, so one
     restricted union serves them all.  Deduped by marker string, so a split
     minor's slices and the conflict forks of one environment count once.
     """
-    grouped: dict[tuple[tuple[str, str], ...], list[str]] = {}
+    grouped: dict[tuple[tuple[str, str], ...], list[tuple[ResolveTarget, str]]] = {}
     seen: set[str] = set()
     for target in targets:
         marker = declared_range_marker(target)
@@ -148,43 +176,8 @@ def _references_by_pins(
             continue
         seen.add(marker)
         key = tuple(sorted(_reference_pins(target).items()))
-        grouped.setdefault(key, []).append(marker)
+        grouped.setdefault(key, []).append((target, marker))
     return grouped
-
-
-def _project_implementation_version(
-    covered: MarkerSet,
-    environments: Sequence[Marker],
-    targets: Sequence[ResolveTarget],
-    *,
-    uses_implementation_version: bool | None = None,
-) -> MarkerSet:
-    """Drop ``implementation_version`` from ``covered`` when a row mirrors it.
-
-    On CPython the resolve mirrors each slice's ``python_full_version`` bounds
-    onto ``implementation_version``, and the algebra treats the two as
-    independent.  A cross term (``python_full_version`` from one slice,
-    ``implementation_version`` from another) then survives the plain union and
-    manufactures a false hole on a covering lock, since the reference leaves
-    ``implementation_version`` open.
-
-    With no existential primitive the projection is reproduced by ``restrict``:
-    binding ``implementation_version`` to one representative per slice drops the
-    axis, and the union over the targets' ``python_full_version`` reassembles
-    the minor.  Runs only when a row names ``implementation_version``.
-    """
-    if uses_implementation_version is None:
-        uses_implementation_version = any(
-            "implementation_version" in variable_names(row) for row in environments
-        )
-    if not uses_implementation_version:
-        return covered
-    reps = {target.python_full_version for target in targets}
-    return reduce(
-        MarkerSet.union,
-        (covered.restrict({"implementation_version": rep}) for rep in reps),
-        MarkerSet.empty(),
-    )
 
 
 def _coverage_message(witness: dict[str, str | frozenset[str]]) -> str:

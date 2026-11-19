@@ -2,34 +2,26 @@
 
 from __future__ import annotations
 
-__lazy_modules__ = (
-    "collections",
-    "nab_project._testing.coordinator_fake",
-    "nab_provider._vendor.packaging.utils",
-    "nab_provider.pep508",
-    "nab_provider.records",
-    "nab_provider.yanking",
-)
-
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.pep508 import parse_requirement
-from nab_provider.records import WheelFile
+from nab_provider.testing import make_metadata, make_wheel
 from nab_provider.yanking import mark_yanked
-
-from .coordinator_fake import make_coordinator
+from nab_test_support.coordinator import make_coordinator
 
 if TYPE_CHECKING:
     from nab_provider.testing import FakeFetchPort
+
+
 ReleaseRow = tuple[str, str, bool, Sequence[str]]
-Extras = Mapping[tuple[str, str, bool], tuple[str, ...]]
+ReleaseExtras = Mapping[tuple[str, str, bool], tuple[str, ...]]
 
 
-def graph_port(
-    releases: Sequence[ReleaseRow], provided_extras: Extras | None = None
+def make_release_coordinator(
+    releases: Sequence[ReleaseRow], provided_extras: ReleaseExtras | None = None
 ) -> FakeFetchPort:
     """Serve metadata by artifact URL, including withdrawals and declared extras."""
     listings = defaultdict(list)
@@ -37,26 +29,23 @@ def graph_port(
     for raw_name, version, yanked, dependencies in releases:
         name = canonicalize_name(raw_name)
         distribution = name.replace("-", "_")
-        file = WheelFile(
-            filename=f"{distribution}-{version}-py3-none-any.whl",
+        file = make_wheel(
+            version,
+            package=distribution,
             url=f"https://example.test/{name}-{version}-{yanked}.whl",
-            version=version,
-            requires_python=None,
-            has_metadata=True,
-            upload_time=None,
             hashes=(("sha256", "a" * 64),),
         )
         record = mark_yanked(file, reason="withdrawn") if yanked else file
         listings[name].append(record)
-        metadata[file.metadata_url] = (
-            f"Metadata-Version: 2.2\nName: {name}\nVersion: {version}\n"
-            + "".join(f"Requires-Dist: {dep}\n" for dep in dependencies)
-            + "".join(
-                f"Provides-Extra: {extra}\n"
-                for extra in (provided_extras or {}).get((name, version, yanked), ())
-            )
-            + "\n"
+        metadata[file.metadata_url] = make_metadata(
+            name,
+            version,
+            *dependencies,
+            metadata_version="2.2",
+            provides_extra=(provided_extras or {}).get((name, version, yanked), ()),
         )
+
+    # A dependency with no releases has an empty index listing.
     for _name, _version, _yanked, dependencies in releases:
         for dependency in dependencies:
             listings.setdefault(

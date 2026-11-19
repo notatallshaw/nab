@@ -36,14 +36,15 @@ MINIMUM = "26.3"
 
 
 def _import_or_none(name: str) -> ModuleType | None:
-    """Return the named module.
-
-    Return ``None`` when importing it raises ``ModuleNotFoundError``.
-    """
+    """Import a candidate if the package and its parents are installed."""
     try:
         return import_module(name)
-    except ModuleNotFoundError:
-        return None
+    except ModuleNotFoundError as exc:
+        # A dotted candidate is also absent if one of its parents is missing.
+        missing = exc.name
+        if missing is not None and (name == missing or name.startswith(missing + ".")):
+            return None
+        raise
 
 
 def _clears_floor(name: str, version: str) -> bool:
@@ -76,8 +77,7 @@ def _no_backend(rejected: Sequence[str]) -> DiagnosticMessage:
 def _import_backend(candidates: Sequence[str]) -> ModuleType:
     """Return the first candidate that imports and clears the floor.
 
-    Only the package is named, so a submodule that fails for a reason of its
-    own raises where it failed rather than reading as a missing backend.
+    An import error inside an installed candidate reaches the caller.
     """
     rejected: list[str] = []
     for name in candidates:

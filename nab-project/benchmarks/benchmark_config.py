@@ -13,6 +13,7 @@ from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
 from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
+from nab_provider.marker_holds import dependency_marker_holds, marker_uses_extra
 from nab_provider.overrides import PackageOverride
 from nab_provider.provider import (
     BuildPolicy,
@@ -24,6 +25,7 @@ from nab_provider.provider import (
     join_extra,
     split_extra,
 )
+from nab_provider.requirements_file import expand_self_extras
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.yanked_resolution import YankProxyProvider
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
@@ -121,6 +123,44 @@ class ScenarioProjectMetadata(NamedTuple):
     optional_dependencies: dict[str, list[str]]
 
 
+def expand_project_extras(
+    project_name: str,
+    requested_extras: list[str],
+    optional_dependencies: dict[str, list[str]],
+    *,
+    marker_environment: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Collect the original requirement strings from extras active on this target."""
+    project = canonicalize_name(project_name)
+    optional = {
+        canonicalize_name(key): deps for key, deps in optional_dependencies.items()
+    }
+    selected = expand_self_extras(
+        optional, project, requested_extras, marker_environment
+    )
+
+    roots: list[str] = []
+    for extra in selected:
+        for text in optional.get(extra, []):
+            req = Requirement(text)
+            if canonicalize_name(req.name) == project:
+                continue
+
+            # Evaluate an extra marker here, before the requirement becomes a root.
+            if (
+                marker_environment is None
+                or req.marker is None
+                or not marker_uses_extra(req.marker)
+            ):
+                roots.append(text)
+            elif dependency_marker_holds(
+                req.marker, {**marker_environment, "extra": frozenset({extra})}
+            ):
+                req.marker = None
+                roots.append(str(req))
+    return roots
+
+
 def validate_scenario_settings(
     scenario_name: str,
     scenario: Mapping[str, object],
@@ -132,6 +172,20 @@ def validate_scenario_settings(
     if unknown:
         msg = f"{scenario_name}: unknown scenario settings: {unknown!r}"
         raise ValueError(msg)
+
+
+def parse_unsupported_reason(
+    scenario_name: str, scenario: Mapping[str, object]
+) -> str | None:
+    """Return the explanation for skipping the scenario, if supplied."""
+    if "unsupported_reason" not in scenario:
+        return None
+
+    reason = scenario["unsupported_reason"]
+    if not isinstance(reason, str) or not reason.strip():
+        msg = f"{scenario_name}: unsupported_reason must be a non-empty string"
+        raise ValueError(msg)
+    return reason
 
 
 def _scenario_string_list(

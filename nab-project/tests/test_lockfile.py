@@ -17,9 +17,10 @@ from typing import Any, ClassVar
 import pytest
 
 from nab_markersets._compat import get_int_max_str_digits
-from nab_project._testing.artifacts import make_sdist_artifact, make_wheel_artifact
 from nab_provider.policy import MetadataPolicy
 from nab_provider.value import replace
+
+from .lock_artifacts import make_sdist_artifact, make_wheel_artifact
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -45,7 +46,6 @@ from nab_project._lockfile.pylock import (
     _pin_to_package,
     _relativize_path,
 )
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
@@ -115,6 +115,7 @@ from nab_provider.target import (
     slices_from_points,
 )
 from nab_provider.testing import make_metadata, make_wheel, pkg_override
+from nab_test_support.coordinator import make_coordinator
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
@@ -7791,6 +7792,34 @@ class TestMarkerCoverage:
         gpu = base.with_selection((("extra", "gpu"),))
         validate_marker_coverage([cpu, gpu], environments=[self._row(base)])
 
+    def test_implementation_bound_cannot_borrow_another_cpython_target(self) -> None:
+        targets = [self._minor("3.11"), self._minor("3.12")]
+        with pytest.raises(CoverageError, match="python_full_version"):
+            validate_marker_coverage(
+                targets, environments=[Marker('implementation_version < "3.12"')]
+            )
+
+    def test_implementation_bound_can_cover_the_rest_of_a_cpython_minor(self) -> None:
+        validate_marker_coverage(
+            [self._minor("3.12")],
+            environments=[
+                Marker('python_full_version < "3.12.4"'),
+                Marker('implementation_version >= "3.12.4.dev0"'),
+            ],
+        )
+
+    def test_pypy_implementation_version_is_independent(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.12",
+            spec=PlatformSpec("linux_x86_64"),
+            implementation="pypy",
+            python_full_version="3.12.0",
+        )
+        with pytest.raises(CoverageError):
+            validate_marker_coverage(
+                [target], environments=[Marker('implementation_version == "3.12.0"')]
+            )
+
     def test_cpython_iv_mirror_split_minor_passes(self) -> None:
         target = self._minor("3.13")
         slices, rows = self._split(target, 'implementation_version >= "3.13.2"')
@@ -7854,7 +7883,42 @@ class TestMarkerCoverage:
         monkeypatch.setattr(MarkerSet, "witness", boom)
         target = self._minor("3.13")
         with pytest.raises(IntractableMarkerSet, match="patched"):
-            validate_marker_coverage([target], environments=[self._row(target)])
+            validate_marker_coverage(
+                [target], environments=[Marker('python_version == "3.12"')]
+            )
+
+    def test_cannot_emit_a_lock_with_an_unproven_micro_range(self) -> None:
+        target = self._minor("3.12")
+        row = Marker('"11" not in python_full_version')
+        lock_input = LockInput(
+            targets={
+                target.label: TargetLock(target=target, pins={"foo": _index_pin()})
+            },
+            environments=[row],
+        )
+
+        assert not row.evaluate({**target.marker_env, "python_full_version": "3.12.11"})
+        with pytest.raises(CoverageError, match="cannot verify"):
+            build_pylock(lock_input)
+
+    @pytest.mark.parametrize(
+        ("full_version", "row"),
+        [(None, '"12" in python_version'), ("3.12.11", '"11" in python_full_version')],
+    )
+    def test_version_substrings_can_cover_a_known_value(
+        self, full_version: str | None, row: str
+    ) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.12",
+            spec=PlatformSpec("linux_x86_64"),
+            python_full_version=full_version,
+        )
+        validate_marker_coverage([target], environments=[Marker(row)])
+
+    def test_version_substring_can_cover_the_host(self) -> None:
+        target = ResolveTarget.for_host()
+        row = Marker(f'"{target.python_full_version}" in python_full_version')
+        validate_marker_coverage([target], environments=[row])
 
     def test_build_pylock_non_covering_raises(self) -> None:
         target = self._minor("3.13")

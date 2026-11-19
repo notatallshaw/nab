@@ -37,6 +37,7 @@ from benchmark_config import (
     parse_scenario_requirement_strings,
     parse_scenario_vcs_config,
     parse_trust_unverified_sdist_deps,
+    parse_unsupported_reason,
     validate_scenario_build_policy,
     validate_scenario_settings,
 )
@@ -87,6 +88,11 @@ def build_inputs(
     Returns requirements, constraints, config, target, and the effective host.
     """
     validate_scenario_settings(name, scenario)
+    reason = parse_unsupported_reason(name, scenario)
+    if reason is not None:
+        msg = f"{name}: cannot profile this scenario: {reason}"
+        raise SystemExit(msg)
+
     trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(name, scenario)
     requirement_inputs = parse_scenario_requirement_strings(name, scenario)
     vcs_config = parse_scenario_vcs_config(name, scenario)
@@ -128,6 +134,7 @@ def build_inputs(
             project_metadata.project_name,
             project_metadata.project_extras,
             project_metadata.optional_dependencies,
+            marker_environment=target.marker_env,
         )
 
     marker_env = dict(target.marker_env)
@@ -191,7 +198,10 @@ def main() -> None:
     resolution_override = (
         sc.ResolutionStrategy(args.resolution) if args.resolution is not None else None
     )
-    inputs = build_inputs(name, scenario, resolution_override, host=None)
+    try:
+        inputs = build_inputs(name, scenario, resolution_override, host=None)
+    except (TypeError, ValueError) as exc:
+        parser.error(str(exc))
 
     if not args.cprofile:
         report(name, sc.resolve_scenario(**inputs))

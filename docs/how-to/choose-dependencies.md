@@ -79,6 +79,9 @@ nab lock --extras cli --groups dev
 The project's regular dependencies are included too. `--all-extras` and `--all-groups` select every
 declared extra or group. `[tool.nab].default-groups` selects groups on every resolve.
 
+Inside the `cli` extra, an `extra` marker evaluates with the value `"cli"`. Other marker variables,
+such as `sys_platform`, still use the target environment.
+
 ### Include other extras
 
 An extra can include another extra from the same project. Here `--extras all` also selects `cli`
@@ -91,10 +94,10 @@ Selected sets normally resolve together, so their requirements must be compatibl
 [conflicting extras or groups](../explanation/conflicts.md) when they are alternatives that need
 separate pins in one lock.
 
-The lock can offer extras and groups for an installer to select. Check the installer's selection
-support: pip currently uses default groups and no extras.
-[Lockfile extras and groups](../reference/lockfile-groups.md) explains those conditions and how
-`base-group` and `build-group` separate runtime and build dependencies.
+The lock can offer extras and groups at installation time. With pip 26.3 or newer, use
+`-r 'pylock.toml[cli]'` to include the locked `cli` extra. See [Use a lock](use-the-lock.md) for
+group selection. [Lockfile extras and groups](../reference/lockfile-groups.md) explains those
+conditions and how `base-group` and `build-group` separate runtime and build dependencies.
 
 ## Constrain versions without adding a dependency
 

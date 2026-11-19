@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import posixpath
+import re
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import urlsplit
 
 from nab_index.archive_files import source_relative_path
@@ -21,22 +22,26 @@ from .pyproject_files import (
     build_system_requires,
     dependency_groups,
     project_dependencies,
+    project_dynamic_fields,
     project_name,
     project_optional_dependencies,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
     from pathlib import Path
 
     from nab_provider._vendor.packaging.requirements import Requirement
 
 __all__ = ["dependency_input_requirements", "input_table"]
 
+# A hash inside a URL is part of the requirement.
+_REQUIREMENT_COMMENT = re.compile(r"(?:^|\s)#")
 
-def input_table(value: object, where: str) -> dict[str, Any]:
+
+def input_table(value: object, where: str) -> dict[str, object]:
     """Validate a TOML table before interpreting its declarations."""
-    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+    if not toml_io.is_table(value):
         msg = f"{where} must be a table"
         raise ValueError(msg)
     return value
@@ -105,36 +110,57 @@ def _projects(declaration: Mapping[str, object]) -> list[_Project]:
     return result
 
 
-def _requirements_file(
-    path: str,
-    read: Callable[[str], str],
-    active: tuple[str, ...] = (),
-) -> list[Requirement]:
-    """Read PEP 508 lines and relative -r includes; reject pip-only options."""
-    path = source_relative_path(path)
-    if path in active:
-        msg = f"cyclic requirements file include: {(*active, path)}"
-        raise ValueError(msg)
-    result = []
+def _file_entries(path: str, read: Callable[[str], str]) -> Iterator[Requirement | str]:
+    """Yield parsed requirements and the source-relative paths of included files."""
     for line in read(path).splitlines():
-        text = line.split(" #", 1)[0].strip()
-        if not text or text.startswith("#"):
+        text = _REQUIREMENT_COMMENT.split(line, maxsplit=1)[0].strip()
+        if not text:
             continue
-        if text.startswith(("-r ", "--requirement ")):
-            relative = text.split(maxsplit=1)[1]
-            child = source_relative_path(
+
+        fields = text.split(maxsplit=1)
+        if fields[0] in {"-r", "--requirement"}:
+            if len(fields) == 1:
+                msg = f"{path}: {fields[0]} needs a file name"
+                raise ValueError(msg)
+            relative = fields[1]
+            yield source_relative_path(
                 posixpath.normpath(str(PurePosixPath(path).parent / relative))
             )
-            result.extend(_requirements_file(child, read, (*active, path)))
         else:
-            result.extend(parse_requirements([text], path))
-    return result
+            yield from parse_requirements([text], path)
+
+
+def _requirements_files(
+    paths: Sequence[str], read: Callable[[str], str]
+) -> Iterator[Requirement]:
+    """Read each file once, preserving include order and reporting cycles."""
+    completed: set[str] = set()
+    for root in paths:
+        path = source_relative_path(root)
+        if path in completed:
+            continue
+
+        # Keep parent iterators so reading resumes on the line after an include.
+        active = {path: _file_entries(path, read)}
+        while active:
+            path = next(reversed(active))
+            entry = next(active[path], None)
+            if entry is None:
+                active.popitem()
+                completed.add(path)
+            elif not isinstance(entry, str):
+                yield entry
+            elif entry in active:
+                msg = f"cyclic requirements file include: {(*active, entry)}"
+                raise ValueError(msg)
+            elif entry not in completed:
+                active[entry] = _file_entries(entry, read)
 
 
 def _provided_project(
-    document: Mapping[str, Any],
+    document: Mapping[str, object],
     path: str,
-    optional: dict[str, Mapping[str, Sequence[str]]],
+    optional: dict[str, Mapping[str, Sequence[str]] | None],
 ) -> str:
     """Record extras only for a project the caller supplies separately."""
     name = project_name(document)
@@ -145,7 +171,11 @@ def _provided_project(
     if name in optional:
         msg = f"duplicate imported project {name!r}"
         raise ValueError(msg)
-    optional[name] = project_optional_dependencies(document)
+    # A different input can request this project's extras later.
+    if "optional-dependencies" in project_dynamic_fields(document):
+        optional[name] = None
+    else:
+        optional[name] = project_optional_dependencies(document, require_static=False)
     return name
 
 
@@ -161,7 +191,7 @@ def dependency_input_requirements(
     from imported projects is ignored; selected dynamic dependencies are refused.
     """
     projects = _projects(declaration)
-    optional: dict[str, Mapping[str, Sequence[str]]] = {}
+    optional: dict[str, Mapping[str, Sequence[str]] | None] = {}
     roots: list[Requirement] = []
     for project in projects:
         path = str(PurePosixPath(project.path) / "pyproject.toml")
@@ -180,10 +210,11 @@ def dependency_input_requirements(
             resolve_groups_to_requirements(dependency_groups(document), project.groups)
         )
 
-    for path in require_string_list(
+    paths = require_string_list(
         declaration.get("requirements-files", []), "input requirements-files"
-    ):
-        roots.extend(_requirements_file(path, read))
+    )
+    roots.extend(_requirements_files(paths, read))
+
     result = expand_project_requirements(roots, optional)
     for requirement in result:
         if requirement.url is not None and urlsplit(requirement.url).scheme in {
