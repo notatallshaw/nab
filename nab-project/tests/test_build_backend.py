@@ -144,63 +144,49 @@ class TestExtractStaticMetadata:
         _write_pyproject(tmp_path, '[build-system]\nrequires = ["setuptools"]\n')
         assert extract_static_metadata(tmp_path) is None
 
-    def test_dynamic_dependencies_returns_none(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        "field", ["dependencies", "optional-dependencies", "requires-python"]
+    )
+    def test_dynamic_resolution_field_requires_backend(
+        self, tmp_path: Path, field: str
+    ) -> None:
         _write_pyproject(
-            tmp_path,
-            """
-            [project]
-            name = "foo"
-            version = "1.0"
-            dynamic = ["dependencies"]
-            """,
+            tmp_path, f'[project]\nname = "foo"\nversion = "1.0"\ndynamic = ["{field}"]'
         )
         assert extract_static_metadata(tmp_path) is None
 
-    def test_dynamic_optional_dependencies_returns_none(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("version_field", ["", 'version = "0.0.0"'])
+    def test_dynamic_version_requires_backend(
+        self, tmp_path: Path, version_field: str
+    ) -> None:
+        # A backend-computed version can have a placeholder in the checkout.
         _write_pyproject(
-            tmp_path,
-            """
-            [project]
-            name = "foo"
-            version = "1.0"
-            dynamic = ["optional-dependencies"]
-            """,
+            tmp_path, f'[project]\nname = "foo"\n{version_field}\ndynamic = ["version"]'
         )
         assert extract_static_metadata(tmp_path) is None
 
-    def test_dynamic_version_placeholder_returns_none(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "description",
+            "readme",
+            "license",
+            "license-files",
+            "authors",
+            "maintainers",
+            "keywords",
+            "classifiers",
+            "urls",
+            "scripts",
+            "gui-scripts",
+            "entry-points",
+        ],
+    )
+    def test_other_dynamic_fields_allow_static_metadata(
+        self, tmp_path: Path, field: str
+    ) -> None:
         _write_pyproject(
-            tmp_path,
-            """
-            [project]
-            name = "foo"
-            version = "0.0.0"
-            dynamic = ["version"]
-            """,
-        )
-        assert extract_static_metadata(tmp_path) is None
-
-    def test_dynamic_requires_python_returns_none(self, tmp_path: Path) -> None:
-        _write_pyproject(
-            tmp_path,
-            """
-            [project]
-            name = "foo"
-            version = "1.0"
-            dynamic = ["requires-python"]
-            """,
-        )
-        assert extract_static_metadata(tmp_path) is None
-
-    def test_dynamic_non_version_keeps_static_version(self, tmp_path: Path) -> None:
-        _write_pyproject(
-            tmp_path,
-            """
-            [project]
-            name = "foo"
-            version = "1.0"
-            dynamic = ["readme"]
-            """,
+            tmp_path, f'[project]\nname = "foo"\nversion = "1.0"\ndynamic = ["{field}"]'
         )
         meta = extract_static_metadata(tmp_path)
         assert meta is not None
@@ -523,9 +509,7 @@ class TestExtractMetadata:
             dynamic = ["dependencies"]
             """,
         )
-        with pytest.raises(
-            BuildBackendError, match="dynamic-metadata path requires a ResolveInputs"
-        ):
+        with pytest.raises(BuildBackendError, match="requires a build backend"):
             extract_metadata(tmp_path)
 
     def test_dynamic_path_with_config_invokes_runner(self, tmp_path: Path) -> None:

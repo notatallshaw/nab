@@ -219,14 +219,11 @@ def extract_metadata(
         return static
     if config is None:
         report = DiagnosticMessage(
-            (
-                "dynamic-metadata path requires a ResolveInputs; the static reader "
-                f"returned None for {source_dir}"
-            ),
+            f"Reading package metadata from {source_dir} requires a build backend.",
             suggestions=(
                 Suggestion(
-                    "pass one through ``extract_metadata`` or use a build-policy "
-                    "that does not enter the dynamic path."
+                    "Pass the project's build settings (ResolveInputs) "
+                    "as the config argument to extract_metadata()."
                 ),
             ),
         )
