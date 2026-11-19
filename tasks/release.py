@@ -276,8 +276,15 @@ def _make(release: str, next_dev: str | None, *, assume_yes: bool, push: bool) -
     _run("git", "commit", "--message", "Back to development")
 
     if push:
-        _run("git", "push", "--set-upstream", "origin", branch)
-        _run("git", "push", "origin", tag)
+        _run(
+            "git",
+            "push",
+            "--atomic",
+            "--set-upstream",
+            "origin",
+            f"refs/heads/{branch}",
+            f"refs/tags/{tag}",
+        )
     _run("git", "switch", "main")
 
     if not push:

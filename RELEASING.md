@@ -11,8 +11,9 @@ All six packages release together at one version (lockstep).
    ```
 
    This creates a `release/0.0.3` branch with two commits (the `0.0.3` release, then a return to
-   `0.0.4.dev0`), tags the release commit `v0.0.3`, pushes the branch and tag, and prints a link to
-   open the PR.
+   `0.0.4.dev0`), tags the release commit `v0.0.3`, pushes the branch and tag together, and prints a
+   link to open the PR. If the server rejects either one, both remote refs stay as they were. The
+   local release branch and tag are still available for inspection.
 
 2. Open the PR from that link and review the version bump.
 
@@ -26,9 +27,9 @@ All six packages release together at one version (lockstep).
 
 - Prereleases work: `hatch run release:make 0.0.3rc1`.
 - The changelog is the generated GitHub release notes (a list of merged PRs).
-- The workflow runs `tasks/release.py check` and `tasks/build_dists.py`, and installs only from
-  hash-pinned locks: the `release` group in `pylock.dev.toml` for the toolchain, plus
-  `.github/requirements/pylock.build.toml` for the backend, which the build needs because it runs
-  with `--no-isolation`.
+- The workflow runs `tasks/release.py check` and `tasks/build_dists.py`, and installs the release
+  tools and build backend from hash-pinned locks after setting up pip: the `release` group in
+  `pylock.dev.toml` for the toolchain, plus `.github/requirements/pylock.build.toml` for the
+  backend, which the build needs because it runs with `--no-isolation`.
 - After changing a dependency group, regenerate the locks with `tasks/refresh_locks.py`.
 - To abort before publishing, delete the branch and the tag.

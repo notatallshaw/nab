@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -274,6 +275,34 @@ def test_github_slug() -> None:
         == "notatallshaw/nab"
     )
     assert release._github_slug("https://gitlab.com/x/y.git") is None
+
+
+def test_existing_remote_tag_leaves_the_release_branch_unpublished(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    _use_tree(checkout, monkeypatch, "0.0.3.dev0", "0.0.3.dev0")
+    monkeypatch.setattr(release, "REPO_ROOT", checkout)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    release._run("git", "init", "--initial-branch=main")
+    release._run("git", "config", "user.name", "Release test")
+    release._run("git", "config", "user.email", "release@example.invalid")
+    release._run("git", "add", ".")
+    release._run("git", "commit", "-m", "Initial manifests")
+    remote = tmp_path / "origin.git"
+    release._run("git", "init", "--bare", str(remote))
+    release._run("git", "remote", "add", "origin", str(remote))
+
+    # A release tag can exist on the server without being in this checkout.
+    release._run("git", "push", "origin", "HEAD:refs/tags/v0.0.3")
+    original_refs = release._run("git", "ls-remote", "--refs", "origin")
+    with pytest.raises(SystemExit, match="git push"):
+        release._make("0.0.3", None, assume_yes=True, push=True)
+
+    assert release._run("git", "ls-remote", "--refs", "origin") == original_refs
 
 
 def test_main_make_defaults_to_pushing_and_asking_first(
