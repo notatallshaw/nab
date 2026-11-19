@@ -10,6 +10,7 @@ from html.parser import HTMLParser
 from nab_provider.value import Record
 
 from ._compat import override
+from ._repository_version import check_repository_version
 
 __all__ = [
     "Anchor",
@@ -101,8 +102,9 @@ class ProjectPageParser(HTMLParser):
     Also records whether the page declares the :pep:`629` repository version.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, page_url: str) -> None:
         super().__init__()
+        self._page_url = page_url
         self.anchors: list[Anchor] = []
         self.base_href: str | None = None
         self.declares_repository_version = False
@@ -110,10 +112,10 @@ class ProjectPageParser(HTMLParser):
     @override
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "meta":
-            for name, value in attrs:
-                if name == "name" and value == _REPOSITORY_VERSION_META:
-                    self.declares_repository_version = True
-                    break
+            fields = dict(attrs)
+            if fields.get("name") == _REPOSITORY_VERSION_META:
+                self.declares_repository_version = True
+                check_repository_version(fields.get("content"), self._page_url)
             return
 
         if tag == "base":

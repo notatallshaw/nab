@@ -43,6 +43,7 @@ from nab_index.cached_client import CachedAsyncSimpleClient, ParsedCacheStats
 from nab_index.client import SdistFile, WheelFile, _parse_files
 from nab_index.parsed_listing import corruption_reason, decode, encode
 from nab_index.urllib3_async_transport import _Urllib3Response
+from nab_provider.errors import IndexAccessError
 
 # Derived so a bucket-version bump does not need every path updated.
 _SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
@@ -1031,6 +1032,25 @@ class TestReadPathCorruptBody:
 
 
 class TestReadPathOffline:
+    def test_old_rows_cannot_hide_an_incompatible_json_page(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _cache(tmp_path)
+        body = json.dumps({**_LISTING, "meta": {"api-version": "2.0"}}).encode()
+        digest = cache.put_simple("pkg", body, _FRESH)
+        files = _parse_files(_LISTING, _INDEX_NORM, "pkg")
+
+        # Format 9 stored rows before Nab checked the page's API version.
+        header, rows = json.loads(encode(files, digest))
+        header[0] = 9
+        cache.put_simple_parsed("pkg", json.dumps([header, rows]).encode())
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX, offline=True)
+
+        with pytest.raises(IndexAccessError, match="requires Simple API version 2.0"):
+            _run(client.get_files("pkg"))
+        assert not transport.calls
+
     def test_offline_parsed_hit_without_body_or_network(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         files, _ = _warm_bound(cache, fresh=False)

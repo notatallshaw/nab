@@ -1068,6 +1068,19 @@ class TestPep503Directory:
             undated: None,
         }
 
+    def test_incompatible_local_page_identifies_its_version(
+        self, tmp_path: Path
+    ) -> None:
+        package_dir = self._make_index(
+            tmp_path, '<meta name="pypi:repository-version" content="2.0">'
+        )
+        client = LocalIndexClient(tmp_path.as_uri())
+        with pytest.raises(
+            IndexAccessError, match="requires Simple API version 2.0"
+        ) as error:
+            run(client.get_files("foo"))
+        assert (package_dir / "index.html").as_uri() in str(error.value)
+
     def test_parses_anchor_tags(self, tmp_path: Path) -> None:
         body = (
             "<html><body>"

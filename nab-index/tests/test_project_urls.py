@@ -18,6 +18,7 @@ from nab_index.multi_index import MultiIndexClient
 from nab_index.parsed_listing import decode, encode
 from nab_index.transport import HttpError
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.errors import IndexAccessError
 from nab_provider.provider import Provider
 from nab_provider.testing import make_coordinator, make_wheel
 from nab_provider.value import replace
@@ -430,6 +431,42 @@ def test_first_index_keeps_aliased_project(tmp_path: Path) -> None:
     assert [file.version for file in files] == ["1.0"]
     assert [url for url, _ in primary.calls] == [_PROJECT_URL]
     assert secondary.calls == []
+
+
+@pytest.mark.parametrize("html", [False, True], ids=["json", "html"])
+def test_incompatible_primary_page_stops_index_selection(
+    tmp_path: Path, *, html: bool
+) -> None:
+    body = (
+        b'<meta content="2.0" name="pypi:repository-version">'
+        if html
+        else b'{"meta":{"api-version":"2.0"},"files":[]}'
+    )
+    primary = _RoutedTransport({_PROJECT_URL: (200, body)}, html=html)
+    secondary_url = "https://secondary.example/simple/"
+    secondary = _RoutedTransport({f"{secondary_url}foo-bar/": (200, _listing("2.0"))})
+    cache = OnDiskCache(tmp_path / "primary", _INDEX)
+
+    async def read() -> None:
+        client = MultiIndexClient(
+            {
+                "primary": CachedAsyncSimpleClient(primary, cache, _INDEX),
+                "secondary": CachedAsyncSimpleClient(
+                    secondary,
+                    OnDiskCache(tmp_path / "secondary", secondary_url),
+                    secondary_url,
+                ),
+            },
+            ["primary", "secondary"],
+            {},
+        )
+        async with client:
+            await client.get_files("foo-bar")
+
+    with pytest.raises(IndexAccessError, match="requires Simple API version 2.0"):
+        asyncio.run(read())
+    assert secondary.calls == []
+    assert cache.get_simple("foo-bar") is None
 
 
 def test_304_from_normalized_url_replaces_old_parsed_file_urls(tmp_path: Path) -> None:

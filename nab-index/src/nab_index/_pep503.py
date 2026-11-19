@@ -34,23 +34,25 @@ __all__ = [
 ]
 
 
-def _parse(text: str) -> ProjectPageParser:
+def _parse(text: str, page_url: str) -> ProjectPageParser:
     """Run the page parser over ``text``."""
     # Deferred to keep html.parser off the CLI's import path.
     from ._html_page import ProjectPageParser  # noqa: PLC0415
 
-    parser = ProjectPageParser()
+    parser = ProjectPageParser(page_url)
     parser.feed(text)
     return parser
 
 
-def read_page(text: str) -> tuple[list[Anchor], str | None]:
+def read_page(
+    text: str, page_url: str = "HTML project page"
+) -> tuple[list[Anchor], str | None]:
     """Return a project page's anchors and its ``<base href>``, if it has one.
 
     Relative anchors resolve against the base href rather than the page
     directory, matching how pip and uv read a Simple-repository page.
     """
-    parser = _parse(text)
+    parser = _parse(text, page_url)
     return (parser.anchors, parser.base_href)
 
 
@@ -168,7 +170,7 @@ def json_listing(text: str, page_url: str) -> bytes:
     site error page served with a 200 would otherwise fall through to a
     lower-priority index and risk pinning a different version.
     """
-    parser = _parse(text)
+    parser = _parse(text, page_url)
     anchors, base_href = parser.anchors, parser.base_href
     if not anchors and not parser.declares_repository_version:
         msg = (

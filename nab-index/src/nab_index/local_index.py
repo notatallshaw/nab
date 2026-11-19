@@ -218,8 +218,9 @@ def _scan_pep503_directory(
         msg = f"{index_html} is not valid UTF-8: {exc}"
         raise MalformedLocalListingError(msg) from exc
 
-    anchors, base_href = read_page(text)
-    base_url = _page_base_url(index_html, base_href)
+    page_url = index_html.as_uri()
+    anchors, base_href = read_page(text, page_url)
+    base_url = _page_base_url(page_url, base_href)
     bases = _merging_bases(base_url, anchors)
 
     files: list[WheelFile | SdistFile] = []
@@ -294,7 +295,7 @@ def _append_record(
     return files
 
 
-def _page_base_url(index_html: Path, base_href: str | None) -> str:
+def _page_base_url(page_url: str, base_href: str | None) -> str:
     """Return the URI a page's relative anchors resolve against.
 
     RFC 3986 section 5.1.3: the base is the URI the page was read from, not
@@ -303,14 +304,13 @@ def _page_base_url(index_html: Path, base_href: str | None) -> str:
     loudly rather than falling back to the page URL, which would resolve each
     link to a different file than the page names.
     """
-    page_url = index_html.as_uri()
     if base_href is None:
         return page_url
 
     try:
         return urljoin(page_url, base_href)
     except ValueError as exc:
-        msg = f"{index_html} has an unparseable <base href>: {exc}"
+        msg = f"{page_url} has an unparseable <base href>: {exc}"
         raise MalformedLocalListingError(msg) from exc
 
 

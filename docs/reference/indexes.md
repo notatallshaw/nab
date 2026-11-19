@@ -38,6 +38,14 @@ nab caches listings separately for each `serialization` setting.
 `serialization` is not settable on a `file://` index, `"negotiate"` included. A local index is read
 from disk with no `Accept` negotiation, so the key is rejected.
 
+Nab reads Simple API version 1 pages. An unversioned page is treated as version 1.0. A newer minor
+version produces a warning. A higher major version stops the lock, even if another configured index
+has the package.
+
+Nab checks HTML pages when it downloads them. Listings cached by older releases contain the file
+records without the original HTML version tag. That tag can be checked the next time Nab downloads
+the page.
+
 ### HTML limitations
 
 Pinning `html` gives up the extra data PEP 700 defines for the JSON listing. Two of those losses

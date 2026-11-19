@@ -13,6 +13,7 @@ __lazy_modules__ = (
     "io",
     "nab_index._json_decode",
     "nab_index._pep503",
+    "nab_index._repository_version",
     "nab_index.transport",
     "nab_provider.errors",
     "nab_provider.records",
@@ -60,6 +61,7 @@ from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from ._json_decode import decode_json
 from ._pep503 import json_listing
+from ._repository_version import check_repository_version
 from ._urljoin import join_url
 from .transport import IDENTITY_HEADERS, raise_unless_ok
 
@@ -581,6 +583,10 @@ def _parse_files(
             f"{package!r}: body is {type(data).__name__}, expected a JSON object"
         )
         raise MalformedSimpleResponseError(msg)
+    meta = data.get("meta")
+    if isinstance(meta, dict):
+        check_repository_version(meta.get("api-version"), base_url)
+
     raw_files = data.get("files")
     if not isinstance(raw_files, list):
         msg = (
