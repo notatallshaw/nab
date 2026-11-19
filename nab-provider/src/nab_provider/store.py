@@ -14,7 +14,7 @@ __lazy_modules__ = (
 import threading
 from contextlib import contextmanager
 from hashlib import sha256
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from ._vendor.packaging.utils import canonicalize_version
 from .metadata import metadata_header_block, metadata_without_description
@@ -74,6 +74,22 @@ class WheelMetadataContext:
     __slots__ = ()
 
 
+class _ListingResult(NamedTuple):
+    """Files or a fetch error, with the diagnostics from that same lookup."""
+
+    files: list[WheelFile | SdistFile] | None = None
+    error: BaseException | None = None
+    offline_miss: bool = False
+    unreadable_only: bool = False
+    unreachable_only: bool = False
+    no_usable_file: bool = False
+    all_yanked: bool = False
+    zip_sdists: frozenset[str] = frozenset()
+
+
+_NO_LISTING = _ListingResult()
+
+
 class InMemoryIndex:
     """Thread-safe slots for fetched data, plus the events readers wait on.
 
@@ -91,23 +107,9 @@ class InMemoryIndex:
         self._lock = threading.Lock()
         self._pending: dict[str, threading.Event] = {}
 
-        self._listings: dict[str, list[WheelFile | SdistFile]] = {}
-        self._listing_errors: dict[str, BaseException] = {}
+        self._listings: dict[str, _ListingResult] = {}
         # Publish the index name and whether the route was pinned together.
         self._listing_indexes: dict[str, tuple[str, bool]] = {}
-        # Packages whose empty listing stands for an index skipped offline.
-        self._offline_listing_misses: set[str] = set()
-        # Packages whose empty listing stands for a page of formats nab cannot read.
-        self._unreadable_only_listings: set[str] = set()
-        # Packages whose empty listing stands for a page of links nab cannot reach.
-        self._unreachable_only_listings: set[str] = set()
-        # Packages whose empty listing stands for a page nab kept no file off.
-        self._no_usable_file_listings: set[str] = set()
-        # Packages whose empty listing stands for a page of yanked files.
-        self._all_yanked_listings: set[str] = set()
-        # Versions an index served as a ``.zip`` sdist, which the listing parse
-        # drops, so no record of them reaches ``_listings``.
-        self._zip_sdists: dict[str, frozenset[str]] = {}
 
         # Metadata text is keyed by the artifact it came from: the sidecar URL
         # for a wheel's METADATA, or None for text that stands for the version
@@ -166,7 +168,7 @@ class InMemoryIndex:
 
     def get_listing(self, package: str) -> list[WheelFile | SdistFile] | None:
         """Return the cached listing for ``package``, or ``None``."""
-        return self._listings.get(package)
+        return self._listings.get(package, _NO_LISTING).files
 
     def store_listing(  # noqa: PLR0913 - independent diagnostics accompany one listing
         self,
@@ -200,7 +202,6 @@ class InMemoryIndex:
         nothing in ``data`` records.  It replaces whatever a prior store left,
         so re-storing a listing without one clears it.
         """
-        key = f"listing:{package}"
         materialised = list(data)
         withdrawn = getattr(data, "withdrawn_versions", None)
         if has_yanked_files is None:
@@ -211,50 +212,46 @@ class InMemoryIndex:
             from .yanking import YankedListing  # noqa: PLC0415
 
             materialised = YankedListing(materialised, withdrawn_versions=withdrawn)
-        with self._publishing(key):
+        result = _ListingResult(
+            files=materialised,
+            offline_miss=offline_miss,
+            unreadable_only=unreadable_only,
+            unreachable_only=unreachable_only,
+            no_usable_file=no_usable_file,
+            all_yanked=all_yanked,
+            zip_sdists=zip_sdists,
+        )
+        self._publish_listing(package, result)
+
+    def _publish_listing(self, package: str, result: _ListingResult) -> None:
+        with self._publishing(f"listing:{package}"):
             self._consistent_wheel_metadata.pop(package, None)
             self._consistent_metadata_contexts.pop(package, None)
-            # The marks land first, so an unlocked reader sees them with the listing.
-            if offline_miss:
-                self._offline_listing_misses.add(package)
-            if unreadable_only:
-                self._unreadable_only_listings.add(package)
-            if unreachable_only:
-                self._unreachable_only_listings.add(package)
-            if no_usable_file:
-                self._no_usable_file_listings.add(package)
-            if all_yanked:
-                self._all_yanked_listings.add(package)
-            if zip_sdists:
-                self._zip_sdists[package] = zip_sdists
-            else:
-                self._zip_sdists.pop(package, None)
-
-            self._listings[package] = materialised
+            self._listings[package] = result
 
     def is_offline_listing_miss(self, package: str) -> bool:
         """Whether ``package``'s empty listing is an offline cold-cache miss."""
-        return package in self._offline_listing_misses
+        return self._listings.get(package, _NO_LISTING).offline_miss
 
     def is_unreadable_only_listing(self, package: str) -> bool:
         """Whether ``package``'s empty listing held only unreadable formats."""
-        return package in self._unreadable_only_listings
+        return self._listings.get(package, _NO_LISTING).unreadable_only
 
     def is_unreachable_only_listing(self, package: str) -> bool:
         """Whether ``package``'s empty listing held only links nab cannot reach."""
-        return package in self._unreachable_only_listings
+        return self._listings.get(package, _NO_LISTING).unreachable_only
 
     def is_no_usable_file_listing(self, package: str) -> bool:
         """Whether ``package``'s empty listing named files nab kept none of."""
-        return package in self._no_usable_file_listings
+        return self._listings.get(package, _NO_LISTING).no_usable_file
 
     def is_all_yanked_listing(self, package: str) -> bool:
         """Whether ``package``'s empty listing held files and yanked every one."""
-        return package in self._all_yanked_listings
+        return self._listings.get(package, _NO_LISTING).all_yanked
 
     def zip_sdist_versions(self, package: str) -> frozenset[str]:
         """Versions of ``package`` an index served as a ``.zip`` sdist."""
-        return self._zip_sdists.get(package, frozenset())
+        return self._listings.get(package, _NO_LISTING).zip_sdists
 
     def store_listing_error(self, package: str, error: BaseException) -> None:
         """Record a failed listing fetch and unblock any waiter.
@@ -262,13 +259,11 @@ class InMemoryIndex:
         Distinct from ``store_listing([])``: an empty listing means the index
         served nothing nab could read; an error means the fetch failed.
         """
-        key = f"listing:{package}"
-        with self._publishing(key):
-            self._listing_errors[package] = error
+        self._publish_listing(package, _ListingResult(error=error))
 
     def get_listing_error(self, package: str) -> BaseException | None:
         """Return ``package``'s recorded listing fetch error, or ``None``."""
-        return self._listing_errors.get(package)
+        return self._listings.get(package, _NO_LISTING).error
 
     def store_listing_index(
         self, package: str, index_name: str, *, pinned: bool = False
@@ -360,7 +355,7 @@ class InMemoryIndex:
     ) -> WheelMetadataContext | None:
         """Return the sharing token for this raw listing and its serving index."""
         with self._lock:
-            if self._listings.get(package) is not files:
+            if self.get_listing(package) is not files:
                 return None
 
             context = self._consistent_metadata_contexts.get(package)

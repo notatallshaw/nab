@@ -1,8 +1,51 @@
-"""Artifact identity across equivalent release versions."""
+"""Fetched listings, errors and source metadata kept by the provider."""
 
 import pytest
 
 from nab_provider.store import InMemoryIndex, sdist_artifact_key
+from nab_provider.testing import make_wheel
+
+
+def test_replacing_a_listing_replaces_its_diagnostics() -> None:
+    index = InMemoryIndex()
+    index.store_listing("pkg", [], offline_miss=True)
+    index.store_listing("pkg", [], unreadable_only=True, no_usable_file=True)
+    assert not index.is_offline_listing_miss("pkg")
+    assert index.is_unreadable_only_listing("pkg")
+    assert index.is_no_usable_file_listing("pkg")
+
+    index.store_listing("pkg", [], unreachable_only=True, all_yanked=True)
+    assert not index.is_unreadable_only_listing("pkg")
+    assert not index.is_no_usable_file_listing("pkg")
+    assert index.is_unreachable_only_listing("pkg")
+    assert index.is_all_yanked_listing("pkg")
+
+    wheel = make_wheel()
+    index.store_listing("pkg", [wheel])
+    assert index.get_listing("pkg") == [wheel]
+    assert not index.is_unreachable_only_listing("pkg")
+    assert not index.is_all_yanked_listing("pkg")
+
+
+def test_replacing_a_listing_with_an_error_and_recovering() -> None:
+    index = InMemoryIndex()
+    wheel = make_wheel()
+    index.store_listing("pkg", [wheel], zip_sdists=frozenset({"2"}))
+    files = index.get_listing("pkg")
+    assert files is not None
+    context = index.consistent_metadata_context("pkg", files)
+    assert context is not None
+
+    failure = OSError("index unavailable")
+    index.store_listing_error("pkg", failure)
+    assert index.get_listing_error("pkg") is failure
+    assert index.get_listing("pkg") is None
+    assert not index.zip_sdist_versions("pkg")
+    assert index.consistent_metadata_context("pkg", files) is None
+
+    index.store_listing("pkg", [wheel])
+    assert index.get_listing_error("pkg") is None
+    assert index.get_listing("pkg") == [wheel]
 
 
 @pytest.mark.parametrize(
