@@ -3,8 +3,8 @@
 ``choose_package_to_decide`` needs the smallest sort key in the undecided set,
 and a scan moves the keys of only the handful of packages it assigns. The queue
 holds the keys in a heap and calls ``sort_key`` again only for the packages a
-scan marks stale. It still walks the whole undecided set, which keeps those
-calls in the order a full scan made them.
+scan marks stale. When keys need refreshing, it visits packages in undecided
+set order so provider calls keep the order of a full scan.
 """
 
 from __future__ import annotations
@@ -85,40 +85,33 @@ class DecisionQueue(Generic[PackageType]):
         probe = key_inputs_arrived if epoch == self._epoch else None
 
         stale = self._stale_packages(undecided, changed, epoch)
-        self._refresh(undecided, stale, sort_key, changed, probe)
+        if stale:
+            self._refresh(undecided, stale, sort_key, changed, probe)
         self._compact()
         return self._live_top()
 
     def _stale_packages(
         self, undecided: AbstractSet[PackageType], changed: set[PackageType], epoch: int
-    ) -> set[PackageType]:
+    ) -> AbstractSet[PackageType]:
         """Return the packages this scan has to evaluate again.
 
         Also forgets the key of any stale package that has left the undecided set.
         """
-        if epoch != self._epoch:
-            self._epoch = epoch
-            stale = changed | undecided
-            # Every undecided package is stale here, so only ``changed`` can
-            # name one that has left.
-            departed = changed - undecided
-        elif self._unready:
-            stale = changed | self._unready
-            departed = stale - undecided
-        else:
-            stale = changed
-            departed = stale - undecided
-
+        stale = changed | self._unready if self._unready else changed
+        departed = stale - undecided
         for package in departed:
             self._keys.pop(package, None)
             self._unready.discard(package)
 
-        return stale
+        if epoch != self._epoch:
+            self._epoch = epoch
+            return undecided
+        return stale - departed if departed else stale
 
     def _refresh(
         self,
         undecided: AbstractSet[PackageType],
-        stale: set[PackageType],
+        stale: AbstractSet[PackageType],
         sort_key: Callable[[PackageType], tuple[Any, ...]],
         changed: set[PackageType],
         key_inputs_arrived: Callable[[PackageType], bool] | None,
