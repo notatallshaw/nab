@@ -21,6 +21,7 @@ Layout under ``root``:
     sdist-v3/<index>/<package>/<version>.record  <- pkg_info and pyproject,
                                                     length-prefixed UTF-8
     sdist-v1/<index>/<package>/<version>.json    <- the same pair, as JSON
+    dependency-inputs-v1/<archive hash>/<file name digest>.json  <- declaration text
 
 An index pinned to one serialization gets its own listings directory,
 since a stored body records nothing about which serialization it came from.
@@ -72,6 +73,7 @@ from typing import TYPE_CHECKING, Final, Protocol
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.value import HashableRecord, replace
 
+from . import dependency_input_cache
 from ._json_decode import decode_json
 from .atomic import atomic_write_chunks
 from .parsed_listing import corruption_reason as _parsed_corruption
@@ -248,7 +250,9 @@ class CachePolicy(HashableRecord):
 
 def _is_entry_bucket(name: str) -> bool:
     """Whether ``name`` is a bucket of records nab writes and parses."""
-    return any(name.startswith(prefix) for prefix in ENTRY_BUCKET_PREFIXES)
+    return name == dependency_input_cache.BUCKET or name.startswith(
+        ENTRY_BUCKET_PREFIXES
+    )
 
 
 def is_recognized_bucket(name: str) -> bool:
@@ -733,7 +737,12 @@ class OnDiskCache:
 
     def _read_json_reason(self, path: Path, raw: bytes) -> str | None:
         try:
-            if self._bucket_of(path).startswith("sdist-"):
+            bucket = self._bucket_of(path)
+            if bucket == dependency_input_cache.BUCKET:
+                dependency_input_cache.verify_record(
+                    path.relative_to(self._root / bucket), raw
+                )
+            elif bucket.startswith("sdist-"):
                 _decode_json_sdist_record(raw)
             else:
                 decode_json(raw)

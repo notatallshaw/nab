@@ -21,6 +21,11 @@ Older `sdist-v2/` and `sdist-v1/` records are carried forward when the current b
 | `sdist-v2/`         | the retired binary records                                 |
 | `sdist-v1/`         | the same records in the retired JSON format                |
 
+Named lock plans that import dependency declarations from a source archive also use
+`dependency-inputs-v1/`. Each record holds one declaration file, keyed by the archive hash and the
+file's relative path. `nab cache verify` checks that identity and the content checksum.
+`nab cache clear` removes these records along with the index cache.
+
 ### Index records
 
 A matching `sdist-v2/` binary record or `sdist-v1/` JSON record is copied into `sdist-v3/` when the
@@ -31,7 +36,7 @@ buffered atomic replacement, and reads reject incomplete or changed records. Aft
 shutdown a cache entry may need rebuilding or refetching. Lockfile write synchronization is
 unchanged.
 
-Record buckets are keyed per index, so two indexes never share an entry.
+Index response records are keyed per index, so two indexes never share an entry.
 
 For the same archive URL, equivalent versions such as `1` and `1.0` share an sdist record. Older
 artifact records are reused when the requested version text matches their stored key, then made

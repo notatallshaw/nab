@@ -17,7 +17,7 @@ JsonValue: TypeAlias = (
 )
 
 
-def decode_json(raw: bytes) -> JsonValue:
+def decode_json(raw: bytes | str) -> JsonValue:
     """Raise ValueError for invalid JSON or excessive nesting."""
     try:
         # The default decoder has no hooks that can construct other Python types.

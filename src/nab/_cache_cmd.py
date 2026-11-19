@@ -5,9 +5,8 @@
 by path and reason, exiting 1 when it found any. ``clear`` removes every
 bucket nab owns, including the cloned and extracted source trees.
 
-``verify`` and ``clear`` descend only into the buckets nab owns, never
-follow a symlink out of the root, and refuse a root that holds foreign
-files.
+A populated root must contain a recognized cache bucket. Both commands leave
+unrelated entries in that root alone.
 """
 
 from __future__ import annotations

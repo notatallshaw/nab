@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -12,6 +13,7 @@ from nab import _run as nab_run
 from nab._cache_cmd import cache_command
 from nab.cli import run
 from nab.config.ladder import SourceRoots
+from nab_index import dependency_input_cache
 from nab_index.cache import (
     CACHE_VERSION_SDIST,
     CACHE_VERSION_SIMPLE,
@@ -496,6 +498,31 @@ class TestCacheSourceTrees:
         assert list(root.iterdir()) == []
         _run_cache(["clear", "--cache-dir", str(root)])
         assert str(root) in capsys.readouterr().err
+
+
+def test_verify_and_clear_dependency_input_records(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "cache"
+    bucket = root / dependency_input_cache.BUCKET
+    digest = "a" * 64
+    dependency_input_cache.write_text(bucket, digest, "pyproject.toml", "[project]")
+    (record,) = bucket.rglob("*.json")
+    notes = root / "notes.txt"
+    notes.write_text("keep")
+
+    _run_cache(["verify", "--cache-dir", str(root)])
+    assert not capsys.readouterr().out
+
+    data = json.loads(record.read_text())
+    data["content"] = "changed"
+    record.write_text(json.dumps(data))
+    _run_cache(["verify", "--cache-dir", str(root)], status=1)
+    assert f"{record}: dependency input checksum mismatch" in capsys.readouterr().out
+
+    _run_cache(["clear", "--cache-dir", str(root)])
+    assert not bucket.exists()
+    assert notes.read_text() == "keep"
 
 
 class TestCacheUnknownAction:
