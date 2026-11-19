@@ -145,6 +145,21 @@ class TestCacheDir:
         assert captured.out == f"{target}\n"
         assert captured.err == ""
 
+    @pytest.mark.parametrize("value", ["", "   "])
+    def test_explicit_blank_cache_dir_is_refused(
+        self, value: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _run_cache(["dir", "--cache-dir", value], status=1)
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "--cache-dir must be a non-empty path" in captured.err
+
+    def test_explicit_working_directory_is_accepted(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _run_cache(["dir", "--cache-dir", "."])
+        assert capsys.readouterr().out == ".\n"
+
     def test_prints_even_when_missing(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
