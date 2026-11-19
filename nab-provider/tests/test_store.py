@@ -208,6 +208,22 @@ class TestSourceArchives:
         assert idx.get_sdist_pyproject("foo", "1.0") == {}
         assert idx.get_sdist_pyproject("bar", "1.0") is None
 
+    @pytest.mark.parametrize("replacement", [b"new archive", b"", None])
+    def test_latest_fetch_replaces_the_previous_archive_or_error(
+        self, replacement: bytes | None
+    ) -> None:
+        index = InMemoryIndex()
+        index.store_sdist_archive("pkg", "1", b"old archive")
+
+        failure = OSError("download interrupted")
+        index.store_sdist_archive_error("pkg", "1", failure)
+        assert index.get_sdist_archive_error("pkg", "1") is failure
+        assert index.get_sdist_archive("pkg", "1") is None
+
+        index.store_sdist_archive("pkg", "1", replacement)
+        assert index.get_sdist_archive_error("pkg", "1") is None
+        assert index.get_sdist_archive("pkg", "1") == replacement
+
     def test_sdist_archive_pending_event_fires(self) -> None:
         idx = InMemoryIndex()
         event, _ = idx.get_or_create_pending("sdist-archive:foo:1.0")

@@ -130,8 +130,7 @@ class InMemoryIndex:
         self._offline_metadata_warned: set[str] = set()
 
         self._sdist_pyproject: dict[tuple[str, str], Mapping[str, Any] | None] = {}
-        self._sdist_archives: dict[tuple[str, str], bytes | None] = {}
-        self._sdist_archive_errors: dict[tuple[str, str], BaseException] = {}
+        self._sdist_archives: dict[tuple[str, str], bytes | BaseException | None] = {}
 
         # The mechanical outcome of a rung-4 range read, per wheel URL, for
         # the provider's tier accounting.
@@ -649,26 +648,27 @@ class InMemoryIndex:
 
     def get_sdist_archive(self, package: str, version: str) -> bytes | None:
         """Return cached sdist archive bytes, or ``None`` if absent or unfetched."""
-        return self._sdist_archives.get((package, version))
+        result = self._sdist_archives.get((package, version))
+        return result if isinstance(result, bytes) else None
 
     def store_sdist_archive_error(
         self, package: str, version: str, error: BaseException
     ) -> None:
         """Record a failed sdist-archive fetch and unblock the waiter.
 
-        Kept in its own slot rather than ``store_sdist_archive(None)`` so
-        ``BUILD_REMOTE`` can tell an archive the index never offered (skip the
-        version) from one it advertised and failed to serve (abort).
+        Callers use the error to distinguish a failed download from an archive
+        the index never offered.
         """
         key = f"sdist-archive:{package}:{version}"
         with self._publishing(key):
-            self._sdist_archive_errors[(package, version)] = error
+            self._sdist_archives[(package, version)] = error
 
     def get_sdist_archive_error(
         self, package: str, version: str
     ) -> BaseException | None:
         """Return a recorded sdist-archive fetch error, or ``None``."""
-        return self._sdist_archive_errors.get((package, version))
+        result = self._sdist_archives.get((package, version))
+        return result if isinstance(result, BaseException) else None
 
     def get_or_create_pending(self, key: str) -> tuple[threading.Event, bool]:
         """Return ``key``'s waitable event, and whether it already existed.
