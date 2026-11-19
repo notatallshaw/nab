@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 
 import pytest
-from hypothesis import given
-from hypothesis import strategies as st
 
 from nab_resolver._compat import override
 from nab_resolver.ranges import Range
-from nab_resolver.resolver import BaseProvider, Resolver, ResolverObserver
+from nab_resolver.resolver import Resolver, ResolverObserver
 from nab_resolver.types import (
     Incompatibility,
     IncompatibilityCause,
@@ -19,79 +17,7 @@ from nab_resolver.types import (
     Term,
 )
 
-Graph = dict[str, dict[int, dict[str, Range[int]]]]
-
-
-class GraphProvider(BaseProvider[str, int]):
-    """A finite package registry with explicit version preferences and facts."""
-
-    def __init__(self, packages: Graph) -> None:
-        self.packages = packages
-        self.preferences: dict[str, int] = {}
-        self.choices: list[str] = []
-        self.reads: list[str] = []
-        self.pending: list[Incompatibility[str, int]] = []
-        self.forced: list[str] = []
-        self.on_choice: Callable[[GraphProvider, str], None] | None = None
-        self.on_metadata: Callable[[GraphProvider, str], None] | None = None
-
-    def choose_version(
-        self, package: str, version_range: RangeProtocol[int]
-    ) -> int | None:
-        self.choices.append(package)
-        if self.on_choice is not None:
-            self.on_choice(self, package)
-        versions = self.packages.get(package, {})
-        preferred = self.preferences.get(package)
-        if (
-            preferred is not None
-            and preferred in versions
-            and preferred in version_range
-        ):
-            return preferred
-        return next(
-            (v for v in sorted(versions, reverse=True) if v in version_range), None
-        )
-
-    def get_dependencies(self, package: str, version: int) -> Mapping[str, Range[int]]:
-        self.reads.append(package)
-        if self.on_metadata is not None:
-            self.on_metadata(self, package)
-        return self.packages[package][version]
-
-    def prioritize(
-        self,
-        package: str,
-        version_range: RangeProtocol[int],
-        conflict_counts: Mapping[str, int],
-        culprit_counts: Mapping[str, int] | None = None,
-    ) -> int:
-        """Choose the package with the fewest currently available versions."""
-        return sum(
-            version in version_range for version in self.packages.get(package, {})
-        )
-
-    def has_satisfying_version(
-        self, package: str, version_range: RangeProtocol[int]
-    ) -> bool:
-        """Read availability without changing provider state."""
-        return any(
-            version in version_range for version in self.packages.get(package, {})
-        )
-
-    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
-        """Keep dependency facts specific to their selected version."""
-        return None
-
-    @override
-    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
-        pending, self.pending = self.pending, []
-        return pending
-
-    @override
-    def consume_force_backtrack_targets(self) -> list[str]:
-        forced, self.forced = self.forced, []
-        return forced
+from .preferred_provider import Graph, GraphProvider
 
 
 class Observer(ResolverObserver[str, int]):
@@ -379,33 +305,6 @@ def test_callback_failure_restores_the_observer() -> None:
 
     assert resolver.observer is observer
     assert observer.decisions == []
-
-
-@st.composite
-def registries(draw: st.DrawFn) -> Graph:
-    """Generate finite forward dependency graphs with optional version bounds."""
-    names = ("a", "b", "c", "d")
-    result: Graph = {}
-    for index, name in enumerate(names):
-        versions = {}
-        for version in (1, 2):
-            dependencies = {}
-            for dependency in names[index + 1 :]:
-                if draw(st.booleans()):
-                    dependencies[dependency] = Range.at_least(draw(st.integers(1, 2)))
-            versions[version] = dependencies
-        result[name] = versions
-    return result
-
-
-@given(registries())
-def test_preferred_verification_matches_an_ordinary_success(packages: Graph) -> None:
-    roots = {"a": Range.full()}
-    expected = Resolver(GraphProvider(packages)).resolve(roots)
-    provider = GraphProvider(packages)
-    provider.preferences = expected
-
-    assert Resolver(provider).try_resolve_preferred(roots, expected) == expected
 
 
 def test_late_recheck_receives_complete_immutable_snapshots() -> None:

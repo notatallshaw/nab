@@ -246,6 +246,8 @@ uploaded-prior-to = false
 # https://docs.pytest.org/en/stable/reference/reference.html#confval-addopts
 [tool.pytest.ini_options]
 minversion = "9.0"
+# Keep each distribution's tests package distinct during workspace collection.
+consider_namespace_packages = true
 pythonpath = ["nab-project/test-support"]
 addopts = [
     "-ra",
