@@ -1,19 +1,13 @@
-"""In-memory fetch port over a pre-filled store, and the helpers around it.
+"""Test a provider with package listings and metadata supplied in memory.
 
-:class:`FakeFetchPort` implements :class:`~nab_provider.fetch_port.FetchPort`
-against a real :class:`~nab_provider.store.InMemoryIndex`.  Its request methods
-write to that index and hand back an already-set :class:`threading.Event`, so
-the synchronous provider code under test sees every fetch resolve immediately.
-It is public so a host outside nab can drive the provider with no socket and no
-file.
+:func:`make_coordinator` builds a :class:`FakeFetchPort` that answers the
+provider's fetch requests using an :class:`~nab_provider.store.InMemoryIndex`.
+Preloaded listings are available immediately. Use ``pending_listings`` to
+publish a listing when the provider waits for it.
 
-The request methods repeat the port's signatures exactly, defaults included.
-Materialising a declared source, building a remote sdist and reading a wheel
-off disk need a host, and arrive as callables.
-
-Replace one request with :meth:`FakeFetchPort.override` for a setup the
-keywords cannot express, and read the calls back with
-:meth:`FakeFetchPort.calls_to`.
+Tests can supply handlers to read a wheel, prepare a declared source or build
+sdist metadata. Use :meth:`FakeFetchPort.override` to replace an individual
+request and :meth:`FakeFetchPort.calls_to` to inspect its calls.
 """
 
 from __future__ import annotations
@@ -67,10 +61,7 @@ __all__ = [
     "pkg_override",
 ]
 
-_UNSERVED = (
-    "{name} is not offered by this port; pass its handler to make_coordinator"
-    " or override the request in the test"
-)
+_UNSERVED = "Pass the {handler} argument to make_coordinator or override {name!r}."
 
 _HandlerResult = TypeVar("_HandlerResult")
 
@@ -85,7 +76,7 @@ REQUESTS = (
     "materialize_source",
     "build_sdist_metadata",
 )
-"""The port's request methods, and the names :meth:`FakeFetchPort.calls_to`
+"""Request names that :meth:`FakeFetchPort.calls_to`
 and :meth:`FakeFetchPort.override` accept."""
 
 
@@ -336,10 +327,9 @@ def _make_archive_server(
 
 
 class FakeFetchPort:
-    """An in-memory :class:`~nab_provider.fetch_port.FetchPort`.
+    """In-memory implementation of :class:`~nab_provider.fetch_port.FetchPort`.
 
-    Build one with :func:`make_coordinator` rather than directly: it assembles
-    the four servers out of the keywords a test sets.
+    Use :func:`make_coordinator` to choose which listings and metadata it serves.
     """
 
     def __init__(  # noqa: PLR0913 - one keyword per handler make_coordinator builds
@@ -357,9 +347,9 @@ class FakeFetchPort:
         read_wheel: Callable[[Path], str | None] | None = None,
         pending_listings: Mapping[str, Sequence[WheelFile | SdistFile]] | None = None,
     ) -> None:
-        """Wire the port to ``index`` and to one server per fetch kind."""
+        """Use the supplied handlers to answer fetch requests for ``index``."""
         self.index = index
-        # Not on the port: the engine reads it off its coordinator.
+        # The resolution engine reads the configured indexes from its coordinator.
         self.indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
         self.offline = offline
         self.build_config = build_config
@@ -391,7 +381,7 @@ class FakeFetchPort:
             calls.clear()
 
     def _checked(self, name: str) -> str:
-        """Return ``name`` if it is one of the port's requests, else raise."""
+        """Check that ``name`` identifies a fetch request."""
         if name not in self._calls:
             msg = f"{name!r} is not a fetch request; expected one of {REQUESTS}"
             raise KeyError(msg)
@@ -603,7 +593,9 @@ class FakeFetchPort:
     def _materialize_source(self, request: SourceRequest) -> SourceMaterialization:
         """Materialise one declared source, as the coordinator does."""
         if self._materialize is None:
-            raise NotImplementedError(_UNSERVED.format(name="materialize_source"))
+            raise NotImplementedError(
+                _UNSERVED.format(handler="materialize", name="materialize_source")
+            )
         return self._materialize(self, request, self.build_config)
 
     def _built_metadata(
@@ -611,7 +603,9 @@ class FakeFetchPort:
     ) -> WheelMetadata:
         """Build one sdist, as the coordinator does."""
         if self._build_sdist is None:
-            raise NotImplementedError(_UNSERVED.format(name="build_sdist_metadata"))
+            raise NotImplementedError(
+                _UNSERVED.format(handler="build_sdist", name="build_sdist_metadata")
+            )
         return self._build_sdist(self, package, version, url, hashes, self.build_config)
 
 
@@ -674,7 +668,7 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
       the listing serves off disk; without it the metadata keywords answer
       that request too.
 
-    ``offline`` starts the port offline, as ``--offline`` does for a real run.
+    ``offline`` simulates a run with ``--offline``.
     """
     index = InMemoryIndex()
 
