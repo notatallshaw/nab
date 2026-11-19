@@ -157,6 +157,11 @@ Each single-environment scenario is a top-level TOML table keyed by name. It req
 and a fixed `datetime`, used as the `uploaded-prior-to` cutoff. Optional settings include
 constraints, marker overlays, distribution policy, and build policy.
 
+Use an explicit UTC cutoff when comparing a scenario with pip. For example, the Nab benchmark reads
+`datetime = "2025-06-06 12:35:16"` as UTC. Run pip with `--uploaded-prior-to 2025-06-06T12:35:16Z`
+to use the same instant. Without an offset, pip uses local time and can see a different set of
+releases.
+
 `marker_environment` and the `platform_system` shorthand define the resolver target without
 restricting the host. Set `requires_matching_host = true` when the physical host must match those
 values so its wheel tags remain faithful.
