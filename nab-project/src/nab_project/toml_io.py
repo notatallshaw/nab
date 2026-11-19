@@ -11,6 +11,8 @@ from __future__ import annotations
 
 __lazy_modules__ = ("tomli",)
 
+from collections.abc import Mapping
+from math import isnan
 from typing import TYPE_CHECKING, Any
 
 import tomli
@@ -19,7 +21,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import BinaryIO
 
-__all__ = ["load", "load_path", "loads"]
+__all__ = ["load", "load_path", "loads", "values_match"]
 
 
 def loads(text: str) -> dict[str, Any]:
@@ -52,3 +54,28 @@ def load_path(path: Path) -> dict[str, Any]:
     """
     with path.open("rb") as f:
         return load(f)
+
+
+def values_match(
+    expected: object, actual: object, *, allow_extra_keys: bool = False
+) -> bool:
+    """Compare TOML values, optionally matching only the specified table keys."""
+    if isinstance(actual, dict) and isinstance(expected, Mapping):
+        if not allow_extra_keys and len(expected) != len(actual):
+            return False
+        return all(
+            key in actual
+            and values_match(value, actual[key], allow_extra_keys=allow_extra_keys)
+            for key, value in expected.items()
+        )
+    if isinstance(actual, list) and isinstance(expected, list):
+        return len(expected) == len(actual) and all(
+            values_match(left, right, allow_extra_keys=allow_extra_keys)
+            for left, right in zip(expected, actual, strict=True)
+        )
+
+    # A NaN read twice compares unequal in Python. Conversely, True, 1 and
+    # 1.0 compare equal even though they are different TOML types.
+    if isinstance(expected, float) and isnan(expected):
+        return isinstance(actual, float) and isnan(actual)
+    return type(expected) is type(actual) and expected == actual

@@ -127,23 +127,6 @@ class RootRequirement(HashableRecord):
         self.source = source
 
 
-def _reference_value_matches(reference: object, candidate: object) -> bool:
-    """Match named reference fields without equating different TOML scalar types."""
-    match reference, candidate:
-        case dict() as expected, dict() as actual:
-            return all(
-                key in actual and _reference_value_matches(value, actual[key])
-                for key, value in expected.items()
-            )
-        case list() as expected, list() as actual:
-            return len(expected) == len(actual) and all(
-                _reference_value_matches(left, right)
-                for left, right in zip(expected, actual, strict=True)
-            )
-        case _:
-            return type(reference) is type(candidate) and reference == candidate
-
-
 def _uses_identity_fields(reference: Mapping[str, object]) -> bool:
     """Plain strings and dicts already have their serialized TOML form."""
     return type(reference) is dict and all(
@@ -201,11 +184,17 @@ def resolve_dependency_references(lock: Pylock) -> dict[int, frozenset[int]]:
             candidates = (
                 by_name.get(name, ()) if isinstance(name, str) else range(len(packages))
             )
-            matches = []
-            for candidate_index in candidates:
-                candidate = packages[candidate_index]
-                if _reference_value_matches(reference, candidate):
-                    matches.append(candidate_index)
+            if isinstance(name, str) and len(reference) == 1:
+                # The name lookup already checked the only field in this reference.
+                matches = candidates
+            else:
+                matches = [
+                    row
+                    for row in candidates
+                    if toml_io.values_match(
+                        reference, packages[row], allow_extra_keys=True
+                    )
+                ]
             if len(matches) != 1:
                 message = "lock dependency must identify exactly one package"
                 raise InvalidLockfileError(message)

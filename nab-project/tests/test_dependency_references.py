@@ -344,3 +344,31 @@ def test_reference_validation_accepts_partial_source_tables(
         parent["dependencies"] = [{source_key: {"path": source["path"], "editable": 1}}]
         with pytest.raises(InvalidLockfileError, match="identify exactly one package"):
             resolve_dependency_references(Pylock.from_dict(document))
+
+
+def test_reference_matches_nan_in_package_tool_data() -> None:
+    document = toml_io.loads(
+        """lock-version = "1.0"
+created-by = "example"
+
+[[packages]]
+name = "parent"
+directory = { path = "./parent" }
+dependencies = [{ tool = { example = { values = [nan] } } }]
+
+[[packages]]
+name = "child"
+directory = { path = "./first" }
+marker = "python_version < '3.13'"
+tool.example = { values = [nan], label = "first" }
+
+[[packages]]
+name = "child"
+directory = { path = "./second" }
+marker = "python_version >= '3.13'"
+tool.example = { values = [1.0], label = "second" }
+"""
+    )
+    lock = Pylock.from_dict(document)
+    lock.validate()
+    assert resolve_dependency_references(lock) == {0: {1}, 1: set(), 2: set()}

@@ -65,7 +65,14 @@ def test_unchanged_nan_survives_comments_and_table_reordering(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(
-    ("before", "after"), [("true", "1"), ("1", "1.0"), ("nan", "inf")]
+    ("before", "after"),
+    [
+        ("true", "1"),
+        ("1", "1.0"),
+        ("nan", "inf"),
+        ("{low=1}", "{low=1, high=2}"),
+        ("{low=1, high=2}", "{low=1}"),
+    ],
 )
 def test_changed_toml_values_are_refused(
     tmp_path: Path, before: str, after: str
