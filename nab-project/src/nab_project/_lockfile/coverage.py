@@ -64,11 +64,7 @@ def _reference_pins(target: ResolveTarget) -> dict[str, str]:
 
 
 class CoverageError(ValueError):
-    """A resolved target has no covering ``environments`` row.
-
-    The error names one uncovered interpreter as a concrete point so the
-    producer can widen the declaration or drop the target.
-    """
+    """The lock's environment rows could not be shown to cover a resolved target."""
 
 
 def validate_marker_coverage(
@@ -81,9 +77,9 @@ def validate_marker_coverage(
 ) -> None:
     """Confirm the emitted rows cover every target the resolve ran.
 
-    Asks the algebra for a point the declared rows miss; a witness is a
-    real interpreter the declaration would refuse.  Targets on one platform
-    share a restriction, so they are asked as a single question.
+    First check the targets on each platform together. If that fails, check
+    their known Python versions individually and report an uncovered interpreter
+    when the marker algebra can identify one.
 
     An empty ``environments`` returns early: an omitted field declares
     support for every environment, so it must not be read as the empty set.
@@ -114,33 +110,58 @@ def validate_marker_coverage(
         # a single-platform residual denoting the same set.
         covered_here = covered.restrict(env)
 
-        # Restricting the question too is sound: a group's pins are a subset
-        # of every reference's own == clauses at the same values, since both
-        # read the target's marker_env and the reference only ever adds the
-        # python axes _reference_pins leaves open.  So this drops conjuncts
-        # the reference already fixes rather than narrowing what is asked.
+        requested = [
+            (target, MarkerSet.from_marker(marker).restrict(env))
+            for target, marker in references
+        ]
         asked = reduce(
-            MarkerSet.union,
-            (MarkerSet.from_marker(marker) for marker in references),
-            MarkerSet.empty(),
-        ).restrict(env)
+            MarkerSet.union, (row for _, row in requested), MarkerSet.empty()
+        )
+        if asked.is_subset(covered_here, store=store):
+            continue
 
-        witness = (asked & ~covered_here).witness(store=store)
-        if witness is not None:
-            # The residual carries no pins, so env restores them for the message.
-            raise CoverageError(_coverage_message({**env, **witness}))
+        for target, reference in requested:
+            _check_target_coverage(target, reference, covered_here, env, store)
+
+
+def _check_target_coverage(
+    target: ResolveTarget,
+    reference: MarkerSet,
+    covered: MarkerSet,
+    pins: dict[str, str],
+    store: DecisionStore | None,
+) -> None:
+    """Prove coverage of one target or explain why the declaration failed."""
+    # Substring tests on versions can be decided directly on a known value.
+    # An open minor still needs coverage for every possible full version.
+    known = {"python_version": target.python_version}
+    if not target.is_minor_interval:
+        known["python_full_version"] = target.python_full_version
+    missing = reference - covered.restrict(known)
+    if missing.is_empty(store=store):
+        return
+
+    witness = missing.witness(store=store)
+    if witness is not None:
+        raise CoverageError(_coverage_message({**pins, **witness}))
+
+    msg = (
+        f"cannot verify that the lock environments cover {target.label}. "
+        "Use version comparisons that describe the supported interpreters."
+    )
+    raise CoverageError(msg)
 
 
 def _references_by_pins(
     targets: Sequence[ResolveTarget],
-) -> dict[tuple[tuple[str, str], ...], list[str]]:
+) -> dict[tuple[tuple[str, str], ...], list[tuple[ResolveTarget, str]]]:
     """Group the distinct target references by the platform axes they pin.
 
     Targets differing only in Python version pin the same axes, so one
     restricted union serves them all.  Deduped by marker string, so a split
     minor's slices and the conflict forks of one environment count once.
     """
-    grouped: dict[tuple[tuple[str, str], ...], list[str]] = {}
+    grouped: dict[tuple[tuple[str, str], ...], list[tuple[ResolveTarget, str]]] = {}
     seen: set[str] = set()
     for target in targets:
         marker = declared_range_marker(target)
@@ -148,7 +169,7 @@ def _references_by_pins(
             continue
         seen.add(marker)
         key = tuple(sorted(_reference_pins(target).items()))
-        grouped.setdefault(key, []).append(marker)
+        grouped.setdefault(key, []).append((target, marker))
     return grouped
 
 

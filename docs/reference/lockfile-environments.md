@@ -4,8 +4,9 @@ A resolve drops dependencies whose PEP 508 markers are false on its [target](tar
 The resulting pins therefore belong to that environment, or to the targets declared by a matrix.
 
 The top-level `environments` entries record that scope. A PEP 751 consumer refuses a lock that does
-not cover its environment. nab also refuses to emit a lock whose declaration misses a resolved
-target and names the uncovered interpreter.
+not cover its environment. Nab checks that the rows cover every resolved target. If a custom
+declaration uses a version substring and coverage cannot be verified, use version comparisons that
+describe the supported range.
 
 ## Recorded marker values
 

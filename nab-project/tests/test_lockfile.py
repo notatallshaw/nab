@@ -7855,7 +7855,42 @@ class TestMarkerCoverage:
         monkeypatch.setattr(MarkerSet, "witness", boom)
         target = self._minor("3.13")
         with pytest.raises(IntractableMarkerSet, match="patched"):
-            validate_marker_coverage([target], environments=[self._row(target)])
+            validate_marker_coverage(
+                [target], environments=[Marker('python_version == "3.12"')]
+            )
+
+    def test_cannot_emit_a_lock_with_an_unproven_micro_range(self) -> None:
+        target = self._minor("3.12")
+        row = Marker('"11" not in python_full_version')
+        lock_input = LockInput(
+            targets={
+                target.label: TargetLock(target=target, pins={"foo": _index_pin()})
+            },
+            environments=[row],
+        )
+
+        assert not row.evaluate({**target.marker_env, "python_full_version": "3.12.11"})
+        with pytest.raises(CoverageError, match="cannot verify"):
+            build_pylock(lock_input)
+
+    @pytest.mark.parametrize(
+        ("full_version", "row"),
+        [(None, '"12" in python_version'), ("3.12.11", '"11" in python_full_version')],
+    )
+    def test_version_substrings_can_cover_a_known_value(
+        self, full_version: str | None, row: str
+    ) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.12",
+            spec=PlatformSpec("linux_x86_64"),
+            python_full_version=full_version,
+        )
+        validate_marker_coverage([target], environments=[Marker(row)])
+
+    def test_version_substring_can_cover_the_host(self) -> None:
+        target = ResolveTarget.for_host()
+        row = Marker(f'"{target.python_full_version}" in python_full_version')
+        validate_marker_coverage([target], environments=[row])
 
     def test_build_pylock_non_covering_raises(self) -> None:
         target = self._minor("3.13")
