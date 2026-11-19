@@ -174,7 +174,10 @@ See [distribution policies](docs/reference/distribution-policy.md) and
 
 ## Universal lock benchmark
 
-Cold and warm cache timings compare Nab's default and performance settings with uv, Poetry and PDM.
+The charts compare Nab's default and performance settings with uv, Poetry and PDM. Each bar shows
+the fastest of twelve lock commands for that tool and cache state on a GitHub-hosted Linux runner.
+For each lock, the benchmark checked the selected packages and wheels for CPython 3.10, 3.11 and
+3.12 on Linux x86-64, macOS arm64 and Windows x86-64.
 
 Creating a fresh lock for NumPy, pandas, SciPy, Matplotlib and scikit-learn:
 
@@ -208,10 +211,10 @@ assume-consistent-metadata = true
 max-concurrency = 50
 ```
 
-Existing-lock runs also set `lock-policy = "reuse"`. `wheel-only` considers prebuilt wheels and
-excludes source distributions. The concurrency limit lets the client overlap more waiting HTTP
-requests. Higher concurrency can use more connections and memory. These settings can be slower when
-dependencies change.
+For the existing-lock chart, Nab performance also sets `lock-policy = "reuse"`. Nab default resolves
+afresh. `wheel-only` considers prebuilt wheels and excludes source distributions. The concurrency
+limit lets the client overlap more waiting HTTP requests. Higher concurrency can use more
+connections and memory. These settings can be slower when dependencies change.
 
 ## Libraries
 
