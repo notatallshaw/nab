@@ -46,7 +46,8 @@ workspace root.
 When `nab lock <member>/pyproject.toml` is invoked and the member declares no workspace of its own,
 nab walks upwards from the member's directory for the first ancestor that declares one, in either
 file: `[tool.nab.workspace]` in its `pyproject.toml`, or `[workspace]` in its `nab.toml`. Nab checks
-`pyproject.toml` first and skips directories and named pipes during this search.
+`pyproject.toml` first and skips directories and named pipes during this search. If the project file
+is a symlink, the search starts in the directory containing the link.
 
 Each member of the matched workspace contributes a local source. The provider prefers those local
 sources over PyPI for any requirement whose canonical name matches.

@@ -201,6 +201,25 @@ class TestDiscoverWorkspaceRoot:
         )
         assert discover_workspace_root(member) == (root / "pyproject.toml")
 
+    def test_project_file_symlink_uses_the_workspace_containing_the_link(
+        self, tmp_path: Path
+    ) -> None:
+        app_root = _write(
+            tmp_path / "application" / "pyproject.toml",
+            '[tool.nab.workspace]\nmembers=["member"]\n',
+        )
+        template = _write(
+            tmp_path / "templates" / "shared.toml",
+            '[project]\nname="member"\nversion="1"\n',
+        )
+        _write(tmp_path / "templates" / "nab.toml", "[workspace]\nmembers=[]\n")
+
+        member = app_root.parent / "member" / "pyproject.toml"
+        member.parent.mkdir()
+        member.symlink_to(template)
+
+        assert discover_workspace_root(member) == app_root.resolve()
+
     def test_symlink_loop_below_the_root_still_finds_it(self, tmp_path: Path) -> None:
         """The walk starts inside the loop, so it still reaches the root above."""
         root = _write(
