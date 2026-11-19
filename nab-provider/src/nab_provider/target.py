@@ -63,7 +63,7 @@ from .value import HashableRecord, Record, replace
 
 if TYPE_CHECKING:
     import re
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Iterable, Iterator, Mapping, Sequence
 
     from .tags import TagsSource
 
@@ -443,50 +443,43 @@ def _non_interval(
 def slices_from_points(
     target: ResolveTarget, points: Sequence[Version]
 ) -> list[ResolveTarget]:
-    """Partition ``target``'s minor into one slice per micro interval.
+    """Partition a minor at the first version of each new marker outcome.
 
-    ``points`` are the in-minor releases the micro line is cut at (see
-    :func:`micro_boundary_points`), sorted ascending.  They partition
-    ``[{minor}.0, inf)`` into intervals; each interval becomes ``target``
-    moved onto its lower-bound release, carrying the python_full_version
-    bounds that fence it off (see :meth:`ResolveTarget.with_micro_slice`).
-    Every marker answers unambiguously at an interval's lower bound, so that
-    release is where the slice resolves.  Each slice declares its own
-    environment row and pins, so a marker that genuinely splits the micros is
-    honoured per slice rather than lifted onto the whole minor.
-
-    Returns ``[target]`` unchanged when ``points`` is empty: nothing cut the
-    minor, so the whole minor resolves at once.
+    Each slice resolves at a final patch release when it contains one.
+    A slice containing only prereleases uses its earliest version.
     """
     if not points:
         return [target]
-    floor = Version(f"{target.python_version}.0")
-    reps = [floor, *points]
-    lowers: list[Version | None] = [None, *points]
-    uppers: list[Version | None] = [*points, None]
 
+    floor = Version(f"{target.python_version}.0.dev0")
     slices: list[ResolveTarget] = []
-    for rep, low, high in zip(reps, lowers, uppers, strict=True):
+    for low, high in zip([floor, *points], [*points, None], strict=True):
         clauses: list[str] = []
-        if low is not None:
-            clauses.append(f'python_full_version >= "{_dev0(low)}"')
+        if low != floor:
+            clauses.append(f'python_full_version >= "{low}"')
         if high is not None:
-            clauses.append(f'python_full_version < "{high}"')
-        slices.append(target.with_micro_slice(str(rep), tuple(clauses)))
+            if high.is_prerelease:
+                # <X already excludes every prerelease of the final X.
+                upper = (
+                    high.base_version
+                    if high.dev == 0 and high.pre is None
+                    else str(high)
+                )
+                clauses.append(f'python_full_version < "{upper}"')
+            else:
+                # PEP 440's <final excludes prereleases of that patch. Together
+                # these bounds include them while excluding the final and its locals.
+                clauses.extend(
+                    (
+                        f'python_full_version <= "{high}"',
+                        f'python_full_version != "{high}"',
+                    )
+                )
+
+        final = Version.from_parts(release=low.release)
+        representative = final if high is None or final < high else low
+        slices.append(target.with_micro_slice(str(representative), tuple(clauses)))
     return slices
-
-
-def _dev0(version: Version) -> str:
-    """Return the ``.dev0`` boundary form of a release ``version``.
-
-    The canonical disjoint and exhaustive split pair at a boundary ``X`` is
-    ``< "X"`` on the lower side and ``>= "X.dev0"`` on the upper: a verbatim
-    ``< "X"`` / ``>= "X"`` pair leaves a gap at prereleases of ``X`` (packaging
-    carries a ``< X`` upper as ``X.dev0``), so the ``>=`` lower edge is snapped
-    to ``X.dev0`` to meet the adjacent ``< "X"`` exactly.  The suffix is a
-    syntactic form on a packaging-parsed version, validated by re-parsing.
-    """
-    return str(Version(f"{version}.dev0"))
 
 
 def _scanned_version_variables(target: ResolveTarget) -> frozenset[str]:
@@ -505,28 +498,15 @@ def _scanned_version_variables(target: ResolveTarget) -> frozenset[str]:
 def micro_boundary_points(
     target: ResolveTarget, consulted: Iterable[Marker]
 ) -> list[Version]:
-    """Return the in-minor releases ``consulted`` cuts ``target``'s minor at.
+    """Return the first interpreter version at which each consulted clause changes.
 
-    A minor target stands for every micro of its minor (its
-    ``python_full_version`` is the synthesized ``{minor}.0`` floor).  A
-    consulted marker comparing ``python_full_version`` against a literal inside
-    the minor (``python_full_version < "3.10.2"``) needs different package sets
-    on each side, so the release it flips at is a point the micro line is split
-    on (see :func:`slices_from_points`).  On CPython ``implementation_version``
-    tracks ``python_full_version``, so a comparison on it mints the same
-    boundary.
+    A bare minor covers prereleases as well as final patch releases. For example,
+    ``< "3.12.4"`` stops applying at 3.12.4.dev0, while ``>= "3.12.4"`` starts at
+    3.12.4 itself. On CPython, implementation-version comparisons use the same
+    boundaries. Exact targets are never split.
 
-    Within one minor, a clause can change only at the literal's micro or
-    the next one. Packaging's specifier membership decides which points
-    change its answer. A boundary outside the minor or at its floor cuts nothing.
-
-    An operator that cannot tile the interval raises
-    :class:`NonIntervalMarkerError` (see there); with the whole-minor pin gone,
-    an untileable marker stops the resolve loudly.  A whole target (a host, or
-    a python-patches pin) is not an interval and is never cut.
-
-    Markers are scanned in text order, so the clause a crash names is the same
-    every run even when ``consulted`` is unordered.
+    A clause outside the supported interval comparisons raises NonIntervalMarkerError.
+    Scan markers in text order to report the same offending clause on each run.
     """
     if not target.is_minor_interval:
         return []
@@ -552,50 +532,66 @@ def _clause_boundary_points(
     floor: Version,
     target: ResolveTarget,
 ) -> set[Version]:
-    """Return the in-minor release boundaries one clause cuts the minor at.
-
-    Empty when the clause names no scanned version variable, or its boundaries
-    fall outside the minor or at its floor.  Raises
-    :class:`NonIntervalMarkerError` when the clause names a scanned variable
-    but cannot tile the interval.
-    """
+    """Compare the clause on either side of each possible change in this minor."""
     parsed = _clause_interval_literal(parts, scanned, target)
     if parsed is None:
         return set()
     op, specifier, version = parsed
 
-    if (version.is_prerelease and op in _AT_LITERAL_OPERATORS) or (
-        version.is_postrelease and op in _POST_AT_LITERAL_OPERATORS
+    if _in_minor(version, minor_release, floor) and (
+        (version.is_prerelease and op in _AT_LITERAL_OPERATORS)
+        or (version.is_postrelease and op in _POST_AT_LITERAL_OPERATORS)
     ):
-        # An at-literal boundary lands on the literal, and a pre- or post-release
-        # literal falls between two micros, so no micro reads it the way its slice
-        # would.  Interior to the minor that cannot be tiled and crashes; below the
-        # floor or in another minor it is uniform and splits nothing.  The literal
-        # itself decides which, not its release form: a prerelease sorts just below
-        # its release and a post just above, so ``3.12.0a1`` sits below the floor
-        # while ``3.12.0.post1`` sits above it.
-        if _in_minor(version, minor_release, floor):
-            raise _non_interval(parts, target)
-        return set()
+        raise _non_interval(parts, target)
 
     release = (*version.release, 0, 0)[:_PYTHON_FULL_VERSION_PARTS]
     if version.epoch != floor.epoch or release[:_PYTHON_VERSION_PARTS] != minor_release:
         return set()
 
     major, minor, micro = release
-    previous = Version.from_parts(release=(major, minor, max(micro - 1, 0)))
-    admitted = specifier.contains(previous, prereleases=True)
+    patch = Version.from_parts(release=(major, minor, micro))
+    minor_start = Version.from_parts(release=(*minor_release, 0), dev=0)
+    candidates = {
+        minor_start,
+        Version.from_parts(release=patch.release, dev=0),
+        patch,
+        Version.from_parts(release=(major, minor, micro + 1), dev=0),
+        *_prerelease_points(version, patch.release),
+    }
 
+    # Packaging preserves operand order. In particular, a literal-first
+    # comparison need not agree with its mirror on a prerelease interpreter.
+    comparison = Marker(" ".join(parts)) if parts[2] in scanned else None
+    previous = None
     points: set[Version] = set()
-    # These candidates cover cuts before and after the literal's final release.
-    # A shorter wildcard or compatible prefix ends outside this minor.
-    for patch in range(max(micro, 1), micro + 2):
-        point = Version.from_parts(release=(major, minor, patch))
-        next_admitted = specifier.contains(point, prereleases=True)
-        if admitted != next_admitted:
+    for point in sorted(candidates):
+        admitted = (
+            comparison.evaluate_prepared({parts[2]: str(point)})
+            if comparison is not None
+            else specifier.contains(point, prereleases=True)
+        )
+        if previous is not None and admitted != previous:
             points.add(point)
-        admitted = next_admitted
+        previous = admitted
     return points
+
+
+def _prerelease_points(version: Version, release: tuple[int, ...]) -> Iterator[Version]:
+    """Yield a prerelease literal and the first supported version after it."""
+    if version.dev is not None:
+        successor = Version.from_parts(
+            release=release, pre=version.pre, dev=version.dev + 1
+        )
+    elif version.pre is not None:
+        phase, number = version.pre
+        successor = Version.from_parts(release=release, pre=(phase, number + 1), dev=0)
+    else:
+        return
+
+    literal = Version.from_parts(release=release, pre=version.pre, dev=version.dev)
+    if literal == version:
+        yield literal
+        yield successor
 
 
 def _in_minor(point: Version, minor_release: tuple[int, ...], floor: Version) -> bool:
@@ -992,7 +988,10 @@ class ResolveTarget(HashableRecord):
     def covered_by_requires_python(self, specifiers: Iterable[SpecifierSet]) -> bool:
         """Prove that the specifiers cover this target's version range."""
         if self.is_minor_interval:
-            constraints = [f">={self.python_version}.0", f"=={self.python_version}.*"]
+            constraints = [f"=={self.python_version}.*"]
+            if not self.micro_clauses:
+                constraints.append(f">={self.python_version}.0")
+            # A split target carries its own bounds and can contain only prereleases.
             for clause in self.micro_clauses:
                 atom = MARKER_COMPARISON.fullmatch(clause)
                 if atom is None:

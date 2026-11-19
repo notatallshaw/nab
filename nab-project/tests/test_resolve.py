@@ -2561,9 +2561,10 @@ class TestResolveUniversalPyproject:
 
         expected_pins = {
             "3.10.0": {"base": V("1.0"), "foo": V("1.0")},
+            "3.10.4.dev0": {"base": V("1.0")},
             "3.10.4": {"base": V("1.0"), "foo": V("2.0")},
         }
-        assert len(result.target_results) == 2
+        assert len(result.target_results) == 3
         assert {
             tr.target.marker_env["python_full_version"]: tr.pins
             for tr in result.target_results
@@ -6095,20 +6096,17 @@ class TestLockDeclaresItsEnvironment:
         assert set(below.pins) == {"foo"}
         assert set(above.pins) == {"foo", "bar"}
 
-        rows = {
-            "below" if 'python_full_version < "3.12.4"' in str(m) else "above": str(m)
-            for m in lock_input.environments
-        }
-        assert set(rows) == {"below", "above"}
-        assert 'python_full_version >= "3.12.4.dev0"' in rows["above"]
-
-        # The two rows are disjoint and together cover the whole minor.
-        low = {**_PY312_ENV, "python_full_version": "3.12.1"}
-        high = {**_PY312_ENV, "python_full_version": "3.12.5"}
-        assert Marker(rows["below"]).evaluate(low)
-        assert not Marker(rows["below"]).evaluate(high)
-        assert Marker(rows["above"]).evaluate(high)
-        assert not Marker(rows["above"]).evaluate(low)
+        rows = lock_input.environments
+        assert len(rows) == 2
+        for version, expected in [
+            ("3.12.1", below),
+            ("3.12.4rc1", below),
+            ("3.12.4", above),
+            ("3.12.5", above),
+        ]:
+            env = {**_PY312_ENV, "python_full_version": version}
+            assert sum(row.evaluate(env) for row in rows) == 1
+            assert Marker(expected.target.environment_marker_string).evaluate(env)
 
 
 _BASE_GROUP = '[tool.nab]\nbase-group = "default"\n'

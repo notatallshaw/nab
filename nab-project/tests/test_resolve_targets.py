@@ -3447,13 +3447,10 @@ class TestMicroBoundaryNarrowing:
         )
 
         assert result.success
-        versions = {
-            tr.target.label: str(tr.pins["bar"]) for tr in result.target_results
-        }
-        assert versions == {
-            "py310-linux_x86_64-pf3100": "1.0",
-            "py310-linux_x86_64-pf3104": "2.0",
-        }
+        pins = {tr.target.python_full_version: tr.pins for tr in result.target_results}
+        assert str(pins["3.10.0"]["bar"]) == "1.0"
+        assert "bar" not in pins["3.10.4.dev0"]
+        assert str(pins["3.10.4"]["bar"]) == "2.0"
 
         pylock = build_pylock(build_lock_input(result, inputs=_no_build()))
         pylock.validate()
