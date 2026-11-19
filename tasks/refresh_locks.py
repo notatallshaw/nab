@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import tomli
 
+from nab_markersets.markersets import MarkerSet
 from nab_provider._vendor.packaging.pylock import Pylock
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from nab_provider._vendor.packaging.pylock import Package
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_LOCK = Path(".github/requirements/pylock.build.toml")
@@ -41,26 +45,71 @@ def check_build_systems(root: Path) -> None:
         raise ValueError(message)
 
 
-def _pins(path: Path) -> dict[str, set[str | None]]:
-    """Collect version choices across the lock's declared environments."""
+def _read_lock(path: Path) -> Pylock:
     with path.open("rb") as stream:
-        lock = Pylock.from_dict(tomli.load(stream))
-    versions: dict[str, set[str | None]] = {}
-    for package in lock.packages:
-        version = str(package.version) if package.version is not None else None
-        versions.setdefault(str(package.name), set()).add(version)
-    return versions
+        return Pylock.from_dict(tomli.load(stream))
+
+
+def _lock_environments(lock: Pylock) -> MarkerSet:
+    """Combine each declared environment with the lock's Python requirement."""
+    python = MarkerSet.full()
+    for specifier in lock.requires_python or ():
+        python &= MarkerSet.from_marker(
+            f'python_full_version {specifier.operator} "{specifier.version}"'
+        )
+
+    if lock.environments is None:
+        return python
+
+    targets = MarkerSet.empty()
+    for marker in lock.environments:
+        targets |= python & MarkerSet.from_marker(marker)
+    return targets
+
+
+def _package_environments(package: Package) -> MarkerSet:
+    if package.marker is None:
+        return MarkerSet.full()
+    return MarkerSet.from_marker(package.marker)
 
 
 def check_shared_pins(root: Path) -> None:
-    """Prevent sequential installs from silently moving a shared package's version."""
-    build, dev = (_pins(root / path) for path in (BUILD_LOCK, DEV_LOCK))
-    different = sorted(
-        name for name in build.keys() & dev.keys() if build[name] != dev[name]
-    )
-    if different:
-        message = "build and development locks disagree on: " + ", ".join(different)
-        raise ValueError(message)
+    """Reject versions that would replace each other in the same environment."""
+    build = _read_lock(root / BUILD_LOCK)
+    dev = _read_lock(root / DEV_LOCK)
+    dev_packages: dict[str, list[Package]] = defaultdict(list)
+    for package in dev.packages:
+        dev_packages[package.name].append(package)
+
+    differing_versions = [
+        (build_pin, dev_pin)
+        for build_pin in build.packages
+        for dev_pin in dev_packages.get(build_pin.name, ())
+        if build_pin.version != dev_pin.version
+    ]
+    if not differing_versions:
+        return
+
+    build_targets = _lock_environments(build)
+    dev_targets = _lock_environments(dev)
+    conflicts = set()
+    for build_pin, dev_pin in differing_versions:
+        overlap = (
+            build_targets
+            & _package_environments(build_pin)
+            & _package_environments(dev_pin)
+        )
+        # Compare one development target at a time so unrelated platform and
+        # group conditions do not multiply the marker algebra's search space.
+        if not overlap.equivalent_within(MarkerSet.empty(), dev_targets):
+            conflicts.add(
+                f"{build_pin.name} (build {build_pin.version}, "
+                f"development {dev_pin.version})"
+            )
+
+    if conflicts:
+        message = "build and development pins disagree in the same environment: "
+        raise ValueError(message + ", ".join(sorted(conflicts)))
 
 
 def main(args: Sequence[str], root: Path = ROOT) -> int:
