@@ -3,9 +3,11 @@ and end-to-end resolution with a simple in-memory provider."""
 
 from __future__ import annotations
 
+import pickle
 import sys
 from collections import UserDict, defaultdict
 from collections.abc import ItemsView, Mapping
+from copy import deepcopy
 from typing import Any, ClassVar
 
 import pytest
@@ -2033,6 +2035,17 @@ class TestErrorMessages:
         with pytest.raises(ResolutionError) as exc_info:
             resolver.resolve({"root": Range.singleton(1)})
         assert exc_info.value.incompatibility is not None
+
+    def test_copied_proof_keeps_the_failure_report(self) -> None:
+        resolver = Resolver(DictProvider({}))
+        with pytest.raises(ResolutionError) as raised:
+            resolver.resolve({"missing": Range.full()})
+
+        proof = raised.value.incompatibility
+        assert proof is not None
+        expected = format_error(proof)
+        assert format_error(deepcopy(proof)) == expected
+        assert format_error(pickle.loads(pickle.dumps(proof))) == expected  # noqa: S301
 
     def test_error_message_contains_derived_explanation(self) -> None:
         """Error message traces through derived incompatibilities."""
