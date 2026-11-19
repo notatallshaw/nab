@@ -21,6 +21,7 @@ from nab_resolver.resolver import BaseProvider, Resolver, ResolverStats
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
     from collections.abc import Set as AbstractSet
+    from typing import TypeGuard
 
     from typing_extensions import override as _override
 
@@ -209,10 +210,6 @@ class IncompletePreferenceError(ResolutionError):
     """An interrupted or unknown query cannot prove that live choices fail."""
 
 
-class _NeedLiveProofError(Exception):
-    pass
-
-
 @dataclass(frozen=True, slots=True)
 class _Context(Generic[CandidateType]):
     """A selected assignment whose known metadata may already establish failure."""
@@ -221,8 +218,38 @@ class _Context(Generic[CandidateType]):
     selected: frozenset[CandidateType]
 
 
-class _NeedContextProofError(Exception):
-    pass
+class _SuspendSearchError(Exception):
+    """Suspend the current resolver callback while a proof is outstanding."""
+
+
+class _ProofRequestError(
+    _SuspendSearchError, Generic[CandidateType, RangeType, PinnedRequirementType]
+):
+    """Return control to the preference search that requested this proof."""
+
+    def __init__(
+        self,
+        search: PreferenceSearch[CandidateType, RangeType, PinnedRequirementType],
+        proof: PreferenceScope[CandidateType] | _Context[CandidateType],
+    ) -> None:
+        super().__init__("a preference proof is required")
+        self.search = search
+        self.proof = proof
+
+    def resume(self, stack: list[PreferenceScope[CandidateType]]) -> None:
+        """Schedule a live scope or check the requesting assignment's context."""
+        if isinstance(self.proof, PreferenceScope):
+            stack.append(self.proof)
+        else:
+            self.search.check_context(self.proof)
+
+
+def _requested_by(
+    error: _SuspendSearchError,
+    search: PreferenceSearch[CandidateType, RangeType, PinnedRequirementType],
+) -> TypeGuard[_ProofRequestError[CandidateType, RangeType, PinnedRequirementType]]:
+    """Narrow the proof to the candidate type of the search that requested it."""
+    return isinstance(error, _ProofRequestError) and error.search is search
 
 
 class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementType]):
@@ -249,10 +276,6 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         self.refuted: set[_Context[CandidateType]] = set()
         self.possible: dict[_Context[CandidateType], int] = {}
 
-        # These typed requests survive unwinding the active resolver callback.
-        self.requested_scope: PreferenceScope[CandidateType] | None = None
-        self.requested_context: _Context[CandidateType] | None = None
-
     def spend(self, steps: int) -> None:
         """Charge work from any resolver query against the cumulative limit."""
         self.remaining -= steps
@@ -277,59 +300,67 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         self, candidate: CandidateType, selected: Mapping[str, CandidateType]
     ) -> frozenset[CandidateType]:
         """Find ancestors reachable from roots without the candidate's metadata."""
-        demand = set(self.roots)
-        pins = list(self.input_pins)
-        expanded: set[str] = set()
-
-        # The target's metadata must not establish its own admission.
-        while True:
-            before = len(expanded)
-            for name, parent in selected.items():
-                if (
-                    self.catalogue.candidate_base(parent)
-                    == self.catalogue.candidate_base(candidate)
-                    or name not in demand
-                    or name in expanded
-                ):
-                    continue
-
-                data = self.catalogue.facts.get(parent)
-                if data is None:
-                    continue
-
-                if self.catalogue.candidate_withdrawn(parent) and not any(
-                    self.catalogue.pin_allows(req, parent) for req in pins
-                ):
-                    continue
-
-                expanded.add(name)
-                demand.update(data.dependencies)
-                pins.extend(data.pins)
-            if len(expanded) == before:
-                break
-
-        ancestors: set[str] = set()
+        base = self.catalogue.candidate_base(candidate)
+        parents = self._grounded_parents(selected, excluded_base=base)
         pending = [
             name
             for name, value in selected.items()
-            if self.catalogue.candidate_base(value)
-            == self.catalogue.candidate_base(candidate)
+            if self.catalogue.candidate_base(value) == base
         ]
-        pending.extend(
-            (
-                self.catalogue.candidate_base(candidate),
-                self.catalogue.candidate_package(candidate),
-            )
-        )
+        pending.extend((base, self.catalogue.candidate_package(candidate)))
+
+        ancestors: set[str] = set()
         while pending:
-            child = pending.pop()
-            for name in expanded - ancestors:
-                data = self.catalogue.facts[selected[name]]
-                assert data is not None
-                if child in data.dependencies:
-                    ancestors.add(name)
-                    pending.append(name)
+            for parent in parents.get(pending.pop(), ()):
+                if parent not in ancestors:
+                    ancestors.add(parent)
+                    pending.append(parent)
         return frozenset(selected[name] for name in ancestors)
+
+    def _grounded_parents(
+        self, selected: Mapping[str, CandidateType], *, excluded_base: str
+    ) -> dict[str, list[str]]:
+        """Index the edges reachable without reading the candidate under review."""
+        parents: dict[str, list[str]] = {}
+        demanded = set(self.roots)
+        pending = deque(self.roots)
+        pins: dict[str, list[PinnedRequirementType]] = {}
+        for pin in self.input_pins:
+            pins.setdefault(self.catalogue.pin_project(pin), []).append(pin)
+
+        waiting: dict[str, list[str]] = {}
+        while pending:
+            name = pending.popleft()
+            try:
+                parent = selected[name]
+            except KeyError:
+                continue
+            base = self.catalogue.candidate_base(parent)
+            if base == excluded_base:
+                continue
+            data = self.catalogue.facts.get(parent)
+            if data is None:
+                continue
+
+            # A later reachable parent can supply the pin this package needs.
+            if self.catalogue.candidate_withdrawn(parent) and not any(
+                self.catalogue.pin_allows(pin, parent) for pin in pins.get(base, ())
+            ):
+                waiting.setdefault(base, []).append(name)
+                continue
+
+            for child in data.dependencies:
+                parents.setdefault(child, []).append(name)
+                if child not in demanded:
+                    demanded.add(child)
+                    pending.append(child)
+
+            for pin in data.pins:
+                project = self.catalogue.pin_project(pin)
+                pins.setdefault(project, []).append(pin)
+                pending.extend(waiting.pop(project, ()))
+
+        return parents
 
     def fixed_range(
         self, candidate: CandidateType, parents: frozenset[CandidateType]
@@ -342,8 +373,14 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         allowed = self.catalogue.full_range()
         declarations = [self.roots]
         for parent in parents:
-            data = self.catalogue.facts[parent]
-            assert data is not None
+            data = self.catalogue.facts.get(parent)
+            if data is None:
+                name = self.catalogue.candidate_package(parent)
+                version = self.catalogue.candidate_label(parent)
+                message = (
+                    f"missing dependency metadata for fixed parent {name}=={version}"
+                )
+                raise ResolutionInvariantError(message)
             declarations.append(data.dependencies)
         for dependencies in declarations:
             for package, version_range in dependencies.items():
@@ -408,15 +445,13 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
             if not scope.live < query.live:
                 message = "live preference analysis is incomplete: cyclic query"
                 raise ResolutionInvariantError(message)
-            self.requested_scope = query
-            raise _NeedLiveProofError
+            raise _ProofRequestError(self, query)
 
         context = _Context(scope, frozenset(selected.values()))
         if context in self.refuted:
             return PreparationStatus.IMPOSSIBLE
         if self.possible.get(context) != len(self.catalogue.facts):
-            self.requested_context = context
-            raise _NeedContextProofError
+            raise _ProofRequestError(self, context)
         return PreparationStatus.ALLOWED
 
     def run(
@@ -435,12 +470,10 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
             # Unwind the callback before a prerequisite consumes the shared budget.
             try:
                 selected = callback(scope)
-            except _NeedLiveProofError:
-                assert self.requested_scope is not None
-                stack.append(self.requested_scope)
-            except _NeedContextProofError:
-                assert self.requested_context is not None
-                self.check_context(self.requested_context)
+            except _SuspendSearchError as request:
+                if not _requested_by(request, self):
+                    raise
+                request.resume(stack)
             except ResolutionTerminatedError:
                 raise
             except ResolutionError as exc:
@@ -471,6 +504,22 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         if incomplete:
             self.incomplete_facts[scope] = len(self.catalogue.facts)
 
+    def _selected_data(
+        self, package: str, selected: Mapping[str, CandidateType]
+    ) -> tuple[CandidateType, DependencyData[RangeType, PinnedRequirementType]]:
+        """Return the chosen candidate and the dependency facts supporting its proof."""
+        if package not in selected:
+            message = (
+                f"cannot explain yanked admission: no selected candidate for {package}"
+            )
+            raise ResolutionInvariantError(message)
+        candidate = selected[package]
+        data = self.catalogue.facts.get(candidate)
+        if data is None:
+            message = f"cannot explain yanked admission: missing metadata for {package}"
+            raise ResolutionInvariantError(message)
+        return candidate, data
+
     def explain(
         self, selected: Mapping[str, CandidateType]
     ) -> dict[str, tuple[str, ...]]:
@@ -489,17 +538,7 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
 
         while pending:
             package = pending.popleft()
-            candidate = selected.get(package)
-            data = (
-                self.catalogue.facts.get(candidate) if candidate is not None else None
-            )
-            if data is None:
-                message = (
-                    f"cannot explain yanked admission: missing metadata for {package}"
-                )
-                raise ResolutionInvariantError(message)
-
-            assert candidate is not None
+            candidate, data = self._selected_data(package, selected)
             # An unadmitted yanked parent cannot supply pins to its children.
             if self.catalogue.candidate_withdrawn(candidate):
                 source = next(

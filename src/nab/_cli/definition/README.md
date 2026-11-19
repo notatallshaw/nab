@@ -23,16 +23,18 @@ flowchart LR
 ## Reading a definition
 
 ```python
-from nab._cli.definition.rows import Value
+from nab._cli.definition.rows import Switch
 from nab._cli.definition.tables import Table
 
 
 class Example(Table, on=("lock",)):
-    max_concurrency = Value[int | None](help="maximum concurrent downloads")
+    all_plans = Switch(
+        default=False, negatable=True, action=True, help="run every declared lock plan"
+    )
 ```
 
-This defines `--max-concurrency` for `nab lock`. The attribute supplies the flag name, replacing
-underscores with hyphens. `Value[int | None]` reads one integer; an absent flag leaves `None`.
+The attribute name becomes `--all-plans` for `nab lock`. The switch defaults to false and accepts
+`--no-all-plans`. Use `action=True` for flags that tell a command what to do.
 
 A `Table` groups definitions with shared commands and defaults. `scope` distinguishes project
 settings from user settings, and `docs` names their reference page. A definition can override the

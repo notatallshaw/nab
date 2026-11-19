@@ -13,7 +13,7 @@ import pytest
 from nab._resolve import _make_resolve_transport
 from nab_index.cache import CachePolicy, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient
-from nab_index.httpx_async_transport import _HttpxResponse
+from nab_index.response import HttpxResponse
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -39,7 +39,7 @@ class RecordingTransport:
     """Return one HTTP response while recording requests and resource closure."""
 
     def __init__(self, response: httpx.Response) -> None:
-        self.response = _HttpxResponse(response, response.content)
+        self.response = HttpxResponse(response, response.content)
         self.requests: list[tuple[str, dict[str, str] | None]] = []
         self.closes = 0
 

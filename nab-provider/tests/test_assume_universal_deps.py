@@ -100,7 +100,7 @@ def test_strict_default_refuses_dynamic_sdist_and_suggests_scoped_option() -> No
 
     assert 'match = ["pkg==1.0"]' in str(caught.value)
     assert "assume-universal-deps = true" in str(caught.value)
-    assert port.calls_to("request_built_metadata") == []
+    assert port.calls_to("build_sdist_metadata") == []
 
 
 @pytest.mark.parametrize(
@@ -282,7 +282,7 @@ def test_opt_in_reuses_wheel_deps_without_installing_foreign_wheel(scope: str) -
     assert port.calls_to("request_metadata") == [
         ("pkg", "1.0", wheel.metadata_url, wheel.metadata_hash)
     ]
-    assert port.calls_to("request_built_metadata") == []
+    assert port.calls_to("build_sdist_metadata") == []
 
 
 def test_borrowed_markers_and_extras_are_evaluated_for_each_resolve_target() -> None:
@@ -427,7 +427,7 @@ def test_sidecar_integrity_error_is_not_replaced_by_build_fallback() -> None:
     with pytest.raises(MetadataHashMismatchError, match="sidecar hash mismatch"):
         provider.get_dependencies("pkg", _VERSION)
 
-    assert port.calls_to("request_built_metadata") == []
+    assert port.calls_to("build_sdist_metadata") == []
 
 
 def test_bare_wheel_uses_range_metadata_and_passes_integrity_hashes() -> None:
@@ -493,7 +493,7 @@ def test_unreadable_local_metadata_is_not_replaced_by_a_build(tmp_path: Path) ->
     with pytest.raises(IndexAccessError, match="cannot read local wheel"):
         provider.get_dependencies("pkg", _VERSION)
 
-    assert port.calls_to("request_built_metadata") == []
+    assert port.calls_to("build_sdist_metadata") == []
 
 
 @pytest.mark.parametrize(
@@ -524,7 +524,7 @@ def test_strict_sdist_hint_conditions_builds_on_metadata_wheel_availability(
     assert ("if no usable wheel metadata is available" in hint) is (
         wheel_state == "usable"
     )
-    assert port.calls_to("request_built_metadata") == []
+    assert port.calls_to("build_sdist_metadata") == []
 
 
 @pytest.mark.parametrize("scope", ["default", "package", "index"])
@@ -581,7 +581,7 @@ def test_dynamic_sdist_build_hint_repairs_the_effective_policy(scope: str) -> No
         index_overrides=index_overrides,
     )
     assert set(repaired.get_dependencies("pkg", _VERSION)) == {"built-dep"}
-    assert len(port.calls_to("request_built_metadata")) == 1
+    assert len(port.calls_to("build_sdist_metadata")) == 1
 
 
 @pytest.mark.parametrize("build_policy", [BuildPolicy.NEVER, BuildPolicy.BUILD_LOCAL])
@@ -598,7 +598,7 @@ def test_assumption_alone_does_not_authorize_builds(build_policy: BuildPolicy) -
         provider.get_dependencies("pkg", _VERSION)
 
     assert "assume-universal-deps = true" not in str(caught.value)
-    assert port.calls_to("request_built_metadata") == []
+    assert port.calls_to("build_sdist_metadata") == []
 
 
 @pytest.mark.parametrize("missing", ["no-wheel", "unreadable-wheel", "other-version"])
@@ -624,7 +624,7 @@ def test_no_usable_same_version_metadata_falls_back_to_explicit_build(
     )
 
     assert set(provider.get_dependencies("pkg", _VERSION)) == {"built-dep"}
-    assert len(port.calls_to("request_built_metadata")) == 1
+    assert len(port.calls_to("build_sdist_metadata")) == 1
 
 
 @pytest.mark.parametrize(
@@ -670,7 +670,7 @@ def test_yanked_wheel_metadata_can_be_used_after_explicit_release_admission() ->
         metadata_text=_WHEEL_METADATA,
     )
     provider = Provider(port, _MAC_TARGET, assume_universal_deps=True)
-    provider.yank_admissions = frozenset({("pkg", _VERSION)})
+    provider.yank_admissions = {("pkg", _VERSION): ()}
 
     assert set(provider.get_dependencies("pkg", _VERSION)) == {"wheel-dep"}
 
@@ -717,7 +717,7 @@ def test_failed_range_read_tries_the_next_wheel_before_building() -> None:
         ("pkg", "1.0", first.url, first.hashes),
         ("pkg", "1.0", second.url, second.hashes),
     ]
-    assert port.calls_to("request_built_metadata") == []
+    assert port.calls_to("build_sdist_metadata") == []
 
 
 @pytest.mark.parametrize("mechanism", ["wheel", "build"])

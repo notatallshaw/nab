@@ -4,10 +4,10 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "nab_provider._provider.listing_diagnosis",
-    "nab_provider._vendor.packaging.ranges",
     "nab_provider._vendor.packaging.utils",
     "nab_provider.diagnostics",
     "nab_provider.extra_keys",
+    "nab_provider.ranges",
     "nab_provider.yank_candidates",
     "nab_resolver.errors",
     "nab_resolver.ranges",
@@ -17,6 +17,7 @@ __lazy_modules__ = (
 from typing import TYPE_CHECKING, Final
 
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
+from nab_resolver.priority import compute_tier
 from nab_resolver.ranges import IntegerRangeMembership, Range
 from nab_resolver.resolver import (
     DEFAULT_MAX_ITERATIONS,
@@ -28,11 +29,10 @@ from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 from ._compat import override
 from ._provider.listing_diagnosis import MetadataBlock, metadata_diagnostic
-from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.utils import canonicalize_name
 from .diagnostics import ResolutionMessage
 from .extra_keys import split_extra
-from .priority import compute_tier
+from .ranges import VersionRange, require_version_range
 from .value import HashableRecord
 from .yank_candidates import Candidate, YankCandidates, add_range, is_pin, merge_stats
 from .yank_preference import (
@@ -55,6 +55,28 @@ if TYPE_CHECKING:
 __all__ = ["YankProxyProvider"]
 _MAX_SOLVER_ROUNDS = DEFAULT_MAX_ITERATIONS
 _ROOT_SCOPE = PreferenceScope()
+
+
+def _incomplete_query(detail: str) -> IncompletePreferenceError:
+    """Keep the reason a query stopped without a usable proof."""
+    message = "yanked dependency resolution is incomplete"
+    if detail:
+        message += f": {detail}"
+    return IncompletePreferenceError(message)
+
+
+def _query_roots(query: YankProxyProvider) -> dict[Package, Range[int]]:
+    """Encode root candidates before asking the solver to prove anything."""
+    try:
+        return {
+            name: query.encode_range(name, allowed)
+            for name, allowed in query.roots.items()
+        }
+    except ResolutionTerminatedError:
+        raise
+    except ResolutionError as exc:
+        # A proof from the host's own lookup does not describe this query.
+        raise _incomplete_query(str(exc)) from exc
 
 
 class _AdmissionRequiredError(Exception):
@@ -132,8 +154,8 @@ class YankProxyProvider(BaseProvider[Package, int]):
             catalogue = YankCandidates(provider, factory, preferences=preferences)
             root_ranges: dict[str, VersionRange] = {}
             for root in roots:
-                assert isinstance(root.constraint, VersionRange)
-                add_range(root_ranges, root.package, root.constraint)
+                constraint = require_version_range(root.package, root.constraint)
+                add_range(root_ranges, root.package, constraint)
             pins = tuple(req for req in requirements if is_pin(req))
             preference = YankPreference(
                 catalogue,
@@ -413,8 +435,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
             support = next(s for s, v in self.proofs[package].items() if v == version)
             return {self.items[i].package: Range.singleton(i) for i in support}
         token = package.candidate
-        data = self.catalogue.facts[self.items[token]]
-        assert data is not None
+        data = self.catalogue.prepared_data(self.items[token])
         self._trial_pins = (*self.input_pins, *data.pins)
         try:
             return {
@@ -451,24 +472,19 @@ class YankProxyProvider(BaseProvider[Package, int]):
         """Resolve under one set of restrictions with the shared work budget."""
         query = self.new_query(scope)
         query.live_trial = live_trial
+        roots = _query_roots(query)
         solver: Resolver[Package, int] = Resolver(
             query, max_iterations=self.preference.remaining
         )
-        roots: dict[Package, Range[int]] = {
-            name: query.encode_range(name, allowed)
-            for name, allowed in query.roots.items()
-        }
         try:
             selected = solver.resolve(roots)
         except ResolutionTerminatedError:
             raise
         except ResolutionError as exc:
-            if query.incomplete or exc.incompatibility is None:
-                message = "yanked dependency resolution is incomplete"
-                if query.incomplete:
-                    message += ": " + self.catalogue.unavailable_reason
-                raise IncompletePreferenceError(message) from exc
-            raise
+            if not query.incomplete and exc.incompatibility is not None:
+                raise
+            detail = self.catalogue.unavailable_reason if query.incomplete else str(exc)
+            raise _incomplete_query(detail) from exc
         finally:
             self.preference.record_solver_stats(solver.stats)
             self.preference.spend(solver.stats.rounds)
@@ -492,8 +508,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
             if not isinstance(term.package, str) or not term.constraint.is_empty:
                 continue
             if isinstance(parent, MetadataProxy):
-                data = self.catalogue.facts[self.items[parent.candidate]]
-                assert data is not None
+                data = self.catalogue.prepared_data(self.items[parent.candidate])
                 allowed = data.dependencies[term.package]
             else:
                 allowed = self.roots[term.package]
@@ -503,11 +518,9 @@ class YankProxyProvider(BaseProvider[Package, int]):
             )
 
     def _failure_diagnostics(
-        self, error: ResolutionError
+        self, incompatibility: Incompatibility[Package, int]
     ) -> tuple[tuple[str, Diagnostic], ...]:
         """Translate final proof leaves into the original package requirements."""
-        incompatibility = error.incompatibility
-        assert incompatibility is not None
         failures: dict[str, VersionRange] = {}
         rejections: dict[str, dict[Candidate, MetadataBlock]] = {}
         for node in incompatibility.walk():
@@ -517,9 +530,9 @@ class YankProxyProvider(BaseProvider[Package, int]):
                 )
             if node.cause is IncompatibilityCause.NO_VERSIONS:
                 for term in node.terms:
-                    package = term.package
-                    if isinstance(package, MetadataProxy):
-                        candidate = self.items[package.candidate]
+                    proxy = term.package
+                    if isinstance(proxy, MetadataProxy):
+                        candidate = self.items[proxy.candidate]
                         block = self.catalogue.rejections.get(candidate)
                         if block is not None:
                             rejections.setdefault(candidate.package, {})[candidate] = (
@@ -559,10 +572,13 @@ class YankProxyProvider(BaseProvider[Package, int]):
         """Check non-yanked alternatives before adopting the selected candidates."""
         try:
             selected = self._select()
-        except (IncompletePreferenceError, ResolutionTerminatedError):
-            raise
         except ResolutionError as exc:
-            entries = self._failure_diagnostics(exc)
+            proof = exc.incompatibility
+            if proof is None or isinstance(
+                exc, (IncompletePreferenceError, ResolutionTerminatedError)
+            ):
+                raise
+            entries = self._failure_diagnostics(proof)
             summary = "no solution satisfies the requirements and yanked-file policy"
             message = ResolutionMessage(summary, entries)
             error = ResolutionError(message)

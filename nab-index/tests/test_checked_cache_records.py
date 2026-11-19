@@ -207,3 +207,22 @@ def test_truncated_metadata_is_refetched_before_use(tmp_path: Path) -> None:
         assert asyncio.run(read()) == TEXT
         assert route.call_count == 1
     assert cache.get_metadata("demo", URL) == TEXT
+
+
+@pytest.mark.parametrize(
+    ("raw", "field"),
+    [
+        (b'{"pkg_info":false,"pyproject":null}', "pkg_info"),
+        (b'{"pkg_info":null,"pyproject":{}}', "pyproject"),
+    ],
+)
+def test_verify_reports_an_unreadable_legacy_sdist_field(
+    tmp_path: Path, raw: bytes, field: str
+) -> None:
+    cache = OnDiskCache(tmp_path, "https://pypi.org/simple")
+    path = cache._sdist_json_path("demo", "1")
+    _write_legacy(path, raw)
+
+    assert cache.read_cache_entry(path) == f"sdist record {field} must be text or null"
+    assert cache.get_sdist_files("demo", "1") is None
+    assert path.read_bytes() == raw

@@ -27,17 +27,16 @@ __lazy_modules__ = (
 
 import logging
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Literal, TypeGuard
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeGuard
 from urllib.parse import urlsplit
 
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import InvalidVersion, Version
-from nab_provider.records import RangeOutcome, SdistFile, WheelFile
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .._compat import override
+from .._vendor.packaging.ranges import VersionRange
+from .._vendor.packaging.specifiers import SpecifierSet
+from .._vendor.packaging.utils import canonicalize_name
+from .._vendor.packaging.version import InvalidVersion, Version
 from ..environment import UnevaluableMarkerError, classify_dependency, evaluate_prepared
 from ..errors import (
     ForeignMetadataError,
@@ -62,6 +61,7 @@ from ..project_requirements import (
     parse_requirements,
     require_string_list,
 )
+from ..records import RangeOutcome, SdistFile, WheelFile
 from ..store import sdist_artifact_key
 from ..tags import python_axis_accepts
 from ..vcs_admission import admit_vcs_url
@@ -69,11 +69,10 @@ from ..vcs_admission import admit_vcs_url
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
-    from nab_provider._vendor.packaging.markers import Marker
-    from nab_provider._vendor.packaging.requirements import Requirement
-
+    from .._vendor.packaging.markers import Marker
+    from .._vendor.packaging.requirements import Requirement
     from ..provider import DistFile, Provider
-    from ..store import InMemoryIndex
+    from ..store import InMemoryIndex, WheelMetadataContext
     from ..tags import TagSet
     from ..target import ResolveTarget
 
@@ -97,48 +96,41 @@ _OFFLINE_METADATA_MISS = "offline mode skipped a metadata fetch with no cached m
 _FILTERED_SDIST = "no PEP 658 metadata and the listing filter excluded the sdist"
 
 
-def assumed_wheel_metadata(
+def _sharing_context(
     provider: Provider, package: str, version: Version
-) -> str | None:
-    """Return shared wheel metadata when this target's policy allows it."""
-    if not provider.effective_assume_consistent_metadata(
+) -> WheelMetadataContext | None:
+    """Return this listing's token if the release policy allows metadata sharing."""
+    contexts = provider.consistent_metadata_contexts
+    if contexts is None or not provider.effective_assume_consistent_metadata(
         package, version, provider.serving_index(package)
     ):
         return None
+    return contexts.get(package)
 
-    # Sharing still requires a wheel admitted for this target.
+
+class _SharedWheel(NamedTuple):
+    """The chosen wheel, its listing token, and any published metadata."""
+
+    wheel: WheelFile
+    context: WheelMetadataContext
+    text: str | None
+
+
+def shared_wheel(
+    provider: Provider, package: str, version: Version
+) -> _SharedWheel | None:
+    """Select a representative only from wheels admitted by this target."""
+    context = _sharing_context(provider, package, version)
     versions = provider.versions_cache.get(package)
-    if versions is None or not isinstance(
-        version_dists(provider, package, versions).picked.get(version), WheelFile
-    ):
+    if context is None or versions is None:
         return None
-
-    contexts = provider.consistent_metadata_contexts
-    assert contexts is not None
-    return provider.coordinator.index.get_consistent_wheel_metadata(
-        package, str(version), context=contexts.get(package)
+    wheel = version_dists(provider, package, versions).picked.get(version)
+    if not isinstance(wheel, WheelFile):
+        return None
+    text = provider.coordinator.index.get_consistent_wheel_metadata(
+        package, str(version), context=context
     )
-
-
-def resolve_consistent_metadata(
-    provider: Provider,
-    versions: list[tuple[Version, DistFile]],
-    package: str,
-    version: Version,
-) -> tuple[str, bool]:
-    """Read shared wheel metadata after target admission, or fetch it normally."""
-    _, _, normalized = provider.split_and_normalize(package)
-    assumed = assumed_wheel_metadata(provider, normalized, version)
-    if assumed is not None:
-        dist = version_dists(provider, normalized, versions).picked.get(version)
-        assert isinstance(dist, WheelFile)
-
-        # Reusing metadata does not grant permission to use a yanked wheel.
-        if dist.yanked:
-            require_yank_admission(provider, versions, normalized, version)
-        return assumed, False
-
-    return resolve_metadata(provider, versions, package, version)
+    return _SharedWheel(wheel, context, text)
 
 
 def parse_consistent_metadata(
@@ -148,34 +140,47 @@ def parse_consistent_metadata(
     *,
     from_sdist: bool = False,
 ) -> None:
-    """Validate metadata and remember the first wheel source for the release."""
+    """Validate metadata before publishing it against its original wheel listing."""
     package, version = cache_key
-    if not from_sdist:
-        assumed = assumed_wheel_metadata(provider, package, version)
-        if assumed is not None:
-            metadata_text = assumed
+    source = None if from_sdist else shared_wheel(provider, package, version)
+    if source is not None and source.text is not None:
+        metadata_text = source.text
 
-    # Validate for this target before sharing the source with other targets.
     parse_and_cache_metadata(provider, cache_key, metadata_text, from_sdist=from_sdist)
+    if source is not None:
+        provider.coordinator.index.store_consistent_wheel_metadata(
+            package,
+            str(version),
+            source.wheel.metadata_url or source.wheel.url,
+            metadata_text,
+            context=source.context,
+        )
 
-    if from_sdist or not provider.effective_assume_consistent_metadata(
-        package, version, provider.serving_index(package)
-    ):
-        return
 
-    versions = provider.versions_cache.get(package)
-    if versions is not None:
-        dist = version_dists(provider, package, versions).picked.get(version)
-        if isinstance(dist, WheelFile):
-            contexts = provider.consistent_metadata_contexts
-            assert contexts is not None
-            provider.coordinator.index.store_consistent_wheel_metadata(
-                package,
-                str(version),
-                dist.metadata_url or dist.url,
-                metadata_text,
-                context=contexts.get(package),
-            )
+def _resident_metadata(
+    provider: Provider,
+    package: str,
+    version: Version,
+    dist: DistFile | None,
+    metadata_url: str | None,
+) -> tuple[str | None, bool]:
+    """Read shared wheel metadata or this target's own cached artifact metadata."""
+    index = provider.coordinator.index
+    release = str(version)
+    context = _sharing_context(provider, package, version)
+    if context is not None and isinstance(dist, WheelFile):
+        shared = index.get_consistent_wheel_metadata(package, release, context=context)
+        if shared is not None:
+            return shared, False
+
+    if not isinstance(dist, SdistFile):
+        return index.get_metadata_with_origin(package, release, metadata_url)
+
+    key = sdist_artifact_key(release, dist.url)
+    text, from_sdist = index.get_metadata_with_origin(package, key)
+    if text is None and not index.metadata_from_sdist(package, release):
+        return index.get_metadata_with_origin(package, release)
+    return text, from_sdist
 
 
 def resolve_metadata(
@@ -193,8 +198,6 @@ def resolve_metadata(
     guarantees and may need a ``pyproject.toml`` fallback.
     """
     _, _, normalized = provider.split_and_normalize(package)
-    ver_str = str(version)
-    index = provider.coordinator.index
 
     # Sibling wheels of one version can declare different dependencies, so the
     # read is keyed by the artifact this target would install.  ``versions`` is
@@ -209,20 +212,9 @@ def resolve_metadata(
     else:
         metadata_url = None
 
-    source_key = (
-        sdist_artifact_key(ver_str, dist.url)
-        if isinstance(dist, SdistFile)
-        else ver_str
+    text, from_sdist = _resident_metadata(
+        provider, normalized, version, dist, metadata_url
     )
-    text, from_sdist = index.get_metadata_with_origin(
-        normalized, source_key, metadata_url
-    )
-    if (
-        text is None
-        and isinstance(dist, SdistFile)
-        and not index.metadata_from_sdist(normalized, ver_str)
-    ):
-        text, from_sdist = index.get_metadata_with_origin(normalized, ver_str)
     if text is not None:
         return (text, from_sdist)
 
@@ -230,6 +222,7 @@ def resolve_metadata(
         msg = f"Version {version} of {package} not found in listing"
         raise MetadataError(msg)
 
+    ver_str = str(version)
     metadata_text, from_sdist, unreadable_wheel = _read_direct_wheel_metadata(
         provider, dist, normalized, ver_str
     )
@@ -797,9 +790,7 @@ def resolve_dynamic_sdist(
     index = provider.coordinator.index
     source_key = sdist_metadata_key(provider, canonical, version)
 
-    cached: WheelMetadata | None = index.get_resolved_sdist_metadata(
-        canonical, source_key
-    )
+    cached = index.get_resolved_sdist_metadata(canonical, source_key)
     if cached is not None:
         return cached
 
@@ -921,7 +912,9 @@ def _assumed_wheel_candidates(
     files = provider.coordinator.index.get_listing(package) or ()
     candidates = [
         dist
-        for candidate, dist in base_distributions(provider, package, files)
+        for candidate, dist in base_distributions(
+            provider, package, files, provider.listing_filter_cache
+        )
         if candidate == version
         and isinstance(dist, WheelFile)
         and (not dist.yanked or (package, version) in provider.yank_admissions)

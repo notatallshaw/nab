@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import dataclasses
 from reprlib import recursive_repr
-from typing import TYPE_CHECKING, ClassVar, TypeVar
+from typing import TYPE_CHECKING, ClassVar, TypeVar, overload
 
 from ._compat import override
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from _typeshed import DataclassInstance
 
 __all__ = [
     "FACTORY",
@@ -24,6 +26,8 @@ __all__ = [
 ]
 
 _Value = TypeVar("_Value")
+_RecordValue = TypeVar("_RecordValue", bound="Record")
+_DataclassValue = TypeVar("_DataclassValue", bound="DataclassInstance")
 
 
 class FactoryDefault:
@@ -126,35 +130,46 @@ def field_names(value: object) -> tuple[str, ...]:
     raise TypeError(msg)
 
 
-def replace(value: _Value, /, **changes: object) -> _Value:
-    """Reconstruct a record, retaining omitted constructor arguments."""
-    if isinstance(value, Record):
-        names = field_names(value)
-        init_names = value.__record_init_fields__
-        if init_names is None:
-            init_names = names
-    elif dataclasses.is_dataclass(value) and not isinstance(value, type):
-        names = tuple(field.name for field in dataclasses.fields(value))
-        init_names = tuple(
-            field.name for field in dataclasses.fields(value) if field.init
-        )
-    else:
-        msg = "replace() requires a record instance"
-        raise TypeError(msg)
+def _derived_field_error(name: str) -> ValueError:
+    return ValueError(
+        f"field {name} is declared with init=False, "
+        "it cannot be specified with replace()"
+    )
 
-    for name in names:
-        if name not in init_names:
+
+@overload
+def replace(value: _RecordValue, /, **changes: object) -> _RecordValue: ...
+
+
+@overload
+def replace(value: _DataclassValue, /, **changes: object) -> _DataclassValue: ...
+
+
+def replace(value: object, /, **changes: object) -> object:
+    """Reconstruct a record, retaining omitted constructor arguments."""
+    if not isinstance(value, Record):
+        if not dataclasses.is_dataclass(value) or isinstance(value, type):
+            msg = "replace() requires a record instance"
+            raise TypeError(msg)
+
+        # Preserve Nab's ValueError for derived fields across Python versions.
+        if changes:
+            for field in dataclasses.fields(value):
+                if not field.init and field.name in changes:
+                    raise _derived_field_error(field.name)
+
+        # Zuban requires a concrete dataclass even after the instance check.
+        return dataclasses.replace(value, **changes)  # zuban: ignore[misc]
+
+    init_names = value.__record_init_fields__
+    for name in field_names(value):
+        if init_names is not None and name not in init_names:
             if name in changes:
-                msg = (
-                    f"field {name} is declared with init=False, "
-                    "it cannot be specified with replace()"
-                )
-                raise ValueError(msg)
+                raise _derived_field_error(name)
         elif name not in changes:
             changes[name] = getattr(value, name)
 
-    constructor: Callable[..., _Value] = type(value)
-    return constructor(**changes)
+    return type(value)(**changes)
 
 
 class SlottedValue:

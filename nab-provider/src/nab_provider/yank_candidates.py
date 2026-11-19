@@ -14,7 +14,10 @@ __lazy_modules__ = (
     "nab_provider.records",
 )
 
+from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Final
+
+from nab_resolver.errors import ResolutionInvariantError
 
 from ._compat import override
 from ._provider.extras import version_provides_extra
@@ -357,7 +360,9 @@ class YankCandidates:
             )
         ]
         if candidate.withdrawn:
-            provider.yank_admissions = frozenset({(candidate.base, candidate.version)})
+            provider.yank_admissions = MappingProxyType(
+                {(candidate.base, candidate.version): ()}
+            )
         return provider
 
     def prepare(self, candidate: Candidate) -> CandidateData | None:
@@ -510,15 +515,40 @@ class YankCandidates:
             )
         return result
 
+    def prepared_data(self, candidate: Candidate) -> CandidateData:
+        """Read the facts required to use a candidate selected by the solver."""
+        data = self.facts.get(candidate)
+        if data is None:
+            msg = (
+                f"cannot use {candidate.package}=={candidate.version}"
+                " without prepared metadata"
+            )
+            raise ResolutionInvariantError(msg)
+        return data
+
     def adopt(
-        self, selected: Mapping[str, Candidate]
+        self, selected: Mapping[str, Candidate], sources: Mapping[str, tuple[str, ...]]
     ) -> tuple[dict[str, Version], Provider]:
-        """Return selected versions and their restricted metadata provider."""
-        final = self.provider
-        permissions = set()
+        """Install prepared metadata and the declarations allowing each yank."""
+        # Check the whole selection before changing the provider used for the lock.
+        prepared = []
+        admissions = {}
         for package, candidate in selected.items():
-            data = self.facts[candidate]
-            assert data is not None
+            data = self.prepared_data(candidate)
+            prepared.append((package, candidate, data))
+
+            if candidate.withdrawn:
+                declarations = sources.get(candidate.base)
+                if not declarations:
+                    msg = (
+                        f"cannot adopt yanked {candidate.base}=={candidate.version}"
+                        " without an admitting declaration"
+                    )
+                    raise ResolutionInvariantError(msg)
+                admissions[candidate.base, candidate.version] = declarations
+
+        final = self.provider
+        for package, candidate, data in prepared:
             source = data.provider
             base = candidate.base
             final.version_dists_cache.pop(base, None)
@@ -531,11 +561,9 @@ class YankCandidates:
                 source.deferred_url_extras.get((base, candidate.version), {})
             )
             final.consulted_markers.update(source.consulted_markers)
-            if candidate.withdrawn:
-                permissions.add((base, candidate.version))
         for candidate in selected.values():
             final.defer_extra_deps((candidate.base, candidate.version))
-        final.yank_admissions = frozenset(permissions)
+        final.yank_admissions = MappingProxyType(admissions)
         return {name: candidate.version for name, candidate in selected.items()}, final
 
 

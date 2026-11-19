@@ -83,6 +83,4 @@ class YankPreference(PreferenceSearch[Candidate, VersionRange, Requirement]):
     ) -> tuple[dict[str, Version], Provider]:
         """Attach the allowing input or dependency pins to the selected provider."""
         sources = self.explain(selected)
-        pins, provider = self.catalogue.adopt(selected)
-        provider.yank_admission_sources = sources
-        return pins, provider
+        return self.catalogue.adopt(selected, sources)

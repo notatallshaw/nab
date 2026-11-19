@@ -12,7 +12,7 @@ __lazy_modules__ = (
 
 import os
 
-from nab._cli.parse import Row, Spec, Table, build
+from .parse import Row, Spec, Table, build
 
 __all__ = ["page", "terminal_width", "wrap"]
 

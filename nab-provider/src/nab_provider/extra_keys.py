@@ -10,7 +10,7 @@ __lazy_modules__ = ("nab_provider._vendor.packaging.utils",)
 
 import re
 
-from nab_provider._vendor.packaging.utils import canonicalize_name
+from ._vendor.packaging.utils import canonicalize_name
 
 __all__ = [
     "join_extra",

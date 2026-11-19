@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import errno
 import io
 import struct
@@ -11,8 +10,9 @@ import tarfile
 import urllib.request
 import zipfile
 import zlib
+from asyncio import run
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 from urllib.parse import unquote, urljoin, urlsplit
 
 import pytest
@@ -40,15 +40,9 @@ requires_int_limit = pytest.mark.skipif(
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine, Iterator
+    from collections.abc import Iterator
     from typing import Any
     from urllib.parse import ParseResult
-
-_T = TypeVar("_T")
-
-
-def run(coro: Coroutine[Any, Any, _T]) -> _T:
-    return asyncio.run(coro)
 
 
 def _fail_path_call(
@@ -530,6 +524,29 @@ class TestParseFileUrl:
 
 
 class TestFlatWheelhouse:
+    def test_builds_file_urls_only_for_the_requested_project(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = LocalIndexClient(tmp_path.as_uri())
+        wanted = ["Foo_Bar-1-py3-none-any.whl", "foo-bar-2.tar.gz", "foo.bar-3.zip"]
+        unrelated = ["foo_bar_extra-1-py3-none-any.whl", "foo-bar-extra-2.zip"]
+        for name in [*wanted, *unrelated]:
+            (tmp_path / name).touch()
+
+        converted: list[str] = []
+        as_uri = Path.as_uri
+
+        def record_uri(path: Path) -> str:
+            converted.append(path.name)
+            return as_uri(path)
+
+        monkeypatch.setattr(Path, "as_uri", record_uri)
+        files = run(client.get_files("FOO-bar"))
+
+        assert sorted(file.filename for file in files) == sorted(wanted)
+        assert client.served_zip_sdists("FOO-bar") == {"3"}
+        assert sorted(converted) == sorted(wanted)
+
     def test_finds_wheel_in_non_ascii_directory(self, tmp_path: Path) -> None:
         # Windows and macOS filesystems require Unicode filenames.
         name = "\u00ff" if sys.platform in {"win32", "darwin"} else "\udcff"

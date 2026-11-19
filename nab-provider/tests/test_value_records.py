@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import pickle
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 
 import pytest
 
@@ -187,6 +187,21 @@ def test_replace_recomputes_derived_fields(
         replace(value, double=10)
     with pytest.raises(TypeError):
         replace(value, unknown=10)
+
+
+def test_replace_retains_a_dataclass_initializer() -> None:
+    @dataclass
+    class InstalledPackage:
+        requirement: InitVar[str] = ""
+        name: str = field(init=False)
+
+        def __post_init__(self, requirement: str) -> None:
+            self.requirement = requirement
+            self.name = requirement.partition("==")[0]
+
+    package = InstalledPackage("pip==25")
+    assert replace(package).name == "pip"
+    assert replace(package, requirement="wheel==1").name == "wheel"
 
 
 @pytest.mark.parametrize(

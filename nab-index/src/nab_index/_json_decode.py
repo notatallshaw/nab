@@ -1,9 +1,4 @@
-"""One JSON decode for the cache and Simple-API read paths.
-
-``json.loads`` reports most bad input as a :class:`ValueError`, but a document
-nested past the decoder's recursion limit raises :class:`RecursionError`, which
-a handler written for the first kind does not catch.
-"""
+"""Decode JSON from index responses and cache records."""
 
 from __future__ import annotations
 
@@ -13,18 +8,24 @@ __lazy_modules__ = (
 )
 
 import json
-from typing import Any
+from typing import TypeAlias
 
-__all__ = ["decode_json"]
+__all__ = ["JsonValue", "decode_json"]
+
+JsonValue: TypeAlias = (
+    bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"] | None
+)
 
 
-def decode_json(raw: bytes) -> Any:
-    """Decode ``raw``, or raise :class:`ValueError` naming the fault."""
+def decode_json(raw: bytes) -> JsonValue:
+    """Raise ValueError for invalid JSON or excessive nesting."""
     try:
-        return json.loads(raw)
+        # The default decoder has no hooks that can construct other Python types.
+        value: JsonValue = json.loads(raw)
     except ValueError as exc:
         msg = "not valid JSON"
         raise ValueError(msg) from exc
     except RecursionError as exc:
         msg = "nested too deeply to decode"
         raise ValueError(msg) from exc
+    return value

@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from nab_project.resolve import TargetResult
     from nab_provider.resolver_inputs import MarkerHolds
-    from nab_provider.testing import FakeFetchPort
 
 import sys
 
@@ -35,7 +34,7 @@ from nab_provider.records import SdistFile
 from nab_provider.resolver_inputs import ProxyConstraints, build_resolver_inputs
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
-from nab_provider.testing import make_sdist, pkg_override
+from nab_provider.testing import FakeFetchPort, make_sdist, pkg_override
 from nab_provider.vcs_admission import VcsConfig
 from nab_provider.yank_preference import IncompletePreferenceError
 from nab_provider.yanked_resolution import MetadataProxy, YankProxyProvider
@@ -404,9 +403,9 @@ def test_termination_is_not_retried_as_a_yank_conflict(
         calls += 1
         if isinstance(self.provider, Provider):
             self.provider.fetch_versions("dep")
-            self.provider.yank_admissions = frozenset({("dep", Version("2"))})
+            self.provider.yank_admissions = {("dep", Version("2")): ()}
             self.provider.get_dependencies("dep", Version("2"))
-            self.provider.yank_admissions = frozenset()
+            self.provider.yank_admissions = {}
             assert self.provider.has_withdrawn_alternative()
         raise error
 
@@ -552,7 +551,7 @@ def test_unpinned_sdist_is_never_downloaded_or_built() -> None:
         port, [ResolveTarget.for_host()], [Requirement("dep")]
     )
     assert not result.success
-    for request in ("request_sdist", "request_sdist_archive", "request_built_metadata"):
+    for request in ("request_sdist", "request_sdist_archive", "build_sdist_metadata"):
         assert not port.calls_to(request)
 
 
@@ -674,7 +673,7 @@ def test_yanked_source_uses_preferred_wheel_metadata_without_building(
         assert pin.sdist.url == "https://example.test/dep-2.tar.gz"
         assert not pin.wheels
 
-    assert not port.calls_to("request_built_metadata")
+    assert not port.calls_to("build_sdist_metadata")
 
 
 def test_rejected_live_metadata_still_splits_the_universal_lock() -> None:
@@ -747,6 +746,54 @@ def graph_search(
         ProxyConstraints({}),
         preferences={},
     )
+
+
+def test_requested_metadata_proxy_requires_a_prepared_candidate() -> None:
+    search = graph_search([("dep", "2", True, [])], ["dep==2"])
+    candidate = search.catalogue.choices("dep")[0]
+    proxy = MetadataProxy(search.identify(candidate))
+    with pytest.raises(
+        ResolutionInvariantError, match="dep==2 without prepared metadata"
+    ):
+        search.get_dependencies(proxy, 0)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ResolutionError("host could not read the package listing"),
+        ResolutionError(""),
+        ResolutionError(
+            "host dependency conflict",
+            Incompatibility([], cause=IncompatibilityCause.NO_VERSIONS),
+        ),
+        ResolutionLimitError("host work limit"),
+    ],
+    ids=["listing-error", "empty-message", "unrelated-proof", "work-limit"],
+)
+def test_root_listing_failure_cannot_certify_that_no_solution_exists(
+    failure: ResolutionError,
+) -> None:
+    search = graph_search([], ["missing"])
+    port = search.catalogue.provider.coordinator
+    assert isinstance(port, FakeFetchPort)
+
+    def fail_listing(package: str, _speculative: bool) -> None:
+        assert package == "missing"
+        raise failure
+
+    port.override("request_listing", fail_listing)
+    with pytest.raises(ResolutionError) as caught:
+        search.resolve()
+    if isinstance(failure, ResolutionTerminatedError):
+        assert caught.value is failure
+    else:
+        assert isinstance(caught.value, IncompletePreferenceError)
+        expected = "yanked dependency resolution is incomplete"
+        assert str(caught.value) == (
+            f"{expected}: {failure}" if str(failure) else expected
+        )
+        assert caught.value.__cause__ is failure
 
 
 @pytest.mark.parametrize("roots", list(permutations(("leaf", "app", "plugin"))))

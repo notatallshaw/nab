@@ -8,7 +8,7 @@ from __future__ import annotations
 
 __lazy_modules__ = ("nab.policy_migrations",)
 
-from nab.policy_migrations import DIST_POLICY_REPLACEMENTS
+from ..policy_migrations import DIST_POLICY_REPLACEMENTS
 
 __all__ = [
     "Parsed",

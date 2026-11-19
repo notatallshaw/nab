@@ -1,8 +1,4 @@
-"""Run the embedding guide's example and hold it to the output it prints.
-
-The nab-resolver wheel ships no tests, so this page is the only worked provider
-an installed consumer can read.
-"""
+"""Execute the resolver guide and project README examples."""
 
 from __future__ import annotations
 
@@ -10,6 +6,13 @@ import io
 from contextlib import redirect_stdout
 from pathlib import Path
 
+import pytest
+
+from nab_index.multi_index import IndexConfig
+from nab_project.inputs import ResolveInputs
+from nab_resolver.errors import ResolutionError
+
+from ._local_artifacts import make_wheel_archive, publish_artifacts
 from ._markdown import fenced_blocks
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -65,3 +68,35 @@ def test_the_guide_prints_what_it_documents() -> None:
             assert printed.getvalue() == expected, (
                 f"{GUIDE.name} python block {position} no longer prints this output"
             )
+
+
+def test_project_readme_resolves_for_the_host(tmp_path: Path) -> None:
+    readme = REPO_ROOT / "nab-project" / "README.md"
+    [example] = [
+        code
+        for language, code in fenced_blocks(readme.read_text(encoding="utf-8"))
+        if language == "python"
+    ]
+    namespace: dict[str, object] = {}
+    exec(compile(example, str(readme), "exec"), namespace)  # noqa: S102
+    project_versions = namespace["project_versions"]
+    assert callable(project_versions)
+
+    index = tmp_path / "simple"
+    wheel = make_wheel_archive(
+        "leaf",
+        "1.0",
+        "Metadata-Version: 2.1\nName: leaf\nVersion: 1.0\n",
+        "py3-none-any",
+    )
+    publish_artifacts(index, "leaf", {"leaf-1.0-py3-none-any.whl": wheel})
+    project = tmp_path / "pyproject.toml"
+    project.write_text(
+        '[project]\nname = "app"\nversion = "1"\ndependencies = ["leaf"]\n',
+        encoding="utf-8",
+    )
+
+    inputs = ResolveInputs(indexes=(IndexConfig("local", index.as_uri()),))
+    assert project_versions(project, inputs) == {"leaf": "1.0"}
+    with pytest.raises(ResolutionError, match="leaf"):
+        project_versions(project, inputs.replace(constraints=("leaf>=2",)))

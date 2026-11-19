@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import inspect
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
@@ -23,10 +23,8 @@ from nab_provider.fetch_port import (
 )
 from nab_provider.store import sdist_artifact_key
 
-SRC = Path(__file__).resolve().parents[1] / "src" / "nab_project"
-PROVIDER_SRC = (
-    Path(__file__).resolve().parents[2] / "nab-provider" / "src" / "nab_provider"
-)
+PROJECT_SRC = Path(inspect.getfile(FetchCoordinator)).parent
+PROVIDER_SRC = Path(inspect.getfile(FetchPort)).parent
 
 PROVIDER_SOURCES = (
     PROVIDER_SRC / "provider.py",
@@ -37,7 +35,7 @@ PROVIDER_SOURCES = (
 A module outside this list can read the handle unseen, so the list is part of
 what the census asserts."""
 
-HOST_SOURCES = (SRC / "_build_remote.py", SRC / "_sources.py")
+HOST_SOURCES = (PROJECT_SRC / "_build_remote.py", PROJECT_SRC / "_sources.py")
 """The host-side halves of source materialisation and the remote build.
 
 They hold the port under the name ``port``, so the census walks them for that
@@ -56,11 +54,13 @@ def declared_members(protocol: type) -> frozenset[str]:
     return frozenset(name for name in vars(protocol) if not name.startswith("_"))
 
 
-def parameter_shape(func: object) -> list[tuple[str, inspect._ParameterKind, object]]:
+def parameter_shape(
+    func: Callable[..., object],
+) -> list[tuple[str, inspect._ParameterKind, object]]:
     """The name, kind and default of each parameter, in declaration order."""
     return [
         (param.name, param.kind, param.default)
-        for param in inspect.signature(func).parameters.values()  # type: ignore[arg-type]
+        for param in inspect.signature(func).parameters.values()
     ]
 
 
@@ -208,7 +208,7 @@ def host_census() -> set[str]:
 @pytest.fixture
 def coordinator() -> FetchCoordinator:
     """A coordinator that is never started, so it makes no request."""
-    return FetchCoordinator(transport=HttpxAsyncTransport())  # type: ignore[arg-type]
+    return FetchCoordinator(transport=HttpxAsyncTransport())
 
 
 class TestPortDeclaration:
@@ -348,10 +348,8 @@ class TestPortDeclaration:
 class TestRequestSignatures:
     """Both implementations take the port's parameters, defaults included.
 
-    ``isinstance`` on a runtime-checkable protocol tests only that the names are
-    present, and no type checker reads nab-project, so this is what holds either
-    implementation to the port. Defaults are part of it: a hash argument
-    required on one side only narrows the callable.
+    A runtime protocol check verifies that the methods exist. Compare their
+    defaults too, so callers can omit the same arguments on either implementation.
     """
 
     @pytest.mark.parametrize(

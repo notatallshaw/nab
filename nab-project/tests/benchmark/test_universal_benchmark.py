@@ -7,17 +7,22 @@ import json
 import shutil
 import subprocess
 import sys
+from contextlib import nullcontext
+from functools import partial
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 from typing_extensions import Self
 
+from nab_project._resolve import engine
+from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.lockfile import IndexPin, TargetLock, WheelArtifact
 from nab_project.resolve import ResolveResult, TargetResult
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
+from nab_provider.testing import make_metadata, make_sdist, make_wheel
 
 # universal_scenarios.py and universal_summary.py import their siblings by bare name.
 pytestmark = [
@@ -107,7 +112,7 @@ def _successful_result() -> tuple[ResolveTarget, ResolveResult]:
     return target, result
 
 
-def _result_data(result: dict, *, schema: int = 3) -> dict:
+def _result_data(result: dict, *, schema: int = 4) -> dict:
     complete_result = {
         "success": False,
         "resolution_success": None,
@@ -150,6 +155,7 @@ def _result_data(result: dict, *, schema: int = 3) -> dict:
                 "platform_id": "linux_x86_64",
                 "success": False,
                 "error": "resolution failed",
+                "proved_conflict": True,
                 "decisions": 0,
                 "rounds": 0,
                 "conflicts": 0,
@@ -174,6 +180,7 @@ def _result_data(result: dict, *, schema: int = 3) -> dict:
             "commit": "run",
             "source": _CLEAN_SOURCE,
             "python": ">=3.11,<3.12",
+            "python_versions": ["3.11"],
             "platforms": ["linux_x86_64"],
             "python_order": "asc",
             "requirements": ["foo"],
@@ -400,6 +407,8 @@ def test_result_contract_requires_the_complete_input_shape() -> None:
     [
         ("source", {"commit": "a" * 40, "dirty": False}),
         ("python_order", "newest-first"),
+        ("python_versions", []),
+        ("python_versions", ["3.11", "3.11"]),
         ("requirements", []),
         ("platforms", ["linux_x86_64", "linux_x86_64"]),
         ("align_across_tuples", "true"),
@@ -409,6 +418,7 @@ def test_result_contract_requires_the_complete_input_shape() -> None:
         ("build_policy", "always"),
         ("trust_unverified_sdist_deps", "false"),
         ("skip_on_fail", "false"),
+        ("expect_conflict", "true"),
     ],
 )
 def test_result_contract_validates_input_fields(field: str, value: object) -> None:
@@ -450,6 +460,7 @@ def test_result_contract_validates_optional_input_fields() -> None:
 
     for field, value in (
         ("constraints", []),
+        ("dependency_metadata", {"pkg==1": [False]}),
         ("datetime", "not-a-date"),
         ("datetime", "2025-W22-7T00:00:00Z"),
         ("datetime", "20250601T000000Z"),
@@ -463,6 +474,17 @@ def test_result_contract_validates_optional_input_fields() -> None:
         invalid = json.loads(json.dumps(data))
         invalid["input"][field] = value
         assert module.result_is_well_formed(invalid) is False
+
+
+@pytest.mark.parametrize("versions", [["3.10"], ["3.11", "3.12"]])
+def test_summary_rejects_results_from_a_different_python_matrix(
+    versions: list[str],
+) -> None:
+    report = _result_data(
+        {"resolution_success": False, "skip_on_fail": True, "expected_failure": True}
+    )
+    report["input"]["python_versions"] = versions
+    assert not _summary_harness().result_is_accepted(report)
 
 
 def test_result_contract_allows_multiple_slices_per_declared_cell() -> None:
@@ -642,6 +664,99 @@ def test_lock_inconsistency_fails_and_pins_are_retained(
     assert "example CACHED FAILURE" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    ("requirements", "max_iterations", "proofs", "accepted_settings"),
+    [
+        (["pkg==2"], None, [True, True], ("expect_conflict", "skip_on_fail")),
+        (["pkg"], None, [None, None], ("skip_on_fail",)),
+        (
+            ["pkg", "pkg==2; sys_platform == 'linux'"],
+            None,
+            [True, None],
+            ("skip_on_fail",),
+        ),
+        (["pkg"], 1, [False, False], ()),
+        (
+            ["pkg==2; sys_platform == 'linux'", "pkg; sys_platform == 'darwin'"],
+            2,
+            [True, False],
+            (),
+        ),
+    ],
+    ids=["conflicts", "locks", "conflict-and-lock", "limits", "conflict-and-limit"],
+)
+def test_conflict_expectations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    requirements: list[str],
+    max_iterations: int | None,
+    proofs: list[bool | None],
+    accepted_settings: tuple[str, ...],
+) -> None:
+    module = _harness()
+    calls = 0
+    wheel = make_wheel("1", hashes=(("sha256", "a" * 64),))
+    dependency = make_wheel("1", package="dep", hashes=(("sha256", "b" * 64),))
+
+    def fetch(*_args: object, **_kwargs: object) -> nullcontext[FakeFetchPort]:
+        nonlocal calls
+        calls += 1
+        return nullcontext(
+            make_coordinator(
+                listings={"pkg": [wheel], "dep": [dependency]},
+                metadata_by_url={
+                    wheel.url + ".metadata": make_metadata("pkg", "1", "dep"),
+                    dependency.url + ".metadata": make_metadata("dep", "1"),
+                },
+            )
+        )
+
+    monkeypatch.setattr(module, "FetchCoordinator", fetch)
+    monkeypatch.setattr(module, "Urllib3AsyncTransport", object)
+    monkeypatch.setattr(module, "CACHE_DIR", tmp_path / "cache")
+    if max_iterations is not None:
+        monkeypatch.setattr(
+            engine, "Resolver", partial(engine.Resolver, max_iterations=max_iterations)
+        )
+
+    scenario = {
+        **_universal_scenario("linux_x86_64", "macos_arm64"),
+        "requirements": requirements,
+    }
+
+    def run(setting: str) -> bool:
+        return module.process_scenario(
+            "case",
+            {**scenario, setting: True},
+            "run",
+            force=False,
+            output_dir=tmp_path,
+            source=_CLEAN_SOURCE,
+        )
+
+    path = tmp_path / "case.json"
+    for setting in ("expect_conflict", "skip_on_fail"):
+        accepted = setting in accepted_settings
+        assert run(setting) is accepted
+        report = json.loads(path.read_text())
+        assert [
+            target.get("proved_conflict") for target in report["per_tuple"]
+        ] == proofs
+        assert _summary_harness().result_is_accepted(report) is accepted
+        assert run(setting) is accepted
+    assert calls == 2
+
+    # Older reports treated any resolver failure as an expected conflict.
+    if report["result"]["resolution_success"] is False:
+        for target in report["per_tuple"]:
+            target.pop("proved_conflict", None)
+        report["result"]["expected_failure"] = True
+        path.write_text(json.dumps(report))
+        assert not _summary_harness().result_is_accepted(report)
+        assert run("skip_on_fail") is ("skip_on_fail" in accepted_settings)
+        assert calls == 3
+
+
 def test_skip_on_fail_does_not_accept_post_resolution_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -726,6 +841,16 @@ def test_cached_result_must_match_the_shape_and_source(
     assert module.process_scenario(
         "example", scenario, "label", force=False, source=_CLEAN_SOURCE
     )
+    wrong_target = json.loads(result_path.read_text())
+    wrong_target["per_tuple"][0]["python_version"] = "3.10"
+    result_path.write_text(json.dumps(wrong_target))
+    assert module.process_scenario(
+        "example", scenario, "label", force=False, source=_CLEAN_SOURCE
+    )
+    assert (
+        json.loads(result_path.read_text())["per_tuple"][0]["python_version"] == "3.11"
+    )
+
     other_source = {"commit": "b" * 40, "dirty": False, "diff_hash": None}
     assert module.process_scenario(
         "example", scenario, "label", force=False, source=other_source
@@ -738,9 +863,167 @@ def test_cached_result_must_match_the_shape_and_source(
         "example", scenario, "label", force=False, source=unknown_source
     )
 
-    assert calls == 5
+    assert calls == 6
     data = json.loads(result_path.read_text())
     assert data["input"]["source"] == unknown_source
+
+
+def test_run_fails_if_the_resolver_returns_a_lock_for_another_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _harness()
+    _, python_311_result = _successful_result()
+    monkeypatch.setattr(module, "FetchCoordinator", _FakeCoordinator)
+    monkeypatch.setattr(module, "Urllib3AsyncTransport", object)
+    monkeypatch.setattr(
+        module, "resolve_with_coordinator", lambda *args, **kwargs: python_311_result
+    )
+    monkeypatch.setattr(module, "check_lock_consistency", lambda result: (True, []))
+    scenario = {**_universal_scenario("linux_x86_64"), "python": "==3.10.*"}
+
+    assert not module.process_scenario(
+        "wrong-python",
+        scenario,
+        "run",
+        force=True,
+        output_dir=tmp_path,
+        source=_CLEAN_SOURCE,
+    )
+    assert "FAILED" in capsys.readouterr().out
+
+
+def test_wheel_metadata_for_one_release_changes_the_cached_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _harness()
+    wheel = make_wheel(
+        "1.0", tag="cp310-cp310-win_amd64", hashes=(("sha256", "a" * 64),)
+    )
+    sdist = make_sdist("1.0", hashes=(("sha256", "b" * 64),))
+    dependency = make_wheel("2.0", package="dep", hashes=(("sha256", "c" * 64),))
+
+    def fetch(*_args: object, **_kwargs: object) -> nullcontext[FakeFetchPort]:
+        return nullcontext(
+            make_coordinator(
+                listings={"pkg": [wheel, sdist], "dep": [dependency]},
+                metadata_by_url={
+                    wheel.url + ".metadata": make_metadata("pkg", "1.0", "dep==2"),
+                    dependency.url + ".metadata": make_metadata("dep", "2.0"),
+                },
+                sdist_pkg_info="Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n",
+            )
+        )
+
+    monkeypatch.setattr(module, "FetchCoordinator", fetch)
+    monkeypatch.setattr(module, "Urllib3AsyncTransport", object)
+    scenario = {**_universal_scenario("linux_x86_64"), "requirements": ["pkg"]}
+
+    def run() -> bool:
+        return module.process_scenario(
+            "case",
+            scenario,
+            "run",
+            force=False,
+            output_dir=tmp_path,
+            source=_CLEAN_SOURCE,
+        )
+
+    assert not run()
+    scenario["assume_universal_deps"] = {"Pkg": "==1.0"}
+    assert run()
+    report = json.loads((tmp_path / "case.json").read_text())
+    assert report["per_tuple"][0]["pins"] == {"pkg": "1.0", "dep": "2.0"}
+    assert report["result"]["lock_consistent"]
+    assert report["input"]["assume_universal_deps"] == {"pkg": "==1.0"}
+
+    scenario["assume_universal_deps"] = {"pkg": ">=2"}
+    assert not run()
+
+
+@pytest.mark.parametrize(
+    ("version", "other_version"), [("1.0", "1.1"), ("1.0+build", "1.0")]
+)
+def test_declared_dependencies_change_the_lock_and_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str, other_version: str
+) -> None:
+    module = _harness()
+    sdist = make_sdist(version, hashes=(("sha256", "a" * 64),))
+    wheel = make_wheel("2.0", package="dep", hashes=(("sha256", "b" * 64),))
+
+    def fetch(*_args: object, **_kwargs: object) -> nullcontext[FakeFetchPort]:
+        return nullcontext(
+            make_coordinator(
+                listings={"pkg": [sdist], "dep": [wheel]},
+                metadata_by_url={wheel.url + ".metadata": make_metadata("dep", "2.0")},
+                sdist_pkg_info=f"Metadata-Version: 1.1\nName: pkg\nVersion: {version}\n",
+            )
+        )
+
+    monkeypatch.setattr(module, "FetchCoordinator", fetch)
+    monkeypatch.setattr(module, "Urllib3AsyncTransport", object)
+    scenario = {**_universal_scenario("linux_x86_64"), "requirements": ["pkg"]}
+
+    def run() -> bool:
+        return module.process_scenario(
+            "case",
+            scenario,
+            "run",
+            force=False,
+            output_dir=tmp_path,
+            source=_CLEAN_SOURCE,
+        )
+
+    assert not run()
+    scenario["dependency_metadata"] = {f"Pkg=={version}": ["dep>=2"]}
+    assert run()
+    path = tmp_path / "case.json"
+    report = json.loads(path.read_text())
+    assert report["input"]["dependency_metadata"] == {f"pkg=={version}": ["dep>=2"]}
+    assert report["per_tuple"][0]["pins"] == {"pkg": version, "dep": "2.0"}
+    assert report["result"]["lock_consistent"]
+
+    scenario["dependency_metadata"] = {f"pkg=={version}": []}
+    assert run()
+    assert json.loads(path.read_text())["per_tuple"][0]["pins"] == {"pkg": version}
+    scenario["dependency_metadata"] = {f"pkg=={other_version}": []}
+    assert not run()
+
+
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        (["pkg"], TypeError),
+        ({"pkg==1": "dep"}, TypeError),
+        ({"pkg>=1": []}, ValueError),
+        ({"pkg==1.*": []}, ValueError),
+        ({"pkg==1": ["dep="]}, ValueError),
+        ({"My-Pkg==1.0": [], "my_pkg==1": []}, ValueError),
+    ],
+)
+def test_invalid_dependency_metadata_fails_preflight(
+    value: object, error: type[Exception]
+) -> None:
+    scenario = {**_universal_scenario("linux_x86_64"), "dependency_metadata": value}
+    with pytest.raises(error, match="example: .*dependency_metadata"):
+        _harness().validate_scenario("example", scenario)
+
+
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        (["pkg"], TypeError),
+        ({"pkg": False}, TypeError),
+        ({"bad name": "==1"}, ValueError),
+        ({"pkg": "one"}, ValueError),
+        ({"my_pkg": "==1", "my-pkg": "==2"}, ValueError),
+    ],
+)
+def test_invalid_wheel_metadata_override_fails_preflight(
+    value: object, error: type[Exception]
+) -> None:
+    scenario = {**_universal_scenario("linux_x86_64"), "assume_universal_deps": value}
+    with pytest.raises(error, match="example: .*assume_universal_deps"):
+        _harness().validate_scenario("example", scenario)
 
 
 def test_unknown_universal_setting_is_rejected() -> None:
@@ -1085,7 +1368,10 @@ def test_main_records_the_complete_full_scenario_set(
     assert manifest["available_scenarios"] == manifest["selected_scenarios"]
     assert manifest["available_scenarios"] == manifest["completed_scenarios"]
     assert manifest["source"] == _CLEAN_SOURCE
-    assert len(manifest["available_scenarios"]) == 18
+    configured = module.tomllib.loads(
+        (module.SCENARIOS_DIR / "universal.toml").read_text()
+    )
+    assert manifest["available_scenarios"] == sorted(configured)
 
 
 def test_universal_scenarios_only_override_alignment_for_noalign_cases() -> None:
@@ -1139,7 +1425,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "lock_consistent": None,
                 "error": "scenario exceeded wall-clock budget",
             },
-            3,
+            4,
             1,
         ),
         (
@@ -1151,7 +1437,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "timed_out": False,
                 "lock_consistent": None,
             },
-            3,
+            4,
             0,
         ),
         (
@@ -1163,7 +1449,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "timed_out": False,
                 "lock_consistent": None,
             },
-            3,
+            4,
             1,
         ),
         (
@@ -1198,7 +1484,7 @@ def test_summary_exit_status(
     (result_dir / "_manifest.json").write_text(
         json.dumps(
             {
-                "benchmark_schema": 3,
+                "benchmark_schema": 4,
                 "commit": "run",
                 "source": _CLEAN_SOURCE,
                 "run_kind": "full",
@@ -1245,7 +1531,7 @@ def test_summary_rejects_a_selected_run_manifest(
     (result_dir / "_manifest.json").write_text(
         json.dumps(
             {
-                "benchmark_schema": 3,
+                "benchmark_schema": 4,
                 "commit": "run",
                 "source": _CLEAN_SOURCE,
                 "run_kind": "selected",
@@ -1272,7 +1558,7 @@ def test_summary_rejects_a_dirty_full_run(
     (result_dir / "_manifest.json").write_text(
         json.dumps(
             {
-                "benchmark_schema": 3,
+                "benchmark_schema": 4,
                 "commit": "run",
                 "source": dirty_source,
                 "run_kind": "full",

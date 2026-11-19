@@ -28,9 +28,9 @@ import os
 import sys
 import types  # noqa: TC003 - the block TC003 asks for is a runtime import typing
 
-from nab._cli import spec
-from nab._cli.parse import Parsed, UsageError, parse
-from nab._version import __version__
+from ._cli import spec
+from ._cli.parse import Parsed, UsageError, parse
+from ._version import __version__
 
 # Declared rather than imported from ``typing``, which this path never loads.
 TYPE_CHECKING = False

@@ -17,7 +17,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 from itertools import chain
 from pathlib import Path
 from types import ModuleType
@@ -60,11 +59,6 @@ def _task(filename: str) -> ModuleType:
 
 
 build_dists = _task("build_dists.py")
-
-# check_dists.py reaches build_dists through the script directory, which is on
-# sys.path only when it runs as a script.
-sys.modules.setdefault("build_dists", build_dists)
-check_dists = _task("check_dists.py")
 
 PACKAGES = build_dists.PACKAGES
 
@@ -425,11 +419,16 @@ def _workflow_arguments(job: str, executable: str, **environment: str) -> list[s
     text = TEST_WORKFLOW.read_text(encoding="utf-8")
     match = re.search(rf"\n  {job}:\n(.*?)(?=\n  [\w-]+:\n|\Z)", text, re.DOTALL)
     assert match is not None
-    blocks = re.findall(r"(?m)^        run: \|\n((?:          .*\n)+)", match.group(1))
+    blocks = [
+        (indent, block)
+        for indent, block in re.findall(
+            r"(?m)^( +)run:(?: &[\w-]+)? \|\n((?:\1  .*\n)+)", match.group(1)
+        )
+        if any(f"${name}" in block for name in environment)
+    ]
     assert len(blocks) == 1
-    script = "\n".join(
-        line.removeprefix("          ") for line in blocks[0].splitlines()
-    )
+    indent, block = blocks[0]
+    script = "\n".join(line.removeprefix(indent + "  ") for line in block.splitlines())
     bash = shutil.which("bash")
     assert bash is not None
     command = executable + "() { printf '%s\\n' \"$@\"; };\n" + script
@@ -443,7 +442,9 @@ def _workflow_arguments(job: str, executable: str, **environment: str) -> list[s
     "selected", ["resolver provider project umbrella", "project umbrella", "umbrella"]
 )
 def test_ci_passes_selected_workspaces_to_nox(selected: str) -> None:
-    assert _workflow_arguments("test", "nox", WORKSPACES=selected) == [
+    assert _workflow_arguments("test", "python", WORKSPACES=selected) == [
+        "-m",
+        "nox",
         "-s",
         "tests",
         "--",
@@ -527,14 +528,6 @@ def test_release_workflow_publishes_every_released_package() -> None:
     published = _PUBLISHED_DIR.findall(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
 
     assert set(published) == set(PACKAGES)
-
-
-def test_the_dists_check_imports_every_released_package() -> None:
-    """The dists check installs the whole wheel set, then imports it.
-
-    The import list is derived from PACKAGES and pinned here.
-    """
-    assert set(check_dists.MODULES) == set(MODULES)
 
 
 def test_lock_config_covers_every_released_package() -> None:

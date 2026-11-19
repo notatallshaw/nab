@@ -1,59 +1,46 @@
-"""Test providers used by the resolver property tests.
-
-These are minimal :class:`AbstractProvider` implementations that look
-up answers in a pre-built dependency-graph dict.  They appear here so
-the property-test modules stay focused on invariants and so the
-provider implementations can be shared across files.
-"""
+"""Graph-backed test providers and independent solution checks."""
 
 from __future__ import annotations
 
-import itertools
-from collections.abc import Callable, Mapping
+from collections.abc import Iterator, Mapping
 
+from nab_resolver._compat import override
+from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 from nab_resolver.ranges import Range
-from nab_resolver.types import Incompatibility, RangeProtocol
+from nab_resolver.resolver import BaseProvider, Resolver
+from nab_resolver.types import RangeProtocol
 
 
-class FuzzProvider:
-    """Provider backed by a generated dependency graph.
-
-    Picks the newest matching version, prioritises by candidate
-    count, and never queues pending clauses.
-    """
+class _GraphProvider(BaseProvider[str, int]):
+    """Read package versions and dependencies from a generated graph."""
 
     def __init__(self, graph: dict[str, dict[int, dict[str, Range[int]]]]) -> None:
-        """Create a provider from a dependency graph dict."""
         self._graph = graph
 
-    def _get_versions(self, package: str) -> list[int]:
-        """Return versions sorted newest-first."""
-        if package not in self._graph:
-            return []
-        return sorted(self._graph[package].keys(), reverse=True)
+    def _matching_versions(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> Iterator[int]:
+        return (v for v in self._graph.get(package, {}) if v in version_range)
 
     def choose_version(
         self, package: str, version_range: RangeProtocol[int]
     ) -> int | None:
-        """Pick the newest version within the allowed range."""
-        for version in self._get_versions(package):
-            if version in version_range:
-                return version
-        return None
+        return max(self._matching_versions(package, version_range), default=None)
 
     def has_satisfying_version(
         self, package: str, version_range: RangeProtocol[int]
     ) -> bool:
-        """Report whether any available version falls in the range."""
-        return any(v in version_range for v in self._get_versions(package))
+        return next(self._matching_versions(package, version_range), None) is not None
 
     def get_dependencies(self, package: str, version: int) -> dict[str, Range[int]]:
-        """Return dependencies for a specific version."""
         return self._graph.get(package, {}).get(version, {})
 
-    def begin_decision_scan(self) -> Callable[[str], bool] | None:
-        """Offer no probe: nothing in this stub moves under a scan."""
+    def widen_decision(self, package: str, version: int) -> None:
         return None
+
+
+class FuzzProvider(_GraphProvider):
+    """Choose the newest version and prioritize by the matching candidate count."""
 
     def prioritize(
         self,
@@ -62,89 +49,19 @@ class FuzzProvider:
         conflict_counts: Mapping[str, int],
         culprit_counts: Mapping[str, int] | None = None,
     ) -> int:
-        """Prioritize by number of matching versions."""
-        del conflict_counts, culprit_counts
-        versions = self._get_versions(package)
-        return sum(1 for version in versions if version in version_range)
-
-    def is_ready(self, package: str) -> bool:
-        """All packages decidable immediately in tests."""
-        del package
-        return True
-
-    def receive_partial_solution_hint(
-        self,
-        positive_ranges: Mapping[str, RangeProtocol[int]],
-        decisions: Mapping[str, int],
-    ) -> None:
-        """No-op: test provider does not use partial solution state."""
-        del positive_ranges, decisions
-
-    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
-        """No queued clauses."""
-        return []
-
-    def consume_force_backtrack_targets(self) -> list[str]:
-        """No force-backtrack signal from this test provider."""
-        return []
-
-    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
-        """No widening: dependency clauses keep the exact decided version."""
-        del package, version
-        return None
-
-    def narrow_for_display(
-        self, package: str, constraint: RangeProtocol[int]
-    ) -> RangeProtocol[int]:
-        """Identity: constraints render as stored."""
-        del package
-        return constraint
+        return sum(1 for _ in self._matching_versions(package, version_range))
 
 
-class PromotingFuzzProvider:
-    """Provider that promotes packages above a conflict threshold.
-
-    The conflict threshold is drawn by Hypothesis, so the property
-    tests sweep aggressive promotion (1), moderate (3-5), and
-    effectively-disabled (large threshold) settings.
-    """
+class PromotingFuzzProvider(_GraphProvider):
+    """Promote packages once their conflict count reaches the supplied threshold."""
 
     def __init__(
         self,
         graph: dict[str, dict[int, dict[str, Range[int]]]],
         conflict_threshold: int,
     ) -> None:
-        """Create a provider with a specific conflict promotion threshold."""
-        self._graph = graph
+        super().__init__(graph)
         self._conflict_threshold = conflict_threshold
-
-    def _get_versions(self, package: str) -> list[int]:
-        """Return versions sorted newest-first."""
-        if package not in self._graph:
-            return []
-        return sorted(self._graph[package].keys(), reverse=True)
-
-    def choose_version(
-        self, package: str, version_range: RangeProtocol[int]
-    ) -> int | None:
-        """Pick the newest version within the allowed range."""
-        for version in self._get_versions(package):
-            if version in version_range:
-                return version
-        return None
-
-    def has_satisfying_version(
-        self, package: str, version_range: RangeProtocol[int]
-    ) -> bool:
-        """Report whether any available version falls in the range."""
-        return any(v in version_range for v in self._get_versions(package))
-
-    def get_dependencies(self, package: str, version: int) -> dict[str, Range[int]]:
-        """Return dependencies for a specific version."""
-        return self._graph.get(package, {}).get(version, {})
-
-    def begin_decision_scan(self) -> None:
-        """No-op: nothing in this stub moves under a scan."""
 
     def prioritize(
         self,
@@ -153,133 +70,18 @@ class PromotingFuzzProvider:
         conflict_counts: Mapping[str, int],
         culprit_counts: Mapping[str, int] | None = None,
     ) -> tuple[int, int]:
-        """Promote packages above the conflict threshold."""
-        del culprit_counts
-        promoted = (
-            0 if conflict_counts.get(package, 0) >= self._conflict_threshold else 1
-        )
-        versions = self._get_versions(package)
-        count = sum(1 for version in versions if version in version_range)
-        return (promoted, count)
-
-    def is_ready(self, package: str) -> bool:
-        """All packages decidable immediately in tests."""
-        del package
-        return True
-
-    def receive_partial_solution_hint(
-        self,
-        positive_ranges: Mapping[str, RangeProtocol[int]],
-        decisions: Mapping[str, int],
-    ) -> None:
-        """No-op: test provider does not use partial solution state."""
-        del positive_ranges, decisions
-
-    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
-        """No queued clauses."""
-        return []
-
-    def consume_force_backtrack_targets(self) -> list[str]:
-        """No force-backtrack signal from this test provider."""
-        return []
-
-    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
-        """No widening: dependency clauses keep the exact decided version."""
-        del package, version
-        return None
-
-    def narrow_for_display(
-        self, package: str, constraint: RangeProtocol[int]
-    ) -> RangeProtocol[int]:
-        """Identity: constraints render as stored."""
-        del package
-        return constraint
+        tier = 0 if conflict_counts.get(package, 0) >= self._conflict_threshold else 1
+        return tier, sum(1 for _ in self._matching_versions(package, version_range))
 
 
-class OldestFirstProvider:
-    """Provider that picks the oldest version instead of newest.
+class OldestFirstProvider(FuzzProvider):
+    """Use the same candidate-count priority while choosing the oldest match."""
 
-    Used for the version-order independence property: a graph that
-    resolves with newest-first must also resolve with oldest-first
-    (and vice versa for impossible).
-    """
-
-    def __init__(self, graph: dict[str, dict[int, dict[str, Range[int]]]]) -> None:
-        """Create a provider from a dependency graph dict."""
-        self._graph = graph
-
-    def _get_versions(self, package: str) -> list[int]:
-        """Return versions sorted oldest-first."""
-        if package not in self._graph:
-            return []
-        return sorted(self._graph[package].keys())
-
+    @override
     def choose_version(
         self, package: str, version_range: RangeProtocol[int]
     ) -> int | None:
-        """Pick the oldest version within the allowed range."""
-        for version in self._get_versions(package):
-            if version in version_range:
-                return version
-        return None
-
-    def has_satisfying_version(
-        self, package: str, version_range: RangeProtocol[int]
-    ) -> bool:
-        """Report whether any available version falls in the range."""
-        return any(v in version_range for v in self._get_versions(package))
-
-    def get_dependencies(self, package: str, version: int) -> dict[str, Range[int]]:
-        """Return dependencies for a specific version."""
-        return self._graph.get(package, {}).get(version, {})
-
-    def begin_decision_scan(self) -> None:
-        """No-op: nothing in this stub moves under a scan."""
-
-    def prioritize(
-        self,
-        package: str,
-        version_range: RangeProtocol[int],
-        conflict_counts: Mapping[str, int],
-        culprit_counts: Mapping[str, int] | None = None,
-    ) -> int:
-        """Prioritize by number of matching versions."""
-        del conflict_counts, culprit_counts
-        versions = self._get_versions(package)
-        return sum(1 for version in versions if version in version_range)
-
-    def is_ready(self, package: str) -> bool:
-        """All packages decidable immediately in tests."""
-        del package
-        return True
-
-    def receive_partial_solution_hint(
-        self,
-        positive_ranges: Mapping[str, RangeProtocol[int]],
-        decisions: Mapping[str, int],
-    ) -> None:
-        """No-op: test provider does not use partial solution state."""
-        del positive_ranges, decisions
-
-    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
-        """No queued clauses."""
-        return []
-
-    def consume_force_backtrack_targets(self) -> list[str]:
-        """No force-backtrack signal from this test provider."""
-        return []
-
-    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
-        """No widening: dependency clauses keep the exact decided version."""
-        del package, version
-        return None
-
-    def narrow_for_display(
-        self, package: str, constraint: RangeProtocol[int]
-    ) -> RangeProtocol[int]:
-        """Identity: constraints render as stored."""
-        del package
-        return constraint
+        return min(self._matching_versions(package, version_range), default=None)
 
 
 def verify_solution(
@@ -301,7 +103,11 @@ def verify_solution(
         )
 
     for package, version in solution.items():
-        dependencies = graph.get(package, {}).get(version, {})
+        assert package in graph, (
+            f"Selected package {package!r} is absent from the graph"
+        )
+        assert version in graph[package], f"Unknown version {version} of {package!r}"
+        dependencies = graph[package][version]
         for dep_package, dep_range in dependencies.items():
             assert dep_package in solution, (
                 f"Dependency {dep_package!r} of {package!r}@{version} not in solution"
@@ -321,7 +127,7 @@ def reachable_packages(
     reachable: set[str] = set()
     queue = list(root_required)
     while queue:
-        package = queue.pop(0)
+        package = queue.pop()
         if package in reachable:
             continue
         reachable.add(package)
@@ -333,76 +139,49 @@ def reachable_packages(
     return reachable
 
 
-MAX_BRUTE_FORCE_COMBINATIONS = 10_000
+def resolve_or_prove_conflict(
+    resolver: Resolver[str, int],
+    requirements: dict[str, Range[int]],
+    constraints: dict[str, Range[int]] | None = None,
+) -> dict[str, int] | None:
+    """Return pins or a proven conflict. Limits and solver faults fail the test."""
+    try:
+        return resolver.resolve(requirements, constraints)
+    except ResolutionError as error:
+        if (
+            isinstance(error, ResolutionTerminatedError)
+            or error.incompatibility is None
+        ):
+            raise
+        return None
 
 
 def brute_force_has_solution(
     graph: dict[str, dict[int, dict[str, Range[int]]]],
     requirements: dict[str, Range[int]],
     constraints: dict[str, Range[int]] | None = None,
-) -> bool | None:
-    """Check whether any version selection satisfies all constraints.
-
-    Tries every (package, version) combination over the reachable
-    sub-graph.  Returns ``True``/``False``, or ``None`` when the
-    search space exceeds :data:`MAX_BRUTE_FORCE_COMBINATIONS`.
-
-    A user constraint restricts the version of a package only when that
-    package is reachable from the root: a constrained package that is
-    never pulled in leaves its constraint vacuous, mirroring the
-    resolver's own constraint semantics.
-    """
+) -> bool:
+    """Try every published version of each package reached by the requirements."""
     constraints = constraints or {}
-    all_packages = sorted(p for p in graph if p != "root" and graph[p])
 
-    total_combinations = 1
-    for package in all_packages:
-        total_combinations *= len(graph[package])
-        if total_combinations > MAX_BRUTE_FORCE_COMBINATIONS:
-            return None
-
-    candidate_lists = [sorted(graph[p].keys()) for p in all_packages]
-
-    for combo in itertools.product(*candidate_lists):
-        selection = dict(zip(all_packages, combo, strict=False))
-        selection["root"] = 1
-
-        valid = True
-        for package, required_range in requirements.items():
-            if package not in selection or selection[package] not in required_range:
-                valid = False
-                break
-        if not valid:
-            continue
-
-        reachable: set[str] = set()
-        queue = list(requirements.keys())
-        while queue:
-            pkg = queue.pop()
-            if pkg in reachable:
-                continue
-            reachable.add(pkg)
-            version = selection.get(pkg)
-            if version is None:
-                valid = False
-                break
-            deps = graph.get(pkg, {}).get(version, {})
-            for dep_pkg, dep_range in deps.items():
-                if dep_pkg not in selection or selection[dep_pkg] not in dep_range:
-                    valid = False
-                    break
-                if dep_pkg not in reachable:
-                    queue.append(dep_pkg)
-            if not valid:
-                break
-
-        if valid and any(
-            pkg in reachable and selection[pkg] not in crange
-            for pkg, crange in constraints.items()
-        ):
-            valid = False
-
-        if valid:
+    def visit(pins: dict[str, int], pending: list[tuple[str, Range[int]]]) -> bool:
+        if not pending:
             return True
 
-    return False
+        package, allowed = pending[-1]
+        rest = pending[:-1]
+        if package in pins:
+            return pins[package] in allowed and visit(pins, rest)
+
+        constraint = constraints.get(package)
+        for version, dependencies in graph.get(package, {}).items():
+            if version not in allowed or (
+                constraint is not None and version not in constraint
+            ):
+                continue
+            # Each branch owns its choices. Revisiting a package only checks its pin.
+            if visit({**pins, package: version}, [*rest, *dependencies.items()]):
+                return True
+        return False
+
+    return visit({}, list(requirements.items()))

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "asyncio",
-    "json",
     "nab_index.retry",
     "nab_index.retry_limits",
     "nab_index.transport",
@@ -22,7 +21,6 @@ __lazy_modules__ = (
 
 import asyncio
 import http.client
-import json as _json
 import ssl
 import threading
 import time
@@ -34,14 +32,15 @@ import urllib3
 import urllib3.connection
 
 from ._compat import override
+from .response import ResponseBody
 from .retry import GET_RETRY, next_delay
 from .retry_limits import MAX_RETRIES
 from .transport import (
-    DEFAULT_HEADERS,
     ContentDecodingError,
     HttpError,
     accepts_gzip,
     decode_body,
+    merge_request_headers,
     prefetch_settings_for_backend,
     raise_for_error_status,
 )
@@ -166,7 +165,7 @@ def _final_url(response: urllib3.BaseHTTPResponse, requested_url: str) -> str:
     return url
 
 
-class _Urllib3Response:
+class _Urllib3Response(ResponseBody):
     """Adapter that gives a urllib3 response the HttpResponse shape.
 
     The body is fetched undecoded, and decoded by the transport when the
@@ -174,13 +173,13 @@ class _Urllib3Response:
     so it is carried here rather than read from the urllib3 response.
     """
 
-    __slots__ = ("_content", "_requested_url", "_response")
+    __slots__ = ("_requested_url", "_response")
 
     def __init__(
         self, response: urllib3.BaseHTTPResponse, content: bytes, requested_url: str
     ) -> None:
+        super().__init__(content)
         self._response = response
-        self._content = content
         self._requested_url = requested_url
 
     @property
@@ -194,17 +193,6 @@ class _Urllib3Response:
     @property
     def headers(self) -> Mapping[str, str]:
         return self._response.headers
-
-    @property
-    def content(self) -> bytes:
-        return self._content
-
-    @property
-    def text(self) -> str:
-        return self._content.decode("utf-8")
-
-    def json(self) -> Any:
-        return _json.loads(self._content)
 
     def raise_for_status(self) -> None:
         raise_for_error_status(self._response.status, self.url)
@@ -237,7 +225,7 @@ class Urllib3AsyncTransport:
         self._maxsize = maxsize
         self._timeout = timeout
         self._local = threading.local()
-        self._pools: list[urllib3.PoolManager] = []
+        self._pools: set[urllib3.PoolManager] = set()
         self._pools_lock = threading.Lock()
 
     def _pool(self) -> urllib3.PoolManager:
@@ -257,9 +245,9 @@ class Urllib3AsyncTransport:
                 "https": _HTTPSConnectionPool,
             }
             pool.pool_classes_by_scheme = classes  # ty: ignore[invalid-assignment]
-            self._local.pool = pool
             with self._pools_lock:
-                self._pools.append(pool)
+                self._local.pool = pool
+                self._pools.add(pool)
         return pool
 
     def _request(self, url: str, headers: dict[str, str]) -> _Urllib3Response:
@@ -313,9 +301,7 @@ class Urllib3AsyncTransport:
         The defaults go on the request rather than on the pool because urllib3
         replaces the pool's headers with a request's own instead of merging.
         """
-        request_headers = dict(DEFAULT_HEADERS)
-        if headers is not None:
-            request_headers.update(headers)
+        request_headers = merge_request_headers(headers)
         try:
             return await asyncio.to_thread(self._request, url, request_headers)
         except Exception as exc:
@@ -326,8 +312,14 @@ class Urllib3AsyncTransport:
             raise HttpError(msg) from exc
 
     async def aclose(self) -> None:
-        """Close every per-thread pool."""
+        """Release this run's pools so a later run starts with fresh connections."""
         with self._pools_lock:
-            pools = list(self._pools)
+            pools = self._pools.copy()
+            self._local = threading.local()
+
         for pool in pools:
             await asyncio.to_thread(pool.clear)
+
+        # Keep failed cleanups available for retry and leave newly created pools alone.
+        with self._pools_lock:
+            self._pools.difference_update(pools)

@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nab_provider._vendor.packaging.version import Version
+    from ._vendor.packaging.version import Version
 
 __all__ = [
     "ConfigError",

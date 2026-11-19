@@ -122,6 +122,32 @@ def test_scope_preserves_only_independently_grounded_ancestors() -> None:
     assert seen[1].target == "a"
 
 
+def test_late_pin_admits_a_previously_demanded_ancestor() -> None:
+    policy = preference(
+        [
+            ("helper", "1", True, ["target"]),
+            ("grant", "1", False, ["helper==1"]),
+            ("target", "1", True, []),
+        ],
+        ["helper", "grant"],
+    )
+    helper, grant = item("helper", withdrawn=True), item("grant")
+    target = item("target", withdrawn=True)
+    for candidate in (helper, grant):
+        assert policy.catalogue.prepare(candidate) is not None
+
+    selected = {"helper": helper, "grant": grant, "target": target}
+    assert policy.parents(target, selected) == frozenset({grant, helper})
+
+
+def test_fixed_parent_requires_prepared_metadata() -> None:
+    policy = preference(
+        [("parent", "1", False, []), ("target", "1", True, [])], ["parent"]
+    )
+    with pytest.raises(ResolutionInvariantError, match="fixed parent parent==1"):
+        policy.fixed_range(item("target", withdrawn=True), frozenset({item("parent")}))
+
+
 def test_cached_unrooted_cycles_do_not_create_parent_assumptions() -> None:
     policy = preference(
         [
@@ -387,12 +413,11 @@ def test_explain_input_or_constraint_pin_without_inventing_demand(root: str) -> 
     selected = {"a": item("a", withdrawn=True)}
     assert policy.catalogue.prepare(selected["a"]) is not None
     assert policy.explain(selected) == {"a": ("input pin a==1",)}
-    assert policy.catalogue.provider.yank_admission_sources is None
-    assert "yank_admission_sources" not in vars(policy.catalogue.provider)
+    assert not policy.catalogue.provider.yank_admissions
+    assert "yank_admissions" not in vars(policy.catalogue.provider)
     pins, provider = policy.adopt(selected)
     assert pins == {"a": Version("1")}
-    assert provider.yank_admission_sources == {"a": ("input pin a==1",)}
-    assert provider.yank_admissions == frozenset({("a", Version("1"))})
+    assert provider.yank_admissions == {("a", Version("1")): ("input pin a==1",)}
 
 
 def test_explain_late_transitive_pin_uses_a_selected_grounded_parent() -> None:
@@ -449,7 +474,6 @@ def test_only_rooted_cycles_have_admission_explanations(root: str) -> None:
     if root == "a":
         with pytest.raises(ResolutionInvariantError, match="not rooted"):
             policy.adopt(selected)
-        assert policy.catalogue.provider.yank_admission_sources is None
         assert not policy.catalogue.provider.yank_admissions
     else:
         assert policy.explain(selected) == {
@@ -468,7 +492,10 @@ def test_missing_selected_metadata_or_required_dependency_is_not_explained(
     selected = {"app": item("app")}
     if prepared:
         assert policy.catalogue.prepare(selected["app"]) is not None
-    with pytest.raises(ResolutionInvariantError, match="missing metadata"):
+    missing = (
+        "no selected candidate for dep" if prepared else "missing metadata for app"
+    )
+    with pytest.raises(ResolutionInvariantError, match=missing):
         policy.explain(selected)
 
 

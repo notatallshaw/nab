@@ -40,6 +40,9 @@ from benchmark_datetime import parse_datetime
 from universal_result import (
     MANIFEST_FILENAME,
     RESULT_SCHEMA_VERSION,
+    expected_conflict,
+    is_dependency_table,
+    is_package_specifier_table,
     is_portable_scenario_name,
     result_is_accepted,
     result_is_well_formed,
@@ -56,13 +59,20 @@ from nab_project.resolve import (
     resolve_with_coordinator,
 )
 from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.version import Version
+from nab_provider.overrides import PackageOverride
 from nab_provider.provider import ResolutionStrategy
+from nab_provider.ranges import VersionRange
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix
+from nab_resolver.errors import ResolutionTerminatedError
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+
+    from nab_project.resolve import TargetResult
 
 BENCHMARKS_DIR = Path(__file__).parent
 SCENARIOS_DIR = BENCHMARKS_DIR / "scenarios"
@@ -75,8 +85,11 @@ SCENARIO_WALL_TIMEOUT_SECONDS = 300
 UNIVERSAL_SCENARIO_KEYS = frozenset(
     {
         "align_across_tuples",
+        "assume_universal_deps",
         "constraints",
         "datetime",
+        "dependency_metadata",
+        "expect_conflict",
         "platforms",
         "python",
         "python_order",
@@ -260,8 +273,81 @@ def _validate_scenario_names(names: list[str]) -> None:
         raise ValueError(msg)
 
 
-def validate_scenario(scenario_name: str, scenario: dict) -> None:
-    """Reject invalid settings before running a universal scenario."""
+def _metadata_overrides(
+    scenario_name: str, value: object
+) -> tuple[PackageOverride, ...]:
+    """Allow wheel dependencies to supply sdist metadata for selected releases."""
+    if not is_package_specifier_table(value):
+        msg = (
+            f"{scenario_name}: assume_universal_deps must map package names"
+            " to version specifiers"
+        )
+        raise TypeError(msg)
+
+    overrides: dict[str, PackageOverride] = {}
+    for package, specifier in value.items():
+        try:
+            name = canonicalize_name(package, validate=True)
+            versions = SpecifierSet(specifier)
+            requirement = Requirement(f"{name}{versions}")
+            version_range = versions.to_range()
+        except ValueError as exc:
+            msg = (
+                f"{scenario_name}: invalid assume_universal_deps entry"
+                f" {package!r} = {specifier!r}"
+            )
+            raise ValueError(msg) from exc
+
+        if name in overrides:
+            msg = f"{scenario_name}: duplicate assume_universal_deps package {name!r}"
+            raise ValueError(msg)
+
+        overrides[name] = PackageOverride(
+            requirement=requirement,
+            name=name,
+            version_range=version_range,
+            assume_universal_deps=True,
+        )
+    return tuple(overrides.values())
+
+
+def _dependency_overrides(
+    scenario_name: str, value: object
+) -> tuple[PackageOverride, ...]:
+    """Use dependency declarations from a specific package release."""
+    if not is_dependency_table(value):
+        msg = f"{scenario_name}: dependency_metadata must map pins to requirement lists"
+        raise TypeError(msg)
+
+    overrides: dict[tuple[str, Version], PackageOverride] = {}
+    for pin, dependencies in value.items():
+        package, _, raw_version = pin.partition("==")
+        try:
+            name = canonicalize_name(package, validate=True)
+            version = Version(raw_version)
+            requirement = Requirement(f"{name}=={version}")
+            parsed_dependencies = tuple(map(Requirement, dependencies))
+        except ValueError as exc:
+            msg = f"{scenario_name}: invalid dependency_metadata for {pin!r}: {exc}"
+            raise ValueError(msg) from exc
+
+        key = (name, version)
+        if key in overrides:
+            msg = f"{scenario_name}: duplicate dependency_metadata for {pin!r}"
+            raise ValueError(msg)
+
+        overrides[key] = PackageOverride(
+            name=name,
+            requirement=requirement,
+            # Local builds can declare different dependencies from the public release.
+            version_range=VersionRange.singleton(version),
+            dependencies=parsed_dependencies,
+        )
+    return tuple(overrides.values())
+
+
+def validate_scenario(scenario_name: str, scenario: dict) -> ResolveInputs:
+    """Validate a universal scenario and prepare its resolver inputs."""
     _validate_scenario_names([scenario_name])
     unknown = sorted(set(scenario) - UNIVERSAL_SCENARIO_KEYS)
     if unknown:
@@ -290,7 +376,7 @@ def validate_scenario(scenario_name: str, scenario: dict) -> None:
             msg = f"{scenario_name}: platforms has duplicate entry: {platform!r}"
             raise ValueError(msg)
         seen_platforms.add(platform)
-    for key in ("align_across_tuples", "skip_on_fail"):
+    for key in ("align_across_tuples", "skip_on_fail", "expect_conflict"):
         if key in scenario and type(scenario[key]) is not bool:
             msg = f"{scenario_name}: {key} must be a boolean"
             raise TypeError(msg)
@@ -308,6 +394,20 @@ def validate_scenario(scenario_name: str, scenario: dict) -> None:
     except (TypeError, ValueError) as exc:
         msg = f"{scenario_name}: unknown resolution_strategy {resolution!r}"
         raise ValueError(msg) from exc
+
+    cutoff = scenario.get("datetime")
+    return ResolveInputs(
+        constraints=tuple(scenario.get("constraints", ())),
+        uploaded_prior_to=parse_datetime(cutoff) if cutoff else None,
+        package_overrides=(
+            *_metadata_overrides(
+                scenario_name, scenario.get("assume_universal_deps", {})
+            ),
+            *_dependency_overrides(
+                scenario_name, scenario.get("dependency_metadata", {})
+            ),
+        ),
+    )
 
 
 def write_manifest(
@@ -335,6 +435,36 @@ def write_manifest(
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+def _target_record(target_result: TargetResult) -> dict:
+    """Record the target result while the error and its proof are still available."""
+    record = {
+        "label": target_result.target.label,
+        "python_version": target_result.target.python_version,
+        "platform_id": target_result.target.platform_id,
+        "success": target_result.success,
+        "error": str(target_result.error) if target_result.error is not None else None,
+        "decisions": target_result.decisions,
+        "rounds": target_result.rounds,
+        "conflicts": target_result.conflicts,
+        "backjumps": target_result.backjumps,
+        "metadata_fetched": target_result.metadata_fetched,
+        "distributions_seen": target_result.distributions_seen,
+        "wall_time_seconds": round(target_result.wall_time, 3),
+        "package_count": len(target_result.pins),
+        "pins": {
+            canonicalize_name(name): str(version)
+            for name, version in sorted(target_result.pins.items())
+        },
+    }
+    error = target_result.error
+    if error is not None:
+        record["proved_conflict"] = (
+            not isinstance(error, ResolutionTerminatedError)
+            and error.incompatibility is not None
+        )
+    return record
+
+
 def process_scenario(
     scenario_name: str,
     scenario: dict,
@@ -345,7 +475,7 @@ def process_scenario(
     source: dict[str, str | bool | None] | None = None,
 ) -> bool:
     """Resolve one universal scenario and save results."""
-    validate_scenario(scenario_name, scenario)
+    config = validate_scenario(scenario_name, scenario)
     python_spec: str = scenario["python"]
     platforms: tuple[str, ...] = tuple(scenario["platforms"])
     python_order: str = scenario.get("python_order", "asc")
@@ -357,17 +487,12 @@ def process_scenario(
     reason: str = scenario.get("reason", "")
     skip_on_fail: bool = scenario.get("skip_on_fail", False)
 
-    uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None
     matrix = Matrix(
         python=python_spec,
         platforms=tuple(PlatformSpec(p) for p in platforms),
         python_order=python_order,
     )
     targets = matrix.expand()
-    config = ResolveInputs(
-        constraints=tuple(constraint_strings),
-        uploaded_prior_to=uploaded_prior_to,
-    )
     build_policy = enforce_build_policy_for_targets(
         targets=targets,
         build_policy=config.build_policy,
@@ -386,6 +511,9 @@ def process_scenario(
         "commit": commit,
         "source": source if source is not None else get_git_source_state(),
         "python": python_spec,
+        "python_versions": list(
+            dict.fromkeys(target.python_version for target in targets)
+        ),
         "platforms": list(platforms),
         "python_order": python_order,
         "requirements": requirement_strings,
@@ -397,6 +525,20 @@ def process_scenario(
         "skip_on_fail": skip_on_fail,
         "reason": reason,
     }
+    if scenario.get("expect_conflict"):
+        expected_input["expect_conflict"] = True
+    if scenario.get("assume_universal_deps"):
+        expected_input["assume_universal_deps"] = {
+            rule.name: str(rule.requirement.specifier)
+            for rule in config.package_overrides
+            if rule.assume_universal_deps
+        }
+    if scenario.get("dependency_metadata"):
+        expected_input["dependency_metadata"] = {
+            str(rule.requirement): [str(dep) for dep in rule.dependencies]
+            for rule in config.package_overrides
+            if rule.dependencies is not None
+        }
     if constraint_strings:
         expected_input["constraints"] = constraint_strings
     if datetime_str:
@@ -455,28 +597,7 @@ def process_scenario(
             )
         resolution_success = result.success
         elapsed = time.monotonic() - start
-        per_tuple = [
-            {
-                "label": tr.target.label,
-                "python_version": tr.target.python_version,
-                "platform_id": tr.target.platform_id,
-                "success": tr.success,
-                "error": str(tr.error) if tr.error is not None else None,
-                "decisions": tr.decisions,
-                "rounds": tr.rounds,
-                "conflicts": tr.conflicts,
-                "backjumps": tr.backjumps,
-                "metadata_fetched": tr.metadata_fetched,
-                "distributions_seen": tr.distributions_seen,
-                "wall_time_seconds": round(tr.wall_time, 3),
-                "package_count": len(tr.pins),
-                "pins": {
-                    canonicalize_name(name): str(version)
-                    for name, version in sorted(tr.pins.items())
-                },
-            }
-            for tr in result.target_results
-        ]
+        per_tuple = [_target_record(tr) for tr in result.target_results]
         merged = result.merged_pins()
         diverging_packages = sum(
             1 for pins in merged.values() if len({version for version, _ in pins}) > 1
@@ -495,7 +616,7 @@ def process_scenario(
         harness_error = f"{type(exc).__name__}: {exc}"[:200]
 
     scenario_success = resolution_success is True and lock_consistent is True
-    expected_failure = skip_on_fail and completed and resolution_success is False
+    expected_failure = completed and expected_conflict(per_tuple, expected_input)
     data = {
         "input": expected_input,
         "reason": reason,
@@ -538,8 +659,18 @@ def process_scenario(
     output_path.write_text(json.dumps(data, indent=2) + "\n")
 
     stats = data["stats"]
+    accepted = result_is_accepted(data)
     if timed_out:
         print(f"TIMEOUT after {elapsed:.1f}s ({stats['tuples_total']} tuples)")
+    elif harness_error:
+        print(f"FAILED ({harness_error})")
+    elif scenario.get("expect_conflict") and stats["tuples_ok"]:
+        print(
+            f"FAILED ({stats['tuples_ok']}/{stats['tuples_total']} targets resolved, "
+            "expected a conflict on every target)"
+        )
+    elif scenario_success and not accepted:
+        print("FAILED (benchmark target results or totals do not match the inputs)")
     elif scenario_success:
         print(
             f"ok ({stats['tuples_total']} tuples, "
@@ -548,8 +679,6 @@ def process_scenario(
             f"{stats['decisions_total']} decisions, "
             f"{stats['wall_time_seconds']}s)"
         )
-    elif harness_error:
-        print(f"FAILED ({harness_error})")
     elif resolution_success is True:
         print(
             "FAILED (resolved, but the emitted lock does not reproduce every tuple; "
@@ -557,13 +686,13 @@ def process_scenario(
         )
     else:
         failures = [t for t in per_tuple if not t["success"]]
-        label = "skipped (expected to fail)" if expected_failure else "FAILED"
+        label = "expected conflict" if accepted else "FAILED"
         first_fail = failures[0]["error"] if failures else harness_error or "?"
         print(
             f"{label} ({stats['tuples_fail']}/{stats['tuples_total']} tuples; "
             f"first error: {first_fail[:80]})"
         )
-    return result_is_accepted(data)
+    return accepted
 
 
 def main() -> None:

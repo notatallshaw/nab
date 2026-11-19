@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import math
+from typing import TypeGuard
 
 from benchmark_datetime import is_valid_datetime
 
-RESULT_SCHEMA_VERSION = 3
+RESULT_SCHEMA_VERSION = 4
 MANIFEST_FILENAME = "_manifest.json"
 
 _PORTABLE_COMPONENT_START = frozenset(
@@ -39,6 +40,7 @@ _REQUIRED_INPUT_FIELDS = frozenset(
         "platforms",
         "python",
         "python_order",
+        "python_versions",
         "reason",
         "requirements",
         "resolution_strategy",
@@ -48,7 +50,15 @@ _REQUIRED_INPUT_FIELDS = frozenset(
         "trust_unverified_sdist_deps",
     }
 )
-_OPTIONAL_INPUT_FIELDS = frozenset({"constraints", "datetime"})
+_OPTIONAL_INPUT_FIELDS = frozenset(
+    {
+        "assume_universal_deps",
+        "constraints",
+        "datetime",
+        "dependency_metadata",
+        "expect_conflict",
+    }
+)
 _SOURCE_FIELDS = frozenset({"commit", "diff_hash", "dirty"})
 _RESOLUTION_STRATEGIES = frozenset({"highest", "lowest", "lowest-direct"})
 _DIST_POLICIES = frozenset(
@@ -187,6 +197,25 @@ def _valid_string_list(value: object, *, unique: bool = False) -> bool:
     )
 
 
+def is_package_specifier_table(value: object) -> TypeGuard[dict[str, str]]:
+    """Recognize a TOML package-to-specifier table and its JSON representation."""
+    return isinstance(value, dict) and all(
+        isinstance(name, str) and bool(name) and isinstance(specifier, str)
+        for name, specifier in value.items()
+    )
+
+
+def is_dependency_table(value: object) -> TypeGuard[dict[str, list[str]]]:
+    """Read a release-to-dependencies table, including releases with no dependencies."""
+    return isinstance(value, dict) and all(
+        isinstance(release, str)
+        and bool(release)
+        and isinstance(dependencies, list)
+        and all(isinstance(item, str) and bool(item) for item in dependencies)
+        for release, dependencies in value.items()
+    )
+
+
 def _valid_input(value: object, reason: object) -> bool:
     if not isinstance(value, dict):
         return False
@@ -204,6 +233,7 @@ def _valid_input(value: object, reason: object) -> bool:
         and isinstance(value["python"], str)
         and bool(value["python"])
         and _valid_string_list(value["platforms"], unique=True)
+        and _valid_string_list(value["python_versions"], unique=True)
         and isinstance(value["python_order"], str)
         and value["python_order"] in {"asc", "desc"}
         and _valid_string_list(value["requirements"])
@@ -216,8 +246,17 @@ def _valid_input(value: object, reason: object) -> bool:
         and value["build_policy"] in _BUILD_POLICIES
         and type(value["trust_unverified_sdist_deps"]) is bool
         and type(value["skip_on_fail"]) is bool
+        and type(value.get("expect_conflict", False)) is bool
         and isinstance(value["reason"], str)
         and reason == value["reason"]
+        and (
+            "assume_universal_deps" not in value
+            or is_package_specifier_table(value["assume_universal_deps"])
+        )
+        and (
+            "dependency_metadata" not in value
+            or is_dependency_table(value["dependency_metadata"])
+        )
         and ("constraints" not in value or _valid_string_list(value["constraints"]))
         and ("datetime" not in value or is_valid_datetime(value["datetime"]))
     )
@@ -255,11 +294,15 @@ def _valid_stats(value: object) -> bool:
 
 
 def _valid_tuple(value: object) -> bool:
-    if not isinstance(value, dict) or set(value) != _TUPLE_FIELDS:
+    if not isinstance(value, dict) or set(value) - {"proved_conflict"} != _TUPLE_FIELDS:
         return False
     if not all(
         isinstance(value[field], str) and bool(value[field])
         for field in ("label", "platform_id", "python_version")
+    ):
+        return False
+    if "proved_conflict" in value and (
+        value["success"] is not False or type(value["proved_conflict"]) is not bool
     ):
         return False
     pins = value["pins"]
@@ -295,25 +338,19 @@ def _valid_per_tuple(value: object, stats: dict, input_data: dict) -> bool:
         return False
     labels = [item["label"] for item in value]
     cells = {(item["python_version"], item["platform_id"]) for item in value}
+    versions = set(input_data["python_versions"])
     platforms = set(input_data["platforms"])
-    python_versions = {item["python_version"] for item in value}
+    # Several Python patch slices can cover the same requested minor and platform.
+    requested_count = len(versions) * len(platforms)
     return (
         len(value) == stats["tuples_recorded"]
         and stats["tuples_ok"] + stats["tuples_fail"] == len(value)
         and sum(item["success"] is True for item in value) == stats["tuples_ok"]
         and len(set(labels)) == len(labels)
-        and all(item["platform_id"] in platforms for item in value)
-        and (
-            not value
-            or (
-                cells
-                == {
-                    (python, platform)
-                    for python in python_versions
-                    for platform in platforms
-                }
-                and len(cells) == stats["tuples_total"]
-            )
+        and requested_count == stats["tuples_total"]
+        and (not value or len(cells) == requested_count)
+        and all(
+            version in versions and platform in platforms for version, platform in cells
         )
         and all(
             stats[total] == sum(item[field] for item in value)
@@ -359,9 +396,24 @@ def _valid_merged_pins(value: object, stats: dict, per_tuple: list[dict]) -> boo
     return actual == expected and stats["diverging_packages"] == diverging
 
 
-def _valid_outcome(
-    result: dict, stats: dict, per_tuple: list, merged_pins: dict
-) -> bool:
+def expected_conflict(per_tuple: list[dict], settings: dict) -> bool:
+    """Check which targets must prove a conflict for this scenario."""
+    if settings.get("expect_conflict"):
+        return bool(per_tuple) and all(
+            target.get("proved_conflict") is True for target in per_tuple
+        )
+    if not settings["skip_on_fail"]:
+        return False
+    failures = [target for target in per_tuple if not target["success"]]
+    return bool(failures) and all(
+        target.get("proved_conflict") is True for target in failures
+    )
+
+
+def _valid_outcome(data: dict) -> bool:
+    result = data["result"]
+    stats = data["stats"]
+    per_tuple = data["per_tuple"]
     resolution_success = result["resolution_success"]
     if resolution_success is None:
         zero_fields = _STATS_FIELDS - {"tuples_total"}
@@ -373,15 +425,14 @@ def _valid_outcome(
             and isinstance(result["error"], str)
             and all(stats[field] == 0 for field in zero_fields)
             and not per_tuple
-            and not merged_pins
+            and not data["merged_pins"]
         )
     if (
         stats["tuples_recorded"] < stats["tuples_total"]
         or result["timed_out"] is True
         or result["success"]
         is not (resolution_success is True and result["lock_consistent"] is True)
-        or result["expected_failure"]
-        is not (result["skip_on_fail"] is True and resolution_success is False)
+        or result["expected_failure"] is not expected_conflict(per_tuple, data["input"])
     ):
         return False
     if resolution_success is False:
@@ -416,27 +467,6 @@ def _valid_successful_resolution_outcome(result: dict, stats: dict) -> bool:
     )
 
 
-def _result_outcome_is_accepted(result: dict) -> bool:
-    successful_lock = (
-        result["success"] is True
-        and result["resolution_success"] is True
-        and result["expected_failure"] is False
-        and result["lock_consistent"] is True
-        and result["timed_out"] is False
-        and result["error"] is None
-    )
-    expected_resolution_failure = (
-        result["success"] is False
-        and result["resolution_success"] is False
-        and result["expected_failure"] is True
-        and result["skip_on_fail"] is True
-        and result["lock_consistent"] is None
-        and result["timed_out"] is False
-        and result["error"] is None
-    )
-    return successful_lock or expected_resolution_failure
-
-
 def result_is_well_formed(data: object) -> bool:
     """Whether a persisted result could have been emitted by the runner."""
     if not isinstance(data, dict) or set(data) != _TOP_LEVEL_FIELDS:
@@ -452,14 +482,15 @@ def result_is_well_formed(data: object) -> bool:
         and _valid_stats(stats)
         and _valid_per_tuple(per_tuple, stats, input_data)
         and _valid_merged_pins(merged_pins, stats, per_tuple)
-        and _valid_outcome(result, stats, per_tuple, merged_pins)
+        and _valid_outcome(data)
     )
 
 
 def result_is_accepted(data: object) -> bool:
     """Whether a persisted scenario result satisfies the benchmark contract."""
-    return (
-        result_is_well_formed(data)
-        and isinstance(data, dict)
-        and _result_outcome_is_accepted(data["result"])
+    if not isinstance(data, dict) or not result_is_well_formed(data):
+        return False
+    result = data["result"]
+    return result["expected_failure"] or (
+        result["success"] and not data["input"].get("expect_conflict", False)
     )

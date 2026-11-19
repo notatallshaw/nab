@@ -1,7 +1,7 @@
 [project]
 name = "nab-provider"
 version = "0.0.31.dev0"
-description = "IO-free resolution core for nab"
+description = "Python package rules and candidate selection for nab"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

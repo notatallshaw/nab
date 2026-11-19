@@ -33,7 +33,6 @@ __lazy_modules__ = (
 
 import errno
 import os
-import re
 import stat
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -174,9 +173,6 @@ def _is_dir(path: Path) -> bool:
     """Return whether ``path`` is an existing directory."""
     mode = _stat_mode(path)
     return mode is not None and stat.S_ISDIR(mode)
-
-
-_FLAT_EXTS = re.compile(r"\.(whl|tar\.gz|zip)$", re.IGNORECASE)
 
 
 class _ScanResult(NamedTuple):
@@ -542,13 +538,20 @@ def _scan_flat_wheelhouse(
     for entry in sorted(root.iterdir()):
         if not _is_file(entry):
             continue
-        if (version := zip_sdist_version(entry.name, canonical)) is not None:
-            zip_sdists.add(version)
-        if _FLAT_EXTS.search(entry.name) is None:
+
+        # Wheels escape dashes in project names. Sdist names can contain them.
+        filename = entry.name
+        if filename.endswith(".whl"):
+            project = filename.partition("-")[0]
+        elif filename.endswith((".tar.gz", ".zip")):
+            project = filename.rpartition("-")[0]
+        else:
+            continue
+        if _canonical(project) != canonical:
             continue
 
         record = _make_record(
-            entry.name,
+            filename,
             entry.as_uri(),
             entry,
             None,
@@ -557,6 +560,8 @@ def _scan_flat_wheelhouse(
             has_metadata=False,
         )
         if record is not None:
+            if filename.endswith(".zip"):
+                zip_sdists.add(record.version)
             requires_python = (
                 _read_wheel_requires_python(entry, canonical)
                 if isinstance(record, WheelFile)

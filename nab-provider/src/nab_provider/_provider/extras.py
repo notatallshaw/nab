@@ -23,9 +23,8 @@ __lazy_modules__ = (
 import logging
 from typing import TYPE_CHECKING
 
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.utils import canonicalize_name
-
+from .._vendor.packaging.ranges import VersionRange
+from .._vendor.packaging.utils import canonicalize_name
 from ..errors import MetadataError, MissingExtraError
 from ..extra_keys import join_extra
 from ..policy import ExtrasMode
@@ -34,9 +33,9 @@ from .lookahead import flush_pending_blocks
 from .metadata_resolver import refuse_url_dep
 
 if TYPE_CHECKING:
-    from nab_provider._vendor.packaging.version import Version
     from nab_resolver.types import RangeProtocol
 
+    from .._vendor.packaging.version import Version
     from ..provider import Provider
 
 

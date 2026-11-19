@@ -13,6 +13,7 @@ defines it.
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "collections",
     "datetime",
     "errno",
     "nab._cli.parse",
@@ -49,6 +50,7 @@ import shlex
 import stat
 import sys
 import tempfile
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from string import Formatter
@@ -56,7 +58,6 @@ from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
 
 import tomli
 
-from nab._version import __version__
 from nab_project import toml_io
 from nab_project.input_source import (
     InputChangedError,
@@ -146,6 +147,7 @@ from ._run import (
     require_pyproject_file,
     select_input,
 )
+from ._version import __version__
 from .config.hooks import resolve_anchor
 from .config.model import NabProjectConfig, ResolveMode, plan_targets
 from .config.values import SourceConfigError
@@ -1701,23 +1703,25 @@ class _RenderedFile(NamedTuple):
 
 def _write_requirements_files(rendered: list[_RenderedFile]) -> None:
     """Stage every rendered file before replacing any destination."""
-    staged: list[tuple[Path, _RenderedFile]] = []
+    staged: deque[tuple[Path, _RenderedFile]] = deque()
     try:
         for item in rendered:
             with _stage_path(item.path) as tmp:
                 staged.append((tmp, item))
             tmp.write_text(item.text, encoding="utf-8")
             tmp.chmod(_destination_mode(item.path))
+
+        while staged:
+            tmp, item = staged[0]
+            tmp.replace(item.path)
+            staged.popleft()
+            printer().done(
+                f"Wrote {item.path} ({item.pin_count} packages, tuple {item.label})"
+            )
     except BaseException:
         for tmp, _ in staged:
             _discard(tmp)
         raise
-
-    for tmp, item in staged:
-        tmp.replace(item.path)
-        printer().done(
-            f"Wrote {item.path} ({item.pin_count} packages, tuple {item.label})"
-        )
 
 
 @contextlib.contextmanager

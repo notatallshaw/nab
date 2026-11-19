@@ -8,6 +8,7 @@ import pytest
 
 from nab_provider._provider import metadata_resolver
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.errors import IndexAccessError
 from nab_provider.provider import Provider
 from nab_provider.records import SdistFile, WheelFile
 from nab_provider.tags import TagSet
@@ -133,3 +134,18 @@ def test_singleton_needs_no_selection(
     assert indexed.picked[Version("1.0")] is listing[0][1]
     assert len(indexed.sibling_wheels) == 0
     assert calls == 0
+
+
+def test_listing_request_must_publish_a_result() -> None:
+    provider = Provider(make_coordinator())
+    with pytest.raises(IndexAccessError, match="Listing request for 'some-pkg'"):
+        provider.fetch_versions("Some_Pkg")
+
+    error = IndexAccessError("index unavailable")
+    provider.coordinator.index.store_listing_error("some-pkg", error)
+    with pytest.raises(IndexAccessError) as caught:
+        provider.fetch_versions("Some_Pkg")
+    assert caught.value is error
+
+    provider.coordinator.index.store_listing("some-pkg", [])
+    assert provider.fetch_versions("Some_Pkg") == []

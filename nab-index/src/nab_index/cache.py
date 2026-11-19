@@ -50,7 +50,6 @@ __lazy_modules__ = (
     "nab_index._json_decode",
     "nab_index.atomic",
     "nab_index.parsed_listing",
-    "nab_provider.digest",
     "os",
     "pathlib",
     "shutil",
@@ -70,13 +69,13 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Protocol
 
-from nab_provider.digest import is_hex_digest
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.value import HashableRecord, replace
 
 from ._json_decode import decode_json
 from .atomic import atomic_write_chunks
 from .parsed_listing import corruption_reason as _parsed_corruption
+from .parsed_listing import parse_body_digest
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -608,12 +607,10 @@ class OnDiskCache:
             raw = path.read_bytes()
         except OSError:
             return None
-        record = _decode_json_sdist_record(raw)
-        if record is None:
-            logger.warning(
-                "Corrupt sdist cache record %s: not decodable; treating as a miss",
-                path,
-            )
+        try:
+            record = _decode_json_sdist_record(raw)
+        except ValueError as exc:
+            logger.warning("Ignoring corrupt sdist cache record %s (%s)", path, exc)
             return None
         self.put_sdist_files(package, version, *record)
         return record
@@ -736,14 +733,12 @@ class OnDiskCache:
 
     def _read_json_reason(self, path: Path, raw: bytes) -> str | None:
         try:
-            doc = decode_json(raw)
+            if self._bucket_of(path).startswith("sdist-"):
+                _decode_json_sdist_record(raw)
+            else:
+                decode_json(raw)
         except ValueError as exc:
             return str(exc)
-        bucket = self._bucket_of(path)
-        if bucket.startswith("sdist-") and not (
-            isinstance(doc, dict) and "pkg_info" in doc and "pyproject" in doc
-        ):
-            return "sdist record missing fields"
         return None
 
     def _bucket_of(self, path: Path) -> str:
@@ -783,21 +778,25 @@ _SDIST_MAGIC = b"nabsdist1 "
 _SDIST_ABSENT = -1
 
 
-def _decode_json_sdist_record(raw: bytes) -> tuple[str | None, str | None] | None:
-    """Decode a retired JSON sdist record, or ``None`` when it is not one.
+def _decode_json_sdist_record(raw: bytes) -> tuple[str | None, str | None]:
+    """Read the two optional text files from an old JSON sdist cache entry."""
+    doc = decode_json(raw)
+    if not isinstance(doc, dict) or "pkg_info" not in doc or "pyproject" not in doc:
+        msg = "sdist record missing fields"
+        raise ValueError(msg)
 
-    A field holds a file's text, or ``null`` for a file the sdist does not
-    ship. Any other JSON type is corruption, since the pair is re-encoded
-    into the current bucket.
-    """
-    try:
-        doc = decode_json(raw)
-        pkg_info, pyproject = doc["pkg_info"], doc["pyproject"]
-    except (ValueError, KeyError, TypeError):
-        return None
-    if not isinstance(pkg_info, str | None) or not isinstance(pyproject, str | None):
-        return None
-    return (pkg_info, pyproject)
+    return (
+        _json_sdist_text(doc["pkg_info"], "pkg_info"),
+        _json_sdist_text(doc["pyproject"], "pyproject"),
+    )
+
+
+def _json_sdist_text(value: object, field: str) -> str | None:
+    """Read cached file contents, or null if the archive did not contain the file."""
+    if value is None or isinstance(value, str):
+        return value
+    msg = f"sdist record {field} must be text or null"
+    raise ValueError(msg)
 
 
 def _encode_sdist_field(text: str | None) -> tuple[bytes, int]:
@@ -941,16 +940,6 @@ def _policy_etag(value: object) -> str | None:
     return value if isinstance(value, str) and is_sendable_etag(value) else None
 
 
-_SHA256_HEX_LEN = 64
-
-
-def _policy_body_digest(value: object) -> str | None:
-    """Body digest from a policy, or None when it is not 64 hex characters."""
-    if not isinstance(value, str):
-        return None
-    return value if len(value) == _SHA256_HEX_LEN and is_hex_digest(value) else None
-
-
 def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:
     """Decode stored policy bytes, or ``None`` when they are not a policy.
 
@@ -960,15 +949,28 @@ def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:
     """
     try:
         doc = decode_json(policy_bytes)
-        return CachePolicy(
-            fetched_at=int(doc["fetched_at"]),
-            max_age=int(doc["max_age"]),
-            etag=_policy_etag(doc.get("etag")),
-            page_url=_policy_page_url(doc.get("page_url")),
-            body_digest=_policy_body_digest(doc.get("body_digest")),
-        )
-    except (ValueError, KeyError, TypeError, OverflowError):
+    except ValueError:
         return None
+    if not isinstance(doc, dict):
+        return None
+    fetched_at = doc.get("fetched_at")
+    max_age = doc.get("max_age")
+    if not isinstance(fetched_at, (int, float, str)) or not isinstance(
+        max_age, (int, float, str)
+    ):
+        return None
+
+    try:
+        start, lifetime = int(fetched_at), int(max_age)
+    except (ValueError, OverflowError):
+        return None
+    return CachePolicy(
+        fetched_at=start,
+        max_age=lifetime,
+        etag=_policy_etag(doc.get("etag")),
+        page_url=_policy_page_url(doc.get("page_url")),
+        body_digest=parse_body_digest(doc.get("body_digest")),
+    )
 
 
 class CacheBackend(Protocol):

@@ -11,9 +11,8 @@ property tests:
 * ``dependency_graphs`` and friends: random graphs over a small name
   pool used by the resolver-correctness properties.
 
-The pool sizes were tuned so brute-force enumeration of the search
-space stays under :data:`MAX_BRUTE_FORCE_COMBINATIONS` for the small
-strategies, and so Hypothesis can shrink failures to small examples.
+The exhaustive strategies use small package and version pools so every
+reachable choice can be tried and Hypothesis can shrink failures.
 """
 
 from __future__ import annotations
@@ -57,8 +56,6 @@ BRUTE_FORCE_SETTINGS = settings(
     suppress_health_check=[HealthCheck.too_slow],
 )
 """Settings for properties that compare against brute-force enumeration."""
-
-MAX_BRUTE_FORCE_COMBINATIONS = 10_000
 
 
 @st.composite

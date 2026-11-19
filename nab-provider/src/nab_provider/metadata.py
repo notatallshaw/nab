@@ -21,17 +21,16 @@ from contextlib import suppress
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import InvalidVersion, Version
-from nab_provider.pep508 import parse_requirement
-
+from ._vendor.packaging.specifiers import SpecifierSet
+from ._vendor.packaging.version import InvalidVersion, Version
+from .pep508 import parse_requirement
 from .value import FACTORY, FactoryDefault, Record, factory_value
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from nab_provider._vendor.packaging.markers import Marker
-    from nab_provider._vendor.packaging.requirements import Requirement
+    from ._vendor.packaging.markers import Marker
+    from ._vendor.packaging.requirements import Requirement
 
 __all__ = [
     "DEPENDENCY_FIELDS",

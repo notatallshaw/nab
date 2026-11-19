@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import tomli
@@ -28,27 +30,30 @@ PYPROJECT_PATHS = (
     *(REPO_ROOT / name / "pyproject.toml" for name in WORKSPACE_PACKAGES),
 )
 
-WORKFLOW = REPO_ROOT / ".github" / "workflows" / "test.yml"
-
+SELECTOR = REPO_ROOT / "tasks" / "select_tests.py"
 PREFIX = "Programming Language :: Python :: "
-
-# Only the test matrix gives python-version a list; the standalone jobs pin a
-# scalar. A YAML flow sequence of quoted strings is also valid JSON.
-_MATRIX = re.compile(r"^\s*python-version:\s*(\[[^\]]*\])\s*$", re.MULTILINE)
 
 # A matrix entry may carry an implementation or build tag (pypy3.11, 3.14t);
 # only the language version reaches a classifier.
 _LANGUAGE_VERSION = re.compile(r"\d+\.\d+")
 
 
-def _tested_versions() -> set[str]:
-    lists = _MATRIX.findall(WORKFLOW.read_text(encoding="utf-8"))
-    assert len(lists) == 1, f"expected one python-version list, found {lists}"
+def _tested_versions(output: Path) -> set[str]:
+    subprocess.run(  # noqa: S603 - execute the repository selector with a temporary output path
+        [sys.executable, str(SELECTOR), "--output", str(output)],
+        cwd=REPO_ROOT,
+        check=True,
+    )
+    outputs = dict(
+        line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines()
+    )
     versions = set()
-    for entry in json.loads(lists[0]):
-        found = _LANGUAGE_VERSION.search(entry)
-        assert found is not None, f"no Python version in matrix entry {entry!r}"
-        versions.add(found.group())
+    for job in json.loads(outputs["test-matrix"])["include"]:
+        for key in ("python", "second"):
+            if key in job:
+                found = _LANGUAGE_VERSION.search(job[key])
+                assert found is not None
+                versions.add(found.group())
     return versions
 
 
@@ -65,7 +70,9 @@ def _version_classifiers(path: Path) -> set[str]:
     return {entry for entry in project["classifiers"] if _claims_version(entry)}
 
 
-def test_classifiers_cover_every_tested_python_version() -> None:
-    expected = {PREFIX + version for version in {"3", *_tested_versions()}}
+def test_classifiers_cover_every_tested_python_version(tmp_path: Path) -> None:
+    expected = {
+        PREFIX + version for version in {"3", *_tested_versions(tmp_path / "selection")}
+    }
     for path in PYPROJECT_PATHS:
         assert _version_classifiers(path) == expected, path

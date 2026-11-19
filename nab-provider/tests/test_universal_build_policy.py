@@ -146,7 +146,7 @@ def test_host_built_metadata_cannot_supply_a_later_strict_declared_target() -> N
     with pytest.raises(UnsupportedSdistError):
         declared.get_dependencies("pkg", _V1)
 
-    assert len(port.calls_to("request_built_metadata")) == 1
+    assert len(port.calls_to("build_sdist_metadata")) == 1
 
 
 def test_opted_in_targets_build_each_source_only_once() -> None:
@@ -167,7 +167,7 @@ def test_opted_in_targets_build_each_source_only_once() -> None:
         )
         assert set(provider.get_dependencies("pkg", _V1)) == {"shared-dep"}
 
-    assert len(port.calls_to("request_built_metadata")) == 1
+    assert len(port.calls_to("build_sdist_metadata")) == 1
 
 
 @pytest.mark.parametrize("invalid_field", ["requires-python", "name", "version"])
@@ -210,7 +210,7 @@ def test_cached_build_metadata_is_validated_for_each_target(invalid_field: str) 
     with pytest.raises(UnsupportedSdistError, match=expected_error):
         second.get_dependencies("pkg", _V1)
 
-    assert len(port.calls_to("request_built_metadata")) == 1
+    assert len(port.calls_to("build_sdist_metadata")) == 1
 
 
 def test_build_helper_revalidates_cached_python_requirement() -> None:
@@ -232,4 +232,4 @@ def test_build_helper_revalidates_cached_python_requirement() -> None:
     with pytest.raises(UnsupportedSdistError, match="requires Python"):
         build_remote_sdist(second, "pkg", _V1)
 
-    assert len(port.calls_to("request_built_metadata")) == 1
+    assert len(port.calls_to("build_sdist_metadata")) == 1

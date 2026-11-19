@@ -166,6 +166,33 @@ def test_parameterized_scope_has_immutable_hash_keys() -> None:
             setattr(scope, attribute, None)
 
 
+@pytest.mark.parametrize("live_solution", [False, True])
+def test_nested_search_leaves_proof_requests_with_their_owner(
+    *, live_solution: bool
+) -> None:
+    live = Choice("dep", 1)
+    withdrawn = Choice("dep", 1, withdrawn=True)
+    catalogue = Catalogue((live, withdrawn))
+    catalogue.facts[withdrawn] = Data({})
+    outer = Search(catalogue)
+    inner = Search(Catalogue(()))
+    selected = {"dep": withdrawn}
+
+    def attempt(scope: PreferenceScope[Choice]) -> dict[str, Choice]:
+        def inside(inner_scope: PreferenceScope[Choice]) -> dict[str, Choice]:
+            assert inner_scope == PreferenceScope()
+            if scope.target:
+                if live_solution:
+                    return {"dep": live}
+                raise ResolutionError("no live solution")
+            assert outer.check(withdrawn, selected, scope) is PreparationStatus.ALLOWED
+            return selected
+
+        return inner.run(inside)
+
+    assert outer.run(attempt) == ({"dep": live} if live_solution else selected)
+
+
 def test_actual_known_fact_solve_rejects_the_conflicting_assignment() -> None:
     live = Choice("dep", 1)
     withdrawn = Choice("dep", 1, withdrawn=True)

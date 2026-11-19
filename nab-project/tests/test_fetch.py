@@ -52,12 +52,18 @@ from nab_project.fetch import (
 )
 from nab_project.inputs import ResolveInputs
 from nab_provider._vendor.packaging.version import Version
-from nab_provider.metadata import WheelMetadata
+from nab_provider.metadata import WheelMetadata, parse_metadata
 from nab_provider.overrides import IndexOverride
-from nab_provider.policy import BuildPolicy
+from nab_provider.policy import (
+    BuildPolicy,
+    LocalSource,
+    SourceMaterialization,
+    SourceRequest,
+)
+from nab_provider.provider import Provider
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.store import metadata_pending_key, sdist_artifact_key
-from nab_provider.testing import make_wheel, pkg_override
+from nab_provider.testing import make_metadata, make_wheel, pkg_override
 
 
 @pytest.fixture
@@ -552,10 +558,10 @@ class TestInMemoryIndex:
     def test_resolved_sdist_metadata_roundtrip(self) -> None:
         """``store_resolved_sdist_metadata`` round-trips through ``get``."""
         idx = InMemoryIndex()
-        sentinel = object()
+        metadata = parse_metadata(make_metadata("foo", "1.0"))
         assert idx.get_resolved_sdist_metadata("foo", "1.0") is None
-        idx.store_resolved_sdist_metadata("foo", "1.0", sentinel)
-        assert idx.get_resolved_sdist_metadata("foo", "1.0") is sentinel
+        idx.store_resolved_sdist_metadata("foo", "1.0", metadata)
+        assert idx.get_resolved_sdist_metadata("foo", "1.0") is metadata
 
     def test_metadata_rewrite_drops_the_reconciled_sdist_view(self) -> None:
         """Replacing the raw text drops the post-reconciliation entry too.
@@ -565,7 +571,8 @@ class TestInMemoryIndex:
         """
         idx = InMemoryIndex()
         idx.store_sdist_metadata("foo", "1.0", "PKG-INFO")
-        idx.store_resolved_sdist_metadata("foo", "1.0", "resolved")
+        metadata = parse_metadata(make_metadata("foo", "1.0"))
+        idx.store_resolved_sdist_metadata("foo", "1.0", metadata)
         idx.store_metadata("foo", "1.0", "METADATA")
         assert idx.get_resolved_sdist_metadata("foo", "1.0") is None
 
@@ -573,9 +580,10 @@ class TestInMemoryIndex:
         """Re-storing identical text is not a rewrite, so the entry survives."""
         idx = InMemoryIndex()
         idx.store_sdist_metadata("foo", "1.0", "PKG-INFO")
-        idx.store_resolved_sdist_metadata("foo", "1.0", "resolved")
+        metadata = parse_metadata(make_metadata("foo", "1.0"))
+        idx.store_resolved_sdist_metadata("foo", "1.0", metadata)
         idx.store_sdist_metadata("foo", "1.0", "PKG-INFO")
-        assert idx.get_resolved_sdist_metadata("foo", "1.0") == "resolved"
+        assert idx.get_resolved_sdist_metadata("foo", "1.0") is metadata
 
     def test_listing_index_roundtrip(self) -> None:
         """``store_listing_index`` records the serving index name, and
@@ -584,8 +592,15 @@ class TestInMemoryIndex:
         """
         idx = InMemoryIndex()
         assert idx.get_listing_index("foo") is None
+        assert idx.pinned_listing_index("foo") is None
+
+        idx.store_listing_index("foo", "primary", pinned=True)
+        assert idx.get_listing_index("foo") == "primary"
+        assert idx.pinned_listing_index("foo") == "primary"
+
         idx.store_listing_index("foo", "primary")
         assert idx.get_listing_index("foo") == "primary"
+        assert idx.pinned_listing_index("foo") is None
 
 
 LISTING_JSON = {
@@ -608,6 +623,22 @@ LISTING_JSON = {
 }
 
 METADATA_TEXT = "Metadata-Version: 2.1\nName: testpkg\nVersion: 1.0\n"
+
+
+class ShutdownObserver(FetchCoordinator):
+    """Expose when the real shutdown call has posted the stop marker."""
+
+    def __init__(self) -> None:
+        super().__init__(HttpxAsyncTransport())
+        self.stop_posted = threading.Event()
+
+    def _submit(
+        self,
+        item: fetch_requests.FetchRequest | list[fetch_requests.FetchRequest] | None,
+    ) -> None:
+        super()._submit(item)
+        if item is None:
+            self.stop_posted.set()
 
 
 class TestFetchCoordinator:
@@ -1439,61 +1470,69 @@ class TestFetchCoordinator:
         coord.shutdown()
 
     @respx.mock
-    def test_drain_queue_empty_exception(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """QueueEmpty during drain loop breaks out of the loop."""
-        import asyncio
-        import time
+    def test_shutdown_drains_metadata_from_an_accepted_listing(self) -> None:
+        listing_started = threading.Event()
+        late_submission = threading.Event()
+        wheel = make_wheel("2.0")
+        listing = {"filename": wheel.filename, "url": wheel.url, "core-metadata": True}
 
-        respx.get(url__regex=r".*").mock(return_value=httpx.Response(200, text="ok"))
+        async def serve_listing(_request: httpx.Request) -> httpx.Response:
+            listing_started.set()
+            # Let the worker process the stop marker while the listing is in flight.
+            assert await asyncio.to_thread(late_submission.wait, 5)
+            return httpx.Response(200, json={"files": [listing]})
 
-        triggered = threading.Event()
+        respx.get("https://pypi.org/simple/pkg/").mock(side_effect=serve_listing)
+        url = wheel.url + ".metadata"
+        metadata = respx.get(url).mock(
+            return_value=httpx.Response(200, text="metadata")
+        )
 
-        class RiggedQueue(asyncio.Queue):
-            """Queue that, once armed, lies once on empty() to force the race."""
+        coord = ShutdownObserver()
 
-            def __init__(self) -> None:
-                super().__init__()
-                self._origin_empty = super().empty
-                self._origin_get_nowait = super().get_nowait
-                self.armed = False
+        def submit_after_stop() -> threading.Event:
+            assert coord.stop_posted.wait(5)
+            try:
+                return coord.request_listing("late")
+            finally:
+                late_submission.set()
 
-            def empty(self) -> bool:
-                result = self._origin_empty()
-                if result and self.armed:
-                    self.armed = False
-                    return False
-                return result
+        with ThreadPoolExecutor(max_workers=1) as callers:
+            with coord:
+                listing_done = coord.request_listing("pkg")
+                assert listing_started.wait(5)
+                late = callers.submit(submit_after_stop)
 
-            def get_nowait(
-                self,
-            ) -> fetch_requests.FetchRequest | list[fetch_requests.FetchRequest] | None:
-                # Consult the real deque so the lie above can't trick us
-                # into popping from an empty queue. Reaching this branch
-                # is exactly the race the drain loop must handle.
-                if self._origin_empty():
-                    triggered.set()
-                    raise asyncio.QueueEmpty
-                return self._origin_get_nowait()
+            assert listing_done.is_set()
+            assert late.result().is_set()
 
-        monkeypatch.setattr("nab_project.fetch.asyncio.Queue", RiggedQueue)
-        with _coord() as coord:
-            real_dispatch = coord._dispatch
+        assert isinstance(coord.index.get_listing_error("late"), RuntimeError)
+        assert metadata.call_count == 1
+        assert coord.index.get_metadata("pkg", "2.0", url) == "metadata"
 
-            def arm_after_dispatch(
-                item: fetch_requests.FetchRequest | list[fetch_requests.FetchRequest],
-                client: CachedAsyncSimpleClient | MultiIndexClient,
-                sem: asyncio.Semaphore,
-                tasks: set[asyncio.Task],
-            ) -> None:
-                real_dispatch(item, client, sem, tasks)
-                coord._async_q.armed = True  # type: ignore[union-attr]
+    @respx.mock
+    def test_shutdown_closes_after_the_final_reply(self) -> None:
+        serving = threading.Event()
+        coord = ShutdownObserver()
+        url = "https://files.example.com/pkg.whl.metadata"
 
-            coord._dispatch = arm_after_dispatch  # type: ignore[method-assign]
-            coord.request_metadata("pkg", "1.0", "https://f.com/pkg")
-            time.sleep(0.3)
+        async def reply(_request: httpx.Request) -> httpx.Response:
+            serving.set()
+            assert coord.stop_posted.wait(5)
+            # Deliver the reply between posting the stop marker and consuming it.
+            await asyncio.sleep(0)
+            return httpx.Response(200, text="metadata")
 
-        assert triggered.is_set()
-        assert not coord._crashed
+        respx.get(url).mock(side_effect=reply)
+        with coord:
+            worker = coord._thread
+            assert worker is not None
+            done = coord.request_metadata("pkg", "1", url)
+            assert serving.wait(5)
+
+        assert done.is_set()
+        assert coord.index.get_metadata("pkg", "1", url) == "metadata"
+        assert not worker.is_alive()
 
     @respx.mock
     def test_gather_pending_tasks_on_shutdown(self) -> None:
@@ -2006,18 +2045,55 @@ class TestFetchCoordinator:
             )
             assert isinstance(error, HttpError)
 
+    def test_overlapping_source_requests_keep_their_own_results(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        versions = ("1", "2")
+        for version in versions:
+            tree = tmp_path / version
+            tree.mkdir()
+            (tree / "pyproject.toml").write_text(
+                f'[project]\nname = "shared"\nversion = "{version}"\n', encoding="utf-8"
+            )
+
+        with _coord(start_on_demand=True) as coordinator:
+            materialize = coordinator.materialize_source
+            both_complete = threading.Barrier(2)
+
+            def synchronized(request: SourceRequest) -> SourceMaterialization:
+                result = materialize(request)
+                both_complete.wait(timeout=10)
+                return result
+
+            monkeypatch.setattr(coordinator, "materialize_source", synchronized)
+
+            def resolve_source(version: str) -> tuple[Version, Path | None]:
+                provider = Provider(
+                    coordinator,
+                    local_sources=[LocalSource("shared", str(tmp_path / version))],
+                )
+                (entry,) = provider.fetch_versions("shared")
+                return entry[0], entry[1].local_path
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(resolve_source, versions))
+
+        assert results == [
+            (Version(version), tmp_path / version) for version in versions
+        ]
+
     @respx.mock
     @pytest.mark.skipif(
         not hasattr(tarfile, "data_filter"),
         reason="sdist extraction requires the tar data filter (PEP 706)",
     )
     @pytest.mark.parametrize("transport_factory", [None, HttpxAsyncTransport])
-    def test_request_built_metadata_builds_the_downloaded_sdist(
+    def test_build_sdist_metadata_builds_the_downloaded_sdist(
         self,
         monkeypatch: pytest.MonkeyPatch,
         transport_factory: Callable[[], AsyncHttpTransport] | None,
     ) -> None:
-        """The build rung downloads, extracts, and stores what the backend said.
+        """The build returns the metadata from the downloaded and extracted sdist.
 
         Only the backend invocation is faked: the archive is really fetched
         through the transport and really extracted, so the member is exercised
@@ -2051,19 +2127,10 @@ class TestFetchCoordinator:
         with _coord(
             build_config=config, build_transport_factory=transport_factory
         ) as coord:
-            event = coord.request_built_metadata(
+            result = coord.build_sdist_metadata(
                 "pkg", "1.0", "https://files.example.com/pkg-1.0.tar.gz", ()
             )
-            assert event.wait(timeout=5)
-            assert (
-                coord.index.get_built_metadata(
-                    "pkg",
-                    sdist_artifact_key(
-                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
-                    ),
-                )
-                is built
-            )
+            assert result is built
         assert seen == {
             "config": config,
             "offline": False,

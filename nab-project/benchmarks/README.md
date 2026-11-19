@@ -115,10 +115,20 @@ python nab-project/benchmarks/universal_summary.py
 Each result retains its per-target solutions and merged target-label pin projection. The runner
 exits nonzero after an unexpected resolution, timeout, lock-emission failure, or projection failure.
 
-The result schema and source identity invalidate stale caches.
+The report records the Python versions selected from the scenario's range before resolution. A
+completed result must cover every requested Python version and platform. Rerun older scenarios to
+write this target list, or read their reports with the summary script from the original checkout.
 
 A full run writes `_manifest.json` with the current scenario set. The summary follows that set,
 ignores removed result files, and accepts only complete runs from a clean source tree.
+
+If a release's wheels and source distribution have the same dependencies on every target, add
+`assume_universal_deps = { package = "==1.2" }` to the scenario. Nab can then read those
+dependencies from a wheel. The report records the package and version selector.
+
+For older source releases that lack static metadata, record the release's declared requirements with
+`dependency_metadata."name==1.2" = ["dep>=3"]`. Use an empty list for a release with no runtime
+dependencies. The benchmark records these declarations alongside its other inputs.
 
 Selected diagnostics are isolated under `universal-selected/` and are never treated as a full-suite
 baseline.
@@ -157,6 +167,13 @@ narrow the match. A nonmatching host records the scenario as inapplicable.
 Universal scenarios require `python`, `platforms`, and `requirements`. They may also set
 constraints, a cutoff, Python ordering, alignment, resolution strategy, an explanatory reason, and
 expected-failure handling.
+
+With `skip_on_fail = true`, a failed resolution counts as expected only if the solver proved a
+conflict on every failed target. A work limit or solver error fails the benchmark. Rerun older
+expected-failure reports to record the proof status.
+
+Use `expect_conflict = true` when the requirements must conflict on every target. Any target that
+resolves or hits a work limit makes the benchmark fail.
 
 ## What the suites cover
 

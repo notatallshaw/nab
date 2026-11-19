@@ -22,6 +22,7 @@ The following import paths are supported and will remain available until a major
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `nab_resolver.resolver`    | `Resolver`, `ResolverProvider`, `BaseProvider`, `ResolverObserver`, `Solution`, `DEFAULT_MAX_ITERATIONS`                     |
 | `nab_resolver.root`        | `ROOT`                                                                                                                       |
+| `nab_resolver.priority`    | `compute_tier`                                                                                                               |
 | `nab_resolver.ranges`      | `Range`, `IntegerRangeMembership`                                                                                            |
 | `nab_resolver.types`       | `RootRequirement`, `Term`, `Incompatibility`, `IncompatibilityCause`, `RangeProtocol`                                        |
 | `nab_resolver.errors`      | `ResolutionError`, `ResolutionTerminatedError`, `ResolutionLimitError`, `ResolutionInvariantError`, `ResolutionStalledError` |

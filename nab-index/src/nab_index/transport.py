@@ -17,11 +17,12 @@ __lazy_modules__ = (
 
 import gzip
 import zlib
-from typing import TYPE_CHECKING, Any, Final, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Final, Protocol, runtime_checkable
 
 from nab_provider.errors import HttpError, UnserveableUrlError
 from nab_provider.fetch_port import PrefetchSettings
 
+from ._json_decode import JsonValue
 from ._version import __version__
 from .retry_limits import RETRY_STATUSES
 
@@ -37,10 +38,12 @@ __all__ = [
     "HttpError",
     "HttpResponse",
     "IdleClosableTransport",
+    "JsonValue",
     "TunedHttpTransport",
     "UnserveableUrlError",
     "accepts_gzip",
     "decode_body",
+    "merge_request_headers",
     "prefetch_settings_for_backend",
     "raise_for_error_status",
     "raise_unless_ok",
@@ -70,6 +73,17 @@ class ContentDecodingError(Exception):
     """A response body did not decode as its Content-Encoding promised."""
 
 
+def merge_request_headers(overrides: Mapping[str, str] | None) -> dict[str, str]:
+    """Merge HTTP fields case-insensitively, keeping each caller-supplied name."""
+    if not overrides:
+        return dict(DEFAULT_HEADERS)
+
+    fields = {name.lower(): (name, value) for name, value in DEFAULT_HEADERS.items()}
+    for name, value in overrides.items():
+        fields[name.lower()] = (name, value)
+    return dict(fields.values())
+
+
 def _quality(params: str) -> float:
     """Return an Accept-Encoding entry's ``q`` value, 1.0 when it carries none.
 
@@ -95,11 +109,20 @@ def accepts_gzip(request_headers: Mapping[str, str]) -> bool:
     undone.
     """
     folded = {name.lower(): value for name, value in request_headers.items()}
+    gzip_listed = False
+    wildcard_allowed = False
     for entry in folded.get("accept-encoding", "").split(","):
-        coding, _, params = entry.partition(";")
-        if coding.strip().lower() == "gzip" and _quality(params) > 0:
-            return True
-    return False
+        name, _, params = entry.partition(";")
+        coding = name.strip().lower()
+        if coding in _GZIP_CODINGS:
+            gzip_listed = True
+            if _quality(params) > 0:
+                return True
+        elif coding == "*" and _quality(params) > 0:
+            wildcard_allowed = True
+
+    # An explicit refusal overrides the wildcard in either order (RFC 9110 §12.5.3).
+    return wildcard_allowed and not gzip_listed
 
 
 def decode_body(body: bytes, content_encoding: str | None) -> bytes:
@@ -159,7 +182,7 @@ class HttpResponse(Protocol):
         """Response body as text."""
         ...
 
-    def json(self) -> Any:
+    def json(self) -> JsonValue:
         """Response body parsed as JSON."""
         ...
 

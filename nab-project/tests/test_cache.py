@@ -943,12 +943,14 @@ class TestReadCacheEntry:
     @pytest.mark.parametrize(
         "raw",
         [
+            b"[]",
+            b'{"fetched_at": [], "max_age": 600, "etag": null}',
             b'{"fetched_at": Infinity, "max_age": 600, "etag": null}',
             b'{"fetched_at": -Infinity, "max_age": 600, "etag": null}',
             b'{"fetched_at": 1, "max_age": 1e400, "etag": null}',
         ],
     )
-    def test_out_of_range_policy_number(self, tmp_path: Path, raw: bytes) -> None:
+    def test_malformed_cache_policy(self, tmp_path: Path, raw: bytes) -> None:
         cache = self._cache(tmp_path)
         path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy"
         path.parent.mkdir(parents=True)

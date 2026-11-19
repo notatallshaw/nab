@@ -243,13 +243,12 @@ class MultiIndexClient:
                 self._record_route(package, index_name)
                 return files
 
-        # Nothing found anywhere: route to the first index so
-        # subsequent metadata calls (which will also miss) hit a
-        # stable client.
-        self._record_route(package, self._order[0])
-
         if skipped_offline is not None:
+            # A cold index can still supply the package on a later lookup.
             raise skipped_offline
+
+        # Every index answered absent. Attribute follow-up calls to the first one.
+        self._record_route(package, self._order[0])
         return []
 
     def served_unreadable_only(self, package: str) -> bool:

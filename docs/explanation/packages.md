@@ -89,6 +89,11 @@ the provider's file records, index configuration and fetch errors. `nab_provider
 shared record behavior; concrete record types belong to their domain package. Fixed fields use
 `Final` annotations without runtime write guards.
 
+The resolver counts discarded decisions for each package and records which earlier packages it
+blames for them. The Python provider uses `nab_resolver.priority.compute_tier` to rank packages by
+those counts. Within a tier it considers the number of candidates, then tries an extra before its
+base package if the counts are equal.
+
 ## Diagnostic suggestions
 
 ```text
@@ -209,7 +214,7 @@ The CLI selects the policy and reports whether the saved lock was reused.
 from nab_provider.provider import Provider
 from nab_provider.records import WheelFile
 from nab_provider.testing import make_coordinator
-from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider.ranges import VersionRange
 from nab_resolver.resolver import Resolver
 
 
@@ -232,13 +237,21 @@ port = make_coordinator(
     },
 )
 provider = Provider(port)
-resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+resolver = Resolver(
+    provider,
+    range_type=VersionRange,
+    root_version="0",
+    format_range=provider.format_range,
+)
 print(resolver.resolve({"app": VersionRange.full()}))
 ```
 
 `nab_provider.testing` supplies the in-memory `FetchPort`. A real host implements that interface
-over its own session and download path. The provider has no project path; use
-`nab_project.resolve.resolve_for_targets` when resolving a project.
+using its own HTTP session and download code. The fetcher stores queued results in the shared index.
+`materialize_source(request)` returns the source tree and its metadata directly.
+`build_sdist_metadata(...)` returns the built metadata. The provider caches it by sdist version and
+URL and checks it for each target. Use `nab_project.resolve.resolve_for_targets` when resolving a
+project.
 
 ### Collect active dependency declarations
 

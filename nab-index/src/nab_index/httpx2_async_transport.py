@@ -6,7 +6,7 @@ __lazy_modules__ = (
     "asyncio",
     "httpx2",
     "importlib.util",
-    "json",
+    "nab_index.response",
     "nab_index.retry",
     "nab_index.retry_limits",
     "nab_index.transport",
@@ -16,69 +16,28 @@ __lazy_modules__ = (
 )
 
 import asyncio
-import json as _json
 import ssl
 import sys
 from importlib.util import find_spec
-from typing import TYPE_CHECKING, Any
 
 import httpx2
 import truststore
 
+from .response import HttpxResponse
 from .retry import is_certificate_error, next_delay
 from .retry_limits import MAX_REDIRECTS, MAX_RETRIES, RETRY_STATUSES
 from .transport import (
-    DEFAULT_HEADERS,
     ContentDecodingError,
     HttpError,
     accepts_gzip,
     decode_body,
+    merge_request_headers,
     prefetch_settings_for_backend,
-    raise_for_error_status,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
 
 __all__ = [
     "Httpx2AsyncTransport",
 ]
-
-
-class _Httpx2Response:
-    """An httpx2 response with nab's decoded body and 4xx/5xx error handling."""
-
-    __slots__ = ("_content", "_response")
-
-    def __init__(self, response: httpx2.Response, content: bytes) -> None:
-        self._response = response
-        self._content = content
-
-    @property
-    def status_code(self) -> int:
-        return self._response.status_code
-
-    @property
-    def url(self) -> str:
-        return str(self._response.url)
-
-    @property
-    def headers(self) -> Mapping[str, str]:
-        return self._response.headers
-
-    @property
-    def content(self) -> bytes:
-        return self._content
-
-    @property
-    def text(self) -> str:
-        return self._content.decode("utf-8")
-
-    def json(self) -> Any:
-        return _json.loads(self._content)
-
-    def raise_for_status(self) -> None:
-        raise_for_error_status(self._response.status_code, self.url)
 
 
 class Httpx2AsyncTransport:
@@ -121,14 +80,12 @@ class Httpx2AsyncTransport:
 
     async def get(
         self, url: str, *, headers: dict[str, str] | None = None
-    ) -> _Httpx2Response:
+    ) -> HttpxResponse:
         """Send a GET, retrying transient failures and truncated gzip bodies.
 
         Pass :data:`~nab_index.transport.IDENTITY_HEADERS` for undecoded bytes.
         """
-        request_headers = dict(DEFAULT_HEADERS)
-        if headers is not None:
-            request_headers.update(headers)
+        request_headers = merge_request_headers(headers)
 
         decode = accepts_gzip(request_headers)
         failures = 0
@@ -162,12 +119,12 @@ class Httpx2AsyncTransport:
                 raise HttpError(msg) from exc
             else:
                 if response.status_code not in RETRY_STATUSES:
-                    return _Httpx2Response(response, content)
+                    return HttpxResponse(response, content)
 
                 failures += 1
                 # Preserve the final status and body when retries run out.
                 if failures > MAX_RETRIES:
-                    return _Httpx2Response(response, content)
+                    return HttpxResponse(response, content)
                 delay = next_delay(failures, response.headers.get("Retry-After"))
 
             await asyncio.sleep(delay)

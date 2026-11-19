@@ -91,7 +91,7 @@ def test_source_python_admission(
                 provider.get_dependencies(*key)
             assert key not in provider.deps_cache
 
-    assert len(coordinator.calls_to("request_source_listing")) == 1
+    assert len(coordinator.calls_to("materialize_source")) == 1
     assert metadata.requires_python == (
         SpecifierSet(requires_python) if requires_python is not None else None
     )

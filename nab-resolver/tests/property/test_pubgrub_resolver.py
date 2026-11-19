@@ -33,6 +33,7 @@ from .providers import (
     PromotingFuzzProvider,
     brute_force_has_solution,
     reachable_packages,
+    resolve_or_prove_conflict,
     verify_solution,
 )
 from .strategies import (
@@ -614,6 +615,26 @@ class TestAdversarialGraphShapes:
             assert package in reachable
 
 
+def _check_against_brute_force(
+    graph: dict[str, dict[int, dict[str, Range[int]]]],
+    requirements: dict[str, Range[int]],
+    threshold: int,
+    constraints: dict[str, Range[int]] | None = None,
+) -> None:
+    expected = brute_force_has_solution(graph, requirements, constraints)
+    for provider in (FuzzProvider(graph), PromotingFuzzProvider(graph, threshold)):
+        resolver = Resolver(provider, max_iterations=1000)
+        solution = resolve_or_prove_conflict(resolver, requirements, constraints)
+        assert (solution is not None) == expected
+        if solution is None:
+            continue
+
+        verify_solution(solution, requirements, graph)
+        for package, allowed in (constraints or {}).items():
+            if package in solution:
+                assert solution[package] in allowed
+
+
 class TestAgreesWithBruteForce:
     """PubGrub is described as a complete search algorithm in
     `solver.md`_: it returns a solution iff one exists, and only
@@ -631,33 +652,18 @@ class TestAgreesWithBruteForce:
     @given(
         graph=small_exhaustive_graphs(),
         threshold=st.integers(min_value=1, max_value=10),
+        root_version=st.integers(),
     )
+    @example(graph={"root": {1: {}}}, threshold=1, root_version=2)
     @BRUTE_FORCE_SETTINGS
-    def test_agrees_with_brute_force(self, graph: dict, threshold: int) -> None:
+    def test_agrees_with_brute_force(
+        self, graph: dict, threshold: int, root_version: int
+    ) -> None:
         """Resolver agrees with exhaustive enumeration for small graphs."""
-        requirements = {"root": Range.singleton(1)}
-        brute_force_sat = brute_force_has_solution(graph, requirements)
-        if brute_force_sat is None:
-            return
-
-        for provider in (FuzzProvider(graph), PromotingFuzzProvider(graph, threshold)):
-            resolver = Resolver(provider, max_iterations=1000)
-            try:
-                solution = resolver.resolve(requirements)
-            except ResolutionError as error:
-                if "exceeded" in str(error):
-                    continue
-                assert not brute_force_sat, (
-                    f"Resolver reported impossible but brute-force found a "
-                    f"solution.\nGraph: {graph}"
-                )
-                continue
-
-            assert brute_force_sat, (
-                f"Resolver found a solution but brute-force says impossible.\n"
-                f"Graph: {graph}\nSolution: {solution}"
-            )
-            verify_solution(solution, requirements, graph)
+        graph = {**graph, "root": {root_version: graph["root"][1]}}
+        _check_against_brute_force(
+            graph, {"root": Range.singleton(root_version)}, threshold
+        )
 
     @pytest.mark.timeout(RESOLUTION_TIMEOUT_SECONDS * 200)
     @given(case=graph_and_constraints())
@@ -682,32 +688,7 @@ class TestAgreesWithBruteForce:
         impossible because of such a constraint is a completeness bug.
         """
         graph, constraints = case
-        requirements = {"root": Range.singleton(1)}
-        brute_force_sat = brute_force_has_solution(graph, requirements, constraints)
-        if brute_force_sat is None:
-            return
-
-        for provider in (FuzzProvider(graph), PromotingFuzzProvider(graph, 1)):
-            resolver = Resolver(provider, max_iterations=1000)
-            try:
-                solution = resolver.resolve(requirements, constraints=constraints)
-            except ResolutionError as error:
-                if "exceeded" in str(error):
-                    continue
-                assert not brute_force_sat, (
-                    f"Resolver reported impossible but brute-force found a "
-                    f"solution.\nGraph: {graph}\nConstraints: {constraints}"
-                )
-                continue
-
-            assert brute_force_sat, (
-                f"Resolver found a solution but brute-force says impossible.\n"
-                f"Graph: {graph}\nConstraints: {constraints}\nSolution: {solution}"
-            )
-            verify_solution(solution, requirements, graph)
-            for package, constraint_range in constraints.items():
-                if package in solution:
-                    assert solution[package] in constraint_range
+        _check_against_brute_force(graph, {"root": Range.singleton(1)}, 1, constraints)
 
     @pytest.mark.timeout(RESOLUTION_TIMEOUT_SECONDS * 200)
     @given(
@@ -719,29 +700,7 @@ class TestAgreesWithBruteForce:
         self, graph: dict, threshold: int
     ) -> None:
         """Mutual-dep graphs agree with exhaustive enumeration."""
-        requirements = {"root": Range.singleton(1)}
-        brute_force_sat = brute_force_has_solution(graph, requirements)
-        if brute_force_sat is None:
-            return
-
-        for provider in (FuzzProvider(graph), PromotingFuzzProvider(graph, threshold)):
-            resolver = Resolver(provider, max_iterations=1000)
-            try:
-                solution = resolver.resolve(requirements)
-            except ResolutionError as error:
-                if "exceeded" in str(error):
-                    continue
-                assert not brute_force_sat, (
-                    f"Resolver reported impossible but brute-force found a "
-                    f"solution.\nGraph: {graph}"
-                )
-                continue
-
-            assert brute_force_sat, (
-                f"Resolver found a solution but brute-force says impossible.\n"
-                f"Graph: {graph}\nSolution: {solution}"
-            )
-            verify_solution(solution, requirements, graph)
+        _check_against_brute_force(graph, {"root": Range.singleton(1)}, threshold)
 
 
 class TestOrderInsensitivity:

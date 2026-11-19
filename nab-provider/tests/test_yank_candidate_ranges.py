@@ -10,10 +10,11 @@ import pytest
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import Provider
-from nab_provider.testing import make_coordinator
+from nab_provider.testing import make_coordinator, make_wheel
 from nab_provider.yank_candidates import Candidate
 from nab_provider.yank_preference import PreferenceScope
 from nab_provider.yanked_resolution import YankProxyProvider
+from nab_provider.yanking import mark_yanked
 from nab_resolver.ranges import Range
 
 
@@ -81,3 +82,26 @@ def test_completed_search_releases_membership_owners() -> None:
     assert pins == {}
     gc.collect()
     assert reference() is None
+
+
+def test_withdrawn_files_at_one_release_share_an_alias_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wheels = [
+        mark_yanked(make_wheel("1.0", tag=f"{build}-py3-none-any"), reason=True)
+        for build in range(32)
+    ]
+    provider = Provider(make_coordinator(wheels), defer_yanked=True)
+    assert len(provider.fetch_versions("pkg")) == len(wheels)
+    comparisons = 0
+    original = Version.__eq__
+
+    def compare(left: Version, right: object) -> bool:
+        nonlocal comparisons
+        comparisons += 1
+        return original(left, right)
+
+    monkeypatch.setattr(Version, "__eq__", compare)
+    assert not provider.has_withdrawn_alternative()
+    # One pass over the listing and one over this release cover every file.
+    assert comparisons <= 2 * len(wheels)

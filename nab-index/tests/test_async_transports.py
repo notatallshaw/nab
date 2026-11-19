@@ -1,4 +1,4 @@
-"""Tests for the async HTTP transports and FetchCoordinator transport injection."""
+"""Tests for the index HTTP transports, clients and archive reads."""
 
 from __future__ import annotations
 
@@ -10,13 +10,15 @@ import itertools
 import json
 import ssl
 import tarfile
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Generator, Mapping, Sequence
+from contextlib import AbstractContextManager, contextmanager
+from functools import partial
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock
+from threading import Event, Thread
+from typing import Any, TypeVar
+from unittest.mock import MagicMock, patch
 from urllib.parse import urljoin
 
 import httpx
@@ -36,7 +38,7 @@ from nab_index.client import (
     _extract_sdist_files,
 )
 from nab_index.httpx2_async_transport import Httpx2AsyncTransport
-from nab_index.httpx_async_transport import HttpxAsyncTransport, _HttpxResponse
+from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.retry import GET_RETRY, next_delay
 from nab_index.retry_limits import MAX_REDIRECTS, MAX_RETRIES, RETRY_STATUSES
 from nab_index.transport import (
@@ -59,8 +61,6 @@ from nab_index.urllib3_async_transport import (
     _Urllib3Response,
 )
 from nab_markersets._compat import get_int_max_str_digits
-from nab_project._testing.loopback import running_server
-from nab_project.fetch import FetchCoordinator
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
@@ -95,6 +95,23 @@ UNPARSEABLE_RETRY_AFTERS = [
 # Literals, so dropping a status from RETRY_STATUSES fails a test instead of
 # quietly deleting its own cases.
 EXPECTED_RETRY_STATUSES = (408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 527)
+
+
+_Server = TypeVar("_Server", bound=ThreadingHTTPServer)
+
+
+@contextmanager
+def _running_server(server: _Server) -> Generator[_Server, None, None]:
+    with server:
+        thread = Thread(
+            target=partial(server.serve_forever, poll_interval=0.01), daemon=True
+        )
+        thread.start()
+        try:
+            yield server
+        finally:
+            server.shutdown()
+            thread.join()
 
 
 class _QuietHandler(BaseHTTPRequestHandler):
@@ -140,7 +157,7 @@ def _stub_index(
     server.statuses = list(statuses)
     server.seen = []
     server.retry_after = retry_after
-    return running_server(server)
+    return _running_server(server)
 
 
 class _GzipStubIndex(ThreadingHTTPServer):
@@ -171,7 +188,7 @@ def _gzip_stub_index(
     server.bodies = list(bodies)
     server.encoding = encoding
     server.seen = []
-    return running_server(server)
+    return _running_server(server)
 
 
 class _ArtifactStubIndex(ThreadingHTTPServer):
@@ -204,19 +221,21 @@ def _artifact_stub_index(body: bytes) -> AbstractContextManager[_ArtifactStubInd
     server = _ArtifactStubIndex(("127.0.0.1", 0), _ArtifactStubIndexHandler)
     server.body = body
     server.accept_encoding = []
-    return running_server(server)
+    return _running_server(server)
 
 
 class _UserAgentStubIndex(ThreadingHTTPServer):
     """Loopback index that records each request's User-Agent."""
 
-    user_agents: list[str | None]
+    user_agents: list[str]
+    encodings: list[str]
 
 
 class _UserAgentStubIndexHandler(_QuietHandler):
     def do_GET(self) -> None:
         assert isinstance(self.server, _UserAgentStubIndex)
-        self.server.user_agents.append(self.headers.get("User-Agent"))
+        self.server.user_agents.extend(self.headers.get_all("User-Agent", []))
+        self.server.encodings.extend(self.headers.get_all("Accept-Encoding", []))
 
         body = b"ok"
         self.send_response(200)
@@ -228,7 +247,8 @@ class _UserAgentStubIndexHandler(_QuietHandler):
 def _user_agent_stub_index() -> AbstractContextManager[_UserAgentStubIndex]:
     server = _UserAgentStubIndex(("127.0.0.1", 0), _UserAgentStubIndexHandler)
     server.user_agents = []
-    return running_server(server)
+    server.encodings = []
+    return _running_server(server)
 
 
 EARLY_HINTS_LISTING = (
@@ -271,7 +291,7 @@ def _early_hints_index(
 ) -> AbstractContextManager[_EarlyHintsIndex]:
     server = _EarlyHintsIndex(("127.0.0.1", 0), _EarlyHintsIndexHandler)
     server.informational = list(informational)
-    return running_server(server)
+    return _running_server(server)
 
 
 class _MovedIndex(ThreadingHTTPServer):
@@ -321,7 +341,7 @@ def _moved_index(
     server.body = body
     server.seen = []
     server.transient = list(transient)
-    return running_server(server)
+    return _running_server(server)
 
 
 @pytest.fixture
@@ -590,21 +610,22 @@ class TestAcceptsGzip:
     def test_unparseable_quality_is_a_refusal(self) -> None:
         assert not accepts_gzip({"Accept-Encoding": "gzip;q=high"})
 
+    @pytest.mark.parametrize(
+        ("value", "accepted"),
+        [
+            ("X-GZip;q=0.4", True),
+            ("br, *;q=0.1", True),
+            ("*;q=0", False),
+            ("*, gzip;q=0", False),
+            ("x-gzip;q=0, *", False),
+            ("*;q=0, gzip", True),
+        ],
+    )
+    def test_alias_and_wildcard_preferences(self, value: str, accepted: bool) -> None:
+        assert accepts_gzip({"Accept-Encoding": value}) is accepted
+
     def test_absent_header(self) -> None:
         assert not accepts_gzip({"Accept": "application/json"})
-
-
-class TestFetchCoordinatorTransport:
-    @respx.mock
-    def test_explicit_transport(self) -> None:
-        """Coordinator routes fetches through whatever transport is passed in."""
-        respx.get("https://pypi.org/simple/pkg/").mock(
-            return_value=httpx.Response(200, json=LISTING_JSON)
-        )
-        with FetchCoordinator(transport=HttpxAsyncTransport()) as coord:
-            event = coord.request_listing("pkg")
-            event.wait(timeout=5)
-            assert coord.index.get_listing("pkg") is not None
 
 
 class TestHttpxAsyncTransport:
@@ -614,7 +635,7 @@ class TestHttpxAsyncTransport:
             return_value=httpx.Response(200, json={"a": 1}, headers={"etag": "abc"})
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 resp = await transport.get("https://example.com/")
@@ -624,7 +645,6 @@ class TestHttpxAsyncTransport:
                 await transport.aclose()
 
         resp = asyncio.run(go())
-        assert isinstance(resp, _HttpxResponse)
         assert resp.status_code == 200
         assert resp.headers["etag"] == "abc"
         assert resp.json() == {"a": 1}
@@ -658,7 +678,7 @@ class TestHttpxAsyncTransport:
             return_value=httpx.Response(200, json={"ok": True})
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 resp = await transport.get("https://example.com/simple/pkg")
@@ -683,7 +703,7 @@ class TestHttpxAsyncTransport:
             return_value=httpx.Response(200)
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/r/0")
@@ -793,7 +813,7 @@ class TestHttpxAsyncTransport:
             side_effect=[httpx.Response(status), httpx.Response(200, json={"ok": True})]
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -816,7 +836,7 @@ class TestHttpxAsyncTransport:
             side_effect=[httpx.Response(status), httpx.Response(200, json={"ok": True})]
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -836,7 +856,7 @@ class TestHttpxAsyncTransport:
             side_effect=[httpx.Response(408), httpx.Response(200, json={"ok": True})]
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -856,7 +876,7 @@ class TestHttpxAsyncTransport:
             side_effect=[httpx.ConnectError("boom"), httpx.Response(200)]
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -876,7 +896,7 @@ class TestHttpxAsyncTransport:
             ]
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -898,7 +918,7 @@ class TestHttpxAsyncTransport:
             * (MAX_RETRIES + 1)
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -920,7 +940,7 @@ class TestHttpxAsyncTransport:
             side_effect=[httpx.Response(503)] * (MAX_RETRIES + 1)
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -995,7 +1015,7 @@ class TestHttpxAsyncTransport:
             return_value=httpx.Response(404)
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/missing")
@@ -1014,7 +1034,7 @@ class TestHttpxAsyncTransport:
             )
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -1035,7 +1055,7 @@ class TestHttpxAsyncTransport:
             )
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -1060,7 +1080,7 @@ class TestHttpxAsyncTransport:
             ]
         )
 
-        async def go() -> _HttpxResponse:
+        async def go() -> HttpResponse:
             transport = HttpxAsyncTransport(http2=False)
             try:
                 return await transport.get("https://example.com/pkg")
@@ -1669,6 +1689,39 @@ class TestUrllib3AsyncTransport:
         assert pools[0] is not pools[1]
         assert set(map(id, pools)) <= set(map(id, transport._pools))
 
+    def test_closing_releases_old_pools_and_keeps_a_new_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        transport = Urllib3AsyncTransport()
+        first = transport._pool()
+        clearing = Event()
+        release = Event()
+        clear = first.clear
+
+        def wait_then_clear() -> None:
+            clearing.set()
+            assert release.wait(timeout=10)
+            clear()
+
+        monkeypatch.setattr(first, "clear", wait_then_clear)
+
+        async def close_and_reuse() -> None:
+            closing = asyncio.create_task(transport.aclose())
+            try:
+                assert await asyncio.to_thread(clearing.wait, 5)
+                second = transport._pool()
+                assert second is not first
+            finally:
+                release.set()
+
+            await closing
+            assert transport._pools == {second}
+            assert transport._pool() is second
+            await transport.aclose()
+            assert not transport._pools
+
+        asyncio.run(close_and_reuse())
+
     def test_ssl_context_satisfies_urllib3_cert_check(self) -> None:
         """``_SSLContext`` returns a non-empty CA count for urllib3-future.
 
@@ -1822,9 +1875,7 @@ class TestAsyncSimpleClient:
             asyncio.run(go())
         assert isinstance(caught.value, HttpError)
 
-    def test_get_files_over_nested_raises_clean(
-        self, refuse_over_nested: Callable[[bytes], AbstractContextManager[None]]
-    ) -> None:
+    def test_get_files_over_nested_raises_clean(self) -> None:
         """A body past the JSON decoder's recursion guard must not escape raw."""
         body = b"[[[]]]"
         transport = self._FakeTransport(body)
@@ -1834,12 +1885,13 @@ class TestAsyncSimpleClient:
                 return await c.get_files("pkg")
 
         with (
-            refuse_over_nested(body),
+            patch.object(json, "loads", side_effect=RecursionError) as decode,
             pytest.raises(
                 MalformedSimpleResponseError, match="nested too deeply to decode"
             ),
         ):
             asyncio.run(go())
+        decode.assert_called_once_with(body)
 
     def test_get_files_404_returns_empty(self) -> None:
         transport = self._FakeTransport(b"not found", status=404)
@@ -1976,21 +2028,6 @@ class TestArtifactContentEncoding:
 
         assert server.accept_encoding == ["identity"]
 
-    @pytest.mark.parametrize("make_transport", TRANSPORTS)
-    def test_direct_archive_keeps_the_served_bytes(
-        self, make_transport: Callable[[], AsyncHttpTransport]
-    ) -> None:
-        """The ``archive-sources`` path, whose caller checks the declared hash."""
-        with (
-            _artifact_stub_index(SDIST_BODY) as server,
-            FetchCoordinator(transport=make_transport()) as coord,
-        ):
-            url = f"http://127.0.0.1:{server.server_port}/demo-1.0.tar.gz"
-            coord.request_direct_archive("demo", SDIST_SHA256, url).wait(timeout=10)
-            assert coord.index.get_sdist_archive("demo", SDIST_SHA256) == SDIST_BODY
-
-        assert server.accept_encoding == ["identity"]
-
 
 class TestUnfollowedRedirectAcrossBackends:
     """Both backends treat a 300 they did not follow the same way.
@@ -2057,8 +2094,18 @@ class TestUserAgentAcrossBackends:
         assert index.user_agents == [USER_AGENT]
 
     @pytest.mark.parametrize("make_transport", TRANSPORTS)
-    def test_accept_encoding_override_keeps_the_user_agent(
-        self, make_transport: Callable[[], AsyncHttpTransport]
+    @pytest.mark.parametrize(
+        ("headers", "user_agent"),
+        [
+            (IDENTITY_HEADERS, USER_AGENT),
+            ({"user-agent": "my-client", "accept-encoding": "identity"}, "my-client"),
+        ],
+    )
+    def test_header_overrides_reach_the_server_once(
+        self,
+        make_transport: Callable[[], AsyncHttpTransport],
+        headers: dict[str, str],
+        user_agent: str,
     ) -> None:
         with _user_agent_stub_index() as index:
             url = f"http://127.0.0.1:{index.server_port}/files/pkg-1.0.whl"
@@ -2066,13 +2113,14 @@ class TestUserAgentAcrossBackends:
             async def go() -> None:
                 transport = make_transport()
                 try:
-                    await transport.get(url, headers=IDENTITY_HEADERS)
+                    await transport.get(url, headers=headers)
                 finally:
                     await transport.aclose()
 
             asyncio.run(go())
 
-        assert index.user_agents == [USER_AGENT]
+        assert index.user_agents == [user_agent]
+        assert index.encodings == ["identity"]
 
 
 class TestInformationalResponseAcrossBackends:

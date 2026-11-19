@@ -4788,6 +4788,42 @@ class TestLockCommandUniversal:
         ]
         assert not list(tmp_path.glob("*.tmp"))
 
+    @pytest.mark.parametrize("error", [PermissionError, KeyboardInterrupt])
+    def test_failed_replacement_discards_unpublished_stages(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        error: type[BaseException],
+    ) -> None:
+        paths = [tmp_path / f"req-{number}.txt" for number in range(3)]
+        for path in paths:
+            path.write_text("previous\n")
+        files = [
+            _RenderedFile(path, str(number), f"pkg=={number}\n", 1)
+            for number, path in enumerate(paths)
+        ]
+        replace = Path.replace
+
+        def refuse_middle(source: Path, target: Path) -> Path:
+            if target == paths[1]:
+                raise error
+            return replace(source, target)
+
+        with monkeypatch.context() as patcher:
+            patcher.setattr(Path, "replace", refuse_middle)
+            with pytest.raises(error):
+                _write_requirements_files(files)
+
+        assert [path.read_text() for path in paths] == [
+            "pkg==0\n",
+            "previous\n",
+            "previous\n",
+        ]
+        assert not list(tmp_path.glob("*.tmp"))
+
+        _write_requirements_files(files)
+        assert [path.read_text() for path in paths] == [item.text for item in files]
+
     def test_template_files_keep_the_permissions_a_write_would_give(
         self, tmp_path: Path
     ) -> None:

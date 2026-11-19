@@ -235,24 +235,24 @@ def test_repeated_source_leaves_are_charged_before_comparison(
     assert engine._work_meter.remaining is None
 
 
+def _forbid_column_builds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail if a rejected comparison allocates its scalar or membership columns."""
+
+    def unexpected(*_args: object) -> None:
+        pytest.fail("comparison built truth columns before admission")
+
+    monkeypatch.setattr(engine, "_compile_cell_truth_masks", unexpected)
+    monkeypatch.setattr(engine, "_membership_columns", unexpected)
+
+
 def test_empty_rows_do_not_allocate_a_membership_powerset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[int] = []
-    original = engine._compile_cell_truth_masks
-
-    def columns(
-        space: engine._CellSpace, size: int
-    ) -> tuple[dict[engine.Atom, int], int]:
-        calls.append(size)
-        return original(space, size)
-
-    monkeypatch.setattr(engine, "_compile_cell_truth_masks", columns)
+    _forbid_column_builds(monkeypatch)
     source = engine.parse('"a" in extras')
     assert engine.equivalent_within_rows(
         source, engine.FALSE, engine.FALSE, 100_000, max_work=100_000
     )
-    assert calls == []
 
 
 def test_first_row_difference_precedes_later_intractable_row() -> None:
@@ -291,16 +291,7 @@ def test_membership_admission_precedes_positioned_integer_construction(
 def test_combined_table_allowance_declines_before_mask_construction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[int] = []
-    original = engine._compile_cell_truth_masks
-
-    def columns(
-        space: engine._CellSpace, size: int
-    ) -> tuple[dict[engine.Atom, int], int]:
-        calls.append(size)
-        return original(space, size)
-
-    monkeypatch.setattr(engine, "_compile_cell_truth_masks", columns)
+    _forbid_column_builds(monkeypatch)
     source = engine.parse('"a" in extras')
     assert (
         engine._independent_rows_equivalent(
@@ -308,7 +299,6 @@ def test_combined_table_allowance_declines_before_mask_construction(
         )
         is None
     )
-    assert calls == []
 
 
 @pytest.mark.parametrize(
@@ -438,6 +428,24 @@ def test_equivalence_skips_false_and_semantically_empty_rows() -> None:
         engine._Row({}, engine.TRUE),
     ]
     assert engine._independent_rows_equivalent(source, source, rows, 2, 100_000, store)
+
+
+@pytest.mark.parametrize("variable", ["extras", "dependency_groups"])
+def test_membership_columns_match_each_subset(variable: str) -> None:
+    names = ("z", "a", "m")
+    predicates = [
+        f'"{name}" {op} {variable}' for name in names for op in ("in", "not in")
+    ]
+    atoms = engine.collect_atoms(engine.parse(" and ".join(predicates)))
+    table = engine._membership_columns(atoms, 1 << len(names))
+
+    assert table.size == 1 << len(names)
+    assert table.within == (1 << table.size) - 1
+    for bits in range(table.size):
+        members = {name for index, name in enumerate(names) if bits & (1 << index)}
+        assert [bool(column & (1 << bits)) for column in table.columns] == [
+            atom.holds(members) for atom in atoms
+        ]
 
 
 def test_unadmitted_membership_domain_declines_without_preparing_columns() -> None:

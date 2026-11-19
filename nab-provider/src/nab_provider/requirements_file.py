@@ -16,11 +16,10 @@ __lazy_modules__ = (
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
-from nab_provider._vendor.packaging.dependency_groups import resolve_dependency_groups
-from nab_provider._vendor.packaging.errors import ExceptionGroup
-from nab_provider._vendor.packaging.markers import Marker
-from nab_provider._vendor.packaging.utils import canonicalize_name
-
+from ._vendor.packaging.dependency_groups import resolve_dependency_groups
+from ._vendor.packaging.errors import ExceptionGroup
+from ._vendor.packaging.markers import Marker
+from ._vendor.packaging.utils import canonicalize_name
 from .marker_holds import dependency_marker_holds, intractable_as_error, marker_set
 from .pep508 import NESTED_MARKER_MESSAGE, parse_requirement
 from .project_requirements import (
@@ -37,7 +36,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from types import CodeType
 
-    from nab_provider._vendor.packaging.requirements import Requirement
+    from ._vendor.packaging.requirements import Requirement
 
 __all__ = [
     "InvalidProjectRequirementError",

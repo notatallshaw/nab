@@ -114,10 +114,11 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
-    from nab.config.ladder import Layer
     from nab_project.prepared_input import PreparedProjectInput
     from nab_provider.overrides import IndexOverride, PackageOverride
     from nab_provider.tags import PlatformSpec
+
+    from .ladder import Layer
 
 
 __all__ = [

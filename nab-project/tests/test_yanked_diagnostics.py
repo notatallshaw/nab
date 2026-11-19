@@ -249,7 +249,7 @@ def test_install_artifact_identity_failure_does_not_invent_a_listing_refusal() -
         "1.0"
     ]
     assert not search.catalogue.facts
-    assert port.calls_to("request_built_metadata") == []
+    assert port.calls_to("build_sdist_metadata") == []
 
     message = caught.value.args[0]
     assert isinstance(message, ResolutionMessage)

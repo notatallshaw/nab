@@ -41,6 +41,7 @@ RP = sys.intern(">=3.8")
 _H_FORMAT = 0
 _H_CODEC = 1
 _H_KEY_SCHEME = 2
+_H_DIGEST = 3
 _H_ZIP_SDISTS = 4
 
 # An sdist row is tag plus seven fields; the unknown-tag case relies on keeping
@@ -236,6 +237,26 @@ def test_valid_blob_decodes() -> None:
     assert decode(encode(SAMPLE, DIGEST), _policy()) is not None
 
 
+@pytest.mark.parametrize(
+    ("position", "value"),
+    [
+        (_H_FORMAT, float(FORMAT_VERSION)),
+        (_H_CODEC, True),
+        (_H_KEY_SCHEME, False),
+        (_H_CODEC, "one"),
+        (_H_DIGEST, None),
+        (_H_DIGEST, "short"),
+        (_H_DIGEST, "z" * 64),
+    ],
+)
+def test_malformed_header_is_reported_and_treated_as_a_miss(
+    position: int, value: object
+) -> None:
+    blob = _tamper_header(position, value)
+    assert decode(blob, _policy()) is None
+    assert corruption_reason(blob) == "unexpected header shape"
+
+
 def test_format_mismatch_is_miss() -> None:
     assert decode(_tamper_header(_H_FORMAT, FORMAT_VERSION + 1), _policy()) is None
 
@@ -322,6 +343,7 @@ def test_unknown_tag_on_a_well_formed_row_is_miss(tag: object) -> None:
         (_W_HAS_METADATA, 1),
         (_W_UPLOAD_TIME, 20230101),
         (_W_SIZE, "1024"),
+        (_W_SIZE, -1),
         # ... nor a bool as a count.
         (_W_SIZE, True),
         (_W_HASHES, True),
@@ -332,8 +354,7 @@ def test_unknown_tag_on_a_well_formed_row_is_miss(tag: object) -> None:
         (_W_METADATA_HASH, ["sha256", "dead", "extra"]),
     ],
 )
-def test_wrong_field_type_is_miss(index: int, value: object) -> None:
-    """A field JSON allows but the record does not never reaches a record."""
+def test_invalid_wheel_field_is_miss(index: int, value: object) -> None:
     assert decode(_wheel_row_with(index, value), _policy()) is None
 
 
@@ -347,13 +368,13 @@ def test_wrong_field_type_is_miss(index: int, value: object) -> None:
         (_S_REQUIRES_PYTHON, 3),
         (_S_UPLOAD_TIME, 20230101),
         (_S_SIZE, "10"),
+        (_S_SIZE, -1),
         # bool is a subclass of int here too.
         (_S_SIZE, True),
         (_S_SIZE, 1.5),
     ],
 )
-def test_wrong_sdist_field_type_is_miss(index: int, value: object) -> None:
-    """An sdist row is checked on its own fields, not through the wheel's."""
+def test_invalid_sdist_field_is_miss(index: int, value: object) -> None:
     assert decode(_sdist_row_with(index, value), _policy()) is None
 
 

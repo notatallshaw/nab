@@ -37,7 +37,7 @@ def console_entry() -> None:
     """
     gc.disable()
     try:
-        from nab.cli import console_entry as run_cli  # noqa: PLC0415
+        from .cli import console_entry as run_cli  # noqa: PLC0415
 
         run_cli(_resume_collector)
     finally:

@@ -79,6 +79,7 @@ from nab_provider.provider import (
     BuildPolicy,
     DistFile,
     DistPolicy,
+    ListingFilterCache,
     LocalSource,
     MissingExtraError,
     Provider,
@@ -2971,10 +2972,13 @@ class TestSharedListingFilter:
         real = listing_mod._filter_base
 
         def counting(
-            provider: Provider, normalized: str, files: Sequence[WheelFile]
+            provider: Provider,
+            normalized: str,
+            files: Sequence[DistFile],
+            cache: ListingFilterCache | None,
         ) -> list[tuple[Version, DistFile]]:
             calls.append(f"{normalized}@{provider.python_version}")
-            return real(provider, normalized, files)
+            return real(provider, normalized, files, cache)
 
         return calls, counting
 

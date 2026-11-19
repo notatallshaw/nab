@@ -1,7 +1,7 @@
 [project]
 name = "nab-project"
 version = "0.0.31.dev0"
-description = "Index-backed provider, lockfile emitter, and downloader for nab"
+description = "Python project resolution, lockfiles and downloads for nab"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

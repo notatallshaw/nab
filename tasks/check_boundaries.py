@@ -3,7 +3,11 @@
 The packages checked are the ones ``tasks/build_dists.py`` builds for a release,
 so a distribution cannot join the release without also joining this check.
 
-Four rules:
+Five rules:
+
+``relative``
+    Use relative imports for modules in the importing package. A bare
+    ``import pkg`` can bind the package itself.
 
 ``declared``
     A package may import a sibling only when it depends on it. The allowed
@@ -65,15 +69,17 @@ except ModuleNotFoundError:
 # PYTHONSAFEPATH switch off.
 _BUILD_DISTS = Path(__file__).resolve().parent / "build_dists.py"
 _spec = importlib.util.spec_from_file_location("nab_build_dists", _BUILD_DISTS)
-assert _spec is not None
-assert _spec.loader is not None
+if _spec is None or _spec.loader is None:
+    msg = f"Cannot load the distribution definitions from {_BUILD_DISTS}"
+    raise ImportError(msg)
 build_dists = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(build_dists)
 
 REPO_ROOT = build_dists.REPO_ROOT
 
 REMEDY = (
-    "Use the sibling's public API, or promote the helper in the same change: "
+    "Use relative imports inside a package. For sibling imports, use the public "
+    "API or promote the helper in the same change: "
     "drop the underscore, add it to that module's __all__, and update its "
     "existing callers."
 )
@@ -256,7 +262,18 @@ def violations(package: Package, modules: dict[str, Package]) -> list[str]:
             continue
         tree = ast.parse(path.read_text("utf-8"), str(path))
         location = path.relative_to(REPO_ROOT)
-        for dotted, lineno in sorted(set(imported_paths(tree))):
+        imports = set(imported_paths(tree))
+        local_lines = {
+            lineno
+            for dotted, lineno in imports
+            if dotted.startswith(package.module + ".")
+        }
+        found.extend(
+            f"{location}:{lineno}: use a relative import within {package.module}"
+            for lineno in sorted(local_lines)
+        )
+
+        for dotted, lineno in sorted(imports):
             head, _, rest = dotted.partition(".")
             if head not in modules or head == package.module:
                 continue

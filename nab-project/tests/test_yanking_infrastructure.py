@@ -7,9 +7,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from nab_project._resolve.engine import _warn_selected_yanks
 from nab_project._testing.yanking import ReleaseRow, graph_port
 from nab_project.inputs import ResolveInputs
-from nab_project.lockfile import IndexPin
+from nab_project.lockfile import IndexPin, LocalPin, LockValidationError, TargetLock
 from nab_project.resolve import resolve_with_coordinator
 from nab_provider._provider.listing import parse_prefetched_metadata
 from nab_provider._provider.metadata_resolver import fetch_sdist_metadata
@@ -23,6 +24,7 @@ from nab_provider.records import SdistFile
 from nab_provider.target import ResolveTarget
 from nab_provider.yank_candidates import Candidate, YankCandidates, add_range, is_pin
 from nab_provider.yanking import mark_yanked
+from nab_resolver.errors import ResolutionInvariantError
 
 if TYPE_CHECKING:
     from nab_provider.testing import FakeFetchPort
@@ -70,6 +72,45 @@ def test_deferred_listing_is_not_preparation_permission() -> None:
     assert not port.calls_to("request_metadata")
 
 
+@pytest.mark.parametrize("prepared", [False, True])
+def test_invalid_selection_keeps_existing_provider_state(*, prepared: bool) -> None:
+    facts = catalogue([("first", "1", True, []), ("second", "2", True, [])])
+    first = facts.choices("first")[0]
+    second = facts.choices("second")[0]
+    assert facts.prepare(first) is not None
+    if prepared:
+        assert facts.prepare(second) is not None
+    previous = dict(facts.provider.deps_cache)
+
+    missing = "an admitting declaration" if prepared else "prepared metadata"
+    with pytest.raises(ResolutionInvariantError, match=f"second==2 without {missing}"):
+        facts.adopt(
+            {"first": first, "second": second}, {"first": ("input pin first==1",)}
+        )
+
+    assert facts.provider.deps_cache == previous
+    assert not facts.provider.yank_admissions
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_yank_warning_reports_inconsistent_lock_state(*, confirmed: bool) -> None:
+    provider = catalogue([("dep", "2", True, [])]).provider
+    provider.yank_admissions = {
+        ("dep", Version("2")): ("input pin dep==2",) if confirmed else ()
+    }
+    target = ResolveTarget.for_host()
+    lock = TargetLock(target=target, pins={"dep": LocalPin("dep", "2", "/src/dep")})
+
+    with pytest.raises(LockValidationError) as caught:
+        _warn_selected_yanks(provider, lock)
+    message = str(caught.value)
+    assert target.label in message
+    assert "dep==2" in message
+    assert (
+        "expected an index pin" if confirmed else "no admitting declaration"
+    ) in message
+
+
 def test_fact_catalogue_separates_file_classes_and_adopts_the_chosen_one() -> None:
     facts = catalogue([("dep", "2", True, []), ("dep", "2", False, ["missing"])])
     ordered = facts.ordered("dep", VersionRange.full())
@@ -85,9 +126,10 @@ def test_fact_catalogue_separates_file_classes_and_adopts_the_chosen_one() -> No
     assert withdrawn_data is not None
     assert not withdrawn_data.dependencies
     assert facts.prepare(withdrawn) is withdrawn_data
-    pins, provider = facts.adopt({"dep": withdrawn})
+    sources = {"dep": ("input pin dep==2",)}
+    pins, provider = facts.adopt({"dep": withdrawn}, sources)
     assert pins == {"dep": Version("2")}
-    assert provider.yank_admissions == frozenset({("dep", Version("2"))})
+    assert provider.yank_admissions == {("dep", Version("2")): sources["dep"]}
     assert all(file.yanked for file in provider.dist_files_for("dep", Version("2")))
 
 
@@ -167,7 +209,7 @@ def test_cached_declared_extras_keep_only_their_active_pin_syntax() -> None:
     assert {req.name for req in base.pins} == {"leaf"}
     assert {req.name for req in extra.pins} == {"leaf", "other"}
     pins, provider = facts.adopt(
-        {"dep": facts.choices("dep")[0], "dep[x]": facts.choices("dep[x]")[0]}
+        {"dep": facts.choices("dep")[0], "dep[x]": facts.choices("dep[x]")[0]}, {}
     )
     assert set(pins) == {"dep", "dep[x]"}
     assert not provider.yank_admissions

@@ -31,28 +31,28 @@ __lazy_modules__ = (
     "nab_provider.tags",
 )
 
-import re
 from functools import lru_cache
 from typing import TYPE_CHECKING, ClassVar, Final, NamedTuple
 
 from nab_markersets.markersets import variable_names
 from nab_markersets.python_versions import validate_python_version
-from nab_provider._vendor.packaging import tags as ptags
-from nab_provider._vendor.packaging.markers import Marker, default_environment
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.specifiers import (
+
+from ._vendor.packaging import tags as ptags
+from ._vendor.packaging.markers import Marker, default_environment
+from ._vendor.packaging.ranges import VersionRange
+from ._vendor.packaging.specifiers import (
     InvalidSpecifier,
     Specifier,
     SpecifierSet,
 )
-from nab_provider._vendor.packaging.version import InvalidVersion, Version
-
+from ._vendor.packaging.version import InvalidVersion, Version
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS, MARKER_VARIABLE_FOR_KIND
 from .environment import (
     EnvironmentSource,
     host_environment,
 )
 from .marker_holds import IntractableMarkerError, UnevaluableMarkerError
+from .pep508 import MARKER_COMPARISON
 from .tags import (
     FREE_THREADED_MIN_PYTHON,
     PlatformSpec,
@@ -62,6 +62,7 @@ from .tags import (
 from .value import HashableRecord, Record, replace
 
 if TYPE_CHECKING:
+    import re
     from collections.abc import Iterable, Mapping, Sequence
 
     from .tags import TagsSource
@@ -266,19 +267,6 @@ _ALWAYS_DECLARED: tuple[str, ...] = (
 # consulted marker on one splits the minor at its boundary instead, and each
 # slice emits the bounds that fence it off; an unsplit minor emits neither.
 _BY_CONSTRAINT = ("python_full_version", "implementation_version")
-
-# One ``lhs op rhs`` comparison of a marker, matched against the string form
-# :func:`Marker.__str__` normalises to: an operand is either a quoted literal
-# or a bare variable token, which is what tells the two apart.  Both quote
-# styles are matched, since packaging emits a value holding a double quote
-# single-quoted.  Ordered so the two-character operators win over their
-# prefixes.
-_MARKER_OPERAND = r'"[^"]*"|\'[^\']*\'|[A-Za-z_][A-Za-z0-9_]*'
-_MARKER_CLAUSE_RE = re.compile(
-    rf"(?P<lhs>{_MARKER_OPERAND})\s*"
-    r"(?P<op>===|==|!=|<=|>=|~=|<|>|not\s+in|in)\s*"
-    rf"(?P<rhs>{_MARKER_OPERAND})"
-)
 
 
 @lru_cache(maxsize=8192)
@@ -548,7 +536,7 @@ def micro_boundary_points(
 
     points: set[Version] = set()
     for marker in sorted(consulted, key=str):
-        for atom in _MARKER_CLAUSE_RE.finditer(str(marker)):
+        for atom in MARKER_COMPARISON.finditer(str(marker)):
             points.update(
                 _clause_boundary_points(
                     _clause_parts(atom), scanned, minor_release, floor, target
@@ -704,24 +692,31 @@ def apply_python_axis_overlay(
     level and the two would describe different interpreters. Re-derive both
     from whichever axis key the overlay supplies (``python_full_version``
     wins when both are present), so an overlay of ``python_version`` ``3.8``
-    yields ``python_full_version`` ``3.8.0`` like the universal matrix. On
-    CPython ``implementation_version`` equals ``python_full_version``, so move
-    it with the axis; other implementations version separately and keep their
-    host value unless the overlay sets it. Non-axis keys the overlay sets are
-    kept verbatim; the ``python_version``/``python_full_version`` pair is always
-    the derived one, so a patch-precision ``python_version`` (e.g. ``3.10.5``)
-    normalizes to major.minor.
+    yields ``python_full_version`` ``3.8.0`` like the universal matrix.
+
+    Changing the language version on CPython, or switching to CPython, sets
+    ``implementation_version`` to the resulting ``python_full_version``.
+    Other implementations retain their previous implementation version. An
+    explicit ``implementation_version`` always takes precedence. A patch-level
+    ``python_version`` such as ``3.10.5`` normalizes to major.minor.
     """
-    source = overlay.get("python_full_version") or overlay.get("python_version")
-    if source is None:
-        environment.update(overlay)
+    source = overlay.get("python_full_version", overlay.get("python_version"))
+    axis = python_axis_environment(source) if source is not None else None
+    previous_implementation = environment.get("implementation_name")
+    environment.update(overlay)
+
+    if axis is not None:
+        environment.update(axis)
+    elif environment.get("implementation_name") == previous_implementation:
         return
 
-    axis = python_axis_environment(source)
-    if environment.get("implementation_name") == "cpython":
-        environment["implementation_version"] = axis["python_full_version"]
-    environment.update(overlay)
-    environment.update(axis)
+    # The selected implementation decides whether its version follows Python.
+    if (
+        environment.get("implementation_name") == "cpython"
+        and "implementation_version" not in overlay
+        and "python_full_version" in environment
+    ):
+        environment["implementation_version"] = environment["python_full_version"]
 
 
 def _language_minor(version: Version) -> str:
@@ -999,7 +994,7 @@ class ResolveTarget(HashableRecord):
         if self.is_minor_interval:
             constraints = [f">={self.python_version}.0", f"=={self.python_version}.*"]
             for clause in self.micro_clauses:
-                atom = _MARKER_CLAUSE_RE.fullmatch(clause)
+                atom = MARKER_COMPARISON.fullmatch(clause)
                 if atom is None:
                     return False
                 parsed = _clause_interval_literal(

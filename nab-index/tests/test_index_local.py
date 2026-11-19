@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import itertools
-from typing import TYPE_CHECKING, TypeVar
+from asyncio import run
+from typing import TYPE_CHECKING
 from urllib.parse import urljoin
 
 import pytest
@@ -20,15 +20,7 @@ from nab_index.local_index import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine
     from pathlib import Path
-    from typing import Any
-
-_T = TypeVar("_T")
-
-
-def run(coro: Coroutine[Any, Any, _T]) -> _T:
-    return asyncio.run(coro)
 
 
 def _make_index(tmp_path: Path, body: str) -> Path:
