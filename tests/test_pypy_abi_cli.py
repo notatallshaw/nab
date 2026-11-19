@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import zipfile
 from typing import TYPE_CHECKING
 
 import pytest
@@ -14,6 +13,9 @@ from nab_provider._vendor.packaging.pylock import Pylock, PylockSelectError
 from nab_provider._vendor.packaging.tags import Tag
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
+from nab_provider.testing import make_metadata
+
+from ._local_artifacts import make_wheel_archive
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -22,14 +24,9 @@ if TYPE_CHECKING:
 def _indexed_wheel(directory: Path, tag: str) -> str:
     """Write a dependency-free wheel and its hashed local-index entry."""
     filename = f"demo-1.0-{tag}.whl"
-    with zipfile.ZipFile(directory / filename, "w") as wheel:
-        wheel.writestr(
-            "demo-1.0.dist-info/METADATA",
-            "Metadata-Version: 2.1\nName: demo\nVersion: 1.0\n\n",
-        )
-        wheel.writestr("demo-1.0.dist-info/WHEEL", "Wheel-Version: 1.0\n")
-    path = directory / filename
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    payload = make_wheel_archive("demo", "1.0", make_metadata("demo", "1.0"), tag)
+    (directory / filename).write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
     with (directory / "index.html").open("a", encoding="utf-8") as page:
         page.write(f'<a href="{filename}#sha256={digest}">{filename}</a>\n')
     return filename

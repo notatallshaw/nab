@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import hashlib
-import zipfile
 from typing import TYPE_CHECKING
 
 import pytest
 import tomli
 
 from nab.cli import run
+from nab_provider.testing import make_metadata
+
+from ._local_artifacts import make_wheel_archive
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -22,20 +24,10 @@ def publish_wheel(
     package = index / name
     package.mkdir(parents=True)
     filename = f"{name}-1-py3-none-any.whl"
-    wheel = package / filename
-    metadata = (
-        f"Metadata-Version: 2.2\nName: {name}\nVersion: 1\n"
-        + "".join(f"Requires-Dist: {dependency}\n" for dependency in dependencies)
-        + "\n"
-    )
-    with zipfile.ZipFile(wheel, "w") as archive:
-        archive.writestr(f"{name}-1.dist-info/METADATA", metadata)
-        archive.writestr(
-            f"{name}-1.dist-info/WHEEL",
-            "Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
-        )
-        archive.writestr(f"{name}-1.dist-info/RECORD", "")
-    digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    metadata = make_metadata(name, "1", *dependencies, metadata_version="2.2")
+    payload = make_wheel_archive(name, "1", metadata, "py3-none-any")
+    (package / filename).write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
     flag = ' data-yanked="incorrect dependency declaration"' if yanked else ""
     (package / "index.html").write_text(
         f'<a href="{filename}#sha256={digest}"{flag}>{filename}</a>\n',
