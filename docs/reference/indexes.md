@@ -43,8 +43,9 @@ from disk with no `Accept` negotiation, so the key is rejected.
 Pinning `html` gives up the extra data PEP 700 defines for the JSON listing. Two of those losses
 matter:
 
-- A PEP 503 page carries no upload time. Unless the index emits the non-standard `data-upload-time`
-  attribute, every file it serves is excluded once `uploaded-prior-to` applies.
+- HTML has no standard upload-time field. Nab reads the non-standard `data-upload-time` attribute on
+  both HTTP and local HTML pages. A cutoff excludes remote files with no reported time.
+  [Files on disk remain eligible](reproducibility.md#fixed-upload-cutoffs).
 - A page publishes its hashes in the URL fragment. A file whose only fragment digest is md5 gives
   `nab lock` nothing to record, and the PEP 751 and requirements writers then fail on the missing
   hash.

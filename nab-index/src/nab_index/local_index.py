@@ -260,6 +260,7 @@ def _scan_pep503_directory(
             link.hashes,
             canonical,
             has_metadata=metadata_declaration(anchor.metadata) is not None,
+            upload_time=anchor.upload_time,
         )
         if record is not None:
             files = _append_record(files, record, yanked=anchor.yanked)
@@ -634,6 +635,7 @@ def _make_record(
     expected: str,
     *,
     has_metadata: bool,
+    upload_time: str | None = None,
 ) -> WheelFile | SdistFile | None:
     """Build a file record, or ``None`` for unusable filenames.
 
@@ -652,7 +654,7 @@ def _make_record(
             version=version,
             requires_python=requires_python,
             has_metadata=has_metadata,
-            upload_time=None,
+            upload_time=upload_time,
             hashes=hashes,
             local_path=local_path,
         )
@@ -666,7 +668,7 @@ def _make_record(
             url=file_url,
             version=version,
             requires_python=requires_python,
-            upload_time=None,
+            upload_time=upload_time,
             hashes=hashes,
             local_path=local_path,
         )

@@ -1231,7 +1231,7 @@ def upload_time_cause(dist: DistFile, cutoff: datetime | None) -> Cause | None:
     diagnosis can meet one without turning a report into an error.  The
     filter's caller raises on that answer.
     """
-    # A local file:// artifact has no upload time, so the cutoff cannot apply.
+    # Files on disk remain eligible regardless of any upload time in the listing.
     if cutoff is None or dist.local_path is not None:
         return None
 

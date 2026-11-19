@@ -1040,6 +1040,34 @@ class TestPep503Directory:
         (package_dir / "index.html").write_text(body, encoding="utf-8")
         return package_dir
 
+    @pytest.mark.parametrize(
+        "prefix", ["", "https://files.example/"], ids=["local", "remote"]
+    )
+    def test_page_keeps_advertised_upload_times(
+        self, tmp_path: Path, prefix: str
+    ) -> None:
+        wheel = "foo-1.0-py3-none-any.whl"
+        sdist = "foo-2.0.tar.gz"
+        undated = "foo-3.0.tar.gz"
+        stamp = "2025-01-01T00:00:00Z"
+        package_dir = self._make_index(
+            tmp_path,
+            f'<a href="{prefix}{wheel}" data-upload-time="{stamp}">{wheel}</a>'
+            f'<a href="{prefix}{sdist}" data-upload-time="{stamp}">{sdist}</a>'
+            f'<a href="{prefix}{undated}">{undated}</a>',
+        )
+        if not prefix:
+            for filename in (wheel, sdist, undated):
+                (package_dir / filename).touch()
+
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert {file.filename: file.upload_time for file in files} == {
+            wheel: stamp,
+            sdist: stamp,
+            undated: None,
+        }
+
     def test_parses_anchor_tags(self, tmp_path: Path) -> None:
         body = (
             "<html><body>"
