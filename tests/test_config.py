@@ -6240,6 +6240,29 @@ class TestWorkspaceDiscoveryIntegration:
         )
         assert config.build_policy is BuildPolicy.BUILD_LOCAL
 
+    @pytest.mark.parametrize("filename", ["pyproject.toml", "nab.toml"])
+    def test_discovery_skips_a_named_pipe_in_an_ancestor(
+        self,
+        tmp_path: Path,
+        as_fifo: Callable[[Path], AbstractContextManager[None]],
+        filename: str,
+    ) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.nab.workspace]\nmembers = ["projects/app"]\n'
+        )
+        directory = tmp_path / "projects" / "app"
+        directory.mkdir(parents=True)
+        app = directory / "pyproject.toml"
+        app.write_text('[project]\nname = "app"\nversion = "1"\n')
+
+        candidate = directory.parent / filename
+        table = "tool.nab.workspace" if filename == "pyproject.toml" else "workspace"
+        candidate.write_text(f"[{table}]\nmembers = []\n")
+        with as_fifo(candidate):
+            config = read_pyproject_config(app)
+
+        assert config.workspace_member_names == {"app"}
+
     def test_explicit_local_source_wins_over_workspace_member(
         self, tmp_path: Path
     ) -> None:

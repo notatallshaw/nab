@@ -135,6 +135,10 @@ def discover_workspace_root(member_pyproject: Path) -> Path | None:
     start_dir = realpath(member_pyproject).parent
     for parent in (start_dir, *start_dir.parents):
         for candidate in (parent / "pyproject.toml", parent / _PROJECT_TOML):
+            # Opening a named pipe during discovery would wait for a writer.
+            if path_state(candidate) is not PathState.FILE:
+                continue
+
             try:
                 with candidate.open("rb") as f:
                     data = toml_io.load(f)
