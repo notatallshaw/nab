@@ -748,6 +748,7 @@ class Provider:
         listing_filter_cache: ListingFilterCache | None = None,
         *,
         constraints: Mapping[str, VersionRange] | None = None,
+        defer_sdist_python_to_install: bool = False,
         trust_unverified_sdist_deps: bool = False,
         assume_universal_deps: bool = False,
         assume_consistent_metadata: bool = False,
@@ -791,6 +792,8 @@ class Provider:
         self.dist_policy = dist_policy
         self.metadata_policy = metadata_policy
         self.build_policy = build_policy
+        # Build environments check the built wheel before installation.
+        self.defer_sdist_python_to_install = defer_sdist_python_to_install
         # Opt-out: trust a pre-2.2 sdist's PKG-INFO deps as final instead of
         # routing through the dynamic path. Off by default (strict PEP 643).
         self.trust_unverified_sdist_deps = trust_unverified_sdist_deps

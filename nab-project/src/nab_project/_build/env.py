@@ -36,7 +36,6 @@ __lazy_modules__ = (
     "nab_index.urllib3_async_transport",
     "nab_project._build.errors",
     "nab_project.download",
-    "nab_project.inputs",
     "nab_project.lockfile",
     "nab_project.toml_writer",
     "nab_provider._vendor.packaging.requirements",
@@ -966,6 +965,13 @@ def _without_build_permission(
     return override.replace(build_policy=None)
 
 
+class _BuildRequirementInputs(ResolveInputs):
+    """Tentative pins checked by _check_built_requires_python before installation."""
+
+    __slots__ = ()
+    defer_sdist_python_to_install = True
+
+
 def _inner_resolve_inputs(inputs: ResolveInputs) -> ResolveInputs:
     """Return the settings the build-requires resolve runs under.
 
@@ -975,7 +981,7 @@ def _inner_resolve_inputs(inputs: ResolveInputs) -> ResolveInputs:
     this resolve picks the backend that writes the metadata the outer
     resolve reads, and a lock reproduces only if this search does too.
     """
-    return ResolveInputs(
+    return _BuildRequirementInputs(
         allow_zip_sdists=inputs.allow_zip_sdists,
         indexes=inputs.indexes,
         package_overrides=tuple(

@@ -6,7 +6,7 @@ Declared here rather than by the host because nab-project may not import ``nab``
 from __future__ import annotations
 
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from nab_provider.policy import (
     BuildPolicy,
@@ -39,6 +39,9 @@ _DEFAULT_VCS = VcsConfig()
 
 class ResolveInputs(ValueType):
     """The settings one resolve runs under."""
+
+    # Build environments verify their tentative pins against the wheels they install.
+    defer_sdist_python_to_install: ClassVar[bool] = False
 
     __slots__ = __match_args__ = (
         "archive_sources",
@@ -152,4 +155,4 @@ class ResolveInputs(ValueType):
             name: getattr(self, name) for name in self.__match_args__
         }
         kept.update(changes)
-        return ResolveInputs(**kept)
+        return type(self)(**kept)

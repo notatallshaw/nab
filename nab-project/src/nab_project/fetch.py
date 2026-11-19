@@ -26,6 +26,7 @@ __lazy_modules__ = (
     "nab_provider.fetch_port",
     "nab_provider.metadata",
     "nab_provider.policy",
+    "nab_provider.project_requirements",
     "nab_provider.records",
     "nab_provider.serialization",
     "nab_provider.store",
@@ -63,6 +64,7 @@ from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.fetch_port import PrefetchSettings
 from nab_provider.metadata import static_project_from_table
 from nab_provider.policy import BuildPolicy
+from nab_provider.project_requirements import project_with_static_requires_python
 from nab_provider.records import (
     DEFAULT_INDEX_NAME,
     DEFAULT_INDEX_URL,
@@ -1473,23 +1475,19 @@ class FetchCoordinator:
         if pyproject is not None:
             table = parse_pyproject_table(pyproject)
             self.index.store_sdist_pyproject(req.package, source_key, table)
-            self._release_archive_if_deps_are_static(req.package, source_key, table)
+            self._release_archive_if_metadata_is_static(req.package, source_key, table)
         self.index.store_sdist_metadata(req.package, source_key, pkg_info)
 
-    def _release_archive_if_deps_are_static(
+    def _release_archive_if_metadata_is_static(
         self, package: str, version: str, table: Mapping[str, Any] | None
     ) -> None:
-        """Release a held archive when ``table`` already declares the deps.
-
-        The hold exists for a build, and the metadata ladder builds only when
-        the bundled ``[project]`` table cannot supply the dependencies, so a
-        table that can means no build will ask for this archive.  A ``None``
-        table is a pyproject that did not parse and declares nothing, so the
-        archive stays held.
-        """
+        """Keep the archive if a build may supply dependencies or Requires-Python."""
         if self._sdist_archive_hold is None or table is None:
             return
-        if static_project_from_table(table) is not None:
+        if (
+            static_project_from_table(table) is not None
+            and project_with_static_requires_python(table, package) is not None
+        ):
             self._sdist_archive_hold.take(package, version)
 
     async def _fetch_sdist_archive(

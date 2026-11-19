@@ -4316,11 +4316,12 @@ class TestSdistArchiveHolding:
         assert hold.take("pkg", _HELD_SDIST_KEY) is None
         assert coord.index.get_sdist_pyproject("pkg", _HELD_SDIST_KEY) is not None
 
-    def test_a_dynamic_pyproject_keeps_the_archive(self) -> None:
-        """A table that defers its deps leaves the build's bytes in place."""
+    @pytest.mark.parametrize("field", ["dependencies", "requires-python"])
+    def test_a_dynamic_pyproject_keeps_the_archive(self, field: str) -> None:
+        """Keep the source bytes when the backend supplies resolution metadata."""
         config = ResolveInputs(build_policy=BuildPolicy.BUILD_REMOTE)
         _, hold = self._fetched_with_pyproject(
-            '[project]\nname = "pkg"\ndynamic = ["dependencies"]\n', config
+            f'[project]\nname = "pkg"\ndynamic = ["{field}"]\n', config
         )
 
         assert hold.take("pkg", _HELD_SDIST_KEY) == b"archive bytes"
