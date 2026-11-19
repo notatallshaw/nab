@@ -1,10 +1,9 @@
-"""Extras-of-extras expansion for the provider.
+"""Resolve optional dependencies such as ``foo[bar]``.
 
-The provider models extras as proxy packages: ``foo[bar]`` is a
-distinct package whose only candidates are the versions of ``foo``
-that declare ``bar`` in their ``Provides-Extra`` field.  This
-module owns the per-extra version chooser, the per-extra
-dependency lookup, and the missing-extra fallback.
+The resolver tracks ``foo[bar]`` as a separate package pinned to the same version
+as ``foo``. The provider reads that release's metadata to find the dependencies
+for ``bar``. If the release omits the extra, ``ExtrasMode`` determines whether
+to warn, report an error or try another release.
 """
 
 from __future__ import annotations
@@ -49,13 +48,10 @@ def choose_extra_version(
     extra: str,
     version_range: VersionRange,
 ) -> Version | None:
-    """Pick a version for an extras proxy package.
+    """Try releases in the base package's preferred order.
 
-    Delegates to the base package's version list. In BACKTRACK mode,
-    eagerly checks if the version provides the extra and skips it
-    if not.  The strategy decision (highest vs lowest) is keyed off
-    the *base* canonical name; an extras proxy never gets a different
-    answer than its underlying package.
+    BACKTRACK skips releases that omit a transitive extra. Direct requests use
+    ``_pick_for_user_extra`` to report a missing extra on the selected release.
     """
     _, _, normalized = provider.split_and_normalize(base)
     version_list = provider.fetch_versions(base)
