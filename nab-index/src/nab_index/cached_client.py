@@ -792,10 +792,19 @@ class CachedAsyncSimpleClient:
         """
         url = f"{self._index_url}{canonicalize_name(package)}/"
         headers = {"Accept": simple_accept_header(self._serialization)}
-        if policy.etag is not None and is_sendable_etag(policy.etag):
+        # Older cache entries may have an ETag without the page that supplied it.
+        if (
+            policy.page_url is not None
+            and policy.etag is not None
+            and is_sendable_etag(policy.etag)
+        ):
             headers["If-None-Match"] = policy.etag
         response = await self._transport.get(url, headers=headers)
         if response.status_code == _HTTP_NOT_MODIFIED:
+            if response.url != policy.page_url or "If-None-Match" not in headers:
+                # Only a validator for this page confirms the cached listing.
+                return await self._fetch_simple(package)
+
             # A 304 stating no freshness of its own keeps the stored max-age.
             new_policy = CachePolicy(
                 fetched_at=_freshness_start(response),

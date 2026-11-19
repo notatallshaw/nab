@@ -67,10 +67,13 @@ source trees in a temporary directory and discards them at the end.
 A listing follows a small subset of RFC 9111. The `.policy` sidecar records when the body was
 fetched and its `max-age`.
 
-A fresh entry is served directly; a stale one is revalidated with `If-None-Match`, and a
-`304 Not Modified` slides the window forward without refetching the body. A listing the index marks
-`no-cache` or `no-store` gets no window at all, so every online read revalidates it unless an
-`assume-fresh-seconds` floor (see [Package and index policy](package-policy.md)) still covers it.
+A fresh entry is served directly. Nab sends `If-None-Match` when a stale entry records both the
+original page URL and a usable ETag. A `304 Not Modified` from that page refreshes the cached
+listing. If a redirect now leads to a different page, Nab fetches its body even if it uses the same
+ETag.
+
+A listing marked `no-cache` or `no-store` gets no freshness window. Each online read revalidates it
+unless an [assume-fresh-seconds](package-policy.md) setting still covers it.
 
 Metadata and sdist records are immutable: cached once, never revalidated. A 404 is remembered
 briefly so a repeated lookup of an absent name is answered from cache, offline included. One the
@@ -93,8 +96,8 @@ listing body + policy digest
 ```
 
 The `simple-parsed-v2/` bucket stores those records so a warm hit rehydrates them and never reads
-the large raw body. A stale entry is served the same way once the index answers `304 Not Modified`,
-since that confirms the body the blob is bound to.
+the large raw body. A stale entry is served the same way once the original page answers
+`304 Not Modified`, since that confirms the body the blob is bound to.
 
 ### When a parsed listing is rebuilt
 
@@ -102,9 +105,8 @@ Each parsed blob is bound to the exact body it came from by a `body_digest` that
 carries. On a hit the digests and response page URLs are compared. A body or page change invalidates
 the blob and forces a rebuild from the raw body.
 
-A revalidation that lands on a different page retires the blob too, since a relative entry resolves
-against the page URL and a move changes every file URL the records hold. A blob is also rebuilt when
-it was written by a different nab build, or is corrupt.
+A redirect to a different page requires a new listing. Its relative file URLs resolve against the
+new page. A blob is also rebuilt when it was written by a different nab build, or is corrupt.
 
 The raw body remains authoritative. The accelerator is a derived copy, and a rebuild reparses the
 body on disk.

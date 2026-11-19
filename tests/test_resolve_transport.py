@@ -61,7 +61,12 @@ def test_cache_state_controls_client_creation(tmp_path: Path, cache_state: str) 
         cache.put_simple(
             "foo",
             _BODY,
-            CachePolicy(1000, 3600 if cache_state == "fresh" else 0, '"v1"'),
+            CachePolicy(
+                1000,
+                3600 if cache_state == "fresh" else 0,
+                '"v1"',
+                page_url=_INDEX + "foo/",
+            ),
         )
     response = httpx.Response(
         304 if cache_state == "stale" else 200,

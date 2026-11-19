@@ -119,10 +119,11 @@ def _warm_bound(
         fetched_at=2_000_000_000 if fresh else 0,
         max_age=99999 if fresh else 0,
         etag="e",
+        page_url=_INDEX_NORM + "pkg/",
     )
     digest = cache.put_simple("pkg", body, policy)
     files = _parse_files(json.loads(body), _INDEX_NORM, "pkg")
-    cache.put_simple_parsed("pkg", encode(files, digest))
+    cache.put_simple_parsed("pkg", encode(files, digest, page_url=policy.page_url))
     return files, digest
 
 
