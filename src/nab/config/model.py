@@ -14,6 +14,7 @@ __lazy_modules__ = (
     "nab.config.hooks",
     "nab.config.ladder",
     "nab.config.values",
+    "nab_project",
     "nab_project.build_policy",
     "nab_project.conflicts",
     "nab_project.inputs",
@@ -34,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 import tomli
 
+from nab_project import toml_io
 from nab_project.build_policy import enforce_build_policy_for_targets
 from nab_project.conflicts import (
     MIN_ENGAGED_MEMBERS,
@@ -98,7 +100,6 @@ from .ladder import (
     read_env_layer,
     reject_user_keys_in_pyproject,
     resolve_config,
-    tool_nab_section,
 )
 from .values import (
     ENVIRONMENT_KEYS,
@@ -814,7 +815,7 @@ def _reject_unknown_pyproject_keys(
     surfaces the category error; an unknown key fails loud rather than being
     silently dropped.
     """
-    raw = tool_nab_section(document)
+    raw = toml_io.tool_nab_section(document)
     if not isinstance(raw, dict):
         msg = f"[tool.nab] must be a table, got {type(raw).__name__}"
         raise ConfigError(msg)

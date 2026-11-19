@@ -21,7 +21,15 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import BinaryIO, TypeGuard
 
-__all__ = ["is_table", "load", "load_path", "loads", "values_match"]
+__all__ = [
+    "is_table",
+    "load",
+    "load_path",
+    "loads",
+    "loads_if_valid",
+    "tool_nab_section",
+    "values_match",
+]
 
 
 def loads(text: str) -> dict[str, Any]:
@@ -33,6 +41,14 @@ def loads(text: str) -> dict[str, Any]:
         raise
     except (RecursionError, ValueError) as exc:
         raise tomli.TOMLDecodeError(str(exc), text, 0) from exc
+
+
+def loads_if_valid(text: str) -> dict[str, object] | None:
+    """Read optional TOML metadata, returning None when it cannot be parsed."""
+    try:
+        return loads(text)
+    except tomli.TOMLDecodeError:
+        return None
 
 
 def load(f: BinaryIO) -> dict[str, Any]:
@@ -54,6 +70,16 @@ def load_path(path: Path) -> dict[str, Any]:
     """
     with path.open("rb") as f:
         return load(f)
+
+
+def tool_nab_section(document: Mapping[str, object]) -> object:
+    """Read [tool.nab], returning an empty table when [tool] has no Nab entry.
+
+    A malformed Nab entry is returned as written so the caller can report it.
+    """
+    missing: dict[str, object] = {}
+    tool = document.get("tool")
+    return tool.get("nab", missing) if isinstance(tool, dict) else missing
 
 
 def is_table(value: object) -> TypeGuard[dict[str, object]]:

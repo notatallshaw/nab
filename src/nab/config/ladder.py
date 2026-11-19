@@ -350,18 +350,6 @@ def build_cli_overrides(
 _logger = logging.getLogger(__name__)
 
 
-def tool_nab_section(data: Mapping[str, Any]) -> Any:
-    """Return the raw ``[tool.nab]`` value from parsed TOML ``data``.
-
-    Returns ``{}`` when ``[tool]`` is absent or is not a table, so callers can
-    chain ``.get`` safely.  The value may itself be a non-table when
-    ``[tool.nab]`` is malformed.
-    """
-    missing_table: dict[str, Any] = {}
-    tool = data.get("tool", missing_table)
-    return tool.get("nab", missing_table) if isinstance(tool, dict) else missing_table
-
-
 def reject_user_keys_in_pyproject(
     raw: Mapping[str, Any], *, kind: SourceKind = SourceKind.PYPROJECT
 ) -> None:
@@ -454,7 +442,7 @@ def _read_raw_table(
         msg = f"cannot read {path}: {exc}"
         raise SourceConfigError(msg) from exc
     if kind in (SourceKind.PYPROJECT, SourceKind.SCRIPT):
-        section = tool_nab_section(data)
+        section = toml_io.tool_nab_section(data)
         # A non-table [tool.nab] is malformed, not an empty config.
         if not isinstance(section, dict):
             msg = f"{path}: [tool.nab] must be a table, got {type(section).__name__}"

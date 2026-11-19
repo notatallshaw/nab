@@ -14,7 +14,7 @@ __lazy_modules__ = (
     "nab_index.local_index",
     "nab_project._build_remote",
     "nab_project._sources",
-    "nab_project._toml",
+    "nab_project.toml_io",
     "nab_provider.errors",
     "nab_provider.testing",
 )
@@ -28,7 +28,7 @@ from nab_provider.testing import make_coordinator as _make_coordinator
 
 from .._build_remote import build_remote_sdist
 from .._sources import materialize_source
-from .._toml import parse_pyproject_table
+from ..toml_io import loads_if_valid
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -55,7 +55,7 @@ def make_coordinator(
         sdist_pyproject=(
             None
             if sdist_pyproject_toml is None
-            else parse_pyproject_table(sdist_pyproject_toml)
+            else loads_if_valid(sdist_pyproject_toml)
         ),
         materialize=materialize_source,
         build_sdist=build_remote_sdist,

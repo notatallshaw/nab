@@ -21,7 +21,6 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "nab_project",
-    "nab_project._toml",
     "nab_project.paths",
     "nab_provider._vendor.packaging.utils",
     "nab_provider.policy",
@@ -40,7 +39,6 @@ from nab_provider.value import HashableRecord
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from . import toml_io
-from ._toml import tool_nab_section
 from .paths import PathState, path_state, realpath, resolve_path
 
 if TYPE_CHECKING:
@@ -97,7 +95,7 @@ def _workspace_declaration(data: dict[str, Any], project_file: Path) -> tuple[An
     """
     if project_file.name == _PROJECT_TOML:
         return data.get("workspace"), "[workspace]"
-    nab = tool_nab_section(data)
+    nab = toml_io.tool_nab_section(data)
     label = "[tool.nab.workspace]"
     if not isinstance(nab, dict):
         return None, label

@@ -15,7 +15,6 @@ __lazy_modules__ = (
     "nab_index.urls",
     "nab_project",
     "nab_project._lockfile.groups",
-    "nab_project._toml",
     "nab_project.paths",
     "nab_provider._vendor.packaging.pylock",
     "nab_provider._vendor.packaging.specifiers",
@@ -55,7 +54,6 @@ from nab_provider.records import SdistFile, WheelFile
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .. import toml_io
-from .._toml import tool_nab_section
 from ..paths import path_state
 from .groups import BASE_MEMBER
 
@@ -261,7 +259,7 @@ def read_lockfile_anchor(path: Path) -> datetime | None:
             data = toml_io.load(f)
     except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError):
         return None
-    nab = tool_nab_section(data)
+    nab = toml_io.tool_nab_section(data)
     raw = nab.get("created-at") if isinstance(nab, dict) else None
     if isinstance(raw, datetime):
         return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
