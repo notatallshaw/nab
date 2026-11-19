@@ -17,7 +17,7 @@ from nab_index import atomic
 def test_staging_retries_occupied_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, collisions: int
 ) -> None:
-    occupied = tmp_path / ("lock." + urlsafe_b64encode(b"a" * 6).decode() + ".tmp")
+    occupied = tmp_path / ("." + urlsafe_b64encode(b"a" * 6).decode() + ".tmp")
     occupied.write_bytes(b"keep")
     names = iter([b"a" * 6] * collisions + [b"b" * 6])
     monkeypatch.setattr(atomic.os, "urandom", lambda _size: next(names))
@@ -39,7 +39,7 @@ def test_staging_retries_occupied_names(
 def test_staging_never_follows_an_occupied_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
-    occupied = tmp_path / ("lock." + urlsafe_b64encode(b"a" * 6).decode() + ".tmp")
+    occupied = tmp_path / ("." + urlsafe_b64encode(b"a" * 6).decode() + ".tmp")
     original = tmp_path / "original"
     original.write_bytes(b"keep")
     if kind == "directory":
@@ -59,7 +59,7 @@ def test_staging_never_follows_an_occupied_name(
 
 
 def test_staging_is_private_and_not_inherited(tmp_path: Path) -> None:
-    fd, path = atomic._temporary_file(tmp_path / "lock")
+    fd, path = atomic.create_staging_file(tmp_path / "lock")
     try:
         assert path.parent == tmp_path.absolute()
         if os.name != "nt":
@@ -167,13 +167,33 @@ def test_overwrite_retains_the_destination_mode(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX filename limits")
-def test_staging_fits_the_existing_filename_budget(tmp_path: Path) -> None:
+def test_staging_accepts_a_destination_at_the_filename_limit(tmp_path: Path) -> None:
     maximum = os.pathconf(tmp_path, "PC_NAME_MAX")
-    target = tmp_path / ("x" * (maximum - len(".12345678.tmp")))
+    if maximum == -1:
+        pytest.skip("filesystem has no fixed filename limit")
+    target = tmp_path / ("x" * maximum)
     atomic.atomic_write(target, b"new")
 
     assert target.read_bytes() == b"new"
     assert list(tmp_path.iterdir()) == [target]
+
+
+@pytest.mark.parametrize("prefix", ["", "."])
+def test_staging_keeps_a_temporary_looking_destination_absent_until_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prefix: str
+) -> None:
+    random_bytes = b"a" * 6
+    token = urlsafe_b64encode(random_bytes).decode("ascii")
+    target = tmp_path / f"{prefix}{token}.tmp"
+    monkeypatch.setattr(atomic.os, "urandom", lambda _size: random_bytes)
+
+    fd, stage = atomic.create_staging_file(target)
+    try:
+        assert stage.exists()
+        assert not target.exists()
+    finally:
+        os.close(fd)
+        stage.unlink()
 
 
 def test_default_binary_sync_failure_keeps_the_previous_file(

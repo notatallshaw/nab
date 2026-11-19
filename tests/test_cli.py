@@ -4654,6 +4654,25 @@ class TestLockCommandUniversal:
         assert first.read_text() == "stale==0.1\n"
         assert not (tmp_path / "req-3.12.txt").exists()
 
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX filename limits")
+    def test_template_accepts_filenames_at_the_filesystem_limit(
+        self, tmp_path: Path
+    ) -> None:
+        pyproject = _universal_pyproject(tmp_path)
+        maximum = os.pathconf(tmp_path, "PC_NAME_MAX")
+        if maximum == -1:
+            pytest.skip("filesystem has no fixed filename limit")
+        prefix = "x" * (maximum - len("3.11.txt"))
+        template = tmp_path / (prefix + "{python_version}.txt")
+        with patch(
+            "nab._resolve.resolve_for_targets",
+            return_value=_multi_tuple_universal_result(),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=template)
+
+        for python in ("3.11", "3.12"):
+            assert (tmp_path / f"{prefix}{python}.txt").is_file()
+
     def test_template_unwritable_path_writes_no_file(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
