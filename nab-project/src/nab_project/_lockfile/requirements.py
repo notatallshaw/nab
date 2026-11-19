@@ -1,10 +1,8 @@
 """Pip-compatible ``requirements.txt`` rendering for a finished resolve.
 
-Produces text that pip's hash-checking mode can install (with
-``--hash=sha256:...`` lines on index pins) or the same text without
-those lines.  Per-tuple resolves render as commented sections; pip
-cannot install a single requirements.txt across multiple
-``(python, platform)`` tuples in hash-checking mode.
+Index pins can include hash options. Local checkouts and Git sources can be
+installed only with pip's hash-checking mode disabled. Multiple targets render
+as separate commented sections.
 """
 
 from __future__ import annotations
@@ -50,7 +48,7 @@ def write_requirements_with_hashes(
     An index artefact without one raises :class:`MissingHashError`.
 
     Local and VCS pins use ``name @ <url>``; editable local pins use ``-e <url>``.
-    Local subdirectories use a ``#subdirectory=`` fragment.
+    Local directory URLs point to the subdirectory that contains the project.
     Archive URL fragments carry pip-recognized hashes and optional subdirectories.
     An archive without a pip-recognized hash raises :class:`MissingHashError`.
 
@@ -148,9 +146,10 @@ def _render_pins(pins: Mapping[str, PinShape], *, with_hashes: bool) -> list[str
         if isinstance(pin, IndexPin):
             lines.extend(_render_index_pin(pin, with_hashes=with_hashes))
         elif isinstance(pin, LocalPin):
-            url = Path(pin.path).resolve().as_uri()
+            directory = Path(pin.path).resolve()
             if pin.subdirectory is not None:
-                url += f"#subdirectory={quote(pin.subdirectory, safe='/')}"
+                directory /= pin.subdirectory
+            url = directory.as_uri()
             if pin.editable:
                 lines.append(f"-e {url}")
             else:

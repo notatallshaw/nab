@@ -98,7 +98,7 @@ formats:
 
 ```
 my-fork @ file:///abs/path/to/checkout
--e file:///abs/path/to/monorepo#subdirectory=packages/foo
+-e file:///abs/path/to/monorepo/packages/foo
 some-pkg @ git+https://github.com/me/x.git@<sha>
 my-archive @ https://example.com/my-archive-1.0.tar.gz#sha256=<hex>
 mono @ https://example.com/mono-3.0.tar.gz#sha256=<hex>&subdirectory=packages/foo
