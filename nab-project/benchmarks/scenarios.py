@@ -43,6 +43,7 @@ from benchmark_config import (
     build_benchmark_config,
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
+    expand_project_extras,
     parse_scenario_build_packages,
     parse_scenario_index_routes,
     parse_scenario_indexes,
@@ -764,40 +765,6 @@ def get_git_source_state() -> dict[str, str | bool | None]:
     return {"commit": commit, "dirty": dirty, "diff_hash": diff_hash}
 
 
-def expand_project_extras(
-    project_name: str,
-    requested_extras: list[str],
-    optional_dependencies: dict[str, list[str]],
-) -> list[str]:
-    """Flatten the requested project extras into PEP 508 requirement strings.
-
-    Self-references like ``eval_framework[all]`` are resolved by recursing
-    on the named extras.  Cycles are broken via a normalized visited set.
-    Unknown extra names contribute no deps.
-    """
-    canonical_project = canonicalize_name(project_name)
-    norm_optional = {canonicalize_name(k): v for k, v in optional_dependencies.items()}
-    visited: set[str] = set()
-    out: list[str] = []
-
-    def visit(extra: str) -> None:
-        norm = canonicalize_name(extra)
-        if norm in visited:
-            return
-        visited.add(norm)
-        for dep_str in norm_optional.get(norm, []):
-            req = Requirement(dep_str)
-            if canonicalize_name(req.name) == canonical_project:
-                for sub_extra in sorted(req.extras):
-                    visit(sub_extra)
-            else:
-                out.append(dep_str)
-
-    for extra in requested_extras:
-        visit(extra)
-    return out
-
-
 def parse_requirements(
     requirement_strings: list[str],
     *,
@@ -1475,6 +1442,7 @@ def prepare_standard_execution(
                 project_name,
                 project_extras,
                 project_metadata.optional_dependencies,
+                marker_environment=target.marker_env,
             )
         )
     uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None

@@ -24,6 +24,7 @@ from nab_provider.provider import (
     join_extra,
     split_extra,
 )
+from nab_provider.requirements_file import expand_self_extras
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.yanked_resolution import YankProxyProvider
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
@@ -119,6 +120,31 @@ class ScenarioProjectMetadata(NamedTuple):
     project_name: str | None
     project_extras: list[str]
     optional_dependencies: dict[str, list[str]]
+
+
+def expand_project_extras(
+    project_name: str,
+    requested_extras: list[str],
+    optional_dependencies: dict[str, list[str]],
+    *,
+    marker_environment: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Collect the original requirement strings from extras active on this target."""
+    project = canonicalize_name(project_name)
+    optional = {
+        canonicalize_name(key): deps for key, deps in optional_dependencies.items()
+    }
+    selected = expand_self_extras(
+        optional, project, requested_extras, marker_environment
+    )
+
+    # Self-references select extras; only external dependencies become roots.
+    return [
+        text
+        for extra in selected
+        for text in optional.get(extra, [])
+        if canonicalize_name(Requirement(text).name) != project
+    ]
 
 
 def validate_scenario_settings(

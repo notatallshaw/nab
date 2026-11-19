@@ -4598,6 +4598,45 @@ def test_profile_rejects_an_unsupported_scenario_with_its_reason() -> None:
         profile.build_inputs("example", scenario)
 
 
+@pytest.mark.parametrize(
+    ("system", "selected"), [("linux", "linux-dep"), ("win32", "windows-dep")]
+)
+def test_benchmark_roots_follow_markers_on_project_extras(
+    system: str, selected: str
+) -> None:
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.12",
+        "requirements": ["base"],
+        "marker_environment": {"sys_platform": system},
+        "project_name": "example",
+        "project_extras": ["all"],
+        "optional_dependencies": {
+            "all": [
+                'example[linux]; sys_platform == "linux"',
+                'example[windows]; sys_platform == "win32"',
+            ],
+            "linux": ["linux-dep"],
+            "windows": ["windows-dep"],
+        },
+    }
+    prepared, canary_run, profile_inputs = _prepare_runner_parity(
+        standard, canary, profile, scenario=scenario
+    )
+    roots = standard.parse_requirements(
+        prepared.requirement_strings,
+        marker_environment=dict(prepared.target.marker_env),
+    )
+    for requirements in (
+        roots,
+        canary_run.requirements,
+        profile_inputs["requirements"],
+    ):
+        assert set(requirements) == {"base", selected}
+
+
 def test_standard_canary_and_profile_build_the_same_project_config() -> None:
     standard = _harness("scenarios")
     canary = _harness("canary")

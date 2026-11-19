@@ -42,6 +42,7 @@ from benchmark_config import (
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
     direct_packages_from_requirements,
+    expand_project_extras,
     parse_scenario_build_packages,
     parse_scenario_index_routes,
     parse_scenario_indexes,
@@ -236,34 +237,6 @@ def _runtime_manifest(host: BenchmarkHost) -> dict[str, str]:
         "release": marker_environment["platform_release"],
         "machine": marker_environment["platform_machine"],
     }
-
-
-def expand_project_extras(
-    project_name: str,
-    requested_extras: list[str],
-    optional_dependencies: dict[str, list[str]],
-) -> list[str]:
-    canonical_project = canonicalize_name(project_name)
-    norm_optional = {canonicalize_name(k): v for k, v in optional_dependencies.items()}
-    visited: set[str] = set()
-    out: list[str] = []
-
-    def visit(extra: str) -> None:
-        norm = canonicalize_name(extra)
-        if norm in visited:
-            return
-        visited.add(norm)
-        for dep_str in norm_optional.get(norm, []):
-            req = Requirement(dep_str)
-            if canonicalize_name(req.name) == canonical_project:
-                for sub_extra in sorted(req.extras):
-                    visit(sub_extra)
-            else:
-                out.append(dep_str)
-
-    for extra in requested_extras:
-        visit(extra)
-    return out
 
 
 def parse_requirements(
@@ -885,6 +858,7 @@ def _prepare_canary_execution(
                 project_name,
                 project_metadata.project_extras,
                 project_metadata.optional_dependencies,
+                marker_environment=target.marker_env,
             )
         )
 

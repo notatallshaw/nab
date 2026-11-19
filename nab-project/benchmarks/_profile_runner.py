@@ -134,6 +134,7 @@ def build_inputs(
             project_metadata.project_name,
             project_metadata.project_extras,
             project_metadata.optional_dependencies,
+            marker_environment=target.marker_env,
         )
 
     marker_env = dict(target.marker_env)
