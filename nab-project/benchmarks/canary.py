@@ -48,6 +48,7 @@ from benchmark_config import (
     parse_scenario_requirement_strings,
     parse_scenario_vcs_config,
     parse_trust_unverified_sdist_deps,
+    parse_unsupported_reason,
     parse_vcs_allowed_repos,
     parse_vcs_allowed_schemes,
     parse_vcs_policy,
@@ -603,7 +604,7 @@ def _validate_selected_execution_fields(
         build_policy_overrides,
         strict=True,
     ):
-        if "unsupported_reason" not in scenario:
+        if parse_unsupported_reason(scenario_name, scenario) is None:
             validate_scenario_build_policy(
                 scenario_name,
                 marker_environment,
@@ -956,8 +957,9 @@ def median_run(
     resolution_override: ResolutionStrategy | None = None,
     host: BenchmarkHost | None = None,
 ) -> tuple[list[dict], dict]:
-    if "unsupported_reason" in scenario:
-        return [], {"skipped": scenario["unsupported_reason"]}
+    reason = parse_unsupported_reason(scenario_name, scenario)
+    if reason is not None:
+        return [], {"skipped": reason}
 
     effective_host = host or BenchmarkHost.current(WALL_TIMEOUT_S)
     preparation = _prepare_canary_execution(

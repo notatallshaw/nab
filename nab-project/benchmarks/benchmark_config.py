@@ -134,6 +134,20 @@ def validate_scenario_settings(
         raise ValueError(msg)
 
 
+def parse_unsupported_reason(
+    scenario_name: str, scenario: Mapping[str, object]
+) -> str | None:
+    """Return the explanation for skipping the scenario, if supplied."""
+    if "unsupported_reason" not in scenario:
+        return None
+
+    reason = scenario["unsupported_reason"]
+    if not isinstance(reason, str) or not reason.strip():
+        msg = f"{scenario_name}: unsupported_reason must be a non-empty string"
+        raise ValueError(msg)
+    return reason
+
+
 def _scenario_string_list(
     scenario_name: str,
     field: str,

@@ -3175,6 +3175,24 @@ requires_matching_host = "yes"
         module.load_standard_corpus([path])
 
 
+@pytest.mark.parametrize("value", ["false", '""', '"   "'])
+def test_invalid_reason_cannot_skip_a_benchmark(tmp_path: Path, value: str) -> None:
+    path = tmp_path / "quick.toml"
+    path.write_text(
+        '[example]\npython_version = "3.12"\nrequirements = []\n'
+        f"unsupported_reason = {value}\n",
+        encoding="utf-8",
+    )
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    message = "quick:example: unsupported_reason must be a non-empty string"
+    with pytest.raises(ValueError, match=message):
+        standard.load_standard_corpus([path])
+    definition = standard.tomllib.loads(path.read_text(encoding="utf-8"))["example"]
+    with pytest.raises(ValueError, match=message):
+        canary.median_run(definition, 1, scenario_name="quick:example")
+
+
 @pytest.mark.parametrize(
     "unsupported_reason",
     [None, "not runnable"],

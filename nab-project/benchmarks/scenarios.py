@@ -50,6 +50,7 @@ from benchmark_config import (
     parse_scenario_requirement_strings,
     parse_scenario_vcs_config,
     parse_trust_unverified_sdist_deps,
+    parse_unsupported_reason,
     retry_yanked_resolution,
     validate_scenario_build_policy,
     validate_scenario_settings,
@@ -593,7 +594,7 @@ def load_standard_corpus(files: list[Path]) -> list[StandardScenario]:
             row.name,
             row.definition,
         )
-        if "unsupported_reason" not in row.definition:
+        if parse_unsupported_reason(row.logical_key, row.definition) is None:
             validate_scenario_build_policy(
                 row.name,
                 marker_environment,
@@ -622,7 +623,7 @@ def standard_run_plan(
     targets: dict[str, ResolveTarget] = {}
     inapplicable: list[str] = []
     for row in rows:
-        if "unsupported_reason" in row.definition:
+        if parse_unsupported_reason(row.logical_key, row.definition) is not None:
             continue
         marker_environment = parse_marker_environment(row.name, row.definition)
         requires_matching_host = parse_requires_matching_host(
@@ -1459,7 +1460,7 @@ def prepare_standard_execution(
     constraint_strings = requirement_inputs.constraints
     marker_environment = parse_marker_environment(scenario_name, scenario)
     build_policy_overrides = parse_scenario_build_packages(scenario_name, scenario)
-    if "unsupported_reason" not in scenario:
+    if parse_unsupported_reason(scenario_name, scenario) is None:
         validate_scenario_build_policy(
             scenario_name,
             marker_environment,
