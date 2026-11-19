@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import re
 import sys
 from collections import Counter
@@ -133,6 +134,37 @@ def test_default_canary_manifest_preserves_19_strategies() -> None:
         "lowest-direct": 5,
     }
     assert all("-lowest" not in case.scenario.split(":", 1)[0] for case in cases)
+
+
+def test_canary_runs_the_definition_read_during_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _harness()
+    scenario = tmp_path / "quick.toml"
+    scenario.write_text('[empty]\nrequirements = []\npython_version = "3.12"\n')
+    results = tmp_path / "results"
+    monkeypatch.setattr(module, "SCENARIOS_DIR", tmp_path)
+    monkeypatch.setattr(module, "RESULTS_DIR", results)
+    monkeypatch.setattr(module, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["canary", "--scenario", "quick:empty", "--commit", "snapshot", "--runs", "1"],
+    )
+    find = module.find_scenario
+
+    def read_then_remove(spec: str) -> dict | None:
+        definition = find(spec)
+        scenario.unlink(missing_ok=True)
+        return definition
+
+    monkeypatch.setattr(module, "find_scenario", read_then_remove)
+    module.main()
+
+    (report,) = (results / "snapshot").glob("canary_*.json")
+    stored = json.loads(report.read_text())["empty"]
+    assert stored["input"]["python_version"] == "3.12"
+    assert stored["summary"]["success_runs"] == "1/1"
 
 
 def test_default_canaries_do_not_build_packages() -> None:

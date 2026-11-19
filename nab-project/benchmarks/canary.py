@@ -20,6 +20,7 @@ import statistics
 import subprocess
 import sys
 import time
+from collections import Counter
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -96,6 +97,11 @@ class CanaryCase(NamedTuple):
 
     scenario: str
     resolution: ResolutionStrategy | None
+
+    @property
+    def label(self) -> str:
+        """Return the scenario name used as its key in the result file."""
+        return self.scenario.split(":", 1)[-1]
 
 
 class CanaryV2Identity(NamedTuple):
@@ -585,70 +591,74 @@ def _scenario_file(toml_stem: str) -> Path:
 
 
 def _validate_selected_execution_fields(
-    cases: list[CanaryCase],
-    scenarios: list[tuple[str, dict]],
+    scenarios: list[tuple[CanaryCase, dict]],
 ) -> None:
     """Validate marker, build, resolution, and host fields by phase."""
     marker_environments = [
-        parse_target_marker_environment(scenario_name, scenario)
-        for scenario_name, scenario in scenarios
+        parse_target_marker_environment(case.scenario, scenario)
+        for case, scenario in scenarios
     ]
     build_policy_overrides: list[dict[str, BuildPolicy]] = [
-        parse_scenario_build_packages(scenario_name, scenario)
-        for scenario_name, scenario in scenarios
+        parse_scenario_build_packages(case.scenario, scenario)
+        for case, scenario in scenarios
     ]
 
-    for (scenario_name, scenario), marker_environment, overrides in zip(
+    for (case, scenario), marker_environment, overrides in zip(
         scenarios,
         marker_environments,
         build_policy_overrides,
         strict=True,
     ):
-        if parse_unsupported_reason(scenario_name, scenario) is None:
+        if parse_unsupported_reason(case.scenario, scenario) is None:
             validate_scenario_build_policy(
-                scenario_name,
+                case.scenario,
                 marker_environment,
                 overrides,
             )
 
-    for case, (scenario_name, scenario), marker_environment in zip(
-        cases,
+    for (case, scenario), marker_environment in zip(
         scenarios,
         marker_environments,
         strict=True,
     ):
         scenario_resolution(
             scenario,
-            scenario_name=scenario_name,
+            scenario_name=case.scenario,
             override=case.resolution,
         )
         parse_requires_matching_host(
-            scenario_name,
+            case.scenario,
             scenario,
             marker_environment,
         )
 
 
 def select_scenarios(cases: list[CanaryCase]) -> list[CanaryCase]:
-    """Validate every selection before a benchmark run or result write."""
+    """Validate and return the requested case selectors."""
+    _load_selection(cases)
+    return cases
+
+
+def _load_selection(cases: list[CanaryCase]) -> list[tuple[CanaryCase, dict]]:
+    """Read and validate the definitions that will be executed."""
     if not cases:
         msg = "at least one scenario must be selected"
         raise _SelectionError(msg)
     missing: list[str] = []
-    found_scenarios: list[tuple[str, dict]] = []
+    found_scenarios: list[tuple[CanaryCase, dict]] = []
     for case in cases:
         scenario = find_scenario(case.scenario)
         if scenario is None:
             missing.append(case.scenario)
             continue
-        found_scenarios.append((case.scenario, scenario))
+        found_scenarios.append((case, scenario))
     if missing:
         label = "scenario" if len(missing) == 1 else "scenarios"
         msg = f"{label} not found: {', '.join(repr(spec) for spec in missing)}"
         raise _SelectionError(msg)
 
-    labels = [case.scenario.split(":", 1)[-1] for case in cases]
-    duplicate_labels = sorted({label for label in labels if labels.count(label) > 1})
+    counts = Counter(case.label for case in cases)
+    duplicate_labels = sorted(label for label, count in counts.items() if count > 1)
     if duplicate_labels:
         msg = (
             "scenario names must be unique across selected files; duplicate(s): "
@@ -656,8 +666,8 @@ def select_scenarios(cases: list[CanaryCase]) -> list[CanaryCase]:
         )
         raise _SelectionError(msg)
 
-    for scenario_name, scenario in found_scenarios:
-        validate_scenario_settings(scenario_name, scenario)
+    for case, scenario in found_scenarios:
+        validate_scenario_settings(case.scenario, scenario)
 
     field_validators = (
         parse_trust_unverified_sdist_deps,
@@ -669,38 +679,38 @@ def select_scenarios(cases: list[CanaryCase]) -> list[CanaryCase]:
         parse_scenario_project_metadata,
     )
     for validate_field in field_validators:
-        for scenario_name, scenario in found_scenarios:
-            validate_field(scenario_name, scenario)
+        for case, scenario in found_scenarios:
+            validate_field(case.scenario, scenario)
 
     parsed_indexes = [
-        parse_scenario_indexes(scenario_name, scenario)
-        for scenario_name, scenario in found_scenarios
+        parse_scenario_indexes(case.scenario, scenario)
+        for case, scenario in found_scenarios
     ]
-    for (scenario_name, scenario), indexes in zip(
+    for (case, scenario), indexes in zip(
         found_scenarios,
         parsed_indexes,
         strict=True,
     ):
-        parse_scenario_index_routes(scenario_name, scenario, indexes)
-    _validate_selected_execution_fields(cases, found_scenarios)
-    return cases
+        parse_scenario_index_routes(case.scenario, scenario, indexes)
+    _validate_selected_execution_fields(found_scenarios)
+    return found_scenarios
 
 
 def _parse_scenario_selection(
     parser: argparse.ArgumentParser,
     specs: list[str],
-) -> list[CanaryCase]:
+) -> list[tuple[CanaryCase, dict]]:
     try:
-        return select_scenarios([parse_canary_case(spec) for spec in specs])
+        return _load_selection([parse_canary_case(spec) for spec in specs])
     except (TypeError, ValueError) as exc:
         parser.error(str(exc))
 
 
 def _parse_default_selection(
     parser: argparse.ArgumentParser,
-) -> list[CanaryCase]:
+) -> list[tuple[CanaryCase, dict]]:
     try:
-        return select_scenarios(load_canary_manifest())
+        return _load_selection(load_canary_manifest())
     except (TypeError, ValueError) as exc:
         parser.error(str(exc))
 
@@ -990,7 +1000,7 @@ def main() -> None:
 
     source = get_git_source_state()
     commit = args.commit or str(source["commit"] or "no-git")
-    cases_to_run: list[CanaryCase]
+    cases_to_run: list[tuple[CanaryCase, dict]]
     if args.scenarios_list:
         with Path(args.scenarios_list).open(encoding="utf-8") as f:
             cases_to_run = _parse_scenario_selection(
@@ -1003,7 +1013,6 @@ def main() -> None:
         cases_to_run = _parse_default_selection(parser)
 
     host = BenchmarkHost.current(WALL_TIMEOUT_S)
-    labels = [case.scenario.split(":", 1)[-1] for case in cases_to_run]
 
     out_dir = RESULTS_DIR / commit
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1022,11 +1031,8 @@ def main() -> None:
     _check_result_directory(parser, commit)
 
     summary_all: dict[str, dict] = {}
-    for case, label in zip(cases_to_run, labels, strict=True):
-        scenario = find_scenario(case.scenario)
-        if scenario is None:
-            print(f"{label:<45} NOT FOUND")
-            continue
+    for case, scenario in cases_to_run:
+        label = case.label
         resolution = scenario_resolution(
             scenario,
             scenario_name=label,
