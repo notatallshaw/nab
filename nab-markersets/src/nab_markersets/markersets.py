@@ -424,6 +424,15 @@ class MarkerSet:
         return self._wrap(_markersets.restrict_tree(self._tree, prepared))
 
     @_bounded
+    def with_cpython_implementation_version(self) -> MarkerSet:
+        """Read ``implementation_version`` from ``python_full_version`` on CPython.
+
+        The caller supplies the interpreter choice. Other marker variables keep
+        their original meaning.
+        """
+        return self._wrap(_markersets.with_cpython_implementation_version(self._tree))
+
+    @_bounded
     def set_memberships(self) -> frozenset[tuple[str, str]]:
         """Return the ``(variable, canonical name)`` pairs on set-valued variables.
 

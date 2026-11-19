@@ -86,6 +86,10 @@ Python version, while `python_full_version >= "1!0"` selects none.
 True
 ```
 
+For a CPython target, `with_cpython_implementation_version()` evaluates conditions on
+`implementation_version` using `python_full_version`. On other interpreters the two versions can
+differ.
+
 ## Make a marker smaller
 
 `simplify(within=...)` removes conditions already guaranteed by the environments in `within`. Pass

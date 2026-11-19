@@ -7792,6 +7792,34 @@ class TestMarkerCoverage:
         gpu = base.with_selection((("extra", "gpu"),))
         validate_marker_coverage([cpu, gpu], environments=[self._row(base)])
 
+    def test_implementation_bound_cannot_borrow_another_cpython_target(self) -> None:
+        targets = [self._minor("3.11"), self._minor("3.12")]
+        with pytest.raises(CoverageError, match="python_full_version"):
+            validate_marker_coverage(
+                targets, environments=[Marker('implementation_version < "3.12"')]
+            )
+
+    def test_implementation_bound_can_cover_the_rest_of_a_cpython_minor(self) -> None:
+        validate_marker_coverage(
+            [self._minor("3.12")],
+            environments=[
+                Marker('python_full_version < "3.12.4"'),
+                Marker('implementation_version >= "3.12.4.dev0"'),
+            ],
+        )
+
+    def test_pypy_implementation_version_is_independent(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.12",
+            spec=PlatformSpec("linux_x86_64"),
+            implementation="pypy",
+            python_full_version="3.12.0",
+        )
+        with pytest.raises(CoverageError):
+            validate_marker_coverage(
+                [target], environments=[Marker('implementation_version == "3.12.0"')]
+            )
+
     def test_cpython_iv_mirror_split_minor_passes(self) -> None:
         target = self._minor("3.13")
         slices, rows = self._split(target, 'implementation_version >= "3.13.2"')

@@ -46,7 +46,9 @@ way. A slice that consulted it carries both sets of bounds; otherwise it carries
 `python_full_version`.
 
 For example, `implementation_version >= "3.13.4"` gives the lower slice matching `< "3.13.4"`
-clauses and the upper slice matching `>= "3.13.4.dev0"` clauses for both variables.
+clauses and the upper slice matching `>= "3.13.4.dev0"` clauses for both variables. Nab checks those
+bounds against the same CPython version. On PyPy the implementation version is independent of the
+Python language version.
 
 ### Unsplit targets
 

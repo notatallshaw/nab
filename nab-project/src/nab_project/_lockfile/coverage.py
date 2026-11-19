@@ -95,11 +95,15 @@ def validate_marker_coverage(
     if environment_sets is None:
         environment_sets = [MarkerSet.from_marker(marker) for marker in environments]
     covered = reduce(MarkerSet.union, environment_sets, MarkerSet.empty())
-    covered = _project_implementation_version(
-        covered,
-        environments,
-        targets,
-        uses_implementation_version=uses_implementation_version,
+    if uses_implementation_version is None:
+        uses_implementation_version = any(
+            "implementation_version" in variable_names(row) for row in environments
+        )
+    # CPython reports its language version as its implementation version.
+    cpython_covered = (
+        covered.with_cpython_implementation_version()
+        if uses_implementation_version
+        else covered
     )
 
     for pins, references in _references_by_pins(targets).items():
@@ -108,7 +112,10 @@ def validate_marker_coverage(
         # Complementing the whole matrix carries every row's atoms on every
         # axis at once and overruns the cell budget.  Restricting first leaves
         # a single-platform residual denoting the same set.
-        covered_here = covered.restrict(env)
+        rows = (
+            cpython_covered if env.get("implementation_name") == "cpython" else covered
+        )
+        covered_here = rows.restrict(env)
 
         requested = [
             (target, MarkerSet.from_marker(marker).restrict(env))
@@ -171,41 +178,6 @@ def _references_by_pins(
         key = tuple(sorted(_reference_pins(target).items()))
         grouped.setdefault(key, []).append((target, marker))
     return grouped
-
-
-def _project_implementation_version(
-    covered: MarkerSet,
-    environments: Sequence[Marker],
-    targets: Sequence[ResolveTarget],
-    *,
-    uses_implementation_version: bool | None = None,
-) -> MarkerSet:
-    """Drop ``implementation_version`` from ``covered`` when a row mirrors it.
-
-    On CPython the resolve mirrors each slice's ``python_full_version`` bounds
-    onto ``implementation_version``, and the algebra treats the two as
-    independent.  A cross term (``python_full_version`` from one slice,
-    ``implementation_version`` from another) then survives the plain union and
-    manufactures a false hole on a covering lock, since the reference leaves
-    ``implementation_version`` open.
-
-    With no existential primitive the projection is reproduced by ``restrict``:
-    binding ``implementation_version`` to one representative per slice drops the
-    axis, and the union over the targets' ``python_full_version`` reassembles
-    the minor.  Runs only when a row names ``implementation_version``.
-    """
-    if uses_implementation_version is None:
-        uses_implementation_version = any(
-            "implementation_version" in variable_names(row) for row in environments
-        )
-    if not uses_implementation_version:
-        return covered
-    reps = {target.python_full_version for target in targets}
-    return reduce(
-        MarkerSet.union,
-        (covered.restrict({"implementation_version": rep}) for rep in reps),
-        MarkerSet.empty(),
-    )
 
 
 def _coverage_message(witness: dict[str, str | frozenset[str]]) -> str:
