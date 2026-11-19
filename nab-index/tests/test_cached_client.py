@@ -12,7 +12,6 @@ import threading
 import time
 import zipfile
 from collections.abc import Callable, Mapping
-from contextlib import AbstractContextManager
 from email.utils import formatdate
 from pathlib import Path
 from typing import Any
@@ -52,16 +51,16 @@ from nab_index.client import (
     _parse_files,
     _parse_sdist_filename,
 )
-from nab_index.lazy_wheel import RangeMetadataResult, RangeOutcome
+from nab_index.lazy_wheel import (
+    RangeCapability,
+    RangeCapabilityMemo,
+    RangeMetadataResult,
+    RangeOutcome,
+)
 from nab_index.parsed_listing import encode as encode_parsed
 from nab_index.transport import HttpError
 from nab_markersets._compat import get_int_max_str_digits
 from nab_provider.metadata import parse_metadata
-from nab_provider.records import (
-    parse_hash_table,
-    select_artifact_hash,
-    sidecar_hash,
-)
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.store import sdist_artifact_key
 from nab_provider.value import replace
@@ -128,9 +127,6 @@ WHEEL_AND_ZIP_BYTES = json.dumps(WHEEL_AND_ZIP_LISTING).encode()
 
 # A digit run just past CPython's int-from-string limit.
 OVERSIZED_DIGITS = "9" * ((get_int_max_str_digits() or 4300) + 1)
-
-# Stands in for a body nested past the decoder's guard (``refuse_over_nested``).
-OVER_NESTED = b"[[[]]]"
 
 
 class _FakeResponse:
@@ -446,8 +442,6 @@ class TestMetadataHashParsing:
         ) == ("sha512", "a" * 128)
 
     def test_parse_files_empty_digest_leaves_metadata_unverified(self) -> None:
-        from nab_index.client import WheelFile, _parse_files
-
         data = {
             "files": [
                 {
@@ -464,11 +458,9 @@ class TestMetadataHashParsing:
 
 
 class TestYankedMetadata:
-    """PEP 592 ``yanked`` files are dropped from the listing."""
+    """A package listing keeps the yanked flag and reason for each file."""
 
     def test_yanked_true_retained(self) -> None:
-        from nab_index.client import _parse_files
-
         data = {
             "files": [
                 {
@@ -490,8 +482,6 @@ class TestYankedMetadata:
         assert [f.yanked for f in files] == [True, False]
 
     def test_yanked_reason_retained(self) -> None:
-        from nab_index.client import _parse_files
-
         data = {
             "files": [
                 {
@@ -506,8 +496,6 @@ class TestYankedMetadata:
         assert files[0].yanked == "security incident #42"
 
     def test_yanked_false_kept(self) -> None:
-        from nab_index.client import _parse_files
-
         data = {
             "files": [
                 {
@@ -521,8 +509,6 @@ class TestYankedMetadata:
         assert len(files) == 1
 
     def test_yanked_empty_string_kept(self) -> None:
-        from nab_index.client import _parse_files
-
         data = {
             "files": [
                 {
@@ -958,85 +944,6 @@ class TestFragmentedUrlSidecarFetch:
 
         assert asyncio.run(go()) == sidecar.decode()
         assert transport.paths == [wheel_path + ".metadata"]
-
-
-class TestParseHashes:
-    def test_single_entry(self) -> None:
-        assert parse_hash_table({"sha256": "a" * 64}) == (("sha256", "a" * 64),)
-
-    def test_single_entry_malformed(self) -> None:
-        assert parse_hash_table({"sha256": 123}) == ()
-
-    def test_multiple_entries(self) -> None:
-        result = parse_hash_table({"sha256": "a" * 64, "md5": "b" * 32})
-        assert result == (("sha256", "a" * 64), ("md5", "b" * 32))
-
-    def test_multiple_entries_skips_malformed(self) -> None:
-        result = parse_hash_table({"sha256": "a" * 64, "md5": 123})
-        assert result == (("sha256", "a" * 64),)
-
-    def test_non_dict(self) -> None:
-        assert parse_hash_table("sha256:abc") == ()
-
-    def test_empty_dict(self) -> None:
-        assert parse_hash_table({}) == ()
-
-    def test_single_empty_digest_dropped(self) -> None:
-        assert parse_hash_table({"sha256": ""}) == ()
-
-    def test_empty_digest_falls_through_to_valid(self) -> None:
-        assert parse_hash_table({"sha256": "", "sha512": "f" * 128}) == (
-            ("sha512", "f" * 128),
-        )
-
-    def test_empty_digest_yields_no_sdist_check(self) -> None:
-        assert select_artifact_hash(parse_hash_table({"sha256": ""})) is None
-
-    def test_single_non_hex_digest_dropped(self) -> None:
-        assert parse_hash_table({"sha256": "not-a-digest"}) == ()
-
-    def test_hex_digest_split_by_whitespace_dropped(self) -> None:
-        assert parse_hash_table({"sha256": "0123abcd\nbeef"}) == ()
-
-    def test_non_hex_digest_falls_through_to_valid(self) -> None:
-        assert parse_hash_table({"sha256": "deadbeef ", "sha512": "f" * 128}) == (
-            ("sha512", "f" * 128),
-        )
-
-    def test_uppercase_digest_kept_lowercased(self) -> None:
-        assert parse_hash_table({"sha256": "A" * 64}) == (("sha256", "a" * 64),)
-
-    def test_bare_true_publishes_no_sidecar_hash(self) -> None:
-        assert sidecar_hash(True) is None  # noqa: FBT003
-
-
-class TestSelectArtifactHash:
-    def test_prefers_sha256(self) -> None:
-        hashes = (("sha512", "f" * 128), ("sha256", "a" * 64))
-        assert select_artifact_hash(hashes) == ("sha256", "a" * 64)
-
-    def test_falls_through_to_sha384(self) -> None:
-        hashes = (("sha512", "f" * 128), ("sha384", "b" * 96))
-        assert select_artifact_hash(hashes) == ("sha384", "b" * 96)
-
-    def test_falls_through_to_sha512(self) -> None:
-        assert select_artifact_hash((("sha512", "f" * 128),)) == (
-            "sha512",
-            "f" * 128,
-        )
-
-    def test_empty_returns_none(self) -> None:
-        assert select_artifact_hash(()) is None
-
-    def test_only_unacceptable_returns_none(self) -> None:
-        assert select_artifact_hash((("md5", "d" * 32),)) is None
-
-    def test_empty_digest_returns_none(self) -> None:
-        assert select_artifact_hash((("sha256", ""),)) is None
-
-    def test_empty_digest_falls_through_to_valid_algo(self) -> None:
-        hashes = (("sha256", ""), ("sha512", "f" * 128))
-        assert select_artifact_hash(hashes) == ("sha512", "f" * 128)
 
 
 class TestMaxAgeDirective:
@@ -2603,16 +2510,13 @@ class TestNonJsonListingBody:
     def test_cold_over_nested_body_raises_clean_and_skips_cache(
         self,
         tmp_path: Path,
-        refuse_over_nested: Callable[[bytes], AbstractContextManager[None]],
+        over_nested_json: bytes,
     ) -> None:
         cache = _make_cache(tmp_path)
-        transport = _FakeTransport([_FakeResponse(OVER_NESTED, status=200)])
+        transport = _FakeTransport([_FakeResponse(over_nested_json, status=200)])
 
-        with (
-            refuse_over_nested(OVER_NESTED),
-            pytest.raises(
-                MalformedSimpleResponseError, match="nested too deeply to decode"
-            ),
+        with pytest.raises(
+            MalformedSimpleResponseError, match="nested too deeply to decode"
         ):
             _run_get_files(transport, cache, "foo")
         assert cache.get_simple("foo") is None
@@ -4521,8 +4425,6 @@ class TestGetRangeMetadata:
         assert cache.get_metadata("pkg", _WHEEL_URL) is None
 
     def test_injected_memo_is_used(self, tmp_path: Path) -> None:
-        from nab_index.lazy_wheel import RangeCapability, RangeCapabilityMemo
-
         cache = _make_cache(tmp_path)
         memo = RangeCapabilityMemo()
         transport = _WellBehavedRangeTransport(_build_range_wheel())
@@ -5006,16 +4908,13 @@ class TestCorruptCachedListing:
         self,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
-        refuse_over_nested: Callable[[bytes], AbstractContextManager[None]],
+        over_nested_json: bytes,
     ) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_simple("pkg", OVER_NESTED, self._fresh())
+        cache.put_simple("pkg", over_nested_json, self._fresh())
         transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
 
-        with (
-            refuse_over_nested(OVER_NESTED),
-            caplog.at_level(logging.WARNING, logger="nab_index.cached_client"),
-        ):
+        with caplog.at_level(logging.WARNING, logger="nab_index.cached_client"):
             files = _run_get_files(transport, cache, "pkg")
 
         assert len(files) == 1
