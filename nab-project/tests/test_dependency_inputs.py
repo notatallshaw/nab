@@ -132,11 +132,48 @@ def test_requirements_includes_cannot_escape_the_source(
         )
 
 
-def test_cyclic_requirement_includes_are_refused(tmp_path: Path) -> None:
+def test_shared_requirements_files_are_read_once_per_import(tmp_path: Path) -> None:
+    files = {
+        "dev.txt": "-r base.txt\nruff",
+        "ci.txt": "-r ./base.txt\npytest",
+        "base.txt": "packaging",
+    }
+    paths = ["dev.txt", "ci.txt", "base.txt"]
+    reads: list[str] = []
+
+    def read(path: str) -> str:
+        reads.append(path)
+        return files[path]
+
+    result = dependency_input_requirements(
+        {"requirements-files": paths}, read, root=tmp_path
+    )
+    assert result == ["packaging", "pytest", "ruff"]
+    assert reads == ["dev.txt", "base.txt", "ci.txt"]
+
+    files["base.txt"] = "new-base"
+    assert dependency_input_requirements(
+        {"requirements-files": paths}, read, root=tmp_path
+    ) == ["new-base", "pytest", "ruff"]
+
+
+def test_nested_requirement_files_do_not_use_python_call_depth(tmp_path: Path) -> None:
+    def read(path: str) -> str:
+        index = int(path)
+        return "pytest" if index == 1200 else f"-r {index + 1}"
+
+    assert dependency_input_requirements(
+        {"requirements-files": ["0"]}, read, root=tmp_path
+    ) == ["pytest"]
+
+
+@pytest.mark.parametrize("included", ["requirements.txt", "shared.txt"])
+def test_cyclic_requirement_includes_are_refused(tmp_path: Path, included: str) -> None:
+    files = {"requirements.txt": f"-r {included}", "shared.txt": "-r requirements.txt"}
     with pytest.raises(ValueError, match="cyclic requirements"):
         dependency_input_requirements(
-            {"projects": [], "requirements-files": ["requirements.txt"]},
-            lambda path: "-r requirements.txt",
+            {"requirements-files": ["requirements.txt"]},
+            files.__getitem__,
             root=tmp_path,
         )
 

@@ -27,7 +27,7 @@ from .pyproject_files import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
     from pathlib import Path
 
     from nab_provider._vendor.packaging.requirements import Requirement
@@ -109,17 +109,8 @@ def _projects(declaration: Mapping[str, object]) -> list[_Project]:
     return result
 
 
-def _requirements_file(
-    path: str,
-    read: Callable[[str], str],
-    active: tuple[str, ...] = (),
-) -> list[Requirement]:
-    """Read PEP 508 lines and relative -r includes; reject pip-only options."""
-    path = source_relative_path(path)
-    if path in active:
-        msg = f"cyclic requirements file include: {(*active, path)}"
-        raise ValueError(msg)
-    result = []
+def _file_entries(path: str, read: Callable[[str], str]) -> Iterator[Requirement | str]:
+    """Yield parsed requirements and the source-relative paths of included files."""
     for line in read(path).splitlines():
         text = _REQUIREMENT_COMMENT.split(line, maxsplit=1)[0].strip()
         if not text:
@@ -131,13 +122,38 @@ def _requirements_file(
                 msg = f"{path}: {fields[0]} needs a file name"
                 raise ValueError(msg)
             relative = fields[1]
-            child = source_relative_path(
+            yield source_relative_path(
                 posixpath.normpath(str(PurePosixPath(path).parent / relative))
             )
-            result.extend(_requirements_file(child, read, (*active, path)))
         else:
-            result.extend(parse_requirements([text], path))
-    return result
+            yield from parse_requirements([text], path)
+
+
+def _requirements_files(
+    paths: Sequence[str], read: Callable[[str], str]
+) -> Iterator[Requirement]:
+    """Read each file once, preserving include order and reporting cycles."""
+    completed: set[str] = set()
+    for root in paths:
+        path = source_relative_path(root)
+        if path in completed:
+            continue
+
+        # Keep parent iterators so reading resumes on the line after an include.
+        active = {path: _file_entries(path, read)}
+        while active:
+            path = next(reversed(active))
+            entry = next(active[path], None)
+            if entry is None:
+                active.popitem()
+                completed.add(path)
+            elif not isinstance(entry, str):
+                yield entry
+            elif entry in active:
+                msg = f"cyclic requirements file include: {(*active, entry)}"
+                raise ValueError(msg)
+            elif entry not in completed:
+                active[entry] = _file_entries(entry, read)
 
 
 def _provided_project(
@@ -189,10 +205,11 @@ def dependency_input_requirements(
             resolve_groups_to_requirements(dependency_groups(document), project.groups)
         )
 
-    for path in require_string_list(
+    paths = require_string_list(
         declaration.get("requirements-files", []), "input requirements-files"
-    ):
-        roots.extend(_requirements_file(path, read))
+    )
+    roots.extend(_requirements_files(paths, read))
+
     result = expand_project_requirements(roots, optional)
     for requirement in result:
         if requirement.url is not None and urlsplit(requirement.url).scheme in {
