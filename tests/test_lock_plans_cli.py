@@ -663,6 +663,28 @@ def test_named_plan_selects_its_own_build_roots(
     assert command(named, "--plan", "dev", "--locked") == 0
 
 
+def test_named_plan_refuses_partial_extras_but_still_locks_runtime(
+    features: Registry, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert command(features, "--plan", "http") == 0
+    output = features.project.with_name("pylock.http.toml")
+    saved = output.read_bytes()
+    document = toml_io.load_path(features.project)
+    document["project"]["dynamic"] = ["optional-dependencies"]
+    features.project.write_text(toml_writer.dumps(document))
+
+    assert command(features, "--plan", "http", "--locked") == 1
+    assert "optional-dependencies" in capsys.readouterr().err
+    assert output.read_bytes() == saved
+    assert command(features, "--plan", "http") == 1
+    assert output.read_bytes() == saved
+
+    del document["tool"]["nab"]["plans"]["http"]["extras"]
+    features.project.write_text(toml_writer.dumps(document))
+    assert command(features, "--plan", "http") == 0
+    assert {pkg["name"] for pkg in toml_io.load_path(output)["packages"]} == {"runtime"}
+
+
 @pytest.mark.parametrize("build", [False, True])
 def test_complete_plan_selects_extras_independently_of_runtime(
     features: Registry, *, build: bool

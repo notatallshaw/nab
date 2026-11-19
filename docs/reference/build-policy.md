@@ -9,6 +9,10 @@ If `[project].dynamic` includes `"dependencies"`, the backend may add requiremen
 listed. To lock the project, declare its complete dependency list and remove `"dependencies"` from
 `[project].dynamic`.
 
+Selecting a project extra requires a static `[project.optional-dependencies]` table. If the backend
+may extend that table, you can still lock static runtime dependencies and independently declared
+groups by leaving the extras unselected.
+
 ## Build permissions
 
 A source's effective policy determines which metadata builds are allowed:

@@ -316,15 +316,18 @@ def _self_ref_edges(
 
 def expand_project_requirements(
     requirements: Sequence[Requirement],
-    projects: Mapping[str, Mapping[str, Sequence[str]]],
+    projects: Mapping[str, Mapping[str, Sequence[str]] | None],
 ) -> list[Requirement]:
     """Replace references to supplied projects with their selected extra dependencies.
 
     The projects themselves are installed separately. Conditions on local references
     also apply to the dependencies of their extras across project boundaries.
+    A ``None`` table means the build backend determines that project's extras.
     """
     local = {
-        canonicalize_name(name): _canonicalize_optional_deps(optional)
+        canonicalize_name(name): None
+        if optional is None
+        else _canonicalize_optional_deps(optional)
         for name, optional in projects.items()
     }
     pending = deque((requirement, frozenset[str]()) for requirement in requirements)
@@ -333,8 +336,7 @@ def expand_project_requirements(
     while pending:
         requirement, gates = pending.popleft()
         name = canonicalize_name(requirement.name)
-        optional = local.get(name)
-        if optional is None:
+        if name not in local:
             # Keep the caller's parsed requirements unchanged.
             emitted = parse_requirement(str(requirement))
             if gates:
@@ -346,7 +348,14 @@ def expand_project_requirements(
             raise InvalidProjectRequirementError(msg)
         if requirement.marker is not None:
             gates = gates | {str(requirement.marker)}
+        optional = local[name]
         for extra in sorted({canonicalize_name(extra) for extra in requirement.extras}):
+            if optional is None:
+                msg = (
+                    f"The build backend may extend the {extra!r} extra of {name!r} "
+                    "because [project.optional-dependencies] is declared dynamic."
+                )
+                raise InvalidProjectRequirementError(msg)
             key = (name, extra, gates)
             if key in visited:
                 continue

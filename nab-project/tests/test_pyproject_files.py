@@ -296,6 +296,21 @@ class TestReadPyprojectGroups:
 
 
 class TestReadPyprojectOptionalDependencies:
+    def test_dynamic_extra_has_no_complete_dependency_list(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "pyproject.toml"
+        path.write_text(
+            '[project]\ndependencies=["base"]\ndynamic=["optional-dependencies"]\n'
+            '[project.optional-dependencies]\nfast=["listed"]\n',
+            encoding="utf-8",
+        )
+        assert [req.name for req in read_pyproject_dependencies(path)] == ["base"]
+        with pytest.raises(
+            InvalidProjectRequirementError, match="optional-dependencies.*dynamic"
+        ):
+            read_pyproject_optional_dependencies(path)
+
     def test_reads_optional_dependencies(self, tmp_path: Path) -> None:
         p = tmp_path / "pyproject.toml"
         p.write_text(

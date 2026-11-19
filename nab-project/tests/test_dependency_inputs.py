@@ -256,6 +256,32 @@ def test_duplicate_project_identities_are_compared_after_normalization(
         )
 
 
+@pytest.mark.parametrize("requirement", ["worker", "worker[fast]"])
+def test_import_reads_dynamic_extras_only_if_another_project_requests_them(
+    tmp_path: Path, requirement: str
+) -> None:
+    files = {
+        "pyproject.toml": f'[project]\nname="app"\ndependencies=["{requirement}"]\n',
+        "worker/pyproject.toml": (
+            '[project]\nname="worker"\ndependencies=["base"]\n'
+            'dynamic=["optional-dependencies"]\n[project.optional-dependencies]\n'
+            'fast=["partial"]\n'
+        ),
+    }
+    declaration = {
+        "projects": [{"dependencies": True}, {"path": "worker", "dependencies": True}]
+    }
+    if requirement == "worker":
+        assert dependency_input_requirements(
+            declaration, files.__getitem__, root=tmp_path
+        ) == ["base"]
+    else:
+        with pytest.raises(
+            InvalidProjectRequirementError, match=r"'fast' extra of 'worker'.*dynamic"
+        ):
+            dependency_input_requirements(declaration, files.__getitem__, root=tmp_path)
+
+
 def test_selected_extras_can_be_imported_without_runtime_or_build_requirements(
     tmp_path: Path,
 ) -> None:

@@ -121,7 +121,7 @@ def _read_selection_table_or_exit(
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as e:
         printer().error(f"{path} is not valid TOML: {e}")
         raise SystemExit(1) from None
-    except TypeError as e:
+    except (TypeError, InvalidProjectRequirementError) as e:
         printer().error(e, prefix=f"in {path}: ")
         raise SystemExit(1) from None
 

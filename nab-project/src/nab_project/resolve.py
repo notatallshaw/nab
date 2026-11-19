@@ -294,6 +294,7 @@ def plan_project_inputs(
         inputs = inputs_for_build_requirements(inputs)
     tables = _project_tables(
         path,
+        require_static_extras=bool(extras),
         build_group=inputs.build_group,
         build_requirements=build_requirements,
         input_format=input_format,
@@ -624,6 +625,7 @@ def _carried_by(
 def _project_tables(
     path: Path,
     *,
+    require_static_extras: bool,
     build_group: str | None,
     build_requirements: bool,
     input_format: InputFormat = InputFormat.PROJECT,
@@ -642,7 +644,9 @@ def _project_tables(
     return _ProjectTables(
         dependencies=pyproject_files.project_dependencies(document),
         groups=pyproject_files.dependency_groups(document),
-        optional=pyproject_files.project_optional_dependencies(document),
+        optional=pyproject_files.project_optional_dependencies(
+            document, require_static=require_static_extras
+        ),
         project_name=pyproject_files.project_name(document),
         build_requires=(
             pyproject_files.build_system_requires(document, path)
@@ -674,7 +678,9 @@ def complete_project_requirements(
 
     # Bind each requested extra before its name disappears from the install context.
     name = pyproject_files.project_name(document)
-    optional = pyproject_files.project_optional_dependencies(document)
+    optional = pyproject_files.project_optional_dependencies(
+        document, require_static=bool(extras)
+    )
     bound: dict[str, Sequence[str]] = {
         canonicalize_name(key): value for key, value in optional.items()
     }

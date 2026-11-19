@@ -6269,6 +6269,26 @@ class TestGroupAndExtraSelection:
             )
         assert "not found" in capsys.readouterr().err
 
+    @pytest.mark.parametrize("command", ["lock", "download"])
+    def test_all_extras_refuses_a_backend_defined_table(
+        self,
+        hermetic_roots: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        command: str,
+    ) -> None:
+        monkeypatch.chdir(hermetic_roots)
+        project = hermetic_roots / "pyproject.toml"
+        project.write_text(
+            '[project]\nname="demo"\nversion="1"\ndynamic=["optional-dependencies"]\n',
+            encoding="utf-8",
+        )
+        assert run((command, str(project), "--all-extras", "--offline")) == 1
+        assert (
+            "[project.optional-dependencies] is declared dynamic"
+            in capsys.readouterr().err
+        )
+
     def test_all_extras_missing_file_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

@@ -48,8 +48,11 @@ runtime or build metadata. A requirements-file input needs no project entry or `
 `requirements-files` accepts source-relative files containing PEP 508 requirements, comments and
 relative `-r` or `--requirement` includes. A `#` at the start of a line or after whitespace starts a
 comment. URL fragments such as `#sha256=…` stay part of the requirement. Other pip options are not
-supported. Runtime dependencies declared dynamic are refused when selected; local direct references
-need an explicit source policy in the consuming project.
+supported. Local direct references need an explicit source policy in the consuming project.
+
+A selected dependency list must be static. This also applies when a requirement selects an extra
+from another supplied project. Groups and build requirements can be read independently of dynamic
+runtime or optional dependencies.
 
 Inputs contribute requirements rather than adding the source projects themselves as install
 candidates. When runtime dependencies or extras are selected, references among the selected source

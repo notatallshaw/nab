@@ -328,7 +328,7 @@ def snapshot_inputs(  # noqa: PLR0913 - independently selectable project inputs 
         roots["base"] = (
             _requirements(project_dependencies(data), base) if "project" in data else []
         )
-        optional = project_optional_dependencies(data)
+        optional = project_optional_dependencies(data, require_static=bool(extras))
         for extra in sorted(extras):
             roots["extra:" + canonicalize_name(extra)] = _requirements(
                 expand_extra_requirements(
