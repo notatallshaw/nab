@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "collections",
     "collections.abc",
     "nab_provider._vendor.packaging.errors",
     "nab_provider._vendor.packaging.markers",
@@ -13,6 +14,7 @@ __lazy_modules__ = (
     "nab_provider.resolver_inputs",
 )
 
+from collections import deque
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
@@ -118,9 +120,9 @@ def expand_self_extras(
     canonical_deps = _canonicalize_optional_deps(optional_deps)
     out: list[str] = []
     seen: set[str] = set()
-    worklist: list[str] = [canonicalize_name(s) for s in selected]
+    worklist: deque[str] = deque(map(canonicalize_name, selected))
     while worklist:
-        extra = worklist.pop(0)
+        extra = worklist.popleft()
         if extra in seen:
             continue
         seen.add(extra)
@@ -248,11 +250,11 @@ def expand_extra_requirements(
     canonical_deps = _canonicalize_optional_deps(optional_deps)
     out: list[Requirement] = []
     visited: set[tuple[str, frozenset[str]]] = set()
-    worklist: list[tuple[str, frozenset[str]]] = [
+    worklist: deque[tuple[str, frozenset[str]]] = deque(
         (canonicalize_name(s), frozenset()) for s in selected
-    ]
+    )
     while worklist:
-        extra, gates = worklist.pop(0)
+        extra, gates = worklist.popleft()
         if (extra, gates) in visited:
             continue
         visited.add((extra, gates))
@@ -320,11 +322,11 @@ def expand_project_requirements(
         canonicalize_name(name): _canonicalize_optional_deps(optional)
         for name, optional in projects.items()
     }
-    pending = [(requirement, frozenset[str]()) for requirement in requirements]
+    pending = deque((requirement, frozenset[str]()) for requirement in requirements)
     visited: set[tuple[str, str, frozenset[str]]] = set()
     result: list[Requirement] = []
     while pending:
-        requirement, gates = pending.pop(0)
+        requirement, gates = pending.popleft()
         name = canonicalize_name(requirement.name)
         optional = local.get(name)
         if optional is None:
@@ -402,9 +404,9 @@ def expand_group_includes(
 
     out: list[str] = []
     seen: set[str] = set()
-    worklist = [canonicalize_name(s) for s in selected]
+    worklist = deque(map(canonicalize_name, selected))
     while worklist:
-        group = worklist.pop(0)
+        group = worklist.popleft()
         if group in seen:
             continue
         seen.add(group)
