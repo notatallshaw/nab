@@ -10,13 +10,18 @@ import argparse
 import hashlib
 import json
 import sys
+from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 from typing import NamedTuple, NoReturn
 
-from standard_stats import STAT_LABELS, valid_statistics
-
-from nab_provider._vendor.packaging.utils import is_normalized_name
-from nab_provider._vendor.packaging.version import Version
+from standard_result import (
+    STAT_LABELS,
+    StandardResult,
+    read_benchmark_json,
+    valid_outcome,
+    valid_statistics,
+)
 
 RESULTS_DIR = Path(__file__).parent / "results"
 MANIFEST_FILENAME = "_standard_manifest.json"
@@ -84,7 +89,7 @@ class BenchmarkRun(NamedTuple):
     """A validated manifest and its declared result payloads."""
 
     manifest: dict[str, object]
-    results: dict[str, dict[str, object]]
+    results: dict[str, StandardResult]
 
 
 def _fail(message: str, cause: BaseException | None = None) -> NoReturn:
@@ -98,12 +103,9 @@ def _canonical_json(value: object) -> str:
 
 def _read_json(path: Path) -> object:
     try:
-        return json.loads(
-            path.read_text(encoding="utf-8"),
-            parse_constant=lambda value: _fail(f"invalid JSON constant {value!r}"),
-        )
-    except (OSError, UnicodeError, ValueError) as exc:
-        _fail(f"unreadable benchmark JSON: {path}", exc)
+        return read_benchmark_json(path)
+    except (OSError, ValueError) as exc:
+        _fail(f"unreadable benchmark JSON: {path}: {exc}", exc)
 
 
 def _manifest_lists(data: dict[str, object]) -> dict[str, list[str]]:
@@ -257,7 +259,7 @@ def _validate_manifest_identity(
 def _validate_manifest_partitions(
     lists: dict[str, list[str]],
     run_dir: Path,
-) -> None:
+) -> dict[str, str]:
     strategies = lists["strategies"]
     available = lists["available_logical_keys"]
     selected = lists["selected_logical_keys"]
@@ -300,55 +302,19 @@ def _validate_manifest_partitions(
         or _actual_result_keys(run_dir) != completed_keys
     ):
         _fail(f"result files do not match the benchmark manifest: {run_dir}")
+    return completed_map
 
 
-def _validate_manifest(run_dir: Path) -> dict[str, object]:
+def _validate_manifest(run_dir: Path) -> tuple[dict[str, object], dict[str, str]]:
     data = _read_json(run_dir / MANIFEST_FILENAME)
     if not isinstance(data, dict) or set(data) != _MANIFEST_FIELDS:
         _fail(f"invalid standard benchmark manifest: {run_dir}")
     lists = _validate_manifest_identity(data, run_dir)
-    _validate_manifest_partitions(lists, run_dir)
-    return data
+    return data, _validate_manifest_partitions(lists, run_dir)
 
 
 def _settings_hash(settings: object) -> str:
     return hashlib.sha256(_canonical_json(settings).encode()).hexdigest()
-
-
-def _valid_pins(value: object) -> bool:
-    """Return whether *value* is a normalized name-to-version mapping."""
-    if not isinstance(value, dict):
-        return False
-    try:
-        return all(
-            type(name) is str
-            and is_normalized_name(name)
-            and type(version) is str
-            and str(Version(version)) == version
-            for name, version in value.items()
-        )
-    except ValueError:
-        return False
-
-
-def _validate_result_payload(data: dict[str, object], path: Path) -> None:
-    result = data.get("result")
-    if not isinstance(result, dict) or set(result) != {"success", "error", "pins"}:
-        _fail(f"invalid benchmark result payload: {path}")
-    success = result["success"]
-    error = result["error"]
-    pins = result["pins"]
-    if (
-        type(success) is not bool
-        or (success and error is not None)
-        or (not success and (not isinstance(error, str) or not error))
-        or not _valid_pins(pins)
-        or (not success and pins)
-    ):
-        _fail(f"invalid benchmark result payload: {path}")
-
-    if not valid_statistics(data.get("stats"), len(pins)):
-        _fail(f"invalid benchmark statistics: {path}")
 
 
 def _validate_result(
@@ -356,7 +322,8 @@ def _validate_result(
     execution_key: str,
     logical_key: str,
     manifest: dict[str, object],
-) -> dict[str, object]:
+    settings_hash: str,
+) -> StandardResult:
     data = _read_json(path)
     if not isinstance(data, dict) or set(data) != {"input", "result", "stats"}:
         _fail(f"invalid benchmark result: {path}")
@@ -370,7 +337,7 @@ def _validate_result(
         "corpus_hash": manifest["corpus_hash"],
         "logical_key": logical_key,
         "execution_key": execution_key,
-        "settings_hash": _settings_hash(manifest["settings"]),
+        "settings_hash": settings_hash,
     }
     if any(
         key not in input_data
@@ -379,22 +346,24 @@ def _validate_result(
     ):
         _fail(f"benchmark input does not match its manifest: {path}")
 
-    _validate_result_payload(data, path)
-    return data
+    outcome = data["result"]
+    if not valid_outcome(outcome):
+        _fail(f"invalid benchmark result payload: {path}")
+    stats = data["stats"]
+    if not valid_statistics(stats, len(outcome["pins"])):
+        _fail(f"invalid benchmark statistics: {path}")
+    return {"input": input_data, "result": outcome, "stats": stats}
 
 
 def load_run(run_dir: Path) -> BenchmarkRun:
     """Load a complete run and validate every declared standard result."""
     if run_dir.is_symlink() or not run_dir.is_dir():
         _fail(f"no standard benchmark results in {run_dir}")
-    manifest = _validate_manifest(run_dir)
-    logical_by_execution = _execution_map(
-        manifest["completed_logical_keys"],  # type: ignore[arg-type]
-        manifest["strategies"],  # type: ignore[arg-type]
-    )
+    manifest, logical_by_execution = _validate_manifest(run_dir)
+    settings_hash = _settings_hash(manifest["settings"])
     results = {
-        key: _validate_result(run_dir / key, key, logical_by_execution[key], manifest)
-        for key in manifest["completed_execution_keys"]  # type: ignore[union-attr]
+        key: _validate_result(run_dir / key, key, logical_key, manifest, settings_hash)
+        for key, logical_key in sorted(logical_by_execution.items())
     }
     return BenchmarkRun(manifest, results)
 
@@ -418,8 +387,6 @@ def require_comparable(first: BenchmarkRun, second: BenchmarkRun) -> None:
     for key in first.results:
         first_input = first.results[key]["input"]
         second_input = second.results[key]["input"]
-        assert isinstance(first_input, dict)
-        assert isinstance(second_input, dict)
         if _canonical_json(_without_provenance(first_input)) != _canonical_json(
             _without_provenance(second_input)
         ):
@@ -429,7 +396,12 @@ def require_comparable(first: BenchmarkRun, second: BenchmarkRun) -> None:
 def percent_change(old: float, new: float) -> str:
     if old == 0:
         return "+inf%" if new != 0 else "0.0%"
-    return f"{((new - old) * 100) / old:+.1f}%"
+    # Preserve integer counters and round even ratios too large for a float.
+    baseline = Fraction(old)
+    change = (Fraction(new) - baseline) / baseline
+    whole, tenth = divmod(abs(round(change * 1000)), 10)
+    sign = "-" if change < 0 else "+"
+    return f"{sign}{Decimal(whole)}.{tenth}%"
 
 
 def _pin_changes(first: dict[str, str], second: dict[str, str]) -> list[str]:
@@ -445,22 +417,14 @@ def _pin_changes(first: dict[str, str], second: dict[str, str]) -> list[str]:
     return messages
 
 
-def compare_scenario(
-    data1: dict[str, object], data2: dict[str, object], label: str
-) -> None:
+def compare_scenario(data1: StandardResult, data2: StandardResult, label: str) -> None:
     """Print result and counter differences for one scenario execution."""
     result1 = data1["result"]
     result2 = data2["result"]
     stats1 = data1["stats"]
     stats2 = data2["stats"]
-    assert isinstance(result1, dict)
-    assert isinstance(result2, dict)
-    assert isinstance(stats1, dict)
-    assert isinstance(stats2, dict)
     pins1 = result1["pins"]
     pins2 = result2["pins"]
-    assert isinstance(pins1, dict)
-    assert isinstance(pins2, dict)
     messages = _pin_changes(pins1, pins2)
 
     if result1["success"] != result2["success"]:
@@ -480,8 +444,6 @@ def compare_scenario(
         value1 = stats1[key]
         value2 = stats2[key]
         if value1 != value2:
-            assert isinstance(value1, (int, float))
-            assert isinstance(value2, (int, float))
             messages.append(
                 f"{label_text}: {value1} -> {value2} ({percent_change(value1, value2)})"
             )
@@ -507,7 +469,7 @@ def main() -> None:
     except ComparisonError as exc:
         print(f"Cannot compare benchmark runs: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
-    for key in first.manifest["completed_execution_keys"]:  # type: ignore[union-attr]
+    for key in first.results:
         compare_scenario(first.results[key], second.results[key], key)
 
 

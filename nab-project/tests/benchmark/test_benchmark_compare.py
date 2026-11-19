@@ -400,6 +400,7 @@ def test_load_run_rejects_result_file_set_changes(
     [
         (100, 110, "+10.0%"),
         (100, 90, "-10.0%"),
+        (1, 10**350 + 1, "+" + "1" + "0" * 352 + ".0%"),
         (0, 1, "+inf%"),
         (0, 0, "0.0%"),
     ],
@@ -459,6 +460,14 @@ def test_percent_change_is_relative_to_the_baseline(
             id="stats-shape",
         ),
         pytest.param(
+            lambda data: data["stats"].update(wall_time_seconds=10**350),
+            id="unrepresentable-elapsed-time",
+        ),
+        pytest.param(
+            lambda data: data["stats"].update(rounds=1, yanked_proxy_rounds=2),
+            id="more-proxy-rounds-than-total",
+        ),
+        pytest.param(
             lambda data: data["stats"].update(rounds=-1),
             id="negative-counter",
         ),
@@ -481,6 +490,18 @@ def test_load_run_rejects_an_invalid_result_payload(
     _rewrite_json(run_dir / "cases" / "done.json", mutate)
 
     with pytest.raises(module.ComparisonError):
+        module.load_run(run_dir)
+
+
+def test_load_run_rejects_an_overflowing_json_exponent(tmp_path: Path) -> None:
+    module = _harness()
+    run_dir = _write_run(module, tmp_path, "run", source_commit="a" * 40)
+    result = run_dir / "cases" / "done.json"
+    payload = json.loads(result.read_text())
+    payload["input"]["example"] = "replace_with_exponent"
+    result.write_text(json.dumps(payload).replace('"replace_with_exponent"', "1e999"))
+
+    with pytest.raises(module.ComparisonError, match="non-finite number"):
         module.load_run(run_dir)
 
 

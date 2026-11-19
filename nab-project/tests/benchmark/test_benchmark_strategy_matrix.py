@@ -2994,10 +2994,9 @@ def test_resolve_scenario_reports_the_counters_a_real_resolve_raised(
 ) -> None:
     """Pin the counters raised by a resolve to their call counts."""
     result = _resolve_dropped_extra(monkeypatch, "aaa==2.0")
-    # Check the producer's actual counters with both readers before inspecting them.
+    # Check the producer's counters against the shared report format.
     result["input"] = {}
     assert _harness("scenarios")._standard_result_data_valid(result, {})
-    _harness("compare")._validate_result_payload(result, Path("case.json"))
 
     stats = dict(result["stats"])
     assert isinstance(stats.pop("wall_time_seconds"), float)
@@ -3749,6 +3748,14 @@ def test_result_validation_rejects_json_type_coercions(
                 error="failed",
             ),
             id="failure-with-pins",
+        ),
+        pytest.param(
+            lambda data: data["stats"].update(wall_time_seconds=10**350),
+            id="unrepresentable-elapsed-time",
+        ),
+        pytest.param(
+            lambda data: data["stats"].update(rounds=1, yanked_proxy_rounds=2),
+            id="more-proxy-rounds-than-total",
         ),
         pytest.param(
             lambda payload: payload["stats"].update(packages_resolved=2),
