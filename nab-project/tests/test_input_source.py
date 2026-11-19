@@ -136,7 +136,12 @@ def test_python_encoding_declarations(tmp_path: Path, payload: bytes) -> None:
 
 @pytest.mark.parametrize(
     "payload",
-    [b"# coding: unknown-encoding\n", b"\xff\n", b"\xef\xbb\xbf# coding: latin-1\n"],
+    [
+        b"# coding: unknown-encoding\n",
+        b"# coding: base64_codec\n",
+        b"\xff\n",
+        b"\xef\xbb\xbf# coding: latin-1\n",
+    ],
 )
 def test_invalid_python_encodings_are_refused(tmp_path: Path, payload: bytes) -> None:
     path = tmp_path / "script.py"
@@ -168,6 +173,14 @@ def test_python_requirement_without_dependencies(tmp_path: Path) -> None:
         "project": {"dependencies": [], "requires-python": ">=3.11"},
         "tool": {},
     }
+
+
+def test_oversized_script_python_version_is_refused_at_read_time(
+    tmp_path: Path, oversized_integer: str
+) -> None:
+    path = _script(tmp_path, f'# requires-python=">={oversized_integer}"\n')
+    with pytest.raises(ScriptMetadataError, match="requires-python"):
+        read_script_metadata(path)
 
 
 def test_oversized_metadata_integer_uses_the_shared_toml_error(

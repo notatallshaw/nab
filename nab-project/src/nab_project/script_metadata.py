@@ -4,6 +4,7 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "nab_provider._vendor.packaging.specifiers",
+    "nab_provider.metadata",
     "nab_provider.project_requirements",
     "tokenize",
     "tomli",
@@ -15,7 +16,8 @@ from typing import TYPE_CHECKING, Any
 
 import tomli
 
-from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider.metadata import validate_specifier_versions
 from nab_provider.project_requirements import (
     InvalidProjectRequirementError,
     parse_requirements,
@@ -107,11 +109,12 @@ def read_script_metadata(path: Path) -> ScriptMetadata:
     """Read and validate one PEP 723 block using Python's declared file encoding."""
     try:
         with tokenize.open(path) as stream:
-            blocks = list(_script_blocks(stream.read()))
-    except (UnicodeError, SyntaxError) as exc:
+            source = stream.read()
+    except (LookupError, UnicodeError, SyntaxError) as exc:
         message = f"{path}: cannot decode Python script: {exc}"
         raise ScriptMetadataError(message) from exc
 
+    blocks = list(_script_blocks(source))
     if not blocks:
         message = f"{path}: no complete PEP 723 script metadata block"
         raise ScriptMetadataError(message)
@@ -126,25 +129,27 @@ def read_script_metadata(path: Path) -> ScriptMetadata:
         raise ScriptMetadataError(message) from exc
 
     requires_python = document.get("requires-python")
-    if requires_python is not None and not isinstance(requires_python, str):
-        message = f"{path}: PEP 723 requires-python must be a string"
-        raise ScriptMetadataError(message)
+    if requires_python is not None:
+        if not isinstance(requires_python, str):
+            message = f"{path}: PEP 723 requires-python must be a string"
+            raise ScriptMetadataError(message)
+        try:
+            validate_specifier_versions(SpecifierSet(requires_python))
+        except ValueError as exc:
+            message = f"{path}: invalid PEP 723 requires-python: {exc}"
+            raise ScriptMetadataError(message) from exc
+
     tool = document.get("tool", {})
     if not isinstance(tool, dict):
         message = f"{path}: PEP 723 tool must be a table"
         raise ScriptMetadataError(message)
 
     try:
-        if requires_python is not None:
-            SpecifierSet(requires_python)
         dependencies = parse_requirements(
             require_string_list(document.get("dependencies", []), "dependencies"),
             "dependencies",
         )
-    except (
-        InvalidSpecifier,
-        InvalidProjectRequirementError,
-    ) as exc:
+    except InvalidProjectRequirementError as exc:
         message = f"{path}: invalid PEP 723 script metadata: {exc}"
         raise ScriptMetadataError(message) from exc
     return ScriptMetadata(tuple(dependencies), requires_python, tool)
