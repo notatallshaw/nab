@@ -31,6 +31,19 @@ LATE_PIN = Case(
     (Request("b"), Request("a")),
 )
 
+EXTRA_BACKTRACK = Case(
+    (
+        Artifact("a", "2rc1", withdrawn=False),
+        Artifact(
+            "a",
+            "1",
+            withdrawn=False,
+            dependencies=(Request("a", ">=2", marker="extra"),),
+        ),
+    ),
+    (Request("a", extra=True),),
+)
+
 INDEPENDENT_OFFLINE = Case(
     (
         Artifact("a", "1", withdrawn=False),
@@ -82,6 +95,7 @@ LATE_UNKNOWN = Case(
 
 @pytest.mark.parametrize("admission_only", [False, True])
 @given(case=cases())
+@example(case=EXTRA_BACKTRACK)
 @example(case=LATE_PIN)
 @example(case=MIXED_FILES)
 @example(case=UNSEEDED_CYCLE)
