@@ -21,6 +21,21 @@ from nab_provider.metadata import (
 from .integer_limits import AT_DIGIT_LIMIT, OVER_DIGIT_LIMIT, requires_int_limit
 
 
+def test_new_major_metadata_version_is_rejected() -> None:
+    with pytest.raises(ValueError, match=r"foo 1\.0 declares Metadata-Version '3\.0'"):
+        parse_metadata("Metadata-Version: 3.0\nName: foo\nVersion: 1.0\n")
+
+
+def test_new_minor_metadata_version_keeps_dependencies(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    parsed = parse_metadata(
+        "Metadata-Version: 2.7\nName: foo\nVersion: 1.0\nRequires-Dist: dep\n"
+    )
+    assert [req.name for req in parsed.requires_dist] == ["dep"]
+    assert "foo 1.0 declares Metadata-Version '2.7'" in caplog.text
+
+
 def test_parses_minimal_metadata() -> None:
     """A minimal valid METADATA blob round-trips to ``WheelMetadata``."""
     text = "Metadata-Version: 2.1\nName: foo\nVersion: 1.2.3\n"
@@ -325,6 +340,11 @@ class TestMetadataDepsAreStatic:
     def test_pre_2_2_is_not_static(self) -> None:
         md = parse_metadata("Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n")
         assert metadata_deps_are_static(md) is False
+
+    def test_future_major_cannot_establish_static_dependencies(self) -> None:
+        md = parse_metadata("Metadata-Version: 2.2\nName: foo\nVersion: 1.0\n")
+        md.metadata_version = "3.0"
+        assert not metadata_deps_are_static(md)
 
     def test_missing_metadata_version_is_not_static(self) -> None:
         md = parse_metadata("Metadata-Version: 2.2\nName: foo\nVersion: 1.0\n")

@@ -70,7 +70,11 @@ from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name, parse_wheel_filename
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import UnsupportedWheelError
-from nab_provider.metadata import WheelMetadata, validate_specifier_versions
+from nab_provider.metadata import (
+    WheelMetadata,
+    check_metadata_version,
+    validate_specifier_versions,
+)
 from nab_provider.pep508 import parse_requirement
 from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
@@ -513,18 +517,14 @@ def _metadata_display_path(metadata_path: Path, output_dir: Path | None) -> Path
     return metadata_path
 
 
-def _parse_metadata(
-    metadata_path: Path, *, output_dir: Path | None = None
-) -> WheelMetadata:
-    """Parse METADATA, displaying paths inside ``output_dir`` relative to it."""
-    display_path = _metadata_display_path(metadata_path, output_dir)
-
+def _read_backend_metadata(metadata_path: Path, display_path: Path) -> str:
+    """Read the backend's UTF-8 METADATA or report its path in the build error."""
     if not path_state(metadata_path).should_read:
         msg = f"backend produced no METADATA file at {display_path}"
         raise BuildBackendError(msg)
 
     try:
-        text = metadata_path.read_text(encoding="utf-8")
+        return metadata_path.read_text(encoding="utf-8")
     except OSError as exc:
         detail = str(exc).replace(repr(str(metadata_path)), repr(str(display_path)))
         msg = f"backend METADATA at {display_path} could not be read: {detail}"
@@ -532,7 +532,14 @@ def _parse_metadata(
     except UnicodeDecodeError as exc:
         msg = f"backend METADATA at {display_path} is not valid UTF-8: {exc}"
         raise BuildBackendError(msg) from exc
-    msg_obj = message_from_string(text)
+
+
+def _parse_metadata(
+    metadata_path: Path, *, output_dir: Path | None = None
+) -> WheelMetadata:
+    """Parse METADATA, displaying paths inside ``output_dir`` relative to it."""
+    display_path = _metadata_display_path(metadata_path, output_dir)
+    msg_obj = message_from_string(_read_backend_metadata(metadata_path, display_path))
 
     name_raw = msg_obj.get("Name")
     version_raw = msg_obj.get("Version")
@@ -542,6 +549,12 @@ def _parse_metadata(
             f" (Name={name_raw!r}, Version={version_raw!r})"
         )
         raise BuildBackendError(msg)
+
+    try:
+        check_metadata_version(msg_obj.get("Metadata-Version"), name_raw, version_raw)
+    except ValueError as exc:
+        raise BuildBackendError(str(exc)) from exc
+
     try:
         version = Version(version_raw)
     except ValueError as exc:

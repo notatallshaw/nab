@@ -1185,6 +1185,14 @@ class TestParseMetadata:
     that are awkward to reach through ``run_build_backend`` end-to-end.
     """
 
+    def test_future_major_metadata_is_refused(self, tmp_path: Path) -> None:
+        path = tmp_path / "METADATA"
+        path.write_text(
+            "Metadata-Version: 3.0\nName: foo\nVersion: 1\n", encoding="utf-8"
+        )
+        with pytest.raises(BuildBackendError, match="foo 1 declares Metadata-Version"):
+            runner_mod._parse_metadata(path)
+
     def test_missing_metadata_file_raises(self, tmp_path: Path) -> None:
         from nab_project._build.runner import _parse_metadata
 
