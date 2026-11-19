@@ -959,7 +959,9 @@ def _extra_requirements(
             f" missing from {path}: {sorted(selected)!r}"
         )
         raise LookupError(msg)
-    return expand_extra_requirements(tables.optional, tables.project_name, selected)
+    return expand_extra_requirements(
+        tables.optional, tables.project_name, selected, bind_extra_markers=True
+    )
 
 
 def _validate_conflict_members_exist(

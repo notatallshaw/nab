@@ -13,6 +13,7 @@ from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
 from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
+from nab_provider.marker_holds import dependency_marker_holds, marker_uses_extra
 from nab_provider.overrides import PackageOverride
 from nab_provider.provider import (
     BuildPolicy,
@@ -138,13 +139,26 @@ def expand_project_extras(
         optional, project, requested_extras, marker_environment
     )
 
-    # Self-references select extras; only external dependencies become roots.
-    return [
-        text
-        for extra in selected
-        for text in optional.get(extra, [])
-        if canonicalize_name(Requirement(text).name) != project
-    ]
+    roots: list[str] = []
+    for extra in selected:
+        for text in optional.get(extra, []):
+            req = Requirement(text)
+            if canonicalize_name(req.name) == project:
+                continue
+
+            # Evaluate an extra marker here, before the requirement becomes a root.
+            if (
+                marker_environment is None
+                or req.marker is None
+                or not marker_uses_extra(req.marker)
+            ):
+                roots.append(text)
+            elif dependency_marker_holds(
+                req.marker, {**marker_environment, "extra": frozenset({extra})}
+            ):
+                req.marker = None
+                roots.append(str(req))
+    return roots
 
 
 def validate_scenario_settings(

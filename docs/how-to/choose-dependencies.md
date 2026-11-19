@@ -79,6 +79,9 @@ nab lock --extras cli --groups dev
 The project's regular dependencies are included too. `--all-extras` and `--all-groups` select every
 declared extra or group. `[tool.nab].default-groups` selects groups on every resolve.
 
+Inside the `cli` extra, an `extra` marker evaluates with the value `"cli"`. Other marker variables,
+such as `sys_platform`, still use the target environment.
+
 ### Include other extras
 
 An extra can include another extra from the same project. Here `--extras all` also selects `cli`

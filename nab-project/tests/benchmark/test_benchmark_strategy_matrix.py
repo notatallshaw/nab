@@ -4607,6 +4607,7 @@ def test_benchmark_roots_follow_markers_on_project_extras(
     standard = _harness("scenarios")
     canary = _harness("canary")
     profile = _harness("_profile_runner")
+    quoted_extra = 'quoted-dep; os_name != "extra"'
     scenario = {
         "python_version": "3.12",
         "requirements": ["base"],
@@ -4615,16 +4616,21 @@ def test_benchmark_roots_follow_markers_on_project_extras(
         "project_extras": ["all"],
         "optional_dependencies": {
             "all": [
+                quoted_extra,
                 'example[linux]; sys_platform == "linux"',
                 'example[windows]; sys_platform == "win32"',
             ],
-            "linux": ["linux-dep"],
-            "windows": ["windows-dep"],
+            "linux": ['linux-dep; extra == "linux"', 'excluded; extra == "windows"'],
+            "windows": [
+                'windows-dep; extra == "windows"',
+                'excluded; extra != "windows"',
+            ],
         },
     }
     prepared, canary_run, profile_inputs = _prepare_runner_parity(
         standard, canary, profile, scenario=scenario
     )
+    assert quoted_extra in prepared.requirement_strings
     roots = standard.parse_requirements(
         prepared.requirement_strings,
         marker_environment=dict(prepared.target.marker_env),
@@ -4634,7 +4640,7 @@ def test_benchmark_roots_follow_markers_on_project_extras(
         canary_run.requirements,
         profile_inputs["requirements"],
     ):
-        assert set(requirements) == {"base", selected}
+        assert set(requirements) == {"base", "quoted-dep", selected}
 
 
 def test_standard_canary_and_profile_build_the_same_project_config() -> None:

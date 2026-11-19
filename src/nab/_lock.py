@@ -1357,7 +1357,9 @@ def _active_root_requirements(  # noqa: PLR0913 - independent root sources and s
         for extra in extras:
             roots.extend(
                 RootRequirement(requirement=req, source=f"the {extra!r} extra")
-                for req in expand_extra_requirements(optional, project_name, [extra])
+                for req in expand_extra_requirements(
+                    optional, project_name, [extra], bind_extra_markers=True
+                )
             )
 
     effective_groups = dict.fromkeys(

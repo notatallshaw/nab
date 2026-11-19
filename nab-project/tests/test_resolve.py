@@ -3416,26 +3416,21 @@ class TestBuildResolverInputs:
         )
         assert "try: use pkg[extra] to select an extra" in record.message
 
-    def test_warning_cause_holds_when_the_extra_was_selected(
+    def test_selected_project_extra_does_not_bind_markers_on_base_requirements(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """The cause it gives is true on a run that did select the extra.
-
-        ``--extras fast`` folds the extra's entries into the requirement list
-        and leaves the marker environment alone, so blaming an inactive extra
-        would send the user after a flag they already passed.
-        """
         selected = expand_extra_requirements(
-            {"fast": ['foo<2.0 ; extra == "fast"']}, "proj", ["fast"]
+            {"fast": ["bar"]}, "proj", ["fast"], bind_extra_markers=True
         )
         with caplog.at_level("WARNING", logger="nab_provider.resolver_inputs"):
-            build_resolver_inputs(
-                selected,
+            result = build_resolver_inputs(
+                [Requirement('foo<2.0; extra == "fast"'), *selected],
                 VcsConfig(),
                 environment={},
                 marker_holds=dependency_marker_holds,
             )
 
+        assert set(result.ranges) == {"bar"}
         (record,) = caplog.records
         assert (
             "Selecting an extra or group adds its requirements directly"

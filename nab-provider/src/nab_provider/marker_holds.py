@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 from nab_markersets.conversions import MarkerSetCache
 from nab_markersets.errors import IntractableMarkerSet
-from nab_markersets.markersets import MarkerSet
+from nab_markersets.markersets import MarkerSet, variable_names
 
 from ._vendor.packaging.markers import (
     Marker,
@@ -48,6 +48,7 @@ __all__ = [
     "evaluate_prepared",
     "intractable_as_error",
     "marker_set",
+    "marker_uses_extra",
 ]
 
 
@@ -79,6 +80,13 @@ def marker_set(marker: Marker) -> MarkerSet:
         return MarkerSet.from_marker(marker)
     except UndefinedComparison as exc:
         raise marker_evaluation_error(marker, exc) from exc
+
+
+def marker_uses_extra(marker: Marker) -> bool:
+    """Return whether the marker tests the active dependency extra."""
+    # Most environment markers can be ruled out without parsing their variables.
+    text = str(marker)
+    return "extra" in text and "extra" in variable_names(text)
 
 
 def dependency_marker_holds(

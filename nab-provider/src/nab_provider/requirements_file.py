@@ -22,7 +22,12 @@ from ._vendor.packaging.dependency_groups import resolve_dependency_groups
 from ._vendor.packaging.errors import ExceptionGroup
 from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.utils import canonicalize_name
-from .marker_holds import dependency_marker_holds, intractable_as_error, marker_set
+from .marker_holds import (
+    dependency_marker_holds,
+    intractable_as_error,
+    marker_set,
+    marker_uses_extra,
+)
 from .pep508 import NESTED_MARKER_MESSAGE, parse_requirement
 from .project_requirements import (
     InvalidProjectRequirementError,
@@ -363,7 +368,7 @@ def _project_extra_requirements(
     result = []
     for child in parse_requirements(optional[extra], f"{name}[{extra}]"):
         edge = gates
-        if child.marker is not None:
+        if child.marker is not None and marker_uses_extra(child.marker):
             residual = _environment_residual(child.marker, extra)
             if residual is False:
                 continue
