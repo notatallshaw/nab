@@ -71,8 +71,9 @@ def test_the_first_candidate_over_the_floor_wins() -> None:
     assert found.__name__ == "packaging"
 
 
-def test_a_candidate_that_is_not_installed_is_passed_over() -> None:
-    found = _packaging._import_backend((ABSENT, "packaging"))
+@pytest.mark.parametrize("candidate", [ABSENT, f"{ABSENT}.packaging"])
+def test_a_candidate_that_is_not_installed_is_passed_over(candidate: str) -> None:
+    found = _packaging._import_backend((candidate, "packaging"))
 
     assert found.__name__ == "packaging"
 
@@ -113,14 +114,27 @@ def test_a_candidate_with_no_version_is_passed_over(
 def test_a_candidate_that_breaks_on_import_is_not_passed_over(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A broken copy says so where it broke, rather than reading as absent."""
+    """Keep the error raised by an installed candidate."""
     (tmp_path / "nab_markersets_broken_backend.py").write_text(
         'raise ImportError("something inside is missing")\n'
     )
     monkeypatch.syspath_prepend(str(tmp_path))
 
     with pytest.raises(ImportError, match="something inside is missing"):
-        _packaging._import_or_none("nab_markersets_broken_backend")
+        _packaging._import_backend(("nab_markersets_broken_backend", "packaging"))
+
+
+def test_a_missing_dependency_inside_a_candidate_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / "incomplete_packaging"
+    package.mkdir()
+    (package / "__init__.py").write_text("from .missing_version import version\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    with pytest.raises(ModuleNotFoundError) as error:
+        _packaging._import_backend(("incomplete_packaging", "packaging"))
+    assert error.value.name == "incomplete_packaging.missing_version"
 
 
 def test_no_candidate_at_all_names_both_extras() -> None:
