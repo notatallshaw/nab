@@ -1,4 +1,4 @@
-"""nab-project's build of :class:`nab_provider.testing.FakeFetchPort`.
+"""In-memory fetch coordinator for project and CLI tests.
 
 Wraps :func:`nab_provider.testing.make_coordinator` with the handlers a host
 owns, wired to what nab-project runs in production: declared-source
@@ -10,30 +10,21 @@ TOML text and hands the fake the parsed table.
 
 from __future__ import annotations
 
-__lazy_modules__ = (
-    "nab_index.local_index",
-    "nab_project._build_remote",
-    "nab_project._sources",
-    "nab_project.toml_io",
-    "nab_provider.errors",
-    "nab_provider.testing",
-)
-
 from typing import TYPE_CHECKING, Any
 
 from nab_index.local_index import read_wheel_metadata
+from nab_project._build_remote import build_remote_sdist
+from nab_project._sources import materialize_source
+from nab_project.toml_io import loads_if_valid
 from nab_provider.errors import UnsupportedWheelError
-from nab_provider.testing import FakeFetchPort
 from nab_provider.testing import make_coordinator as _make_coordinator
-
-from .._build_remote import build_remote_sdist
-from .._sources import materialize_source
-from ..toml_io import loads_if_valid
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-__all__ = ["FakeFetchPort", "make_coordinator"]
+    from nab_provider.testing import FakeFetchPort
+
+__all__ = ["make_coordinator"]
 
 
 def _read_wheel(path: Path) -> str | None:

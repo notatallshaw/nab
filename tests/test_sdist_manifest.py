@@ -39,7 +39,7 @@ def _suite_modules() -> list[Path]:
     """The Python files that make up the suite, shipped and excluded alike."""
     return [
         _ROOT / "conftest.py",
-        _ROOT / "nab-project/test-support/nab_test_support/tests/conftest.py",
+        *sorted((_ROOT / "nab-project/test-support/nab_test_support").rglob("*.py")),
         *sorted(_TESTS.glob("*.py")),
     ]
 

@@ -16,13 +16,13 @@ import pytest
 from typing_extensions import Self
 
 from nab_project._resolve import engine
-from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.lockfile import IndexPin, TargetLock, WheelArtifact
 from nab_project.resolve import ResolveResult, TargetResult
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
-from nab_provider.testing import make_metadata, make_sdist, make_wheel
+from nab_provider.testing import FakeFetchPort, make_metadata, make_sdist, make_wheel
+from nab_test_support.coordinator import make_coordinator
 
 # universal_scenarios.py and universal_summary.py import their siblings by bare name.
 pytestmark = [

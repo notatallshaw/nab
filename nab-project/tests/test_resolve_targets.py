@@ -27,7 +27,6 @@ from nab_markersets.markersets import MarkerSet
 from nab_project import resolve as resolve_mod
 from nab_project._resolve import engine as engine_mod
 from nab_project._resolve.engine import _EngineSettings, _resolve_one_target, _run_pass
-from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
@@ -94,8 +93,9 @@ from nab_provider.requirements_file import expand_extra_requirements
 from nab_provider.resolver_inputs import ProxyConstraints
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
-from nab_provider.testing import make_metadata, make_sdist, make_wheel
+from nab_provider.testing import FakeFetchPort, make_metadata, make_sdist, make_wheel
 from nab_resolver.errors import ResolutionError
+from nab_test_support.coordinator import make_coordinator
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

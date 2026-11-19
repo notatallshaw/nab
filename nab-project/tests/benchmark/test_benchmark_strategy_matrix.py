@@ -19,7 +19,6 @@ import pytest
 
 from nab_index.client import WheelFile
 from nab_index.multi_index import IndexConfig
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.fetch import IndexRoute
 from nab_provider._vendor.packaging.tags import Tag
 from nab_provider._vendor.packaging.version import Version
@@ -27,6 +26,7 @@ from nab_provider.provider import Provider, ProviderStats
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.target import ResolveTarget
 from nab_resolver.resolver import ResolverStats
+from nab_test_support.coordinator import make_coordinator
 
 # The runner scripts loaded here import their siblings by bare name.
 pytestmark = [

@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from nab_project._resolve.engine import _augment_resolution_error
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.inputs import ResolveInputs
 from nab_project.resolve import resolve_with_coordinator
 from nab_provider._vendor.packaging.ranges import VersionRange
@@ -17,6 +16,7 @@ from nab_provider.target import ResolveTarget
 from nab_provider.testing import make_metadata, make_wheel
 from nab_resolver.errors import ResolutionError
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
+from nab_test_support.coordinator import make_coordinator
 
 
 @pytest.mark.parametrize("transitive", [False, True])

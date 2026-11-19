@@ -22,7 +22,6 @@ from nab._lock import _join_command, _join_for_cmd, _quote_for_cmd
 from nab.cli import run
 from nab_index.client import WheelFile
 from nab_markersets._compat import get_int_max_str_digits
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.lockfile import (
     IndexPin,
     SdistArtifact,
@@ -32,6 +31,7 @@ from nab_project.lockfile import (
 from nab_project.resolve import ResolveResult, TargetResult
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.target import ResolveTarget
+from nab_test_support.coordinator import make_coordinator
 
 from .lock_registry import Registry
 

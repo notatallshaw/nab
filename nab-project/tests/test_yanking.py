@@ -16,7 +16,6 @@ import sys
 
 import pytest
 
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import IndexPin, build_pylock
 from nab_project.resolve import build_lock_input, resolve_with_coordinator
@@ -49,6 +48,7 @@ from nab_resolver.errors import (
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause
+from nab_test_support.coordinator import make_coordinator
 
 from .yanked_releases import ReleaseExtras, ReleaseRow, make_release_coordinator
 

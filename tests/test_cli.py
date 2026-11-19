@@ -65,7 +65,6 @@ from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.transport import HttpError, IdleClosableTransport
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_markersets._compat import get_int_max_str_digits
-from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.download import DownloadError, DownloadResult
 from nab_project.fetch import DEFAULT_MAX_CONCURRENCY, FetchCoordinator
 from nab_project.lockfile import (
@@ -104,8 +103,9 @@ from nab_provider.records import WheelFile
 from nab_provider.requirements_file import InvalidProjectRequirementError
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import IntractableMarkerError, ResolveTarget, host_environment
-from nab_provider.testing import make_metadata, make_wheel
+from nab_provider.testing import FakeFetchPort, make_metadata, make_wheel
 from nab_resolver.errors import ResolutionError
+from nab_test_support.coordinator import make_coordinator
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"

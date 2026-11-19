@@ -54,7 +54,7 @@ only-include = [
     "src/nab",
     "tests",
     "conftest.py",
-    "nab-project/test-support/nab_test_support/tests/conftest.py",
+    "nab-project/test-support/nab_test_support",
 ]
 
 # These read files the sdist does not carry (docs/, tasks/, the noxfile, the
@@ -503,6 +503,7 @@ known-first-party = [
     "nab_provider",
     "nab_project",
     "nab_resolver",
+    "nab_test_support",
 ]
 
 # https://microsoft.github.io/pyright/#/configuration?id=main-pyright-settings

@@ -62,7 +62,6 @@ from nab_project._build.runner import (
     build_wheel_for_install,
     run_build_backend,
 )
-from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.build_backend import extract_metadata
 from nab_project.download import DownloadError, DownloadResult, iter_artifacts
 from nab_project.inputs import ResolveInputs
@@ -91,10 +90,11 @@ from nab_provider.provider import (
 )
 from nab_provider.tags import PlatformSpec, TagSet
 from nab_provider.target import ResolveTarget
-from nab_provider.testing import make_metadata, make_wheel, pkg_override
+from nab_provider.testing import FakeFetchPort, make_metadata, make_wheel, pkg_override
 from nab_provider.value import replace
 from nab_resolver.diagnostics import error_message
 from nab_resolver.errors import ResolutionError, ResolutionLimitError
+from nab_test_support.coordinator import make_coordinator
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"

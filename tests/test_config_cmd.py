@@ -34,7 +34,6 @@ from nab.cli import run
 from nab.config.ladder import OPTIONS, Scope, SourceRoots, docs_url
 from nab.config.subflags import BY_PARENT
 from nab.config.values import SourceConfigError
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.download import DownloadResult
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import (
@@ -53,6 +52,7 @@ from nab_provider.provider import (
     ResolutionStrategy,
 )
 from nab_provider.target import ResolveTarget
+from nab_test_support.coordinator import make_coordinator
 
 # Every registry option carrying a CLI flag, keyed on the option's key.
 _CLI_FLAGS: dict[str, str] = {

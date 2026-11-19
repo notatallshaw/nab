@@ -24,7 +24,6 @@ from nab_project._resolve.engine import (
     _ResolveObserver,
     _walk_no_versions_packages,
 )
-from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
@@ -81,7 +80,7 @@ from nab_provider.requirements_file import (
 )
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
-from nab_provider.testing import make_metadata, make_wheel
+from nab_provider.testing import FakeFetchPort, make_metadata, make_wheel
 from nab_provider.vcs_admission import VcsPolicy
 from nab_resolver.errors import (
     ResolutionError,
@@ -93,6 +92,7 @@ from nab_resolver.errors import (
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
+from nab_test_support.coordinator import make_coordinator
 
 from .yanked_releases import make_release_coordinator
 

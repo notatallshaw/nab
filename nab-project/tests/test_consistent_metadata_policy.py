@@ -10,13 +10,13 @@ from unittest.mock import patch
 import pytest
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import IndexPin
 from nab_project.resolve import resolve_for_targets
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import make_metadata, make_wheel
+from nab_test_support.coordinator import make_coordinator
 
 if TYPE_CHECKING:
     from pathlib import Path

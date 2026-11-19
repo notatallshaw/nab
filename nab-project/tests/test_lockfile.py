@@ -17,9 +17,10 @@ from typing import Any, ClassVar
 import pytest
 
 from nab_markersets._compat import get_int_max_str_digits
-from nab_project._testing.artifacts import make_sdist_artifact, make_wheel_artifact
 from nab_provider.policy import MetadataPolicy
 from nab_provider.value import replace
+
+from .lock_artifacts import make_sdist_artifact, make_wheel_artifact
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -45,7 +46,6 @@ from nab_project._lockfile.pylock import (
     _pin_to_package,
     _relativize_path,
 )
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
@@ -115,6 +115,7 @@ from nab_provider.target import (
     slices_from_points,
 )
 from nab_provider.testing import make_metadata, make_wheel, pkg_override
+from nab_test_support.coordinator import make_coordinator
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"

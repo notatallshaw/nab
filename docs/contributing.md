@@ -57,8 +57,10 @@ shared through `tests/ruff.toml`.
 
 Reuse `nab_provider.testing.make_wheel`, `make_sdist` and `make_metadata` for ordinary record and
 metadata setup. They construct real objects; targets, policies and the dependency scenario belong at
-the caller. Project lock tests can use the artifact factories in `nab_project._testing.artifacts`.
-Keep deliberately malformed records and archive layouts explicit.
+the caller. Project lock tests can use the artifact factories in
+`nab-project/tests/lock_artifacts.py`. For project and CLI tests that read local wheels or build
+source distributions, use `nab_test_support.coordinator.make_coordinator`. Keep deliberately
+malformed records and archive layouts explicit.
 
 For example, a sidecar-backed listing can be set up with:
 

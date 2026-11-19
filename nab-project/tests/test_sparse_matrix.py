@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from nab_index.client import WheelFile
-from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import build_pylock
 from nab_project.resolve import build_lock_input, resolve_with_coordinator
@@ -15,7 +14,8 @@ from nab_provider._vendor.packaging.tags import Tag
 from nab_provider.provider import BuildPolicy
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, MatrixInclude, ResolveTarget
-from nab_provider.testing import make_metadata, make_wheel
+from nab_provider.testing import FakeFetchPort, make_metadata, make_wheel
+from nab_test_support.coordinator import make_coordinator
 
 HASHES = (("sha256", "a" * 64),)
 

@@ -6,7 +6,6 @@ from functools import partial
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.policy import ExtrasMode
@@ -25,6 +24,7 @@ from nab_provider.yanked_resolution import (
 from nab_provider.yanking import mark_yanked
 from nab_resolver.errors import ResolutionError
 from nab_resolver.types import Incompatibility
+from nab_test_support.coordinator import make_coordinator
 
 from .yanking_model import Artifact, Case, Key, Node, Solution, live_completions
 

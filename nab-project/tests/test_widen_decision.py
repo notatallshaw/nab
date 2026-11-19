@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, NoReturn, cast
 import pytest
 
 from nab_project._packaging_provider import PackagingProvider
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
@@ -36,11 +35,12 @@ from nab_provider.testing import make_metadata, make_wheel
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver
 from nab_resolver.root import ROOT
+from nab_test_support.coordinator import make_coordinator
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nab_project._testing.coordinator_fake import FakeFetchPort
+    from nab_provider.testing import FakeFetchPort
 
 V = Version
 

@@ -12,7 +12,6 @@ from nab.config.ladder import OPTIONS
 from nab.config.model import plan_targets, read_pyproject_config
 from nab_project import _sources as sources
 from nab_project import build_backend
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.workspace import read_workspace_members
 from nab_provider._provider import build_remote, metadata_resolver
 from nab_provider._vendor.packaging.version import Version
@@ -22,6 +21,7 @@ from nab_provider.policy import BuildPolicy, SourceRequest
 from nab_provider.provider import Provider
 from nab_provider.records import SdistFile
 from nab_provider.vcs_admission import UnsupportedVcsError, VcsConfig, admit_vcs_url
+from nab_test_support.coordinator import make_coordinator
 
 from ._markdown import fenced_blocks
 

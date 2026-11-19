@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-__lazy_modules__ = ("nab_project.lockfile",)
-
-from ..lockfile import SdistArtifact, WheelArtifact
+from nab_project.lockfile import SdistArtifact, WheelArtifact
 
 
 def make_wheel_artifact(

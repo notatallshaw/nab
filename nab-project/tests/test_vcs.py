@@ -26,7 +26,6 @@ from nab_index.vcs import (
     _resolve_sha,
     prepare_clone,
 )
-from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.fetch import FetchCoordinator
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import VcsPin, build_target_lock
@@ -44,7 +43,9 @@ from nab_provider.provider import (
     VcsSource,
 )
 from nab_provider.target import ResolveTarget
+from nab_provider.testing import FakeFetchPort
 from nab_provider.vcs_request import _split_repo_ref
+from nab_test_support.coordinator import make_coordinator
 
 
 def _mark_complete(clone_dir: Path) -> None:

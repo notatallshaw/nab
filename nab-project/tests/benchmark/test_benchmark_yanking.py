@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, TypeVar
 
 import pytest
 
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.records import WheelFile
 from nab_provider.target import ResolveTarget
@@ -23,6 +22,7 @@ from nab_resolver.errors import (
 )
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause
+from nab_test_support.coordinator import make_coordinator
 
 from ..yanked_releases import make_release_coordinator
 from .test_benchmark_parse_requirements import _harness

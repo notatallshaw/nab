@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from nab.cli import run
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.toml_io import loads
 from nab_provider._vendor.packaging.pylock import PackageSdist, Pylock
 from nab_provider._vendor.packaging.tags import Tag
@@ -21,6 +20,7 @@ from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import make_coordinator as make_provider_coordinator
 from nab_provider.testing import make_metadata, make_sdist, make_wheel
+from nab_test_support.coordinator import make_coordinator
 
 from ._local_artifacts import make_wheel_archive, publish_artifacts
 

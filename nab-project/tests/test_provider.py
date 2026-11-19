@@ -39,7 +39,6 @@ from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_markersets._compat import get_int_max_str_digits
 from nab_project import _build_remote
 from nab_project._resolve.engine import _raise_for_source_python
-from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.fetch import (
     DEFAULT_INDEX_URL,
     FetchCoordinator,
@@ -93,7 +92,13 @@ from nab_provider.records import DistFile, rehydrated_wheel
 from nab_provider.store import sdist_artifact_key
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
-from nab_provider.testing import make_metadata, make_sdist, make_wheel, pkg_override
+from nab_provider.testing import (
+    FakeFetchPort,
+    make_metadata,
+    make_sdist,
+    make_wheel,
+    pkg_override,
+)
 from nab_provider.yanking import mark_yanked
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver
@@ -103,6 +108,7 @@ from nab_resolver.types import (
     RangeProtocol,
     Term,
 )
+from nab_test_support.coordinator import make_coordinator
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"

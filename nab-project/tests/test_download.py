@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from nab_index.transport import HttpError
-from nab_project._testing.artifacts import make_sdist_artifact, make_wheel_artifact
 from nab_project.download import (
     DownloadEntry,
     DownloadError,
@@ -32,6 +31,8 @@ from nab_project.lockfile import (
 )
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
+
+from .lock_artifacts import make_sdist_artifact, make_wheel_artifact
 
 
 def _target(

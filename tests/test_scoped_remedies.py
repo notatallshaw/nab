@@ -14,7 +14,7 @@ import pytest
 from nab.cli import run
 from nab.config.model import read_pyproject_config
 from nab_index.client import WheelFile
-from nab_project._testing.coordinator_fake import make_coordinator
+from nab_test_support.coordinator import make_coordinator
 
 if TYPE_CHECKING:
     from _pytest.capture import CaptureFixture

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
-from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.inputs import ResolveInputs
 from nab_project.resolve import resolve_with_coordinator
 from nab_provider._vendor.packaging.requirements import Requirement
@@ -13,6 +12,7 @@ from nab_provider.records import WheelFile
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix
 from nab_provider.testing import make_metadata, make_wheel
+from nab_test_support.coordinator import make_coordinator
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
