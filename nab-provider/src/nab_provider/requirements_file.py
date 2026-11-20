@@ -390,7 +390,7 @@ def _project_extra_requirements(
 
 
 def expand_group_includes(
-    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    groups: Mapping[str, object],
     selected: Sequence[str],
 ) -> list[str]:
     """Return ``selected`` plus every group reached through ``include-group``.
@@ -410,7 +410,7 @@ def expand_group_includes(
     if not selected:
         return []
 
-    canonical_groups: dict[str, list[str | Mapping[str, str]]] = {}
+    canonical_groups: dict[str, list[object]] = {}
     for name, entries in groups.items():
         # str is a Sequence, so a bare string would expand into characters.
         if isinstance(entries, str) or not isinstance(entries, Sequence):
@@ -461,7 +461,7 @@ def _too_deep_error(exc: RecursionError) -> InvalidProjectRequirementError:
 
 
 def iter_group_requirements(
-    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    groups: Mapping[str, object],
     selected: Sequence[str],
 ) -> Iterator[tuple[str, list[Requirement]]]:
     """Yield each selected group's name and requirements in selection order."""
@@ -469,7 +469,10 @@ def iter_group_requirements(
         return
 
     try:
-        resolver = DependencyGroupResolver(groups)
+        # Packaging validates raw group bodies when resolve() first needs them.
+        resolver = DependencyGroupResolver(
+            groups,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        )
         resolved = [
             (name, [str(req) for req in resolver.resolve(name)]) for name in selected
         ]
@@ -488,7 +491,7 @@ def iter_group_requirements(
 
 
 def resolve_groups_to_requirements(
-    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    groups: Mapping[str, object],
     selected: Sequence[str],
 ) -> list[Requirement]:
     """Combine the requirements of the selected PEP 735 groups in order.

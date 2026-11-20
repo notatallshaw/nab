@@ -579,7 +579,7 @@ class _ProjectTables(Record):
     )
 
     dependencies: list[Requirement]
-    groups: Mapping[str, Sequence[str | Mapping[str, str]]]
+    groups: Mapping[str, object]
     optional: Mapping[str, Sequence[str]]
     project_name: str | None
     build_requires: list[Requirement]
@@ -587,7 +587,7 @@ class _ProjectTables(Record):
     def __init__(
         self,
         dependencies: list[Requirement],
-        groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+        groups: Mapping[str, object],
         optional: Mapping[str, Sequence[str]],
         project_name: str | None,
         build_requires: list[Requirement] | FactoryDefault = FACTORY,
@@ -921,7 +921,7 @@ def _base_fork(reference: ConflictFork) -> ConflictFork:
 
 
 def _group_requirements(
-    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    groups: Mapping[str, object],
     selected: Sequence[str],
     path: Path,
 ) -> list[Requirement]:
@@ -931,7 +931,7 @@ def _group_requirements(
 
 
 def _group_requirements_by_group(
-    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    groups: Mapping[str, object],
     selected: Sequence[str],
     path: Path,
 ) -> dict[str, list[Requirement]]:
@@ -972,7 +972,7 @@ def _extra_requirements(
 def _validate_conflict_members_exist(
     conflicts: Sequence[ConflictSet],
     optional: Mapping[str, Sequence[str]],
-    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    groups: Mapping[str, object],
     configured_groups: Sequence[str] = (),
 ) -> None:
     """Raise when a declared conflict names an extra/group the project lacks.
