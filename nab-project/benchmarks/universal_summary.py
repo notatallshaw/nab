@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import cast
 
+from benchmark_json import read_benchmark_json
 from universal_result import (
     MANIFEST_FILENAME,
     RESULT_SCHEMA_VERSION,
@@ -46,7 +46,7 @@ def authoritative_result_paths(
     """Return the complete full-run scenario set declared by its manifest."""
     manifest_path = target_dir / MANIFEST_FILENAME
     try:
-        manifest = json.loads(manifest_path.read_text())
+        manifest = read_benchmark_json(manifest_path)
     except (OSError, ValueError):
         return None
     if (
@@ -111,7 +111,7 @@ def main() -> int:
     records: list[tuple[Path, dict]] = []
     for path in paths:
         try:
-            data = json.loads(path.read_text())
+            data = read_benchmark_json(path)
         except (OSError, ValueError):
             print(f"Invalid universal result: {path}", file=sys.stderr)
             return 1

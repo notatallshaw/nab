@@ -1469,6 +1469,19 @@ def test_summary_exit_status(
     assert module.main() == exit_code
 
 
+@pytest.mark.parametrize("scope", ["total", "target"])
+def test_unrepresentable_wall_time_invalidates_the_result(scope: str) -> None:
+    module = _summary_harness()
+    report = _result_data(
+        {"success": True, "resolution_success": True, "lock_consistent": True}
+    )
+    assert module.result_is_well_formed(report)
+
+    row = report["stats"] if scope == "total" else report["per_tuple"][0]
+    row["wall_time_seconds"] = 10**350
+    assert not module.result_is_well_formed(report)
+
+
 def test_summary_exits_nonzero_without_results(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

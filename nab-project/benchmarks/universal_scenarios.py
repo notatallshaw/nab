@@ -34,6 +34,7 @@ else:
 
 
 from benchmark_datetime import parse_datetime
+from benchmark_json import read_benchmark_json
 from benchmark_source import get_git_source_state
 from universal_result import (
     MANIFEST_FILENAME,
@@ -479,7 +480,7 @@ def process_scenario(
     )
     if output_path.exists() and not force and source_is_cacheable:
         try:
-            existing = json.loads(output_path.read_text())
+            existing = read_benchmark_json(output_path)
         except (OSError, ValueError):
             existing = None
         if isinstance(existing, dict) and existing.get("input") == expected_input:

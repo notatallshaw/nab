@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import math
 from typing import TypeGuard
 
 from benchmark_datetime import is_valid_datetime
+from benchmark_json import valid_wall_time
 
 RESULT_SCHEMA_VERSION = 4
 MANIFEST_FILENAME = "_manifest.json"
@@ -156,15 +156,6 @@ def _is_optional_bool(value: object) -> bool:
     return value is None or type(value) is bool
 
 
-def _is_nonnegative_number(value: object) -> bool:
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-        and value >= 0
-    )
-
-
 def _is_hex_digest(value: object, lengths: set[int]) -> bool:
     return (
         isinstance(value, str)
@@ -289,7 +280,7 @@ def _valid_stats(value: object) -> bool:
     return (
         all(type(value[field]) is int and value[field] >= 0 for field in _STATS_FIELDS)
         and value["tuples_total"] > 0
-        and _is_nonnegative_number(value["wall_time_seconds"])
+        and valid_wall_time(value["wall_time_seconds"])
     )
 
 
@@ -317,7 +308,7 @@ def _valid_tuple(value: object) -> bool:
             (value["success"] is True and error is None)
             or (value["success"] is False and isinstance(error, str) and bool(error))
         )
-        and _is_nonnegative_number(value["wall_time_seconds"])
+        and valid_wall_time(value["wall_time_seconds"])
         and isinstance(pins, dict)
         and all(
             isinstance(name, str)

@@ -65,8 +65,9 @@ from benchmark_host import (
     parse_target_marker_environment,
     settings_hash,
 )
+from benchmark_json import read_benchmark_json
 from benchmark_source import get_git_commit, get_git_source_state
-from standard_result import read_benchmark_json, valid_outcome, valid_statistics
+from standard_result import valid_outcome, valid_statistics
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_project.fetch import (
