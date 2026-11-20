@@ -120,7 +120,8 @@ completed result must cover every requested Python version and platform. Rerun o
 write this target list, or read their reports with the summary script from the original checkout.
 
 A full run writes `_manifest.json` with the current scenario set. The summary follows that set,
-ignores removed result files, and accepts only complete runs from a clean source tree.
+ignores removed result files, and accepts only complete runs that started and ended on the same
+clean revision. If the checkout changes during a run, rerun it to get a complete report.
 
 If a release's wheels and source distribution have the same dependencies on every target, add
 `assume_universal_deps = { package = "==1.2" }` to the scenario. Nab can then read those
