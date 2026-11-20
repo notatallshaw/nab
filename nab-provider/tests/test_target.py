@@ -1141,6 +1141,36 @@ class TestVersionEmission:
         assert row.evaluate(target.marker_env)
         assert not row.evaluate({**target.marker_env, "python_full_version": "3.13.3"})
 
+    @pytest.mark.parametrize(
+        "variable", ["python_full_version", "implementation_version"]
+    )
+    def test_patch_pin_with_a_version_marker_refuses_unresolved_builds(
+        self, variable: str
+    ) -> None:
+        target = _a_patch_pinned_target()
+        consulted = Marker(f'{variable} == "3.13.4+vendor"')
+        row = Marker(environment_declaration(target, [consulted]))
+
+        assert row.evaluate(target.marker_env)
+        local = dict(
+            target.marker_env,
+            python_full_version="3.13.4+vendor",
+            implementation_version="3.13.4+vendor",
+        )
+        assert consulted.evaluate(local)
+        assert not row.evaluate(local)
+
+    def test_explicit_local_patch_pin_accepts_its_build(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.13",
+            python_full_version="3.13.4+vendor",
+            spec=PlatformSpec("linux_x86_64"),
+        )
+        consulted = Marker('python_full_version == "3.13.4+vendor"')
+        row = Marker(environment_declaration(target, [consulted]))
+        assert row.evaluate(target.marker_env)
+        assert not row.evaluate({**target.marker_env, "python_full_version": "3.13.4"})
+
     def test_a_uniform_marker_leaves_the_minor_plain(self) -> None:
         """A consulted marker whose boundary falls outside the minor is uniform,
         so it splits nothing and the row carries no python_full_version."""
