@@ -71,8 +71,9 @@ eligible. Without `pypy-abi`, Nab retains all native ABIs for that Python minor.
 the running interpreter's ABI.
 
 The setting also works in `environment.platform` or after a CLI platform ID as `pypy-abi=pp80`.
-Every target using it must be PyPy. ABI variants cannot be separate targets for the same platform:
-PEP 508 cannot distinguish them.
+Every target using it must be PyPy. To cover two PyPy ABIs on the same platform, add the second
+target with `[[tool.nab.matrix.include]]`. Both targets must agree on package selections and pins
+because PEP 508 markers cannot distinguish their ABIs.
 
 ## Free-threaded CPython
 
