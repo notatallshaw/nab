@@ -215,14 +215,14 @@ dependencies change.
 
 ## Libraries
 
-nab also publishes components for other tools:
+Nab also publishes components for other tools.
 
-- `nab-resolver`: a generic PubGrub resolver with stable public module paths.
+- `nab-resolver`: a generic PubGrub dependency resolver.
 - `nab-markersets`: PEP 508 marker algebra.
 - `nab-provider`: Python packaging policy and resolution logic without I/O.
 - `nab-index`: package-index and source clients with caching.
 - `nab-project`: resolve orchestration, lockfiles and downloads.
 
-The other component APIs are experimental. See
+Component APIs can change between 0.0.x releases. See
 [how the packages fit together](https://nab.readthedocs.io/en/stable/explanation/packages.html) and
 the [CLI walkthrough](src/nab/_cli/README.md) to explore the code.

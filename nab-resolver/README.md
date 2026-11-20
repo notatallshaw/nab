@@ -16,7 +16,8 @@ is a worked example in the docs:
 
 ## The public API
 
-The following import paths are supported and will remain available until a major version change.
+This release supports the import paths below. They can change between 0.0.x releases, so pin the
+version you tested.
 
 | Module                     | Supported names                                                                                                              |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |

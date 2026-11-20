@@ -37,7 +37,7 @@ stability warnings.
 | Sources               | Simple indexes, local checkouts, declared git sources, hash-pinned `.tar.gz` archives, and workspace members. Project-root `name @ git+...` requirements are not resolved yet. |
 | Output                | PEP 751 `pylock.toml`, requirements with recorded index hashes, and requirements without those hashes.                                                                         |
 | Experimental features | Universal locks, multiple indexes, and workspaces. Their feature pages state the current boundary.                                                                             |
-| Embedding             | `nab-resolver` has stable public module paths. The other component APIs are experimental.                                                                                      |
+| Embedding             | Component APIs can change between 0.0.x releases. Pin the version your tool supports.                                                                                          |
 
 ```{toctree}
 ---

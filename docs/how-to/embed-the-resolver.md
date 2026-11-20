@@ -223,7 +223,8 @@ final result and diagnostics.
 
 ## The supported API
 
-Import these names from their modules. The paths will remain available until a major version change.
+Import these names from the modules listed below. Import paths and APIs can change between 0.0.x
+releases, so pin the version you tested.
 
 | Module                     | Supported names                                                                                                              |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
