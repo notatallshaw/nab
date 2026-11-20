@@ -1019,17 +1019,18 @@ class TestEnvironmentDeclaration:
         assert declaration.endswith('and platform_system == "Linux"')
         assert Marker(declaration).evaluate(_HOST_ENV)
 
-    def test_an_arbitrary_equality_marker_adds_no_full_version_clause(self) -> None:
-        """A consulted ``===`` on the version axis names the axis (the scrape
-        collects it) but the algebra rejects the ``===`` atom, so it yields no
-        boundary: a whole target adds no ``python_full_version`` clause and the
-        declaration still holds on the target.
-        """
-        declaration = environment_declaration(
-            self._target(), [Marker('python_full_version === "3.13.5"')]
+    def test_host_uses_its_patch_when_a_marker_cannot_be_split(self) -> None:
+        target = self._target()
+        row = Marker(
+            environment_declaration(
+                target, [Marker('python_full_version === "3.13.5"')]
+            )
         )
-        assert "python_full_version" not in declaration
-        assert Marker(declaration).evaluate(self._target().marker_env)
+        assert row.evaluate(target.marker_env)
+        assert not row.evaluate({**target.marker_env, "python_full_version": "3.13.5"})
+        assert not row.evaluate(
+            {**target.marker_env, "python_full_version": "3.13.2+local"}
+        )
 
     def test_consulted_variables_are_declared_in_sorted_order(self) -> None:
         declaration = environment_declaration(
@@ -1179,17 +1180,51 @@ class TestVersionEmission:
         )
         assert "python_full_version" not in declaration
 
-    def test_a_whole_target_emits_no_full_version_clause(self) -> None:
-        """A host names a real micro and is whole, so a consulted marker on the
-        micro is not lifted onto the row: the row is its plain minor."""
+    @pytest.mark.parametrize(
+        "variable", ["python_full_version", "implementation_version"]
+    )
+    def test_host_declares_the_patch_interval_it_resolved(self, variable: str) -> None:
+        host = self._host()
+        consulted = Marker(f'{variable} >= "3.13.4"')
+        row = Marker(environment_declaration(host, [consulted]))
+        for version in ("3.13.1", "3.13.2", "3.13.4rc1", "3.13.4", "3.13.5"):
+            env = {
+                **host.marker_env,
+                "python_full_version": version,
+                "implementation_version": version,
+            }
+            assert row.evaluate(env) is (not consulted.evaluate(env))
+
+    def test_host_at_the_boundary_uses_the_upper_patch_interval(self) -> None:
+        host = self._host("3.13.4")
+        row = Marker(
+            environment_declaration(host, [Marker('python_full_version >= "3.13.4"')])
+        )
+        assert row.evaluate(host.marker_env)
+        assert row.evaluate({**host.marker_env, "python_full_version": "3.13.5"})
+        assert not row.evaluate({**host.marker_env, "python_full_version": "3.13.3"})
+
+    def test_host_leaves_uniform_minor_open(self) -> None:
         declaration = environment_declaration(
-            self._host(), [Marker('python_full_version >= "3.13.4"')]
+            self._host(),
+            [Marker('python_full_version >= "3.0" and "linux" == sys_platform')],
         )
         assert "python_full_version" not in declaration
-        assert declaration == (
-            'python_version == "3.13" and sys_platform == "linux"'
-            ' and platform_machine == "x86_64"'
-        )
+
+    @pytest.mark.parametrize(
+        "operand", ["python_full_version", '"python_full_version"']
+    )
+    def test_reversed_comparison_stays_on_the_observed_host_build(
+        self, operand: str
+    ) -> None:
+        host = self._host()
+        consulted = Marker(f'"3.13.2" == {operand}')
+        local = {**host.marker_env, "python_full_version": "3.13.2+vendor"}
+        row = Marker(environment_declaration(host, [consulted]))
+        assert consulted.evaluate(host.marker_env)
+        assert not consulted.evaluate(local)
+        assert row.evaluate(host.marker_env)
+        assert not row.evaluate(local)
 
     def test_a_split_slice_emits_dev0_lower_and_release_upper(self) -> None:
         """The above slice's lower bound is snapped to ``.dev0``; the below
