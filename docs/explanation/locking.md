@@ -111,10 +111,12 @@ A bare platform ID accepts wheels without a minimum operating-system or libc ver
 [platform tag settings](../reference/platform-tags.md) when you need that boundary, such as glibc
 2.28 or macOS 14. The lock can only cover the targets and compatibility settings you declare.
 
-Universal mode reads metadata without running build backends. Packages needing dynamic source
-metadata may need a [metadata override](../reference/metadata-overrides.md) or a different
-dependency selection. An installer may still need to build an sdist recorded in the lock; locking
-does not supply its build environment.
+Universal mode reads metadata without running build backends by default. If a package's source
+metadata is dynamic, you can supply a [metadata override](../reference/metadata-overrides.md). When
+the package has the same dependency declarations across your targets, you can also enable
+`assume-universal-deps` and permit a
+[host metadata build](../reference/build-policy.md#declared-targets-and-host-builds). An installer
+may still need to build an sdist recorded in the lock.
 
 ## Sharing and refreshing the result
 
