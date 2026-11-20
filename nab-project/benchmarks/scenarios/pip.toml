@@ -324,8 +324,9 @@ requirements = [
 
 [airflow-py312-providers]
 # https://github.com/pypa/pip/issues/13281#issuecomment-2833540863
-# Near-duplicate of apache-airflow-311-full but at an earlier date and pin.
-# Airflow 3.1.0 meta-install with 30+ provider extras on Python 3.12.
+# The April report installed Airflow, its core and its providers from wheels
+# built together from main. The 3.1.0 release on PyPI came in September.
+unsupported_reason = "Requires the original locally built Airflow 3.1.0 and provider wheels"
 python_version = "3.12"
 platform_system = "Linux"
 datetime = "2025-04-27 16:40:41"
@@ -661,8 +662,9 @@ requirements = [
 
 [airflow-providers-june-repro]
 # https://github.com/pypa/pip/issues/13281#issuecomment-2972515987
-# Follow-on to the April airflow repro but with updated provider versions
-# (amazon 9.8.0, celery 3.11.0, ...). Kept as a drift check.
+# The June report used a fresh local wheel set, including amazon 9.8.0
+# and celery 3.11.0. The published 3.1.0 wheels postdate the cutoff.
+unsupported_reason = "Requires the original locally built Airflow 3.1.0 and provider wheels"
 python_version = "3.9"
 platform_system = "Linux"
 datetime = "2025-06-14 09:11:08"
@@ -718,8 +720,9 @@ requirements = [
 
 [airflow-32-all-python]
 # https://github.com/pypa/pip/issues/13281#issuecomment-3476741666
-# Airflow 3.2.0 with all-providers fails for all Python versions;
-# same cffi / cryptography / snowflake-connector-python knot as apache-airflow-311-full.
+# The November report installed the 3.2.0 development wheels built from main.
+# PyPI first served the 3.2.0 release in April 2026.
+unsupported_reason = "Requires the original locally built Airflow 3.2.0 and provider wheels"
 python_version = "3.11"
 platform_system = "Linux"
 datetime = "2025-11-01 19:46:40"
@@ -729,9 +732,9 @@ requirements = [
 
 [airflow-32-cffi-pin-hint]
 # https://github.com/pypa/pip/issues/13281#issuecomment-3476743888
-# notatallshaw's diagnosis: cffi 2.0+ is required to unblock the
-# cryptography/snowflake-connector-python knot. Adding cffi>=2.0 as a user
-# requirement is the hint; resolution is still deep.
+# This variant adds cffi>=2.0 to the November wheel set to test the
+# suggested priority hint. It needs the same local Airflow builds.
+unsupported_reason = "Requires the original locally built Airflow 3.2.0 and provider wheels"
 python_version = "3.11"
 platform_system = "Linux"
 datetime = "2025-11-01 19:50:43"
