@@ -2,38 +2,12 @@
 
 from __future__ import annotations
 
-import json
-import math
-import sys
-from typing import TYPE_CHECKING, TypedDict, TypeGuard
+from typing import TypedDict, TypeGuard
+
+from benchmark_json import valid_wall_time
 
 from nab_provider._vendor.packaging.utils import is_normalized_name
 from nab_provider._vendor.packaging.version import Version
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-
-def _finite_float(text: str) -> float:
-    number = float(text)
-    if not math.isfinite(number):
-        msg = f"benchmark report contains a non-finite number: {text}"
-        raise ValueError(msg)
-    return number
-
-
-def read_benchmark_json(path: Path) -> object:
-    """Read a report with finite JSON numbers, including exponent notation."""
-    try:
-        return json.loads(
-            path.read_text(encoding="utf-8"),
-            parse_float=_finite_float,
-            parse_constant=_finite_float,
-        )
-    except RecursionError as exc:
-        msg = "benchmark report is nested too deeply to read"
-        raise ValueError(msg) from exc
-
 
 STAT_LABELS = {
     "rounds": "Rounds",
@@ -126,7 +100,6 @@ def valid_statistics(stats: object, packages: int) -> TypeGuard[dict[str, int | 
     elapsed = stats["wall_time_seconds"]
     return (
         stats["packages_resolved"] == packages
-        and type(elapsed) in (int, float)
-        and 0 <= elapsed <= sys.float_info.max
+        and valid_wall_time(elapsed)
         and stats.get("yanked_proxy_rounds", 0) <= stats["rounds"]
     )

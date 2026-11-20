@@ -15,10 +15,10 @@ from fractions import Fraction
 from pathlib import Path
 from typing import NamedTuple, NoReturn
 
+from benchmark_json import read_benchmark_json
 from standard_result import (
     STAT_LABELS,
     StandardResult,
-    read_benchmark_json,
     valid_outcome,
     valid_statistics,
 )
