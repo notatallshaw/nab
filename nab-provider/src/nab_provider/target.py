@@ -329,6 +329,12 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
     bounds = target.micro_clauses
     if target.concrete_micro:
         bounds = (f'python_full_version == "{target.python_full_version}"',)
+        if (
+            not by_value.isdisjoint(_BY_CONSTRAINT)
+            and "+" not in target.python_full_version
+        ):
+            # A public version pin alone also admits local builds (PEP 440).
+            bounds += ('"+" not in python_full_version',)
     clauses.extend(bounds)
     if "implementation_version" in variables and target.implementation == "cpython":
         clauses.extend(

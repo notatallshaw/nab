@@ -62,8 +62,10 @@ To resolve one patch release without splitting it:
 ```
 
 With this pin, nab resolves Python 3.13.4 once and records `python_full_version == "3.13.4"` in the
-lock. An installer on 3.13.5 needs a lock that includes its patch release. A host target keeps its
-`python_version == "X.Y"` row.
+lock. An installer on 3.13.5 needs a lock that includes its patch release. If a dependency reads the
+full Python version or the CPython implementation version, the row also excludes local builds. To
+resolve for a build such as `3.13.4+vendor`, give its full version in `python-patches`. A host
+target keeps its `python_version == "X.Y"` row.
 
 ### Unsupported boundaries
 
