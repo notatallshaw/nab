@@ -16,7 +16,6 @@ __lazy_modules__ = (
     "nab_project",
     "nab_project._lockfile.groups",
     "nab_project.paths",
-    "nab_provider._vendor.packaging.pylock",
     "nab_provider._vendor.packaging.specifiers",
     "nab_provider._vendor.packaging.utils",
     "nab_provider.digest",
@@ -42,7 +41,6 @@ from urllib.parse import quote
 import tomli
 
 from nab_index.urls import strip_userinfo
-from nab_provider._vendor.packaging.pylock import Pylock, PylockValidationError
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.digest import is_hex_digest
@@ -90,7 +88,6 @@ __all__ = [
     "build_target_lock",
     "collect_dependency_requirements",
     "read_lockfile_anchor",
-    "read_lockfile_packages",
     "require_artifact_hashes",
     "strip_userinfo",
     "validate_artifact_hashes",
@@ -270,30 +267,6 @@ def read_lockfile_anchor(path: Path) -> datetime | None:
             return None
         return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     return None
-
-
-def read_lockfile_packages(path: Path) -> dict[str, Version] | None:
-    """Return the ``name -> version`` map from a prior pylock at ``path``.
-
-    Used by ``nab lock`` to diff a re-lock against the previous result.
-    Packages without a recorded version (direct-reference entries that
-    omit it) are skipped.
-
-    Returns ``None`` when ``path`` does not exist, cannot be read, is
-    not valid TOML, or is not a spec-compliant PEP 751 lockfile; the
-    caller falls back to a no-diff summary line.
-    """
-    if not path_state(path).should_read:
-        return None
-    try:
-        with path.open("rb") as f:
-            data = toml_io.load(f)
-        pylock = Pylock.from_dict(data)
-    except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError, PylockValidationError):
-        return None
-    return {
-        str(pkg.name): pkg.version for pkg in pylock.packages if pkg.version is not None
-    }
 
 
 def build_target_lock(
