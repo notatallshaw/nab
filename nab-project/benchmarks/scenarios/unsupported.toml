@@ -1,28 +1,7 @@
-# Scenarios collected from upstream issue trackers that nab cannot
-# execute yet because the requirement list itself uses a feature nab
-# does not implement.  Each entry documents the inputs and the missing
-# feature.  scenarios.py picks this file up but skips entries with an
-# `unsupported_reason` key, so the file doubles as a backlog: drop the
-# key (and migrate the entry to problematic.toml) once nab can run it.
-#
-# Recurring blockers:
-#
-#   vcs_dependencies     - Requirements like "pkg @ git+https://...".
-#                          nab has no VCS clone+build path.
-#   url_dependencies     - Direct URL or local-path requirements.
-#   multiple_indexes     - Extra indexes (PyTorch CPU/CUDA, Azure, etc.)
-#                          or per-package source overrides. nab only
-#                          accepts a single PyPI Simple URL today.
-#   workspace_sources    - uv workspace [tool.uv.sources] overrides.
-#
-# Scenarios in this file that *would* run on nab but were originally
-# filed against a tool-specific feature have been migrated to
-# problematic.toml.  See the migration block at the end of that file.
-#
-# Placeholder scenarios (non-existent package names captured only for
-# upstream issue context) used to live here under
-# `unsupported_reason = "placeholder"`.  They have been removed because
-# they have no benchmark value.
+# Historical cases awaiting a reproducible benchmark. Each unsupported_reason
+# keeps the case out of standard runs until its inputs can be exercised.
+# The runner supports multiple indexes and package routes. Some reports also
+# need conditional sources, unpublished local files or a particular project tree.
 
 [apache-airflow-providers-git]
 # https://github.com/pypa/pip/issues/13281#issuecomment-2833540863
@@ -37,12 +16,15 @@ requirements = [
 
 [uv-tool-uv-sources-override]
 # https://github.com/astral-sh/uv/issues/17732
-# Conditional [tool.uv.sources] for platform-specific transitive deps.
-unsupported_reason = "multiple_indexes"
-python_version = "3.12"
+# The default selection uses PyPI. The mutually exclusive cu13 and cpu extras
+# choose different explicit PyTorch indexes for the same requirement.
+unsupported_reason = "The standard runner cannot select an index by active extra"
+python_version = "3.13"
 platform_system = "Linux"
-datetime = "2025-10-01 14:00:00"
-requirements = ["pkg-with-platform-conditional-source"]
+datetime = "2026-01-29 10:43:31"
+project_name = "test-torch"
+requirements = ["torch>=2.0"]
+optional_dependencies = { cu13 = ["torch>=2.0"], cpu = ["torch>=2.0"] }
 
 
 # ============================================================================
@@ -64,8 +46,8 @@ unsupported_reason = "multiple_indexes"
 
 [pip-12484-dandidav-vcs]
 # https://github.com/pypa/pip/issues/12484
-# Reported as dandidav + dandi + pydantic conflict; the VCS ref makes it
-# unsupported for nab. Kept as a historical misleading-error test case.
+# The report selected a development checkout of dandidav alongside dandi and
+# pydantic. The Git URL here has no commit for the dated run.
 python_version = "3.11"
 platform_system = "Darwin"
 datetime = "2024-01-23 19:47:27"
@@ -78,18 +60,15 @@ unsupported_reason = "vcs_dependencies"
 
 [pip-12018-direct-url-extra]
 # https://github.com/pypa/pip/issues/12018
-# Original report: pip's `LinkCandidate.__init__` raised
-# `AssertionError: 'pandas[performance]' != 'pandas' for wheel` when an
-# extra was combined with a constraint URL.  Issue body has a real
-# pandas wheel URL, reproduced here so the scenario exercises actual
-# URL-dependency handling rather than placeholder shapes.
+# The requirements file selects the extra. A separate constraints file names the wheel.
 python_version = "3.8"
 platform_system = "Linux"
 datetime = "2023-05-08 04:56:44"
-requirements = [
-    "pandas[performance] @ https://files.pythonhosted.org/packages/16/75/924e3a52c35cb105a152d29622d0f06bb0f48a677e77ddd6e11ef0004164/pandas-2.0.1-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+requirements = ["pandas[performance]"]
+constraints = [
+    "pandas @ https://files.pythonhosted.org/packages/16/75/924e3a52c35cb105a152d29622d0f06bb0f48a677e77ddd6e11ef0004164/pandas-2.0.1-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
 ]
-unsupported_reason = "url_dependencies"
+unsupported_reason = "The standard runner cannot apply a direct wheel URL as a constraint"
 
 # ============================================================================
 # Sourced from: uv
@@ -127,17 +106,20 @@ requirements = [
 
 [uv-issue-16779-pufferlib-hang]
 # https://github.com/astral-sh/uv/issues/16779
-unsupported_reason = "vcs_dependencies"
+# uv add --dev ruff ran in local checkout 21807b34145822e307314dd0e3b503139c6aaa97.
+# The lock also includes the project’s mutually exclusive extras.
+unsupported_reason = "The reported lock needs the PufferLib project and its extra conflict sets"
 python_version = "3.13"
-platform_system = "Linux"
+platform_system = "Darwin"
 datetime = "2025-11-19 17:55:24"
-requirements = ["pufferlib @ git+https://github.com/alex-shapiro/PufferLib"]
+requirements = ["setuptools", "ruff"]
 
 [uv-issue-17285-comfyui]
 # https://github.com/astral-sh/uv/issues/17285
-unsupported_reason = "workspace_sources"
+# This subset of the project requirements omits its local Windows wheels.
+unsupported_reason = "The Windows workspace references local wheels unavailable in the benchmark"
 python_version = "3.13"
-platform_system = "Linux"
+platform_system = "Windows"
 datetime = "2026-01-02 13:28:25"
 requirements = [
     "torch>=2.0.0",
