@@ -32,6 +32,7 @@ _BENCHMARK = (
     Path(__file__).resolve().parents[2] / "benchmarks" / "universal_scenarios.py"
 )
 _CLEAN_SOURCE = {"commit": "a" * 40, "dirty": False, "diff_hash": None}
+_DIRTY_SOURCE = {**_CLEAN_SOURCE, "dirty": True, "diff_hash": "b" * 64}
 _WINDOWS_DEVICE_NAMES = (
     "AUX",
     "CON",
@@ -1289,13 +1290,17 @@ def test_main_exits_nonzero_for_unexpected_failure(
     assert full_manifest.read_text() == '{"existing": true}'
 
 
-def test_main_records_the_complete_full_scenario_set(
+@pytest.mark.parametrize("edited", [False, True])
+def test_main_records_the_full_scenario_set_and_ending_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    edited: bool,
 ) -> None:
     module = _harness()
     monkeypatch.setattr(module, "RESULTS_DIR", tmp_path)
-    monkeypatch.setattr(module, "get_git_source_state", lambda: _CLEAN_SOURCE)
+    ending_source = _DIRTY_SOURCE if edited else _CLEAN_SOURCE
+    revisions = iter((_CLEAN_SOURCE, ending_source))
+    monkeypatch.setattr(module, "get_git_source_state", lambda: next(revisions))
 
     def fake_process(
         name: str,
@@ -1315,7 +1320,12 @@ def test_main_records_the_complete_full_scenario_set(
     monkeypatch.setattr(module, "process_scenario", fake_process)
     monkeypatch.setattr(sys, "argv", [str(_BENCHMARK)])
 
-    module.main()
+    if edited:
+        with pytest.raises(SystemExit) as caught:
+            module.main()
+        assert caught.value.code == 1
+    else:
+        module.main()
 
     manifest = json.loads(
         (
@@ -1323,10 +1333,11 @@ def test_main_records_the_complete_full_scenario_set(
         ).read_text()
     )
     assert manifest["run_kind"] == "full"
-    assert manifest["complete"] is True
+    assert manifest["complete"] is (not edited)
     assert manifest["available_scenarios"] == manifest["selected_scenarios"]
     assert manifest["available_scenarios"] == manifest["completed_scenarios"]
     assert manifest["source"] == _CLEAN_SOURCE
+    assert manifest["source_end"] == ending_source
     configured = module.tomllib.loads(
         (module.SCENARIOS_DIR / "universal.toml").read_text()
     )
@@ -1446,6 +1457,7 @@ def test_summary_exit_status(
                 "benchmark_schema": 4,
                 "commit": "run",
                 "source": _CLEAN_SOURCE,
+                "source_end": _CLEAN_SOURCE,
                 "run_kind": "full",
                 "available_scenarios": ["example"],
                 "selected_scenarios": ["example"],
@@ -1506,6 +1518,7 @@ def test_summary_rejects_a_selected_run_manifest(
                 "benchmark_schema": 4,
                 "commit": "run",
                 "source": _CLEAN_SOURCE,
+                "source_end": _CLEAN_SOURCE,
                 "run_kind": "selected",
                 "available_scenarios": ["a", "b"],
                 "selected_scenarios": ["a"],
@@ -1520,19 +1533,29 @@ def test_summary_rejects_a_selected_run_manifest(
     assert module.main() == 1
 
 
-def test_summary_rejects_a_dirty_full_run(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("start", "end", "accepted"),
+    [
+        (_CLEAN_SOURCE, _CLEAN_SOURCE, True),
+        (_CLEAN_SOURCE, {**_CLEAN_SOURCE, "commit": "b" * 40}, False),
+        (_CLEAN_SOURCE, None, False),
+        (_DIRTY_SOURCE, _DIRTY_SOURCE, False),
+    ],
+)
+def test_summary_requires_one_clean_source(
+    tmp_path: Path, start: dict, end: dict | None, accepted: bool
 ) -> None:
     module = _summary_harness()
     result_dir = tmp_path / "run" / "universal"
     result_dir.mkdir(parents=True)
-    dirty_source = {"commit": "a" * 40, "dirty": True, "diff_hash": "b" * 64}
+    (result_dir / "example.json").write_text("{}")
     (result_dir / "_manifest.json").write_text(
         json.dumps(
             {
                 "benchmark_schema": 4,
                 "commit": "run",
-                "source": dirty_source,
+                "source": start,
+                "source_end": end,
                 "run_kind": "full",
                 "available_scenarios": ["example"],
                 "selected_scenarios": ["example"],
@@ -1542,4 +1565,4 @@ def test_summary_rejects_a_dirty_full_run(
         )
     )
 
-    assert module.authoritative_result_paths(result_dir) is None
+    assert (module.authoritative_result_paths(result_dir) is not None) is accepted
