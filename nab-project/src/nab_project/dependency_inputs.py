@@ -160,7 +160,7 @@ def _requirements_files(
 def _provided_project(
     document: Mapping[str, object],
     path: str,
-    optional: dict[str, Mapping[str, Sequence[str]] | None],
+    optional: dict[str, Mapping[str, object] | None],
 ) -> str:
     """Record extras only for a project the caller supplies separately."""
     name = project_name(document)
@@ -191,7 +191,7 @@ def dependency_input_requirements(
     from imported projects is ignored; selected dynamic dependencies are refused.
     """
     projects = _projects(declaration)
-    optional: dict[str, Mapping[str, Sequence[str]] | None] = {}
+    optional: dict[str, Mapping[str, object] | None] = {}
     roots: list[Requirement] = []
     for project in projects:
         path = str(PurePosixPath(project.path) / "pyproject.toml")
