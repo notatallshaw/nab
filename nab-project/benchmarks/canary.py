@@ -896,23 +896,34 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run canary benchmark")
     parser.add_argument("--commit", type=_result_directory_label, default=None)
     parser.add_argument("--runs", type=int, default=3)
-    parser.add_argument(
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument(
         "--scenario",
         action="append",
         help="Run only STEM:NAME, optionally with an explicit @STRATEGY",
     )
-    parser.add_argument("--scenarios-list", help="File with one scenario per line")
+    selection.add_argument(
+        "--scenarios-list", type=Path, help="File with one scenario per line"
+    )
     args = parser.parse_args()
+    if args.runs < 1:
+        parser.error("--runs must be at least 1")
 
     source = get_git_source_state()
     commit = args.commit or str(source["commit"] or "no-git")
     cases_to_run: list[tuple[CanaryCase, dict]]
-    if args.scenarios_list:
-        with Path(args.scenarios_list).open(encoding="utf-8") as f:
-            cases_to_run = _parse_scenario_selection(
-                parser,
-                [line.strip() for line in f if line.strip()],
+    if args.scenarios_list is not None:
+        try:
+            lines = args.scenarios_list.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            parser.error(
+                f"cannot read scenario list {args.scenarios_list} ({exc.strerror})"
             )
+        except UnicodeDecodeError:
+            parser.error(f"scenario list {args.scenarios_list} contains invalid UTF-8")
+        cases_to_run = _parse_scenario_selection(
+            parser, [line.strip() for line in lines if line.strip()]
+        )
     elif args.scenario:
         cases_to_run = _parse_scenario_selection(parser, args.scenario)
     else:
