@@ -588,14 +588,20 @@ def test_canary_configures_lowest_direct_roots(
     assert seen["resolver_constraints"] is inputs.constraints
 
 
-def test_canary_main_records_v2_contract(
+@pytest.mark.parametrize("edited", [False, True])
+def test_canary_main_records_v2_contract_for_one_checkout(
+    edited: bool,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _harness()
     monkeypatch.setattr(module, "RESULTS_DIR", tmp_path)
     source = {"commit": "source-sha", "dirty": False, "diff_hash": None}
-    monkeypatch.setattr(module, "get_git_source_state", lambda: source)
+    ending_source = (
+        {**source, "dirty": True, "diff_hash": "changed"} if edited else source
+    )
+    revisions = iter((source, ending_source))
+    monkeypatch.setattr(module, "get_git_source_state", lambda: next(revisions))
     scenario = {"requirements": [], "unsupported_reason": "test fixture"}
     input_hash = module.scenario_input_hash("quick:requests", scenario)
     monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
@@ -604,6 +610,13 @@ def test_canary_main_records_v2_contract(
         "argv",
         ["canary.py", "--commit", "test", "--scenario", "quick:requests"],
     )
+
+    if edited:
+        with pytest.raises(SystemExit) as caught:
+            module.main()
+        assert caught.value.code == 1
+        assert not list((tmp_path / "test").glob("canary_*.json"))
+        return
 
     module.main()
 
