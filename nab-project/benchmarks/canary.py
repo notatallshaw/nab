@@ -994,6 +994,13 @@ def main() -> None:
             f"{summary['max_decisions']:>8}"
         )
 
+    if get_git_source_state() != source:
+        print(
+            "The benchmark checkout changed. Rerun the canary from one revision.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
     out_file = _summary_path(parser, commit)
     with out_file.open("x", encoding="utf-8") as f:
         f.write(json.dumps(summary_all, indent=2) + "\n")

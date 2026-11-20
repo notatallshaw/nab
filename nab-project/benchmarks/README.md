@@ -91,7 +91,8 @@ preserving universal results and top-level provenance.
 
 `canary.toml` selects canonical scenario definitions and declares each case's strategy. Manual
 selections may use an explicit suffix such as `pip:trustllm@lowest`. The runner records the complete
-TOML input, effective target and policy, source state, and content hashes.
+TOML input, effective target and policy, source state, and content hashes. It checks the checkout
+again before writing the summary and reports an error if the source changed.
 
 Canary artifacts use contract version 2. An explicit strategy is serialized with the selector and
 input definition used by that contract's input hash, keeping existing scoreboards comparable. The
