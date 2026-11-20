@@ -1472,6 +1472,22 @@ class TestMicroBoundarySplitting:
                 self._target(), [Marker('python_full_version >= "3.12.0.post1"')]
             )
 
+    @pytest.mark.parametrize(
+        "marker",
+        [
+            'python_full_version == "3.12.4+vendor"',
+            'implementation_version != "3.12.4+vendor"',
+            '"3.12.0rc1+vendor" != implementation_version',
+        ],
+    )
+    def test_local_build_in_minor_cannot_be_split(self, marker: str) -> None:
+        with pytest.raises(NonIntervalMarkerError, match="local Python builds"):
+            micro_boundary_points(self._target(), [Marker(marker)])
+
+    def test_local_build_outside_minor_does_not_split(self) -> None:
+        marker = Marker('python_full_version == "3.13.4+vendor"')
+        assert micro_boundary_points(self._target(), [marker]) == []
+
     def test_a_post_release_literal_outside_the_minor_does_not_split(self) -> None:
         """A post release of another minor is uniform across this one, so it
         crashes nothing: ``>= "3.13.4.post1"`` is False for every 3.12 micro."""
@@ -1729,8 +1745,6 @@ class TestMicroBoundaryMembership:
             ("<=3.12.4.post1.dev0", ["3.12.5.dev0"]),
             (">3.12.4.post1.dev0", ["3.12.5.dev0"]),
             ("<3.12.4.post0", ["3.12.5.dev0"]),
-            ("==3.12.4+local", []),
-            ("!=3.12.4+local", []),
             ("==1!3.12.4.0.*", []),
             ("~=1!3.12.4.1", []),
             ("==3.11.999", []),
