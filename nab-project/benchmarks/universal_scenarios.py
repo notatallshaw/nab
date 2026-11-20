@@ -18,11 +18,8 @@ existing benchmarks are not affected.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import os
 import signal
-import subprocess
 import sys
 import time
 from contextlib import contextmanager
@@ -37,6 +34,7 @@ else:
 
 
 from benchmark_datetime import parse_datetime
+from benchmark_source import get_git_source_state
 from universal_result import (
     MANIFEST_FILENAME,
     RESULT_SCHEMA_VERSION,
@@ -130,76 +128,6 @@ def _scenario_wall_timeout() -> Generator[None, None, None]:
     finally:
         alarm(0)
         signal.signal(sigalrm, previous_handler)
-
-
-def get_git_commit() -> str:
-    """Return the Git SHA for the working tree, or 'no-git'."""
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-            cwd=BENCHMARKS_DIR,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return "no-git"
-    return out.stdout.strip()
-
-
-def get_git_source_state() -> dict[str, str | bool | None]:
-    """Record source identity separately from the result-directory label."""
-    commit = get_git_commit()
-    if commit == "no-git":
-        return {"commit": None, "dirty": True, "diff_hash": None}
-    try:
-        root = Path(
-            subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                capture_output=True,
-                check=True,
-                text=True,
-                cwd=BENCHMARKS_DIR,
-            ).stdout.strip()
-        )
-        status = subprocess.run(
-            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        diff = subprocess.run(
-            ["git", "diff", "--binary", "HEAD", "--"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        untracked = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        untracked_hashes = bytearray()
-        for raw_path in untracked.split(b"\0"):
-            if not raw_path:
-                continue
-            object_hash = subprocess.run(  # noqa: S603 - path is one arg after --
-                ["git", "hash-object", "--", os.fsdecode(raw_path)],
-                capture_output=True,
-                check=True,
-                cwd=root,
-            ).stdout
-            untracked_hashes.extend(raw_path + b"\0" + object_hash)
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return {"commit": commit, "dirty": True, "diff_hash": None}
-    dirty = bool(status)
-    diff_hash = (
-        hashlib.sha256(status + b"\0" + diff + b"\0" + untracked_hashes).hexdigest()
-        if dirty
-        else None
-    )
-    return {"commit": commit, "dirty": dirty, "diff_hash": diff_hash}
 
 
 def check_lock_consistency(result: ResolveResult) -> tuple[bool, list[str]]:

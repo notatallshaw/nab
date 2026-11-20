@@ -15,9 +15,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import statistics
-import subprocess
 import sys
 import time
 from collections import Counter
@@ -66,6 +64,7 @@ from benchmark_host import (
     parse_requires_matching_host,
     parse_target_marker_environment,
 )
+from benchmark_source import get_git_source_state
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_project.fetch import FetchCoordinator, index_routes
@@ -157,62 +156,6 @@ def scenario_execution_hash(
     return hashlib.sha256(encoded).hexdigest()
 
 
-def get_git_source_state() -> dict[str, str | bool | None]:
-    """Describe the checked-out source without treating a label as identity."""
-    try:
-        commit = get_git_commit()
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return {"commit": None, "dirty": True, "diff_hash": None}
-    try:
-        root = Path(
-            subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                capture_output=True,
-                check=True,
-                text=True,
-                cwd=BENCHMARKS_DIR,
-            ).stdout.strip()
-        )
-        status = subprocess.run(
-            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        diff = subprocess.run(
-            ["git", "diff", "--binary", "HEAD", "--"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        untracked = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        untracked_hashes = bytearray()
-        for raw_path in untracked.split(b"\0"):
-            if not raw_path:
-                continue
-            object_hash = subprocess.run(  # noqa: S603 - path is one arg after --
-                ["git", "hash-object", "--", os.fsdecode(raw_path)],
-                capture_output=True,
-                check=True,
-                cwd=root,
-            ).stdout
-            untracked_hashes.extend(raw_path + b"\0" + object_hash)
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return {"commit": commit, "dirty": True, "diff_hash": None}
-    dirty = bool(status)
-    diff_hash = (
-        hashlib.sha256(status + b"\0" + diff + b"\0" + untracked_hashes).hexdigest()
-        if dirty
-        else None
-    )
-    return {"commit": commit, "dirty": dirty, "diff_hash": diff_hash}
-
-
 def _target_manifest(target: ResolveTarget) -> dict[str, object]:
     """Return the contract-v2 identity of an effective canary target."""
     tags = [str(tag) for tag in target.tags.ordered]
@@ -279,17 +222,6 @@ def _full_marker_environment(
     if overlay:
         env.update(overlay)
     return env
-
-
-def get_git_commit() -> str:
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True,
-        cwd=BENCHMARKS_DIR,
-    )
-    return result.stdout.strip()
 
 
 def run_one(

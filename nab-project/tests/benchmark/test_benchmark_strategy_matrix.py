@@ -4253,7 +4253,7 @@ def test_main_rejects_a_traversing_result_label_before_any_write(
     module = _harness("scenarios")
     results = tmp_path / "results"
     monkeypatch.setattr(module, "RESULTS_DIR", results)
-    monkeypatch.setattr(module, "get_git_commit", lambda: "../escape")
+    monkeypatch.setattr(module, "get_git_commit", lambda **_kwargs: "../escape")
     argv = ["--commit", "../escape"] if explicit else []
 
     with pytest.raises(SystemExit) as exc_info:
@@ -4262,6 +4262,21 @@ def test_main_rejects_a_traversing_result_label_before_any_write(
     assert exc_info.value.code == 2
     assert not results.exists()
     assert not (tmp_path / "escape").exists()
+
+
+def test_default_label_without_a_checkout_names_the_option(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _harness("scenarios")
+
+    def unavailable(**_kwargs: bool) -> str:
+        raise FileNotFoundError
+
+    monkeypatch.setattr(module, "get_git_commit", unavailable)
+    with pytest.raises(SystemExit) as info:
+        module.main([])
+    assert info.value.code == 2
+    assert "Use --commit to name this run." in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
