@@ -259,13 +259,8 @@ _ALWAYS_DECLARED: tuple[str, ...] = (
     "platform_machine",
 )
 
-# The variables a lock never declares by value: their bounds come only from a
-# slice's ``python_full_version`` clauses (see :func:`slices_from_points`).
-# Both carry a micro release, and on CPython they carry the same one
-# (``implementation_version`` comes from ``sys.implementation.version``), so
-# declaring either by value would pin the lock to a single patch release.  A
-# consulted marker on one splits the minor at its boundary instead, and each
-# slice emits the bounds that fence it off; an unsplit minor emits neither.
+# A minor interval uses its slice bounds for these axes. An explicit patch
+# target uses its full version for both on CPython.
 _BY_CONSTRAINT = ("python_full_version", "implementation_version")
 
 
@@ -308,15 +303,10 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
     those variables differently would miss deps; the declaration refuses it.
 
     Most variables are declared by value (a ``platform_system`` marker pins
-    the OS).  The :data:`_BY_CONSTRAINT` variables (``python_full_version``,
-    and ``implementation_version`` on CPython) are not, since pinning the
-    micro release would refuse the interpreters the resolve ran for.  A minor
-    target is a micro interval: a consulted marker that splits it (see
-    :func:`micro_boundary_points`) leaves each slice its
-    :attr:`~ResolveTarget.micro_clauses` bounds and the row emits those,
-    while an unsplit minor emits none and stays a plain ``python_version``
-    row.  On CPython ``implementation_version`` tracks ``python_full_version``,
-    so a marker consulting it gets the same bounds mirrored onto its name.
+    the OS). An explicit patch target declares its full version. A minor target
+    uses its :attr:`~ResolveTarget.micro_clauses` when a consulted marker splits
+    the minor, or a plain ``python_version`` row when unsplit. On CPython a
+    consulted ``implementation_version`` uses the same bounds.
 
     The variables :func:`unboundable_variables` names are dropped: the kernel
     axes always, and ``implementation_version`` on a non-CPython target (its
@@ -336,16 +326,14 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
 
     clauses = [f'{name} == "{target.marker_env[name]}"' for name in names]
 
-    # A micro-slice target (see :func:`slices_from_points`) carries the
-    # python_full_version bounds of its slice explicitly, so the environment
-    # row covers exactly that slice.  On CPython implementation_version equals
-    # python_full_version, so a marker that consulted it gets the same bounds
-    # mirrored onto its own name.
-    clauses.extend(target.micro_clauses)
+    bounds = target.micro_clauses
+    if target.concrete_micro:
+        bounds = (f'python_full_version == "{target.python_full_version}"',)
+    clauses.extend(bounds)
     if "implementation_version" in variables and target.implementation == "cpython":
         clauses.extend(
             clause.replace("python_full_version", "implementation_version")
-            for clause in target.micro_clauses
+            for clause in bounds
         )
     return " and ".join(clauses)
 

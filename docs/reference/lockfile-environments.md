@@ -19,8 +19,8 @@ variables below are exceptions.
 
 ## Patch-release boundaries
 
-`python_full_version` and `implementation_version` are not declared as one micro version. A target
-naming a minor stands for every micro in that minor, so a single value would reject the others.
+A target naming a Python minor covers its patch releases. Pinning `python_full_version` or
+`implementation_version` to a single patch would exclude the other releases.
 
 For a target spanning Python 3.13, this requirement changes at a patch release:
 
@@ -61,9 +61,9 @@ To resolve one patch release without splitting it:
 "3.13" = "3.13.4"
 ```
 
-Nab does not split a target pinned to an exact patch release, including the host interpreter and
-`[tool.nab.matrix.python-patches]` entries. It resolves that release once and records a
-`python_version == "X.Y"` environment row.
+With this pin, nab resolves Python 3.13.4 once and records `python_full_version == "3.13.4"` in the
+lock. An installer on 3.13.5 needs a lock that includes its patch release. A host target keeps its
+`python_version == "X.Y"` row.
 
 ### Unsupported boundaries
 
