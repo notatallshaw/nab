@@ -172,14 +172,10 @@ def project_optional_dependencies(
     return raw
 
 
-def dependency_groups(
-    document: Mapping[str, Any],
-) -> Mapping[str, Sequence[str | Mapping[str, str]]]:
+def dependency_groups(document: Mapping[str, object]) -> Mapping[str, object]:
     """Read [dependency-groups] from a parsed pyproject (PEP 735).
 
-    The group table comes back unparsed, so an entry is either a requirement
-    string or an include record (``{"include-group": "other-group"}``).  An
-    absent table reads as an empty dict.
+    Group bodies are validated when selected. An absent table reads as an empty dict.
     """
     raw = document.get("dependency-groups", {})
     if not isinstance(raw, dict):
@@ -210,8 +206,6 @@ def read_pyproject_optional_dependencies(
     return project_optional_dependencies(toml_io.load_path(path))
 
 
-def read_pyproject_groups(
-    path: Path,
-) -> Mapping[str, Sequence[str | Mapping[str, str]]]:
+def read_pyproject_groups(path: Path) -> Mapping[str, object]:
     """Parse ``path`` and read [dependency-groups] from it."""
     return dependency_groups(toml_io.load_path(path))
