@@ -75,7 +75,7 @@ class InvalidProjectTableError(TypeError):
 
 
 def _canonicalize_optional_deps(
-    optional_deps: Mapping[str, Sequence[str]],
+    optional_deps: Mapping[str, object],
 ) -> dict[str, list[str]]:
     """Map each extra name to its requirements under PEP 685 normalization."""
     canonical: dict[str, list[str]] = {}
@@ -88,7 +88,7 @@ def _canonicalize_optional_deps(
 
 
 def expand_self_extras(
-    optional_deps: Mapping[str, Sequence[str]],
+    optional_deps: Mapping[str, object],
     project_name: str | None,
     selected: Sequence[str],
     environment: Mapping[str, str] | None = None,
@@ -170,7 +170,7 @@ def _self_references(
 
 
 def self_extra_markers(
-    optional_deps: Mapping[str, Sequence[str]],
+    optional_deps: Mapping[str, object],
     project_name: str | None,
     selected: Sequence[str],
 ) -> list[Marker]:
@@ -227,7 +227,7 @@ def _environment_residual(marker: Marker, extra: str) -> str | bool:
 
 
 def expand_extra_requirements(
-    optional_deps: Mapping[str, Sequence[str]],
+    optional_deps: Mapping[str, object],
     project_name: str | None,
     selected: Sequence[str],
     *,
@@ -317,7 +317,7 @@ def _self_ref_edges(
 
 def expand_project_requirements(
     requirements: Sequence[Requirement],
-    projects: Mapping[str, Mapping[str, Sequence[str]] | None],
+    projects: Mapping[str, Mapping[str, object] | None],
 ) -> list[Requirement]:
     """Replace references to supplied projects with their selected extra dependencies.
 

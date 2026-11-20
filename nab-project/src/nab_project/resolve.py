@@ -53,7 +53,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Final
 
 from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.ranges import VersionRange
@@ -580,7 +580,7 @@ class _ProjectTables(Record):
 
     dependencies: list[Requirement]
     groups: Mapping[str, object]
-    optional: Mapping[str, Sequence[str]]
+    optional: Mapping[str, object]
     project_name: str | None
     build_requires: list[Requirement]
 
@@ -588,7 +588,7 @@ class _ProjectTables(Record):
         self,
         dependencies: list[Requirement],
         groups: Mapping[str, object],
-        optional: Mapping[str, Sequence[str]],
+        optional: Mapping[str, object],
         project_name: str | None,
         build_requires: list[Requirement] | FactoryDefault = FACTORY,
     ) -> None:
@@ -658,7 +658,7 @@ def _project_tables(
 
 def complete_project_requirements(
     path: Path,
-    document: Mapping[str, Any],
+    document: Mapping[str, object],
     inputs: ResolveInputs,
     targets: Sequence[ResolveTarget],
     *,
@@ -681,7 +681,7 @@ def complete_project_requirements(
     optional = pyproject_files.project_optional_dependencies(
         document, require_static=bool(extras)
     )
-    bound: dict[str, Sequence[str]] = {
+    bound: dict[str, object] = {
         canonicalize_name(key): value for key, value in optional.items()
     }
     for extra in extras:
@@ -703,7 +703,7 @@ def complete_project_requirements(
 
 
 def _tables_for_build_requires(
-    document: Mapping[str, Any], path: Path
+    document: Mapping[str, object], path: Path
 ) -> _ProjectTables:
     """Read ``document`` as a project whose dependencies are its build requirements.
 
@@ -971,7 +971,7 @@ def _extra_requirements(
 
 def _validate_conflict_members_exist(
     conflicts: Sequence[ConflictSet],
-    optional: Mapping[str, Sequence[str]],
+    optional: Mapping[str, object],
     groups: Mapping[str, object],
     configured_groups: Sequence[str] = (),
 ) -> None:
