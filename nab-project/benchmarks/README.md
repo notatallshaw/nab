@@ -166,7 +166,8 @@ to use the same instant. Without an offset, pip uses local time and can see a di
 releases.
 
 `marker_environment` and the `platform_system` shorthand define the resolver target without
-restricting the host. Set `requires_matching_host = true` when the physical host must match those
+restricting the host. For example, `platform_system = "Windows"` also sets `sys_platform` to `win32`
+and `os_name` to `nt`. Set `requires_matching_host = true` when the physical host must match those
 values so its wheel tags remain faithful.
 
 `platform_system` alone admits any machine in that OS family; machine and implementation markers

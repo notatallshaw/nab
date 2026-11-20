@@ -1220,6 +1220,25 @@ def test_target_marker_declarations_accept_every_pep508_variable() -> None:
     assert list(parsed) == list(declared)
 
 
+def test_foreign_platform_uses_its_own_os_markers() -> None:
+    module = _harness("scenarios")
+    markers = module.parse_marker_environment("windows", {"platform_system": "Windows"})
+    requirements = module.parse_requirements(
+        ['windows-only; sys_platform == "win32"', 'posix-only; os_name == "posix"'],
+        marker_environment=markers,
+    )
+    assert set(requirements) == {"windows-only"}
+    assert "platform_machine" not in markers
+
+
+def test_interpreter_name_sets_its_display_marker() -> None:
+    module = _harness("scenarios")
+    markers = module.parse_marker_environment(
+        "pypy", {"marker_environment": {"implementation_name": "pypy"}}
+    )
+    assert markers["platform_python_implementation"] == "PyPy"
+
+
 def test_target_marker_declarations_accept_partial_known_overlays() -> None:
     module = _harness("scenarios")
     declared = {"platform_release": "test-release"}
