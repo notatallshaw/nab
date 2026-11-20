@@ -31,6 +31,7 @@ __lazy_modules__ = (
     "nab_provider.tags",
 )
 
+from bisect import bisect_right
 from functools import lru_cache
 from typing import TYPE_CHECKING, ClassVar, Final, NamedTuple
 
@@ -305,7 +306,8 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
     Most variables are declared by value (a ``platform_system`` marker pins
     the OS). An explicit patch target declares its full version. A minor target
     uses its :attr:`~ResolveTarget.micro_clauses` when a consulted marker splits
-    the minor, or a plain ``python_version`` row when unsplit. On CPython a
+    the minor, or a plain ``python_version`` row when unsplit. A host target
+    declares the interval containing its interpreter when one exists. On CPython a
     consulted ``implementation_version`` uses the same bounds.
 
     The variables :func:`unboundable_variables` names are dropped: the kernel
@@ -327,14 +329,11 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
     clauses = [f'{name} == "{target.marker_env[name]}"' for name in names]
 
     bounds = target.micro_clauses
+    consulted_version = not by_value.isdisjoint(_BY_CONSTRAINT)
     if target.concrete_micro:
-        bounds = (f'python_full_version == "{target.python_full_version}"',)
-        if (
-            not by_value.isdisjoint(_BY_CONSTRAINT)
-            and "+" not in target.python_full_version
-        ):
-            # A public version pin alone also admits local builds (PEP 440).
-            bounds += ('"+" not in python_full_version',)
+        bounds = _patch_bounds(target, exclude_local_builds=consulted_version)
+    elif target.host_faithful and consulted_version:
+        bounds = _host_patch_bounds(target, texts)
     clauses.extend(bounds)
     if "implementation_version" in variables and target.implementation == "cpython":
         clauses.extend(
@@ -342,6 +341,35 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
             for clause in bounds
         )
     return " and ".join(clauses)
+
+
+def _patch_bounds(
+    target: ResolveTarget, *, exclude_local_builds: bool
+) -> tuple[str, ...]:
+    """Match one Python patch and distinguish local builds when needed."""
+    version = target.python_full_version
+    bounds = (f'python_full_version == "{version}"',)
+    if exclude_local_builds and "+" not in version:
+        # A public version pin alone also admits local builds (PEP 440).
+        return (*bounds, '"+" not in python_full_version')
+    return bounds
+
+
+def _host_patch_bounds(target: ResolveTarget, texts: Sequence[str]) -> tuple[str, ...]:
+    """Find the host interval or pin its build when the comparison requires it."""
+    try:
+        points = _minor_version_points(target, texts)
+    except NonIntervalMarkerError:
+        return _patch_bounds(target, exclude_local_builds=True)
+
+    if not points:
+        return ()
+
+    floor = Version(f"{target.python_version}.0.dev0")
+    index = bisect_right(points, Version(target.python_full_version))
+    low = points[index - 1] if index else floor
+    high = points[index] if index < len(points) else None
+    return _slice_bounds(low, high, floor)
 
 
 def declared_range_marker(target: ResolveTarget) -> str:
@@ -448,32 +476,37 @@ def slices_from_points(
     floor = Version(f"{target.python_version}.0.dev0")
     slices: list[ResolveTarget] = []
     for low, high in zip([floor, *points], [*points, None], strict=True):
-        clauses: list[str] = []
-        if low != floor:
-            clauses.append(f'python_full_version >= "{low}"')
-        if high is not None:
-            if high.is_prerelease:
-                # <X already excludes every prerelease of the final X.
-                upper = (
-                    high.base_version
-                    if high.dev == 0 and high.pre is None
-                    else str(high)
-                )
-                clauses.append(f'python_full_version < "{upper}"')
-            else:
-                # PEP 440's <final excludes prereleases of that patch. Together
-                # these bounds include them while excluding the final and its locals.
-                clauses.extend(
-                    (
-                        f'python_full_version <= "{high}"',
-                        f'python_full_version != "{high}"',
-                    )
-                )
-
         final = Version.from_parts(release=low.release)
         representative = final if high is None or final < high else low
-        slices.append(target.with_micro_slice(str(representative), tuple(clauses)))
+        bounds = _slice_bounds(low, high, floor)
+        slices.append(target.with_micro_slice(str(representative), bounds))
     return slices
+
+
+def _slice_bounds(
+    low: Version, high: Version | None, floor: Version
+) -> tuple[str, ...]:
+    """Render the marker clauses for one interval of a Python minor."""
+    clauses: list[str] = []
+    if low != floor:
+        clauses.append(f'python_full_version >= "{low}"')
+    if high is not None:
+        if high.is_prerelease:
+            # <X already excludes every prerelease of the final X.
+            upper = (
+                high.base_version if high.dev == 0 and high.pre is None else str(high)
+            )
+            clauses.append(f'python_full_version < "{upper}"')
+        else:
+            # PEP 440's <final excludes prereleases of that patch. Together
+            # these bounds include them while excluding the final and its locals.
+            clauses.extend(
+                (
+                    f'python_full_version <= "{high}"',
+                    f'python_full_version != "{high}"',
+                )
+            )
+    return tuple(clauses)
 
 
 def _scanned_version_variables(target: ResolveTarget) -> frozenset[str]:
@@ -504,17 +537,36 @@ def micro_boundary_points(
     """
     if not target.is_minor_interval:
         return []
+    return _minor_version_points(target, sorted(map(str, consulted)))
+
+
+def _reads_version_on_right(
+    parts: tuple[str, str, str], scanned: frozenset[str]
+) -> bool:
+    """Recognize a version read as a bound on the right of a literal."""
+    lhs, _, rhs = parts
+    if not lhs.startswith(('"', "'")):
+        return False
+    # Packaging also reads a quoted right operand as an environment key.
+    key = rhs[1:-1] if rhs.startswith(('"', "'")) else rhs
+    return key in scanned
+
+
+def _minor_version_points(target: ResolveTarget, texts: Sequence[str]) -> list[Version]:
+    """Find version transitions for the declared minor in marker-text order."""
     minor_release = Version(target.python_version).release[:_PYTHON_VERSION_PARTS]
     floor = Version(f"{target.python_version}.0")
     scanned = _scanned_version_variables(target)
 
     points: set[Version] = set()
-    for marker in sorted(consulted, key=str):
-        for atom in MARKER_COMPARISON.finditer(str(marker)):
+    for text in texts:
+        for atom in MARKER_COMPARISON.finditer(text):
+            parts = _clause_parts(atom)
+            if target.host_faithful and _reads_version_on_right(parts, scanned):
+                # A local build on the right can change the comparison to a string test.
+                raise _non_interval(parts, target)
             points.update(
-                _clause_boundary_points(
-                    _clause_parts(atom), scanned, minor_release, floor, target
-                )
+                _clause_boundary_points(parts, scanned, minor_release, floor, target)
             )
     return sorted(points)
 
