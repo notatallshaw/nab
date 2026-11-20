@@ -156,13 +156,3 @@ requirements = [
     "insightface>=0.7.3",
     "wandb>=0.23.0",
 ]
-
-[uv-issue-18527-flashinfer-jit-cache]
-# https://github.com/astral-sh/uv/issues/18527
-# tool.uv.environments + --index-url=flashinfer.ai/whl/cu130 regressed
-# between uv 0.10.10 and 0.10.11.  Multi-index.
-unsupported_reason = "multiple_indexes"
-python_version = "3.12"
-platform_system = "Linux"
-datetime = "2026-03-17 16:27:57"
-requirements = ["flashinfer-jit-cache==0.5.3+cu130"]

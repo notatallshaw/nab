@@ -37,8 +37,8 @@ pytestmark = [
 _BENCHMARKS = Path(__file__).resolve().parents[2] / "benchmarks"
 _STANDARD_FILES = 14
 _STANDARD_SCENARIOS = 553
-_RUNNABLE_SCENARIOS = 529
-_UNSUPPORTED_SCENARIOS = 24
+_RUNNABLE_SCENARIOS = 530
+_UNSUPPORTED_SCENARIOS = 23
 _TOTAL_EXECUTION_IDENTITIES = 1_659
 _OUT_OF_SCOPE_ECOSYSTEM_SCENARIOS = {
     "ecosystem:dask-bottleneck-2024",
@@ -84,6 +84,14 @@ _UNVERIFIED_SDIST_METADATA_SCENARIOS = {
 }
 _UNVERIFIED_SDIST_METADATA_REASON = "requires unverified sdist dependency metadata"
 _MATCHING_HOST_MARKERS = {
+    "uv:uv-issue-18527-flashinfer-jit-cache": {
+        "implementation_name": "cpython",
+        "os_name": "posix",
+        "platform_machine": "x86_64",
+        "platform_python_implementation": "CPython",
+        "platform_system": "Linux",
+        "sys_platform": "linux",
+    },
     "uv:uv-tensorflow-macos": {
         "implementation_name": "cpython",
         "os_name": "posix",
@@ -3087,6 +3095,16 @@ def test_matching_host_scenarios_retain_their_reviewed_inputs() -> None:
 @pytest.mark.parametrize(
     ("logical_key", "host_kwargs"),
     [
+        (
+            "uv:uv-issue-18527-flashinfer-jit-cache",
+            {
+                "system": "Linux",
+                "sys_platform": "linux",
+                "machine": "x86_64",
+                "os_name": "posix",
+                "platform_tag": "manylinux_2_28_x86_64",
+            },
+        ),
         (
             "uv:uv-tensorflow-macos",
             {
