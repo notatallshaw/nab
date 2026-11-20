@@ -577,15 +577,15 @@ def _as_root_requirements(
     ]
 
 
-class _RecordedDependencies:
+class _RecordedDependencies(Generic[PackageType, VersionType]):
     """Retain a parent range and refinement causes across repeated decisions."""
 
     __slots__ = ("parent_range", "refinement_causes")
 
     def __init__(
         self,
-        parent_range: RangeProtocol[Any],
-        refinement_causes: list[Incompatibility[Any, Any]],
+        parent_range: RangeProtocol[VersionType],
+        refinement_causes: list[Incompatibility[PackageType, VersionType]],
     ) -> None:
         self.parent_range = parent_range
         self.refinement_causes = refinement_causes
@@ -698,7 +698,8 @@ class Resolver(Generic[PackageType, VersionType]):
 
         # Dependency clauses survive backtracking and restarts.
         self.recorded_dependencies: dict[
-            tuple[PackageType, VersionType], _RecordedDependencies
+            tuple[PackageType, VersionType],
+            _RecordedDependencies[PackageType, VersionType],
         ] = {}
 
         self.solution: PartialSolution[Any, Any] = PartialSolution(
@@ -1064,7 +1065,7 @@ class Resolver(Generic[PackageType, VersionType]):
             changed_package = ROOT
         return changed_package, restart_threshold, restarts_remaining
 
-    def _decide_next(self, next_package: Any) -> Any:
+    def _decide_next(self, next_package: PackageType) -> PackageType:
         """Run the decision phase for ``next_package``. Return next changed package."""
         chosen_version = decide.choose_version(self, next_package)
         had_pending = decide.absorb_pending_clauses(self)
@@ -1100,7 +1101,7 @@ class Resolver(Generic[PackageType, VersionType]):
         self,
         package: PackageType,
         version: VersionType,
-        exact_range: RangeProtocol[Any],
+        exact_range: RangeProtocol[VersionType],
         dependencies: Mapping[PackageType, RangeProtocol[VersionType]],
     ) -> None:
         """Record dependency clauses or reapply their retained refinement causes."""
@@ -1118,7 +1119,9 @@ class Resolver(Generic[PackageType, VersionType]):
                 )
             return
 
-        record = _RecordedDependencies(parent_range, [])
+        record: _RecordedDependencies[PackageType, VersionType] = _RecordedDependencies(
+            parent_range, []
+        )
         for dependency_package, supplied_range in dependencies.items():
             dependency_range = self.as_term_range(supplied_range)
             cross_package = dependency_package != package
