@@ -84,7 +84,7 @@ def path_state(path: Path) -> PathState:
 
 
 def is_usable_path_name(entry: str) -> bool:
-    """Whether the filesystem can carry ``entry`` as a name.
+    """Check for an embedded NUL before passing a name to the filesystem.
 
     An embedded NUL has to be tested for rather than caught: building a
     ``Path`` never raises on one, and a non-strict resolve keeps it in
@@ -104,9 +104,9 @@ def realpath(path: Path) -> Path:
 
 
 def resolve_path(base: Path, entry: str) -> Path | None:
-    """Resolve ``entry`` against ``base``, or ``None`` for an unusable name.
+    """Resolve ``entry`` against ``base``.
 
-    Unencodable names other than a NUL raise from the resolve itself.
+    Return ``None`` for an embedded NUL or an encoding error during resolution.
     """
     if not is_usable_path_name(entry):
         return None
