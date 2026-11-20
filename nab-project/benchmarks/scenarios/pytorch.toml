@@ -7,7 +7,20 @@
 
 [torch-xpu-nightly]
 # https://github.com/pytorch/pytorch/issues/148680
-# Nightly index with mismatching versions -> pip tries every torch.
+# The reported Windows install used --pre. The March 6 torchvision and
+# torchaudio nightlies both require the March 5 torch build.
+python_version = "3.10"
+platform_system = "Windows"
+datetime = "2025-03-06 15:44:50"
+requirements = ["torch", "torchvision", "torchaudio"]
+unsupported_reason = "The XPU nightly index no longer lists the March 2025 Windows builds"
+
+[[torch-xpu-nightly.indexes]]
+name = "xpu-nightly"
+url = "https://download.pytorch.org/whl/nightly/xpu/"
+
+[torch-vision-audio-pypi]
+# Resolve the three packages from PyPI on Linux at the same cutoff.
 python_version = "3.10"
 platform_system = "Linux"
 datetime = "2025-03-06 15:44:50"
