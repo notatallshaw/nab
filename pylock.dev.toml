@@ -1,10 +1,5 @@
 lock-version = "1.0"
 environments = [
-    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
-    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
-    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
-    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
-    "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\"",
     "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
     "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
     "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
@@ -35,6 +30,16 @@ environments = [
     "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version >= \"3.10.2.dev0\"",
     "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\" and python_full_version < \"3.10.2\"",
     "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\" and python_full_version >= \"3.10.2.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version < \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version >= \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version < \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version >= \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version < \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version >= \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version < \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version >= \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\" and python_full_version < \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\" and python_full_version >= \"3.11.0a7.dev0\"",
 ]
 requires-python = ">=3.10"
 dependency-groups = [
@@ -9059,9 +9064,12 @@ platforms = [
     "macos_x86_64",
     "windows_amd64",
 ]
+package-metadata-overrides = [
+    "pyyaml==6.0.3: requires-python",
+]
 
 [tool.nab.validation]
 version = 1
-all-inputs-sha256 = "4938b87624b424ac0471f3a45e1842c4fee4eca9e80b685c237c200be6f91329"
-selection-inputs-sha256 = "1f736ec5ed3879132540736aee524a83fb8b20938af686fdfd2c721eed2abff2"
-contents-sha256 = "f9930b8098f2b7fbd8d0499151debd860599918f8509528ac7dbf38795910ba9"
+all-inputs-sha256 = "29af7bccb109ac9c603352fb45bf74d2243c8efa7c01740b3382466022d54c36"
+selection-inputs-sha256 = "547ba02629dd60f863db3f371dc317b1fea74eb06cd85817d46c76dc9a60fe9a"
+contents-sha256 = "7ef85b55e6d57af051bc0f53ff67c95ef2dc58bdb2d7114716d54f0c5d491134"
