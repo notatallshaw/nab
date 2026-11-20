@@ -24,8 +24,8 @@ nab-resolver <----> nab-provider ----> nab-markersets
 metadata. Nab supplies a `FetchCoordinator` that handles those requests using `nab-index`.
 
 The CLI loads configuration and writes output; `nab-project` orchestrates resolution and builds
-lockfile data. Except for `nab-resolver`'s documented API, library APIs are experimental: pin exact
-versions when embedding them.
+lockfile data. Library APIs, including import paths, can change between 0.0.x releases. When
+embedding a component, pin the version you tested.
 
 ## Package responsibilities
 
