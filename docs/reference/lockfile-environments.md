@@ -72,6 +72,7 @@ On a minor-interval target, a consulted full-version marker must describe interv
 - membership (`in` or `not in`), verbatim `===`, non-version strings, and comparisons with another
   variable;
 - invalid PEP 440 operands such as `< "3.12.*"` or `~= "3"`;
+- local version labels within the target minor, such as `python_full_version == "3.12.4+vendor"`;
 - the pre- and post-release boundaries listed below.
 
 For a literal above the first final release in the minor, a prerelease is an error on `<`, `>=`,

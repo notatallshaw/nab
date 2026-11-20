@@ -548,6 +548,15 @@ def _clause_boundary_points(
     if version.epoch != floor.epoch or release[:_PYTHON_VERSION_PARTS] != minor_release:
         return set()
 
+    if version.local is not None:
+        lhs, operator, rhs = parts
+        msg = (
+            f"consulted marker clause {lhs} {operator} {rhs} distinguishes local"
+            f" Python builds within the {target.label} minor interval, which nab"
+            " cannot represent with patch version bounds"
+        )
+        raise NonIntervalMarkerError(msg)
+
     major, minor, micro = release
     patch = Version.from_parts(release=(major, minor, micro))
     minor_start = Version.from_parts(release=(*minor_release, 0), dev=0)
