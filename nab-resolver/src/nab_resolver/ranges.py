@@ -702,9 +702,18 @@ class Range(Generic[VersionType]):
         """
         return (self._intervals,)
 
-    def __setstate__(self, state: tuple[tuple[Interval, ...]]) -> None:
+    def __setstate__(
+        self,
+        state: tuple[tuple[Interval, ...]]
+        | tuple[None, dict[str, tuple[Interval, ...]]],
+    ) -> None:
         """Restore canonical infinity bounds and leave the hash to be recomputed."""
-        (intervals,) = state
+        if len(state) == 2:
+            # Before 0.0.13, pickle stored _intervals in the default slot state.
+            intervals = state[1]["_intervals"]
+        else:
+            (intervals,) = state
+
         self._intervals = tuple(
             (
                 NEGATIVE_INFINITY if isinstance(lower, _NegativeInfinity) else lower,

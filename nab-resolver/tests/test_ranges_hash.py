@@ -53,6 +53,16 @@ sys.stdout.write(
 """
 
 
+def test_read_range_from_0_0_12() -> None:
+    # pickle.dumps(Range.at_least(3), protocol=2) from the released 0.0.12 wheel.
+    payload = Path(__file__).with_name("data") / "range-0.0.12.pickle"
+    restored = pickle.loads(payload.read_bytes())  # noqa: S301 - known release fixture
+    fresh = Range.at_least(3)
+    assert restored == fresh
+    assert hash(restored) == hash(fresh)
+    assert ~restored == ~fresh
+
+
 def round_trip(
     value: Range[int], protocol: int = pickle.DEFAULT_PROTOCOL
 ) -> Range[int]:
