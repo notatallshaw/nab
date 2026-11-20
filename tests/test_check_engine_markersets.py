@@ -16,22 +16,57 @@ checker = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(checker)
 
 
-@pytest.mark.parametrize("use", [False, True])
-def test_conversion_import_and_use_are_checked(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, use: bool
-) -> None:
-    source = tmp_path / "engine.py"
-    source.write_text(
-        "from nab_markersets.conversions import MarkerSetCache\n"
-        "def _resolve_with_micro_narrowing():\n"
-        + ("    return MarkerSetCache()\n" if use else "    return None\n")
-    )
-    module = checker.Module(checker.ENGINE_MODULE, source, is_package=False)
+def run_checker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source: str,
+    *,
+    exempt_import: bool = False,
+) -> int:
+    """Run the checker against one engine module with the given import policy."""
+    path = tmp_path / "engine.py"
+    path.write_text(source)
+    module = checker.Module(checker.ENGINE_MODULE, path, is_package=False)
     monkeypatch.setattr(
         checker, "load_modules", lambda: {checker.ENGINE_MODULE: module}
     )
-    monkeypatch.setattr(
-        checker, "EXEMPT", {checker.ENGINE_MODULE: "Test import without use."}
+    exemptions = (
+        {checker.ENGINE_MODULE: "Test import without use."} if exempt_import else {}
     )
+    monkeypatch.setattr(checker, "EXEMPT", exemptions)
     monkeypatch.setattr(sys, "argv", [str(_PATH)])
-    assert checker.main() == int(use)
+    return checker.main()
+
+
+@pytest.mark.parametrize("use", [False, True])
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "from nab_markersets.conversions import MarkerSetCache as feature",
+        "from nab_markersets import conversions as feature",
+    ],
+)
+def test_conversion_import_and_use_are_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, statement: str, use: bool
+) -> None:
+    source = f"{statement}\ndef _resolve_with_micro_narrowing():\n"
+    source += "    return feature\n" if use else "    return None\n"
+    assert run_checker(tmp_path, monkeypatch, source, exempt_import=True) == int(use)
+
+
+@pytest.mark.parametrize("reached", [False, True])
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "from nab_markersets.conversions import MarkerSetCache as feature",
+        "import nab_markersets.conversions as feature",
+        "from nab_markersets import conversions as feature",
+    ],
+)
+def test_deferred_import_is_rejected_only_in_a_reached_function(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, statement: str, reached: bool
+) -> None:
+    source = f"def helper():\n    {statement}\n    return feature\n"
+    source += "def _resolve_with_micro_narrowing():\n"
+    source += "    return helper()\n" if reached else "    return None\n"
+    assert run_checker(tmp_path, monkeypatch, source) == int(reached)

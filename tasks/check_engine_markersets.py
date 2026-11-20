@@ -17,8 +17,7 @@ Two rules, both computed statically over the shipped ``src`` trees.
     such module must be on ``EXEMPT``, and an exemption that no longer fires is
     an error too.
 
-Every ``Name`` load inside a definition counts as a possible global
-reference, so a ``use`` result of zero is sound.
+The walk follows name loads and explicit imports inside reached definitions.
 
 Run directly::
 
@@ -32,6 +31,10 @@ import ast
 import sys
 from collections import deque
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -122,7 +125,9 @@ class Module:
             if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                 self.defs[node.name] = node
             elif isinstance(node, ast.Import | ast.ImportFrom):
-                self._read_import(node)
+                for bound, target, original in self.import_bindings(node):
+                    self.top_imports.append((target, node.lineno))
+                    self.bindings[bound] = (target, original)
             else:
                 for target in _assigned(node):
                     self.defs[target] = node
@@ -143,19 +148,23 @@ class Module:
             return f"{base}.{node.module}"
         return node.module or base
 
-    def _read_import(self, node: ast.Import | ast.ImportFrom) -> None:
+    def import_bindings(
+        self, node: ast.Import | ast.ImportFrom
+    ) -> Iterator[tuple[str, str, str]]:
+        """Yield each local name, its source module and the imported member."""
         if isinstance(node, ast.Import):
             for alias in node.names:
-                self.top_imports.append((alias.name, node.lineno))
-                bound = alias.asname or alias.name.split(".")[0]
-                self.bindings[bound] = (alias.name, "*module*")
+                yield alias.asname or alias.name.split(".")[0], alias.name, "*module*"
             return
+
         target = self.absolute(node)
-        if not target:
-            return
-        self.top_imports.append((target, node.lineno))
         for alias in node.names:
-            self.bindings[alias.asname or alias.name] = (target, alias.name)
+            bound = alias.asname or alias.name
+            submodule = f"{target}.{alias.name}"
+            if submodule in MARKER_SET_MODULES:
+                yield bound, submodule, "*module*"
+            else:
+                yield bound, target, alias.name
 
 
 def load_modules() -> dict[str, Module]:
@@ -216,7 +225,7 @@ class Walk:
         if module is None:
             return
         if name in module.bindings:
-            self.follow_binding(module_name, name)
+            self.follow_import(module_name, name, *module.bindings[name])
             return
         node = module.defs.get(name)
         if node is None:
@@ -227,9 +236,10 @@ class Walk:
             self.queue.append((module_name, ref))
         self.follow_deferred_imports(module, node)
 
-    def follow_binding(self, module_name: str, name: str) -> None:
+    def follow_import(
+        self, module_name: str, name: str, target: str, original: str
+    ) -> None:
         """Record a cross-module use and queue the definition behind it."""
-        target, original = self.modules[module_name].bindings[name]
         self.uses.append((module_name, name, target, original))
         self.import_module(target)
         if original != "*module*":
@@ -239,19 +249,9 @@ class Walk:
     def follow_deferred_imports(self, module: Module, node: ast.AST) -> None:
         """Follow the imports written inside a reached definition."""
         for sub in ast.walk(node):
-            if sub is node:
-                continue
-            if isinstance(sub, ast.ImportFrom):
-                target = module.absolute(sub)
-                if not target:
-                    continue
-                self.import_module(target)
-                for alias in sub.names:
-                    self.import_module(f"{target}.{alias.name}")
-                    self.queue.append((target, alias.name))
-            elif isinstance(sub, ast.Import):
-                for alias in sub.names:
-                    self.import_module(alias.name)
+            if isinstance(sub, ast.Import | ast.ImportFrom):
+                for bound, target, original in module.import_bindings(sub):
+                    self.follow_import(module.name, bound, target, original)
 
 
 def main() -> int:
