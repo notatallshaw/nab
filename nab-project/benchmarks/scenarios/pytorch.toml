@@ -44,7 +44,8 @@ requirements = [
 
 [torch-flash-attn]
 # https://github.com/huggingface/open-r1/issues/684
-# flash_attn + torch version matrix grief.
+# The report concerned an import-time error in the compiled extension.
+# This resolve checks the declared dependencies of torch and flash-attn.
 python_version = "3.11"
 platform_system = "Linux"
 datetime = "2025-06-26 21:54:41"
@@ -66,6 +67,7 @@ requirements = [
 
 [pytorch-lightning-numpy1]
 # https://github.com/Lightning-AI/pytorch-lightning/issues/20069
+# This variant pins NumPy below 2, as requested by the reporter.
 python_version = "3.11"
 platform_system = "Linux"
 datetime = "2024-07-10 13:10:10"
@@ -74,17 +76,13 @@ requirements = [
     "numpy<2",
 ]
 
-[pytorch-lightning-lite]
+[lightning-transitive-version]
 # https://github.com/Lightning-AI/pytorch-lightning/issues/20000
+# The reporter pinned lightning 2.2.5 and got pytorch-lightning 2.3.0 as a dependency.
 python_version = "3.11"
 platform_system = "Linux"
 datetime = "2024-06-20 14:12:59"
-requirements = [
-    "lightning==2.3.0",
-    "pytorch_lightning==2.2.5",
-    "torchmetrics",
-    "torch",
-]
+requirements = ["lightning==2.2.5"]
 
 [pytorch-lightning-tensorrt]
 # https://github.com/Lightning-AI/pytorch-lightning/issues/21424
