@@ -26,7 +26,7 @@ HELP: tuple[str, ...] = (
     "the group name the project's own dependencies lock under",
     "the group name [build-system].requires locks under",
     "the Python range the project supports, as a specifier",
-    "ignore distributions uploaded after this point",
+    "exclude distributions uploaded at or after the cutoff",
     "which distribution kinds the resolve may pin",
     "which artifact supplies dependency metadata",
     "assume dependency metadata applies across targets",

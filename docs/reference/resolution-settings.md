@@ -40,9 +40,9 @@ target.
 
 ## Upload cutoff
 
-`uploaded-prior-to` is unset by default. It excludes distributions uploaded after the cutoff. Set an
-ISO 8601 string or TOML datetime with an explicit timezone, or a `P<n>D` duration relative to the
-resolve anchor.
+`uploaded-prior-to` is unset by default. It excludes distributions uploaded at or after the cutoff.
+Set an ISO 8601 string or TOML datetime with an explicit timezone, or a `P<n>D` duration relative to
+the resolve anchor.
 
 A cutoff excludes files without upload times, except local `file://` and find-links artifacts. An
 HTML index may lack upload times; see [Index serialization](indexes.md#serialization).

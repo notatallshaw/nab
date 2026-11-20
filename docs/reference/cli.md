@@ -166,8 +166,8 @@ examples.
 - `--project-decision-order`: use arrival or stable decision order.
 - `--project-mode`: set `specific` or `universal` instead of inferring mode from the matrix.
 - `--project-requires-python`: set the supported Python version range.
-- `--project-uploaded-prior-to`: exclude distributions uploaded after a timestamp or relative
-  cutoff.
+- `--project-uploaded-prior-to`: exclude files uploaded at or after the cutoff. Accepts a timestamp
+  or a relative duration.
 - `--project-dist-policy`: select allowed distribution types.
 - `--project-build-policy`: select which source distributions may be built.
 - `--project-build-requires-depth`: limit nested build environments.
