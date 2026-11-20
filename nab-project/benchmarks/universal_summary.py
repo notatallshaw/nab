@@ -66,6 +66,7 @@ def authoritative_result_paths(
         or not commit
         or commit != target_dir.parent.name
         or not _valid_clean_source(source)
+        or manifest.get("source_end") != source
         or not all(
             _valid_scenario_names(names) for names in (available, selected, completed)
         )

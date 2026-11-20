@@ -341,24 +341,17 @@ def validate_scenario(scenario_name: str, scenario: dict) -> ResolveInputs:
 
 def write_manifest(
     path: Path,
+    run: dict[str, object],
+    completed: list[str],
     *,
-    commit: str,
-    source: dict[str, str | bool | None],
-    run_kind: str,
-    available_scenarios: list[str],
-    selected_scenarios: list[str],
-    completed_scenarios: list[str],
-    complete: bool,
+    complete: bool = False,
+    source_end: dict[str, str | bool | None] | None = None,
 ) -> None:
-    """Write the scenario-set contract consumed by benchmark summaries."""
+    """Write the completed scenarios alongside the original run parameters."""
     data = {
-        "benchmark_schema": RESULT_SCHEMA_VERSION,
-        "commit": commit,
-        "source": source,
-        "run_kind": run_kind,
-        "available_scenarios": sorted(available_scenarios),
-        "selected_scenarios": sorted(selected_scenarios),
-        "completed_scenarios": sorted(completed_scenarios),
+        **run,
+        "source_end": source_end,
+        "completed_scenarios": sorted(completed),
         "complete": complete,
     }
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -671,21 +664,17 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"Results -> {output_dir}\n")
     manifest_path = output_dir / MANIFEST_FILENAME
-    available_names = list(scenarios)
-    selected_names = [name for name, _scenario in selected]
-    run_kind = "selected" if args.scenario else "full"
+    run = {
+        "benchmark_schema": RESULT_SCHEMA_VERSION,
+        "commit": commit,
+        "source": source,
+        "run_kind": "selected" if args.scenario else "full",
+        "available_scenarios": sorted(scenarios),
+        "selected_scenarios": sorted(name for name, _scenario in selected),
+    }
     completed_names: list[str] = []
     accepted: list[bool] = []
-    write_manifest(
-        manifest_path,
-        commit=commit,
-        source=source,
-        run_kind=run_kind,
-        available_scenarios=available_names,
-        selected_scenarios=selected_names,
-        completed_scenarios=completed_names,
-        complete=False,
-    )
+    write_manifest(manifest_path, run, completed_names)
     for name, scenario in selected:
         accepted.append(
             process_scenario(
@@ -699,26 +688,22 @@ def main() -> None:
         )
         if (output_dir / f"{name}.json").is_file():
             completed_names.append(name)
-        write_manifest(
-            manifest_path,
-            commit=commit,
-            source=source,
-            run_kind=run_kind,
-            available_scenarios=available_names,
-            selected_scenarios=selected_names,
-            completed_scenarios=completed_names,
-            complete=False,
-        )
+        write_manifest(manifest_path, run, completed_names)
+
+    source_end = get_git_source_state()
     write_manifest(
         manifest_path,
-        commit=commit,
-        source=source,
-        run_kind=run_kind,
-        available_scenarios=available_names,
-        selected_scenarios=selected_names,
-        completed_scenarios=completed_names,
-        complete=len(completed_names) == len(selected_names),
+        run,
+        completed_names,
+        complete=len(completed_names) == len(selected) and source_end == source,
+        source_end=source_end,
     )
+    if source_end != source:
+        print(
+            "The benchmark checkout changed. Rerun the benchmarks from one revision.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     if not all(accepted):
         raise SystemExit(1)
 
