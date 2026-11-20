@@ -4,7 +4,7 @@
 
 Repeatable locking needs a fixed index view and a fixed search order:
 
-- `[tool.nab].uploaded-prior-to` excludes distributions uploaded after its timestamp.
+- `[tool.nab].uploaded-prior-to` excludes distributions uploaded at or after its timestamp.
 - `[tool.nab].decision-order = "stable"` prevents response timing and cache warmth from steering
   package order. See [Resolution settings](resolution-settings.md) for its cost.
 

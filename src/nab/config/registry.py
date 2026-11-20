@@ -182,7 +182,7 @@ OPTIONS: tuple[Opt, ...] = (
         render=hooks.render_uploaded_prior_to,
         type_label="datetime|PnD",
         sample="P7D",
-        help="ignore distributions uploaded after this point",
+        help="exclude distributions uploaded at or after the cutoff",
         docs="reference/resolution-settings.md",
         generated=True,
     ),
