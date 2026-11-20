@@ -1135,6 +1135,12 @@ class TestVersionEmission:
             ' and platform_machine == "x86_64"'
         )
 
+    def test_patch_pin_refuses_other_patch_releases(self) -> None:
+        target = _a_patch_pinned_target()
+        row = Marker(environment_declaration(target, ()))
+        assert row.evaluate(target.marker_env)
+        assert not row.evaluate({**target.marker_env, "python_full_version": "3.13.3"})
+
     def test_a_uniform_marker_leaves_the_minor_plain(self) -> None:
         """A consulted marker whose boundary falls outside the minor is uniform,
         so it splits nothing and the row carries no python_full_version."""
