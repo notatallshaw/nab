@@ -81,7 +81,7 @@ if TYPE_CHECKING:
 
     # A prepared listing plus the cutoff verdicts taken over it, keyed by
     # position in the listing, or ``None`` when no cutoff is configured.
-    _SharedListing = tuple[
+    SharedListing = tuple[
         list[tuple[Version, DistFile]],
         set[Version],
         bool,
@@ -562,7 +562,7 @@ def _prepare_shared(
     normalized: str,
     files: Sequence[WheelFile | SdistFile],
     policy: ListingPolicy,
-) -> _SharedListing:
+) -> SharedListing:
     """Run the half of the pass a matrix shares, and start its cutoff table.
 
     A cutoff verdict reads the file's stamp and its effective cutoff, and
