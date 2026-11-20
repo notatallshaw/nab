@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Rebuild the vendored packaging tree as pristine pypa/packaging at the pinned
-# commit plus one checked-in patch.
+# commit, applying tasks/vendoring/packaging.patch if present.
 #
 # No arguments regenerates the tree in place. --check rebuilds into a temp
-# location and fails if the committed tree has drifted from pristine plus the
-# patch. PROVENANCE.md is nab's own file and never part of the comparison.
+# location and fails if the committed tree differs from the rebuilt copy.
+# PROVENANCE.md is nab's own file and never part of the comparison.
 
 set -euo pipefail
 
@@ -47,16 +47,18 @@ for lic in LICENSE LICENSE.APACHE LICENSE.BSD; do
     cp -a "$SRC/$lic" "$STAGE/$lic"
 done
 
+snapshot="packaging at $PIN"
 if [[ -f "$PATCH_FILE" ]]; then
+    snapshot="$snapshot with packaging.patch"
     git -C "$WORK/tree" apply "$PATCH_FILE"
 fi
 
 if [[ "$MODE" == "check" ]]; then
     if diff -ru -x __pycache__ -x PROVENANCE.md "$VENDOR" "$STAGE"; then
-        echo "vendored packaging matches pin $PIN plus the patch"
+        echo "vendored tree matches $snapshot"
         exit 0
     fi
-    echo "error: vendored tree drifted from pin $PIN plus the patch" >&2
+    echo "error: vendored tree differs from $snapshot" >&2
     echo "run tasks/vendor-packaging.sh to regenerate it" >&2
     exit 1
 fi

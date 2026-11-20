@@ -281,20 +281,22 @@ Nab uses [explicit lazy-import declarations](https://peps.python.org/pep-0810/#s
 3.15, including direct library imports. Earlier Python versions import eagerly; third-party modules
 retain their own behavior.
 
-## The vendored packaging fork
+## The vendored copy of packaging
 
 ```text
 nab.config, nab-project --> nab-provider._vendor.packaging
 nab-markersets          --> vendored packaging, then released packaging
 ```
 
-The provider carries the fork. The CLI and project use its `Version`, `Requirement` and
-`VersionRange` classes; duplicating them would break type checks and dictionary keys.
-`tasks/check_boundaries.py` enforces these exceptions in `VENDOR_ALLOWANCES`.
+The provider bundles the upstream snapshot pinned in `tasks/vendoring/packaging.pin`. The CLI and
+project use its `Version`, `Requirement` and `VersionRange` classes. Sharing those classes preserves
+type checks and dictionary keys. `tasks/check_boundaries.py` enforces these exceptions in
+`VENDOR_ALLOWANCES`.
 
-`nab-markersets` prefers the fork, then released `packaging` 26.3 or newer. Standalone users install
-`nab-markersets[packaging]`; `nab-markersets[nab-vendored-packaging]` installs the fork. The index
-and project also use released `packaging` for other APIs, but markers do not cross between copies.
+`nab-markersets` prefers the bundled copy, then released `packaging` 26.3 or newer. Standalone users
+install `nab-markersets[packaging]`. The `nab-markersets[nab-vendored-packaging]` extra installs the
+provider’s copy. The index and project also use released `packaging` for other APIs, but markers do
+not cross between copies.
 
 The provider owns dependency classification by environment and extra; the project reuses it to check
 saved pins. CI tests the provider with only its declared internal dependencies installed.
