@@ -1578,10 +1578,9 @@ url = "https://download.pytorch.org/whl/cpu"
 
 [uv-issue-16111-jax-extra-index]
 # https://github.com/astral-sh/uv/issues/16111
-# jax / jaxlib <= 0.3.15 are not on PyPI for Python 3.9 (Google's
-# legacy storage bucket index).  Adding the legacy bucket as a
-# secondary index lets presence-based first-index fall through to it
-# for jax / jaxlib while staying on PyPI for everything else.
+# The report uses Google's JAX Simple index ahead of PyPI. Its legacy wheels
+# have no upload timestamps in the listing, so the dated run cannot admit them.
+# This workload omits the original project's Git and MuJoCo dependencies.
 python_version = "3.9"
 platform_system = "Linux"
 datetime = "2025-10-03 07:39:25"
@@ -1606,11 +1605,11 @@ requirements = [
     "chex==0.1.5",
 ]
 [[uv-issue-16111-jax-extra-index.indexes]]
+name = "jax-legacy"
+url = "https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/"
+[[uv-issue-16111-jax-extra-index.indexes]]
 name = "pypi"
 url = "https://pypi.org/simple/"
-[[uv-issue-16111-jax-extra-index.indexes]]
-name = "jax-legacy"
-url = "https://storage.googleapis.com/jax-releases/jax_releases.html"
 
 [uv-issue-18278-h5py-myproject-style]
 # https://github.com/astral-sh/uv/issues/18278
