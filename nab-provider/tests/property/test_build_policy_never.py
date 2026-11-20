@@ -2,12 +2,12 @@
 
 Fuzzes sdist PKG-INFO shapes (Metadata-Version, Dynamic field
 case/content, Requires-Dist lines) and the static-pyproject fallback,
-across BuildPolicy NEVER / BUILD_LOCAL / BUILD_REMOTE.  Oracle is a
-monkeypatched ``build_remote_sdist`` that records invocations.
+across BuildPolicy NEVER / BUILD_LOCAL / BUILD_REMOTE. The fetch port
+records requests for a host metadata build.
 
 Invariants:
 
-* ``build_remote_sdist`` is invoked only when the effective policy is
+* A host metadata build is requested only when the effective policy is
   BUILD_REMOTE (NEVER and BUILD_LOCAL must not build a remote sdist);
 * under a non-building policy, dynamic deps without a static
   pyproject fallback raise UnsupportedSdistError (loud refusal, not a
@@ -18,14 +18,12 @@ Invariants:
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from typing import TypedDict
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nab_index.client import SdistFile
-from nab_provider._provider import build_remote
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import WheelMetadata
 from nab_provider.provider import (
@@ -35,9 +33,9 @@ from nab_provider.provider import (
     UnsupportedSdistError,
 )
 from nab_provider.target import ResolveTarget
-from nab_test_support.coordinator import make_coordinator
+from nab_provider.testing import make_coordinator, make_sdist
 
-from .strategies import PROPERTY_SETTINGS
+from .settings import PROPERTY_SETTINGS
 
 pytestmark = pytest.mark.property
 
@@ -49,17 +47,15 @@ BUILT = WheelMetadata(
     provides_extra=[],
 )
 
-STATIC_PYPROJECT = '[project]\nname = "pkg"\nversion = "1.0"\ndependencies = ["depz"]\n'
+STATIC_PYPROJECT = {
+    "project": {"name": "pkg", "version": "1.0", "dependencies": ["depz"]}
+}
 
 
-def _sdist(version: str = "1.0") -> SdistFile:
-    return SdistFile(
-        filename=f"pkg-{version}.tar.gz",
-        url=f"https://example.com/pkg-{version}.tar.gz",
-        version=version,
-        requires_python=None,
-        upload_time=None,
-    )
+class MetadataFields(TypedDict):
+    metadata_version: str
+    dynamic: str | None
+    deps: list[str]
 
 
 pkg_info_shapes = st.fixed_dictionaries(
@@ -80,7 +76,7 @@ policies = st.sampled_from(
 )
 
 
-def _pkg_info(shape: dict) -> str:
+def _pkg_info(shape: MetadataFields) -> str:
     lines = [
         f"Metadata-Version: {shape['metadata_version']}",
         "Name: pkg",
@@ -92,7 +88,7 @@ def _pkg_info(shape: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _deps_are_static(shape: dict) -> bool:
+def _deps_are_static(shape: MetadataFields) -> bool:
     """PEP 643: 2.2+ metadata whose dependency fields are not Dynamic."""
     if shape["metadata_version"] == "2.1":
         return False
@@ -103,27 +99,15 @@ def _deps_are_static(shape: dict) -> bool:
 @PROPERTY_SETTINGS
 @given(shape=pkg_info_shapes, policy=policies, with_fallback=st.booleans())
 def test_build_only_under_build_remote(
-    shape: dict,
+    shape: MetadataFields,
     policy: BuildPolicy,
     with_fallback: bool,
 ) -> None:
-    calls: list[tuple[str, str]] = []
-
-    def _fake_build(provider: object, package: str, version: object) -> WheelMetadata:
-        calls.append((package, str(version)))
-        return BUILT
-
-    with patch.object(build_remote, "build_remote_sdist", _fake_build):
-        _run_case(shape, policy, with_fallback, calls)
-
-
-def _run_case(
-    shape: dict, policy: BuildPolicy, with_fallback: bool, calls: list[tuple[str, str]]
-) -> None:
     coordinator = make_coordinator(
-        [_sdist("1.0")],
+        [make_sdist("1.0", package="pkg")],
         sdist_pkg_info=_pkg_info(shape),
-        sdist_pyproject_toml=STATIC_PYPROJECT if with_fallback else None,
+        sdist_pyproject=STATIC_PYPROJECT if with_fallback else None,
+        build_sdist=lambda *_args: BUILT,
     )
     provider = Provider(
         coordinator,
@@ -132,21 +116,14 @@ def _run_case(
         build_policy=policy,
     )
 
-    static = _deps_are_static(shape)
-    try:
-        deps = provider.get_dependencies("pkg", Version("1.0"))
-    except UnsupportedSdistError:
-        deps = None
-        assert not static, "static PEP 643 metadata must not be refused"
-        assert policy is not BuildPolicy.BUILD_REMOTE
-        assert not with_fallback, "static pyproject fallback should have applied"
+    needs_build = not _deps_are_static(shape) and not with_fallback
+    allows_build = policy is BuildPolicy.BUILD_REMOTE
+    if needs_build and not allows_build:
+        with pytest.raises(UnsupportedSdistError):
+            provider.get_dependencies("pkg", Version("1.0"))
+    else:
+        provider.get_dependencies("pkg", Version("1.0"))
 
-    if policy is not BuildPolicy.BUILD_REMOTE:
-        assert calls == [], f"sdist build ran under {policy}: {calls}"
-    if static:
-        assert calls == [], "PEP 643-static metadata must never trigger a build"
-        assert deps is not None
-    if not static and deps is not None and not with_fallback:
-        # Dynamic deps with no fallback: only a build can have produced deps.
-        assert policy is BuildPolicy.BUILD_REMOTE
-        assert calls == [("pkg", "1.0")]
+    calls = coordinator.calls_to("build_sdist_metadata")
+    expected = [("pkg", "1.0")] if needs_build and allows_build else []
+    assert [args[:2] for args in calls] == expected
