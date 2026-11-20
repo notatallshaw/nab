@@ -36,31 +36,31 @@ class BenchmarkTimeout(BaseException):
     """Escape resolver exception handlers when a benchmark exceeds its limit."""
 
 
-def _marker_family_matches(
-    marker_environment: Mapping[str, str],
-    candidates: Mapping[str, Mapping[str, str]],
-) -> bool:
-    candidate_keys = {key for candidate in candidates.values() for key in candidate}
-    declared = {
-        key: value for key, value in marker_environment.items() if key in candidate_keys
-    }
-    return not declared or any(
-        all(candidate.get(key) == value for key, value in declared.items())
-        for candidate in candidates.values()
-    )
-
-
-def validate_target_marker_environment(
+def _complete_marker_family(
     scenario_name: str,
-    marker_environment: Mapping[str, str],
+    markers: dict[str, str],
+    candidates: Mapping[str, Mapping[str, str]],
+    kind: str,
 ) -> None:
-    """Reject marker values that cannot describe a supported target."""
-    if not _marker_family_matches(marker_environment, PLATFORM_MARKERS):
-        msg = f"{scenario_name}: marker_environment describes no supported platform"
+    """Fill in marker values shared by every supported match."""
+    keys = {key for candidate in candidates.values() for key in candidate}
+    declared = {key: markers[key] for key in keys if key in markers}
+    if not declared:
+        return
+
+    matches = [
+        candidate
+        for candidate in candidates.values()
+        if all(candidate.get(key) == value for key, value in declared.items())
+    ]
+    if not matches:
+        msg = f"{scenario_name}: marker_environment describes no supported {kind}"
         raise ValueError(msg)
-    if not _marker_family_matches(marker_environment, IMPLEMENTATION_MARKERS):
-        msg = f"{scenario_name}: marker_environment describes no supported interpreter"
-        raise ValueError(msg)
+
+    # Windows implies win32 and nt, but leaves the processor architecture open.
+    for key, value in matches[0].items():
+        if all(candidate.get(key) == value for candidate in matches):
+            markers.setdefault(key, value)
 
 
 def parse_target_marker_environment(
@@ -92,7 +92,12 @@ def parse_target_marker_environment(
             raise ValueError(msg)
         marker_environment["platform_system"] = platform_system
 
-    validate_target_marker_environment(scenario_name, marker_environment)
+    _complete_marker_family(
+        scenario_name, marker_environment, PLATFORM_MARKERS, "platform"
+    )
+    _complete_marker_family(
+        scenario_name, marker_environment, IMPLEMENTATION_MARKERS, "interpreter"
+    )
     return marker_environment
 
 
