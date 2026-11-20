@@ -19,6 +19,7 @@ import pytest
 
 from nab import _run
 from nab.config.ladder import OPTIONS, SourceRoots
+from nab.env import OUTPUT_OWNED
 from nab.output import reset_run
 
 from .lock_registry import Registry
@@ -30,13 +31,15 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def _reset_nab_output(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Isolate CLI colour settings and reset the per-run printer.
+    """Isolate CLI output settings and reset the per-run printer.
 
     Printers hold captured streams that close when their test finishes.
     """
     monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.delenv("FORCE_COLOR", raising=False)
     monkeypatch.delenv("TERM", raising=False)
+    for name in OUTPUT_OWNED:
+        monkeypatch.delenv(name, raising=False)
     yield
     reset_run()
 
