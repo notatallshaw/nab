@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import shutil
-import subprocess
 import sys
 from contextlib import nullcontext
 from functools import partial
@@ -515,45 +513,6 @@ def test_result_contract_allows_multiple_slices_per_declared_cell() -> None:
 
     assert module.result_is_well_formed(data) is True
     assert module.result_is_accepted(data) is True
-
-
-def test_git_source_state_hashes_untracked_contents(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    git = shutil.which("git")
-    assert git is not None
-
-    def run_git(*args: str) -> None:
-        subprocess.run([git, *args], cwd=tmp_path, check=True)  # noqa: S603
-
-    run_git("init", "-q")
-    benchmarks_dir = tmp_path / "nab-project" / "benchmarks"
-    benchmarks_dir.mkdir(parents=True)
-    (benchmarks_dir / "tracked").write_text("tracked\n")
-    run_git("add", "nab-project/benchmarks/tracked")
-    run_git(
-        "-c",
-        "user.name=Benchmark Test",
-        "-c",
-        "user.email=benchmark@example.invalid",
-        "commit",
-        "-qm",
-        "initial",
-    )
-    untracked = tmp_path / "nab-project" / "src" / "source.py"
-    untracked.parent.mkdir(parents=True)
-    untracked.write_text("first\n")
-    module = _harness()
-    monkeypatch.setattr(module, "BENCHMARKS_DIR", benchmarks_dir)
-
-    first = module.get_git_source_state()
-    untracked.write_text("second\n")
-    second = module.get_git_source_state()
-
-    assert first["commit"] == second["commit"]
-    assert first["dirty"] is second["dirty"] is True
-    assert first["diff_hash"] != second["diff_hash"]
 
 
 def test_lock_consistency_requires_a_valid_emitted_pylock() -> None:

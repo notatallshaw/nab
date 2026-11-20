@@ -65,6 +65,7 @@ from benchmark_host import (
     parse_target_marker_environment,
     settings_hash,
 )
+from benchmark_source import get_git_commit, get_git_source_state
 from standard_result import read_benchmark_json, valid_outcome, valid_statistics
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
@@ -690,79 +691,6 @@ def _requires_matching_host_logical_keys(rows: list[StandardScenario]) -> list[s
         ):
             required.append(row.logical_key)
     return sorted(required)
-
-
-def get_git_commit() -> str:
-    """Return the short hash of HEAD."""
-    result = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout.strip()
-
-
-def get_git_source_state() -> dict[str, str | bool | None]:
-    """Return the full Git source identity for a standard benchmark run."""
-    try:
-        commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-            cwd=BENCHMARKS_DIR,
-        ).stdout.strip()
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return {"commit": None, "dirty": True, "diff_hash": None}
-    try:
-        root = Path(
-            subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                capture_output=True,
-                check=True,
-                text=True,
-                cwd=BENCHMARKS_DIR,
-            ).stdout.strip()
-        )
-        status = subprocess.run(
-            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        diff = subprocess.run(
-            ["git", "diff", "--binary", "HEAD", "--"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        untracked = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        untracked_hashes = bytearray()
-        for raw_path in untracked.split(b"\0"):
-            if not raw_path:
-                continue
-            object_hash = subprocess.run(  # noqa: S603 - path follows --
-                ["git", "hash-object", "--", os.fsdecode(raw_path)],
-                capture_output=True,
-                check=True,
-                cwd=root,
-            ).stdout
-            untracked_hashes.extend(raw_path + b"\0" + object_hash)
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return {"commit": commit, "dirty": True, "diff_hash": None}
-    dirty = bool(status)
-    diff_hash = (
-        hashlib.sha256(status + b"\0" + diff + b"\0" + untracked_hashes).hexdigest()
-        if dirty
-        else None
-    )
-    return {"commit": commit, "dirty": dirty, "diff_hash": diff_hash}
 
 
 def parse_requirements(
@@ -1581,7 +1509,12 @@ def main(argv: list[str] | None = None) -> None:
     commit = args.commit
     if commit is None:
         try:
-            commit = _result_directory_label(get_git_commit())
+            commit = _result_directory_label(get_git_commit(short=True))
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            parser.error(
+                "cannot read the benchmark checkout's revision. "
+                "Use --commit to name this run."
+            )
         except argparse.ArgumentTypeError as exc:
             parser.error(str(exc))
     source_start = get_git_source_state()
