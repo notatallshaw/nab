@@ -79,9 +79,9 @@ implementations = ["cpython", "pypy"]
 ```
 
 Likewise, musl Linux and free-threaded CPython need explicit
-[platform settings](../reference/platform-tags.md). Different libc families or ABI variants for the
-same interpreter and platform need separate locks; see
-[platform matrix restrictions](../reference/platform-tags.md).
+[platform settings](../reference/platform-tags.md). These builds can share a lock when they select
+the same packages and versions. If a dependency needs different pins on glibc and musl, lock those
+targets separately.
 
 Dependency markers select requirements within the declared targets; a Windows-only dependency does
 not add a Windows target. Extras and groups also need [selection](../how-to/choose-dependencies.md).
