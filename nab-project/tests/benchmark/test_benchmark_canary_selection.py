@@ -974,6 +974,41 @@ def test_selected_scenario_preflight_fails_before_host_and_output(
     )
 
 
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--runs", "0", "--scenario", "quick:six"], "--runs must be at least 1"),
+        (["--runs", "-1"], "--runs must be at least 1"),
+        (["--scenarios-list", "missing"], "cannot read scenario list"),
+        (["--scenarios-list", "bad.txt"], "contains invalid UTF-8"),
+        (
+            ["--scenarios-list", "bad.txt", "--scenario", "quick:six"],
+            "not allowed with argument",
+        ),
+    ],
+)
+def test_invalid_canary_arguments_create_no_report(
+    arguments: list[str],
+    message: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _harness()
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "bad.txt").write_bytes(b"\xff")
+    results = tmp_path / "results"
+    monkeypatch.setattr(module, "RESULTS_DIR", results)
+    monkeypatch.setattr(sys, "argv", ["canary.py", *arguments])
+
+    with pytest.raises(SystemExit) as caught:
+        module.main()
+
+    assert caught.value.code == 2
+    assert message in capsys.readouterr().err
+    assert not results.exists()
+
+
 def test_empty_scenarios_list_exits_before_creating_results(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
