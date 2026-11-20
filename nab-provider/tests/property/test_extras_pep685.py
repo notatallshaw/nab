@@ -18,7 +18,6 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nab_index.client import WheelFile
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import (
     ExtrasMode,
@@ -28,9 +27,9 @@ from nab_provider.provider import (
     split_extra,
 )
 from nab_provider.target import ResolveTarget
-from nab_test_support.coordinator import make_coordinator
+from nab_provider.testing import make_coordinator, make_wheel
 
-from .strategies import PROPERTY_SETTINGS
+from .settings import PROPERTY_SETTINGS
 
 pytestmark = pytest.mark.property
 
@@ -84,14 +83,7 @@ def _make_extras_provider(
     extras_mode: ExtrasMode = ExtrasMode.WARN,
 ) -> Provider:
     """Build a ``Provider`` whose only entry is ``testpkg-1.0``."""
-    wheel = WheelFile(
-        filename="testpkg-1.0-py3-none-any.whl",
-        url="https://example.com/testpkg-1.0-py3-none-any.whl",
-        version="1.0",
-        requires_python=None,
-        has_metadata=True,
-        upload_time=None,
-    )
+    wheel = make_wheel("1.0", package="testpkg")
     coordinator = make_coordinator([wheel], package="testpkg")
 
     # Pre-store metadata so the resolver short-circuits on the
@@ -112,8 +104,7 @@ class TestQuoteExtraNameNormalization:
     > names: ``re.sub(r"[-_.]+", "-", name).lower()``"
 
     The module's ``join_extra``/``split_extra`` round-trip must apply
-    that normalization, so that ``Security``, ``security``,
-    ``se_curity``, and ``se.curity`` all yield the same proxy key.
+    that normalization to the extra component of the proxy key.
 
     Reference: https://peps.python.org/pep-0685/#specification
     """
@@ -125,7 +116,7 @@ class TestQuoteExtraNameNormalization:
         key = join_extra("pkg", extra)
         _, parsed = split_extra(key)
         assert parsed is not None
-        assert parsed == parsed.lower().replace("_", "-")
+        assert parsed == extra.lower().replace("_", "-")
 
     @given(
         a=st.sampled_from(["Security", "SECURITY", "security"]),
@@ -165,7 +156,7 @@ class TestExtraNameRoundtrip:
         parsed_base, parsed_extra = split_extra(join_extra(base, extra))
         assert parsed_base == base
         assert parsed_extra is not None
-        assert parsed_extra == parsed_extra.lower().replace("_", "-")
+        assert parsed_extra == "dev-test"
 
 
 class TestExtrasNeverCrashOnArbitrary:
