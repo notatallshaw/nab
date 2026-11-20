@@ -1,8 +1,6 @@
-"""Provider that bridges packaging's PEP 440 types to nab-resolver."""
+"""In-memory PEP 440 provider for the resolver integration tests."""
 
 from __future__ import annotations
-
-__lazy_modules__ = ("nab_provider._vendor.packaging.ranges",)
 
 from typing import TYPE_CHECKING
 

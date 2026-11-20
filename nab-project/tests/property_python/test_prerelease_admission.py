@@ -20,13 +20,13 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nab_project._packaging_provider import PackagingProvider
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver
 
+from ..packaging_provider import PackagingProvider
 from .strategies import PROPERTY_SETTINGS
 
 pytestmark = pytest.mark.property

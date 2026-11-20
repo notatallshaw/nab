@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import pytest
 
-from nab_project._packaging_provider import PackagingProvider
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Term
+
+from .packaging_provider import PackagingProvider
 
 V = Version
 
