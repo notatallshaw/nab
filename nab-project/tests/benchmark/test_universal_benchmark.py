@@ -111,7 +111,7 @@ def _successful_result() -> tuple[ResolveTarget, ResolveResult]:
     return target, result
 
 
-def _result_data(result: dict, *, schema: int = 4) -> dict:
+def _result_data(result: dict, *, schema: int = 5) -> dict:
     complete_result = {
         "success": False,
         "resolution_success": None,
@@ -516,15 +516,26 @@ def test_result_contract_allows_multiple_slices_per_declared_cell() -> None:
     assert module.result_is_accepted(data) is True
 
 
-def test_lock_consistency_requires_a_valid_emitted_pylock() -> None:
+@pytest.mark.parametrize(
+    ("filename", "errors"),
+    [
+        ("foo-2.0-py3-none-any.whl", ("foo-2.0", "package version '1.0'")),
+        ("foo-1.0-cp311-cp311-win_amd64.whl", ("No wheel found", "foo")),
+        ("foo-1.0-py3-none-any.whl", ()),
+    ],
+    ids=["wrong-version", "wrong-platform", "installable"],
+)
+def test_lock_consistency_requires_an_installable_lock(
+    filename: str, errors: tuple[str, ...]
+) -> None:
     module = _harness()
     target = ResolveTarget.for_declared(
         python_version="3.11",
         spec=PlatformSpec("linux_x86_64"),
     )
     wheel = WheelArtifact(
-        filename="foo-2.0-py3-none-any.whl",
-        url="https://example.test/foo-2.0-py3-none-any.whl",
+        filename=filename,
+        url=f"https://example.test/{filename}",
         hashes=(("sha256", "a" * 64),),
     )
     pin = IndexPin(
@@ -546,10 +557,12 @@ def test_lock_consistency_requires_a_valid_emitted_pylock() -> None:
 
     consistent, problems = module.check_lock_consistency(result)
 
-    assert consistent is False
-    assert len(problems) == 1
-    assert "foo-2.0" in problems[0]
-    assert "package version '1.0'" in problems[0]
+    assert consistent is (not errors)
+    if errors:
+        assert len(problems) == 1
+        assert all(detail in problems[0] for detail in errors)
+    else:
+        assert problems == []
 
 
 def test_lock_inconsistency_fails_and_pins_are_retained(
@@ -1395,7 +1408,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "lock_consistent": None,
                 "error": "scenario exceeded wall-clock budget",
             },
-            4,
+            5,
             1,
         ),
         (
@@ -1407,7 +1420,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "timed_out": False,
                 "lock_consistent": None,
             },
-            4,
+            5,
             0,
         ),
         (
@@ -1419,7 +1432,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "timed_out": False,
                 "lock_consistent": None,
             },
-            4,
+            5,
             1,
         ),
         (
@@ -1431,7 +1444,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "timed_out": False,
                 "lock_consistent": True,
             },
-            2,
+            4,
             1,
         ),
     ],
@@ -1454,7 +1467,7 @@ def test_summary_exit_status(
     (result_dir / "_manifest.json").write_text(
         json.dumps(
             {
-                "benchmark_schema": 4,
+                "benchmark_schema": 5,
                 "commit": "run",
                 "source": _CLEAN_SOURCE,
                 "source_end": _CLEAN_SOURCE,
@@ -1538,7 +1551,7 @@ def test_summary_rejects_a_selected_run_manifest(
     (result_dir / "_manifest.json").write_text(
         json.dumps(
             {
-                "benchmark_schema": 4,
+                "benchmark_schema": 5,
                 "commit": "run",
                 "source": _CLEAN_SOURCE,
                 "source_end": _CLEAN_SOURCE,
@@ -1575,7 +1588,7 @@ def test_summary_requires_one_clean_source(
     (result_dir / "_manifest.json").write_text(
         json.dumps(
             {
-                "benchmark_schema": 4,
+                "benchmark_schema": 5,
                 "commit": "run",
                 "source": start,
                 "source_end": end,
