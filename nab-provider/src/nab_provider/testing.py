@@ -48,7 +48,13 @@ if TYPE_CHECKING:
 
     from ._vendor.packaging.requirements import Requirement
     from .metadata import WheelMetadata
-    from .policy import BuildPolicy, DistPolicy, SourceMaterialization, SourceRequest
+    from .policy import (
+        BuildPolicy,
+        DistPolicy,
+        MetadataPolicy,
+        SourceMaterialization,
+        SourceRequest,
+    )
     from .records import RangeMetadataResult
 
 __all__ = [
@@ -192,6 +198,7 @@ class _OverrideBody(TypedDict, total=False):
     """The body of a :class:`~nab_provider.overrides.PackageOverride`."""
 
     dist_policy: DistPolicy | None
+    metadata_policy: MetadataPolicy | None
     dist_trust_unverified_deps: bool | None
     assume_universal_deps: bool | None
     assume_consistent_metadata: bool | None
