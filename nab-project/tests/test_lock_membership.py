@@ -32,7 +32,7 @@ def _provider() -> Provider:
         "fancy-addon": (),
     }
     wheels = {
-        name: make_wheel(package=name.replace("-", "_"), hashes=(("sha256", "a" * 64),))
+        name: make_wheel(package=name, hashes=(("sha256", "a" * 64),))
         for name in requirements
     }
     metadata = {}

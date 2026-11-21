@@ -32,6 +32,16 @@ def test_wheel_sidecar_uses_the_configured_url(
     assert make_wheel(url=url).metadata_url == expected
 
 
+@pytest.mark.parametrize("package", ["My-Lib", "my.Lib", "my___lib"])
+def test_artifact_names_use_the_distribution_filename_form(package: str) -> None:
+    wheel = make_wheel(package=package)
+    source = make_sdist(package=package)
+    assert wheel.filename == "my_lib-1.0-py3-none-any.whl"
+    assert source.filename == "my_lib-1.0.tar.gz"
+    assert wheel.url.endswith("/" + wheel.filename)
+    assert source.url.endswith("/" + source.filename)
+
+
 def test_record_fixtures_do_not_share_releasable_state() -> None:
     first = make_wheel()
     second = make_wheel()
