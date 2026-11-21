@@ -87,6 +87,12 @@ def _done_event() -> threading.Event:
     return ev
 
 
+def _filename_stem(package: str, version: str) -> str:
+    """Use the normalized distribution name in wheel and sdist filenames."""
+    distribution = canonicalize_name(package).replace("-", "_")
+    return f"{distribution}-{version}"
+
+
 def make_wheel(  # noqa: PLR0913 - tests vary the record's independent fields
     version: str = "1.0",
     *,
@@ -102,7 +108,7 @@ def make_wheel(  # noqa: PLR0913 - tests vary the record's independent fields
     size: int | None = None,
 ) -> WheelFile:
     """Build an independent wheel record; derive its filename and default URL."""
-    filename = f"{package}-{version}-{tag}.whl"
+    filename = f"{_filename_stem(package, version)}-{tag}.whl"
     return WheelFile(
         filename=filename,
         url=f"https://example.com/{filename}" if url is None else url,
@@ -129,7 +135,7 @@ def make_sdist(
     size: int | None = None,
 ) -> SdistFile:
     """Build an independent gzip-tar sdist record with a default index URL."""
-    filename = f"{package}-{version}.tar.gz"
+    filename = f"{_filename_stem(package, version)}.tar.gz"
     return SdistFile(
         filename=filename,
         url=f"https://example.com/{filename}" if url is None else url,
