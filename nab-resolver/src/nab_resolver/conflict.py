@@ -40,7 +40,6 @@ __all__ = [
     "find_most_recent_satisfier",
     "force_targeted_backtrack",
     "is_terminal_incompatibility",
-    "iterate_force_resolution",
     "maybe_restart",
     "maybe_targeted_backtrack",
     "recompute_previous_level",
@@ -116,20 +115,19 @@ def conflict_resolution(
         )
 
         if can_backjump:
-            (
-                current_incompatibility,
-                most_recent_satisfier,
-                most_recent_satisfier_term,
-                previous_satisfier_level,
-                forced_any,
-            ) = iterate_force_resolution(
+            step = try_force_resolution_step(
                 resolver,
                 current_incompatibility,
                 most_recent_satisfier,
                 most_recent_satisfier_term,
-                previous_satisfier_level,
             )
-            if forced_any:
+            if step is not None:
+                (
+                    current_incompatibility,
+                    most_recent_satisfier,
+                    most_recent_satisfier_term,
+                    previous_satisfier_level,
+                ) = step
                 is_derived = True
 
         resolver.observer.on_conflict_step(
@@ -290,64 +288,28 @@ def conflict_credit_target(
     return parent
 
 
-def iterate_force_resolution(
-    resolver: Resolver[Any, Any],
-    incompatibility: Incompatibility[Any, Any],
-    satisfier: Assignment[Any, Any],
-    satisfier_term: Term[Any, Any],
-    previous_satisfier_level: int,
-) -> tuple[
-    Incompatibility[Any, Any],
-    Assignment[Any, Any],
-    Term[Any, Any],
-    int,
-    bool,
-]:
-    """Iterate :func:`try_force_resolution_step` while it succeeds.
-
-    Returns the (possibly-resolved) incompatibility, refreshed satisfier,
-    satisfier term, previous-satisfier level, and a ``forced_any`` flag
-    indicating whether at least one resolution step happened.  Stops when
-    ``try_force_resolution_step`` declines (returns ``None``).
-    """
-    forced_any = False
-
-    while True:
-        forced = try_force_resolution_step(
-            resolver, incompatibility, satisfier, satisfier_term
-        )
-        if forced is None:
-            break
-        forced_any = True
-        incompatibility = forced
-        (
-            satisfier,
-            satisfier_term,
-            previous_satisfier_level,
-        ) = find_most_recent_satisfier(resolver.solution, forced)
-
-    return (
-        incompatibility,
-        satisfier,
-        satisfier_term,
-        previous_satisfier_level,
-        forced_any,
-    )
-
-
 def try_force_resolution_step(
-    resolver: Resolver[Any, Any],
-    incompatibility: Incompatibility[Any, Any],
-    satisfier: Assignment[Any, Any],
-    satisfier_term: Term[Any, Any],
-) -> Incompatibility[Any, Any] | None:
+    resolver: Resolver[PackageType, VersionType],
+    incompatibility: Incompatibility[PackageType, VersionType],
+    satisfier: Assignment[PackageType, VersionType],
+    satisfier_term: Term[PackageType, VersionType],
+) -> (
+    tuple[
+        Incompatibility[PackageType, VersionType],
+        Assignment[PackageType, VersionType],
+        Term[PackageType, VersionType],
+        int,
+    ]
+    | None
+):
     """Resolve a single-term NO_VERSIONS clause after a soundness check.
 
     Standard PubGrub backjumps to root for single-term clauses, losing the
     supporting decisions; resolving once with the satisfier's cause exposes
     them so later propagation can skip the bad decision.
 
-    Returns ``None`` when the resolved clause collapses to <2 terms (the
+    Return the clause and its checked satisfier and backjump level.
+    Return ``None`` when the resolved clause collapses to <2 terms (the
     eliminated package's conditioning would be lost) or when it is not
     assert-eligible.
     """
@@ -371,7 +333,7 @@ def try_force_resolution_step(
         cause_right=satisfier.cause,
     )
 
-    forced_recent, _, forced_prev_level = find_most_recent_satisfier(
+    forced_recent, forced_term, forced_prev_level = find_most_recent_satisfier(
         resolver.solution, forced
     )
     forced_can_backjump = (
@@ -380,7 +342,7 @@ def try_force_resolution_step(
     if not forced_can_backjump:
         return None
 
-    return forced
+    return forced, forced_recent, forced_term, forced_prev_level
 
 
 def _prior_cause(
