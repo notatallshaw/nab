@@ -1,10 +1,8 @@
 """Evaluate a PEP 508 dependency marker for a resolve-time environment.
 
-``packaging.markers.Marker.evaluate`` binds ``extra`` to a single string and
-cannot say that several extras are active, so this goes through
-:class:`~nab_markersets.markersets.MarkerSet` instead.  Its own module so the resolve
-engine reaches no marker-set definition; ``tasks/check_engine_markersets.py``
-holds the import closure to a named list this module is on.
+The provider uses :class:`~nab_markersets.markersets.MarkerSet` to evaluate
+dependencies against an explicit target environment and its active extras.
+This module translates marker algebra errors into provider errors.
 """
 
 from __future__ import annotations
