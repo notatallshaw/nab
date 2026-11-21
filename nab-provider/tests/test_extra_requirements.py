@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from nab_provider._provider.metadata_resolver import extend_with_extras
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import InvalidName
 from nab_provider.marker_holds import IntractableMarkerError, UnevaluableMarkerError
@@ -84,6 +85,11 @@ class TestAddExtraMarker:
                 "[project.optional-dependencies] extra 'x'",
                 extra='a" or os_name != "x',
             )
+
+
+def test_invalid_sdist_extra_without_dependencies_is_rejected() -> None:
+    with pytest.raises(InvalidProjectRequirementError, match="bad name"):
+        extend_with_extras([], {"bad name": []})
 
 
 class TestSelfReferenceUnevaluableMarker:

@@ -570,6 +570,20 @@ class TestStaticExtractAugmentParity:
     normalisation and malformed-dependency handling.
     """
 
+    def test_empty_extra_with_invalid_name_is_rejected(self, tmp_path: Path) -> None:
+        _write_pyproject(
+            tmp_path,
+            """
+            [project]
+            name = "foo"
+            version = "1.0"
+            [project.optional-dependencies]
+            "bad name" = []
+            """,
+        )
+        with pytest.raises(InvalidProjectRequirementError, match="bad name"):
+            extract_static_metadata(tmp_path)
+
     def test_non_canonical_extra_canonicalized(self, tmp_path: Path) -> None:
         _write_pyproject(
             tmp_path,
