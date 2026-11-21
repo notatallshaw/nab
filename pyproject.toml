@@ -307,8 +307,6 @@ omit = [
     "*/tests/property_python/*",
     "*/test_crosshair_*.py",
     "*/_vendor/*",
-    "*/nab_project/_testing/*",
-    "*/nab_provider/testing.py",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#report
@@ -319,7 +317,6 @@ skip_covered = true
 skip_empty = true
 exclude_also = [
     "def __repr__",
-    "raise NotImplementedError",
     "raise RuntimeError.*unreachable",
     "if __name__ == .__main__.:",
     "class .*\\bProtocol\\):",
