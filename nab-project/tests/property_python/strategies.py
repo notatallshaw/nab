@@ -90,18 +90,12 @@ def pep440_specifiers(draw: st.DrawFn) -> SpecifierSet:
     representation.
     """
     num_specs = draw(st.integers(min_value=0, max_value=2))
-    if num_specs == 0:
-        return SpecifierSet()
-
     parts: list[str] = []
     for _ in range(num_specs):
         op = draw(st.sampled_from([">=", "<=", ">", "<", "==", "!="]))
         version = draw(st.sampled_from(VERSION_POOL))
         parts.append(f"{op}{version}")
-    try:
-        return SpecifierSet(",".join(parts))
-    except Exception:  # noqa: BLE001
-        return SpecifierSet()
+    return SpecifierSet(",".join(parts))
 
 
 @st.composite
