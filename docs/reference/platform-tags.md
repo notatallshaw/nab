@@ -101,8 +101,8 @@ platforms = [
 ```
 
 `platform-release` and `platform-version` set PEP 508 markers without changing wheel tags. Both
-default to `""`; comparisons against an empty value evaluate false. For example, a dependency
-requiring `platform_release >= "5.10"` is dropped unless the target declares a matching kernel.
+default to `""`. With those defaults, `platform_release >= "5.10"` excludes a dependency, while
+`platform_version == ""` includes it.
 
 ## Multiple variants and builds
 
