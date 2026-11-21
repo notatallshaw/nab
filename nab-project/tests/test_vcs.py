@@ -735,6 +735,20 @@ class TestCacheLayout:
         )
         return clone.path, argv
 
+    def test_offline_clone_reuses_a_commit_with_uppercase_hex(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sha = "a1" * 20
+        repo = "git+https://example.com/pkg.git"
+        cached, _ = self._clone(tmp_path, f"{repo}@{sha}", monkeypatch)
+        requested = VcsRequest.parse(f"{repo}@{sha.upper()}")
+        monkeypatch.setattr(subprocess, "run", _refuse_git)
+
+        clone = prepare_clone(tmp_path, requested, require_pin=True, offline=True)
+
+        assert clone.path == cached
+        assert clone.commit_sha == sha
+
     def test_repo_key_covers_the_repo_url_alone(
         self,
         tmp_path: Path,
