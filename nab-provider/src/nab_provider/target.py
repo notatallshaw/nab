@@ -80,6 +80,7 @@ __all__ = [
     "IntractableMarkerError",
     "Matrix",
     "MatrixInclude",
+    "MicroBoundaries",
     "NonIntervalMarkerError",
     "ResolveTarget",
     "UnevaluableMarkerError",
@@ -90,6 +91,7 @@ __all__ = [
     "environment_declaration",
     "host_environment",
     "marker_variables",
+    "micro_boundaries",
     "micro_boundary_points",
     "names_a_micro",
     "python_axis_environment",
@@ -358,7 +360,7 @@ def _patch_bounds(
 def _host_patch_bounds(target: ResolveTarget, texts: Sequence[str]) -> tuple[str, ...]:
     """Find the host interval or pin its build when the comparison requires it."""
     try:
-        points = _minor_version_points(target, texts)
+        points = sorted(_minor_version_boundaries(target, texts).versions)
     except NonIntervalMarkerError:
         return _patch_bounds(target, exclude_local_builds=True)
 
@@ -525,7 +527,7 @@ def _scanned_version_variables(target: ResolveTarget) -> frozenset[str]:
 def micro_boundary_points(
     target: ResolveTarget, consulted: Iterable[Marker]
 ) -> list[Version]:
-    """Return the first interpreter version at which each consulted clause changes.
+    """Return the numeric transitions of the consulted interpreter-version clauses.
 
     A bare minor covers prereleases as well as final patch releases. For example,
     ``< "3.12.4"`` stops applying at 3.12.4.dev0, while ``>= "3.12.4"`` starts at
@@ -535,40 +537,88 @@ def micro_boundary_points(
     A clause outside the supported interval comparisons raises NonIntervalMarkerError.
     Scan markers in text order to report the same offending clause on each run.
     """
+    return sorted(micro_boundaries(target, consulted).versions)
+
+
+_LOCAL_BUILD = '"+" in python_full_version'
+_PUBLIC_BUILD = '"+" not in python_full_version'
+
+
+class MicroBoundaries(NamedTuple):
+    """Version transitions and comparisons that can distinguish a local Python build."""
+
+    versions: frozenset[Version] = frozenset()
+    local_comparisons: frozenset[Marker] = frozenset()
+
+    def merge(self, other: MicroBoundaries) -> MicroBoundaries:
+        """Combine the boundaries observed on two dependency paths."""
+        return MicroBoundaries(
+            self.versions | other.versions,
+            self.local_comparisons | other.local_comparisons,
+        )
+
+    def slices(self, target: ResolveTarget) -> list[ResolveTarget]:
+        """Split a patch interval again when a local suffix changes its dependencies."""
+        intervals = slices_from_points(target, sorted(self.versions))
+        if not self.local_comparisons:
+            return intervals
+
+        result: list[ResolveTarget] = []
+        for interval in intervals:
+            version = interval.python_full_version
+            bounds = interval.micro_clauses
+            # A marker naming a specific local label was rejected during scanning.
+            # All suffixes on this release therefore give the same result.
+            local = target.with_micro_slice(f"{version}+local", (*bounds, _LOCAL_BUILD))
+            if any(
+                marker.evaluate_prepared(interval.marker_env)
+                != marker.evaluate_prepared(local.marker_env)
+                for marker in self.local_comparisons
+            ):
+                result.append(
+                    target.with_micro_slice(version, (*bounds, _PUBLIC_BUILD))
+                )
+                result.append(local)
+            else:
+                result.append(interval)
+        return result
+
+
+def micro_boundaries(
+    target: ResolveTarget, consulted: Iterable[Marker]
+) -> MicroBoundaries:
+    """Find the numeric and local-build distinctions a minor resolve must cover."""
     if not target.is_minor_interval:
-        return []
-    return _minor_version_points(target, sorted(map(str, consulted)))
+        return MicroBoundaries()
+    return _minor_version_boundaries(target, sorted(map(str, consulted)))
 
 
-def _reads_version_on_right(
-    parts: tuple[str, str, str], scanned: frozenset[str]
-) -> bool:
-    """Recognize a version read as a bound on the right of a literal."""
-    lhs, _, rhs = parts
-    if not lhs.startswith(('"', "'")):
-        return False
-    # Packaging also reads a quoted right operand as an environment key.
-    key = rhs[1:-1] if rhs.startswith(('"', "'")) else rhs
-    return key in scanned
-
-
-def _minor_version_points(target: ResolveTarget, texts: Sequence[str]) -> list[Version]:
+def _minor_version_boundaries(
+    target: ResolveTarget, texts: Sequence[str]
+) -> MicroBoundaries:
     """Find version transitions for the declared minor in marker-text order."""
     minor_release = Version(target.python_version).release[:_PYTHON_VERSION_PARTS]
     floor = Version(f"{target.python_version}.0")
     scanned = _scanned_version_variables(target)
 
     points: set[Version] = set()
+    local_comparisons: set[Marker] = set()
     for text in texts:
         for atom in MARKER_COMPARISON.finditer(text):
             parts = _clause_parts(atom)
-            if target.host_faithful and _reads_version_on_right(parts, scanned):
-                # A local build on the right can change the comparison to a string test.
-                raise _non_interval(parts, target)
+            lhs, op, rhs = parts
+            if lhs.startswith(('"', "'")) and rhs.strip("\"'") in scanned:
+                # Packaging uses the right operand as the bound even when it is quoted.
+                if target.host_faithful:
+                    raise _non_interval(parts, target)
+                parts = lhs, op, rhs.strip("\"'")
+                local_comparisons.add(Marker(" ".join(parts)))
+                if lhs == '"+"' and op in {"in", "not in"}:
+                    continue
             points.update(
                 _clause_boundary_points(parts, scanned, minor_release, floor, target)
             )
-    return sorted(points)
+    return MicroBoundaries(frozenset(points), frozenset(local_comparisons))
 
 
 def _clause_boundary_points(
@@ -1048,6 +1098,9 @@ class ResolveTarget(HashableRecord):
                 constraints.append(f">={self.python_version}.0")
             # A split target carries its own bounds and can contain only prereleases.
             for clause in self.micro_clauses:
+                # A local label does not change the numeric bounds of its slice.
+                if clause in (_LOCAL_BUILD, _PUBLIC_BUILD):
+                    continue
                 atom = MARKER_COMPARISON.fullmatch(clause)
                 if atom is None:
                     return False

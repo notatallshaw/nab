@@ -54,6 +54,10 @@ A minor with no marker boundary uses a plain `python_version == "3.13"` row with
 `python_full_version` clause: a marker outside the target minor gives the same answer on every
 patch.
 
+When a marker compares a literal to the running version, a local build can select different
+dependencies from the public release. For example, `"3.12.4" == python_full_version` is true on
+3.12.4 and false on 3.12.4+vendor. Nab resolves both builds when the comparison distinguishes them.
+
 To resolve one patch release without splitting it:
 
 ```toml
@@ -73,8 +77,8 @@ observed build.
 
 On a minor-interval target, a consulted full-version marker must describe intervals. Nab rejects:
 
-- membership (`in` or `not in`), verbatim `===`, non-version strings, and comparisons with another
-  variable;
+- membership other than testing for a local label (`"+" in python_full_version` or its negation),
+  verbatim `===`, non-version strings, and comparisons with another variable;
 - invalid PEP 440 operands such as `< "3.12.*"` or `~= "3"`;
 - local version labels within the target minor, such as `python_full_version == "3.12.4+vendor"`;
 - the pre- and post-release boundaries listed below.

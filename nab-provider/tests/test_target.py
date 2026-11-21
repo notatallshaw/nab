@@ -36,6 +36,7 @@ from nab_provider.target import (
     environment_declaration,
     host_environment,
     marker_variables,
+    micro_boundaries,
     micro_boundary_points,
     python_axis_environment,
     slices_from_points,
@@ -1430,6 +1431,40 @@ class TestMicroBoundarySplitting:
         """Packaging compares the literal to each interpreter's specifier."""
         found = micro_boundary_points(self._target(), [Marker(marker)])
         assert [str(point) for point in found] == points
+
+    @pytest.mark.parametrize("axis", ["python_full_version", "implementation_version"])
+    @pytest.mark.parametrize("quoted", [False, True])
+    def test_local_build_distinction_covers_the_minor(
+        self, axis: str, *, quoted: bool
+    ) -> None:
+        target = self._target()
+        operand = f'"{axis}"' if quoted else axis
+        consulted = Marker(f'"3.12.4" == {operand}')
+        slices = micro_boundaries(target, [consulted]).slices(target)
+        rows = [Marker(environment_declaration(part, [consulted])) for part in slices]
+
+        for version in ("3.12.3", "3.12.4rc1", "3.12.4", "3.12.4+vendor", "3.12.5"):
+            env = dict(
+                target.marker_env,
+                python_full_version=version,
+                implementation_version=version,
+            )
+            [part] = [
+                s for s, row in zip(slices, rows, strict=True) if row.evaluate(env)
+            ]
+            assert consulted.evaluate(part.marker_env) is consulted.evaluate(env)
+
+    def test_local_selector_preserves_the_release_bounds_for_artifacts(self) -> None:
+        target = self._target()
+        markers = [
+            Marker('python_full_version >= "3.12.4" and "+" in python_full_version')
+        ]
+        slices = micro_boundaries(target, markers).slices(target)
+        local = next(
+            part for part in slices if part.python_full_version == "3.12.4+local"
+        )
+        assert local.covered_by_requires_python([SpecifierSet(">=3.12.4")])
+        assert not local.covered_by_requires_python([SpecifierSet(">=3.12.5")])
 
     @pytest.mark.parametrize(
         ("marker", "points"),

@@ -3458,10 +3458,7 @@ class TestMicroBoundaryNarrowing:
         assert len(bars) == 2
 
     def test_a_literal_on_the_left_marker_splits_and_covers_the_minor(self) -> None:
-        """A dep gated by a literal-first marker (``"3.10.4" > pfv``) splits
-        the minor the same as ``pfv < "3.10.4"`` would, so the two rows cover
-        every real 3.10 with no interpreter left between them.
-        """
+        """The installer must see the same dependency as the original comparison."""
         coordinator = self._coordinator(
             {
                 "1.0": self._meta("foo", "1.0", 'mid ; "3.10.4" > python_full_version'),
@@ -3477,21 +3474,25 @@ class TestMicroBoundaryNarrowing:
         )
 
         assert result.success
-        assert self._pins_by_label(result) == {
-            "py310-linux_x86_64-pf3100": {"foo", "mid"},
-            "py310-linux_x86_64-pf3104": {"foo"},
-        }
-        rows = build_lock_input(result, inputs=_no_build()).environments
-        assert len(rows) == 2
-        for micro in ("3.10.0", "3.10.3", "3.10.4", "3.10.19"):
-            env = {
-                "python_version": "3.10",
-                "python_full_version": micro,
-                "sys_platform": "linux",
-                "platform_machine": "x86_64",
-                "implementation_name": "cpython",
+        lock = build_pylock(build_lock_input(result, inputs=_no_build()))
+        [target] = targets
+        for micro, needs_mid in (
+            ("3.10.0", True),
+            ("3.10.3", True),
+            ("3.10.3+vendor", False),
+            ("3.10.4", False),
+            ("3.10.19", False),
+        ):
+            env = dict(
+                target.marker_env,
+                python_full_version=micro,
+                implementation_version=micro,
+            )
+            names = {
+                package.name
+                for package, _ in lock.select(environment=env, tags=target.tags.ordered)
             }
-            assert sum(row.evaluate(env) for row in rows) == 1
+            assert names == ({"foo", "mid"} if needs_mid else {"foo"})
 
 
 class TestMicroSliceAlignmentDirection:

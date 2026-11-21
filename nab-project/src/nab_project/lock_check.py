@@ -19,7 +19,7 @@ from nab_provider.environment import classify_dependency, marker_environment
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.pep508 import parse_requirement
 from nab_provider.records import select_artifact_hash
-from nab_provider.target import micro_boundary_points, slices_from_points
+from nab_provider.target import micro_boundaries
 
 from . import toml_io
 from .build_backend import project_metadata
@@ -176,12 +176,7 @@ def _check_target_slices(
                 )
             )
         )
-    slices = (
-        [target]
-        if target.concrete_micro
-        else slices_from_points(target, sorted(micro_boundary_points(target, markers)))
-    )
-    for sliced in slices:
+    for sliced in micro_boundaries(target, markers).slices(target):
         if lock.requires_python is not None and not lock.requires_python.contains(
             sliced.marker_env["python_full_version"], prereleases=True
         ):
