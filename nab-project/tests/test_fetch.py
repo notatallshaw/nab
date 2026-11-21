@@ -2187,6 +2187,15 @@ class TestMultiIndexCoordinator:
                 ],
             )
 
+    @pytest.mark.parametrize("limit", [0, -1])
+    def test_nonpositive_concurrency_rejected_at_construction(self, limit: int) -> None:
+        transport = HttpxAsyncTransport()
+        try:
+            with pytest.raises(ValueError, match="max_concurrency"):
+                FetchCoordinator(transport, max_concurrency=limit)
+        finally:
+            asyncio.run(transport.aclose())
+
     def test_default_indexes_is_pypi(self) -> None:
         """Without explicit indexes, the coordinator defaults to PyPI."""
         coord = FetchCoordinator(transport=HttpxAsyncTransport())

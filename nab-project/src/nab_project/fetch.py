@@ -84,6 +84,7 @@ from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from . import _fetch_requests as fetch_requests
 from ._build_remote import build_remote_sdist
+from ._concurrency import validate_max_concurrency
 from ._sources import materialize_source
 from .toml_io import loads_if_valid
 
@@ -378,7 +379,7 @@ class FetchCoordinator:
         """Create a coordinator that wraps ``transport``.
 
         ``indexes`` is ordered and its names must be unique. It defaults to
-        PyPI when omitted.
+        PyPI when omitted. ``max_concurrency`` must allow at least one fetch.
 
         ``index_routes`` pins package listings to named indexes.
         ``index_cache_floors`` maps index names to read-time freshness floors
@@ -399,6 +400,8 @@ class FetchCoordinator:
         ``build_config`` is the settings a :pep:`517` build runs under;
         a caller that resolves without building leaves it ``None``.
         """
+        validate_max_concurrency(max_concurrency)
+
         if indexes is None:
             indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
 
