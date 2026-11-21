@@ -24,14 +24,16 @@ from hypothesis import example, given
 from hypothesis import strategies as st
 
 from nab_resolver._compat import override
+from nab_resolver.errors import ResolutionError, ResolutionLimitError
 from nab_resolver.ranges import Range
-from nab_resolver.resolver import ResolutionError, Resolver, ResolverObserver
+from nab_resolver.resolver import Resolver, ResolverObserver
 
 from .providers import (
     FuzzProvider,
     OldestFirstProvider,
     PromotingFuzzProvider,
     brute_force_has_solution,
+    is_proven_conflict,
     reachable_packages,
     resolve_or_prove_conflict,
     verify_solution,
@@ -178,13 +180,10 @@ class TestQuoteResolverNeverCrashes:
     @given(graph=dependency_graphs())
     @PROPERTY_SETTINGS
     def test_never_crashes(self, graph: dict) -> None:
-        """``Resolver.resolve`` returns a solution or raises ``ResolutionError``."""
+        """A generated graph solves or produces a dependency-conflict proof."""
         provider = FuzzProvider(graph)
         resolver = Resolver(provider, max_iterations=1000)
-        try:
-            resolver.resolve({"root": Range.singleton(1)})
-        except ResolutionError:
-            pass
+        resolve_or_prove_conflict(resolver, {"root": Range.singleton(1)})
 
     @pytest.mark.timeout(RESOLUTION_TIMEOUT_SECONDS * 200)
     @given(graph=dependency_graphs())
@@ -194,8 +193,8 @@ class TestQuoteResolverNeverCrashes:
         provider = FuzzProvider(graph)
         resolver = Resolver(provider, max_iterations=1000)
         try:
-            resolver.resolve({"root": Range.singleton(1)})
-        except ResolutionError:
+            resolve_or_prove_conflict(resolver, {"root": Range.singleton(1)})
+        except ResolutionLimitError:
             pass
         assert resolver.stats.decisions <= 1001
 
@@ -228,9 +227,8 @@ class TestQuoteSolutionsAreValid:
         provider = FuzzProvider(graph)
         requirements = {"root": Range.singleton(1)}
         resolver = Resolver(provider, max_iterations=1000)
-        try:
-            solution = resolver.resolve(requirements)
-        except ResolutionError:
+        solution = resolve_or_prove_conflict(resolver, requirements)
+        if solution is None:
             return
         verify_solution(solution, requirements, graph)
 
@@ -241,9 +239,8 @@ class TestQuoteSolutionsAreValid:
         """All packages in the solution are reachable from root."""
         provider = FuzzProvider(graph)
         resolver = Resolver(provider, max_iterations=1000)
-        try:
-            solution = resolver.resolve({"root": Range.singleton(1)})
-        except ResolutionError:
+        solution = resolve_or_prove_conflict(resolver, {"root": Range.singleton(1)})
+        if solution is None:
             return
         root_required = set(graph.get("root", {}).get(1, {}).keys())
         root_required.add("root")
@@ -274,9 +271,8 @@ class TestRootClosedSubgraph:
         """Every dep of an in-solution package is itself in the solution."""
         provider = FuzzProvider(graph)
         resolver = Resolver(provider, max_iterations=1000)
-        try:
-            solution = resolver.resolve({"root": Range.singleton(1)})
-        except ResolutionError:
+        solution = resolve_or_prove_conflict(resolver, {"root": Range.singleton(1)})
+        if solution is None:
             return
         for package, version in solution.items():
             dependencies = graph.get(package, {}).get(version, {})
@@ -301,8 +297,8 @@ class TestQuoteFailureCarriesProof:
     > failed."
 
     Failure must carry an :class:`Incompatibility` proving the cause.
-    The only exception is iteration-limit timeouts, which the resolver
-    surfaces as :class:`ResolutionError` without a witness incompat.
+    An iteration limit can stop the search before it finds a proof.
+    An internal solver fault must fail the property.
 
     Reference:
     https://github.com/dart-lang/pub/blob/master/doc/solver.md#derivation-graph
@@ -317,9 +313,10 @@ class TestQuoteFailureCarriesProof:
         resolver = Resolver(provider, max_iterations=1000)
         try:
             resolver.resolve({"root": Range.singleton(1)})
+        except ResolutionLimitError:
+            return
         except ResolutionError as error:
-            if "exceeded" not in str(error):
-                assert error.incompatibility is not None
+            assert is_proven_conflict(error)
 
 
 class TestDeterministic:
@@ -343,13 +340,9 @@ class TestDeterministic:
         provider_b = FuzzProvider(graph)
         resolver_a = Resolver(provider_a, max_iterations=1000)
         resolver_b = Resolver(provider_b, max_iterations=1000)
-        try:
-            result_a = resolver_a.resolve({"root": Range.singleton(1)})
-        except ResolutionError:
-            with pytest.raises(ResolutionError):
-                resolver_b.resolve({"root": Range.singleton(1)})
-            return
-        result_b = resolver_b.resolve({"root": Range.singleton(1)})
+        requirements = {"root": Range.singleton(1)}
+        result_a = resolve_or_prove_conflict(resolver_a, requirements)
+        result_b = resolve_or_prove_conflict(resolver_b, requirements)
         assert result_a == result_b
 
 
@@ -379,10 +372,7 @@ class TestQuoteIncompatibilityMonotonicity:
         resolver = Resolver(provider, max_iterations=1000)
         observer = _MonotonicityObserver(resolver)
         resolver.observer = observer
-        try:
-            resolver.resolve({"root": Range.singleton(1)})
-        except ResolutionError:
-            pass
+        resolve_or_prove_conflict(resolver, {"root": Range.singleton(1)})
 
         for index in range(1, len(observer.sizes)):
             assert observer.sizes[index] >= observer.sizes[index - 1], (
@@ -398,10 +388,7 @@ def _assert_backjumps_strictly_downward(
     """Resolve ``graph`` with ``provider`` and assert every backjump is downward."""
     observer = _InvariantObserver()
     resolver = Resolver(provider, observer=observer, max_iterations=1000)
-    try:
-        resolver.resolve({"root": Range.singleton(1)})
-    except ResolutionError:
-        pass
+    resolve_or_prove_conflict(resolver, {"root": Range.singleton(1)})
     assert not observer.violations, (
         f"Invariant violations: {observer.violations}\nGraph: {graph}"
     )
@@ -493,10 +480,7 @@ class TestDecisionLevelMonotonicity:
         """Every recorded decision is exactly one level above the prior depth."""
         observer = _DenseLevelsObserver()
         resolver = Resolver(FuzzProvider(graph), observer=observer, max_iterations=1000)
-        try:
-            resolver.resolve({"root": Range.singleton(1)})
-        except ResolutionError:
-            pass
+        resolve_or_prove_conflict(resolver, {"root": Range.singleton(1)})
         if resolver.stats.restarts:
             return
         assert not observer.violations, (
@@ -520,9 +504,8 @@ class TestAdversarialGraphShapes:
         """Deep linear chains finish without stack overflow."""
         provider = FuzzProvider(graph)
         resolver = Resolver(provider, max_iterations=1000)
-        try:
-            solution = resolver.resolve({"root": Range.singleton(1)})
-        except ResolutionError:
+        solution = resolve_or_prove_conflict(resolver, {"root": Range.singleton(1)})
+        if solution is None:
             return
         verify_solution(solution, {"root": Range.singleton(1)}, graph)
 
@@ -533,9 +516,8 @@ class TestAdversarialGraphShapes:
         """Version-pinning cascades resolve under the boto3 pattern."""
         provider = FuzzProvider(graph)
         resolver = Resolver(provider, max_iterations=1000)
-        try:
-            solution = resolver.resolve({"root": Range.singleton(1)})
-        except ResolutionError:
+        solution = resolve_or_prove_conflict(resolver, {"root": Range.singleton(1)})
+        if solution is None:
             return
         verify_solution(solution, {"root": Range.singleton(1)}, graph)
 
@@ -561,9 +543,8 @@ class TestAdversarialGraphShapes:
         provider = FuzzProvider(graph)
         requirements = {"root": Range.singleton(1)}
         resolver = Resolver(provider, max_iterations=1000)
-        try:
-            solution = resolver.resolve(requirements)
-        except ResolutionError:
+        solution = resolve_or_prove_conflict(resolver, requirements)
+        if solution is None:
             return
         verify_solution(solution, requirements, graph)
 
@@ -575,9 +556,8 @@ class TestAdversarialGraphShapes:
         provider = FuzzProvider(graph)
         requirements = {"root": Range.singleton(1)}
         resolver = Resolver(provider, max_iterations=1000)
-        try:
-            solution = resolver.resolve(requirements)
-        except ResolutionError:
+        solution = resolve_or_prove_conflict(resolver, requirements)
+        if solution is None:
             return
         verify_solution(solution, requirements, graph)
 
@@ -589,9 +569,8 @@ class TestAdversarialGraphShapes:
         provider = FuzzProvider(graph)
         requirements = {"root": Range.singleton(1)}
         resolver = Resolver(provider, max_iterations=1000)
-        try:
-            solution = resolver.resolve(requirements)
-        except ResolutionError:
+        solution = resolve_or_prove_conflict(resolver, requirements)
+        if solution is None:
             return
         verify_solution(solution, requirements, graph)
 
@@ -603,9 +582,8 @@ class TestAdversarialGraphShapes:
         provider = FuzzProvider(graph)
         requirements = {"root": Range.singleton(1)}
         resolver = Resolver(provider, max_iterations=1000)
-        try:
-            solution = resolver.resolve(requirements)
-        except ResolutionError:
+        solution = resolve_or_prove_conflict(resolver, requirements)
+        if solution is None:
             return
         verify_solution(solution, requirements, graph)
         root_required = set(graph.get("root", {}).get(1, {}).keys())
@@ -726,28 +704,11 @@ class TestOrderInsensitivity:
         oldest_resolver = Resolver(OldestFirstProvider(graph), max_iterations=1000)
 
         try:
-            newest_resolver.resolve(requirements)
-        except ResolutionError as error:
-            if "exceeded" in str(error):
-                return
-            try:
-                oldest_resolver.resolve(requirements)
-            except ResolutionError:
-                return
-            pytest.fail(
-                f"Newest-first says impossible but oldest-first found a "
-                f"solution.\nGraph: {graph}"
-            )
-
-        try:
-            oldest_resolver.resolve(requirements)
-        except ResolutionError as error:
-            if "exceeded" in str(error):
-                return
-            pytest.fail(
-                f"Newest-first found a solution but oldest-first "
-                f"says impossible.\nGraph: {graph}"
-            )
+            newest = resolve_or_prove_conflict(newest_resolver, requirements)
+            oldest = resolve_or_prove_conflict(oldest_resolver, requirements)
+        except ResolutionLimitError:
+            return
+        assert (newest is None) == (oldest is None), graph
 
 
 class TestIndependenceOfIrrelevantAlternatives:
@@ -773,8 +734,10 @@ class TestIndependenceOfIrrelevantAlternatives:
         provider = FuzzProvider(graph)
         resolver = Resolver(provider, max_iterations=1000)
         try:
-            resolver.resolve(requirements)
-        except ResolutionError:
+            original = resolve_or_prove_conflict(resolver, requirements)
+        except ResolutionLimitError:
+            return
+        if original is None:
             return
 
         for package, versions in graph.items():
@@ -796,15 +759,15 @@ class TestIndependenceOfIrrelevantAlternatives:
                     reduced_provider = FuzzProvider(reduced)
                     reduced_resolver = Resolver(reduced_provider, max_iterations=1000)
                     try:
-                        solution = reduced_resolver.resolve(requirements)
-                    except ResolutionError as error:
-                        if "exceeded" in str(error):
-                            continue
-                        pytest.fail(
-                            f"Removing {dep_to_remove!r} from "
-                            f"{package!r}@{version} broke resolution.\n"
-                            f"Graph: {graph}"
+                        solution = resolve_or_prove_conflict(
+                            reduced_resolver, requirements
                         )
+                    except ResolutionLimitError:
+                        continue
+                    assert solution is not None, (
+                        f"Removing {dep_to_remove!r} from {package!r}@{version} "
+                        f"broke resolution.\nGraph: {graph}"
+                    )
                     verify_solution(solution, requirements, reduced)
 
     @pytest.mark.timeout(RESOLUTION_TIMEOUT_SECONDS * 50)
@@ -841,10 +804,10 @@ class TestIndependenceOfIrrelevantAlternatives:
         resolver = Resolver(provider, max_iterations=1000)
 
         try:
-            solution = resolver.resolve(requirements)
-        except ResolutionError as error:
-            if "exceeded" in str(error):
-                return
+            solution = resolve_or_prove_conflict(resolver, requirements)
+        except ResolutionLimitError:
+            return
+        if solution is None:
             return
 
         for package, versions in graph.items():
@@ -866,15 +829,15 @@ class TestIndependenceOfIrrelevantAlternatives:
                 reduced_provider = FuzzProvider(reduced)
                 reduced_resolver = Resolver(reduced_provider, max_iterations=1000)
                 try:
-                    reduced_solution = reduced_resolver.resolve(requirements)
-                except ResolutionError as error:
-                    if "exceeded" in str(error):
-                        continue
-                    pytest.fail(
-                        f"Removing unselected {package!r}@{version} broke "
-                        f"resolution.\nOriginal solution: {solution}\n"
-                        f"Graph: {graph}"
+                    reduced_solution = resolve_or_prove_conflict(
+                        reduced_resolver, requirements
                     )
+                except ResolutionLimitError:
+                    continue
+                assert reduced_solution is not None, (
+                    f"Removing unselected {package!r}@{version} broke resolution.\n"
+                    f"Original solution: {solution}\nGraph: {graph}"
+                )
                 verify_solution(reduced_solution, requirements, reduced)
 
 
@@ -902,11 +865,10 @@ class TestConstraintsRespected:
         constraints = self._draw_constraints(data, graph)
         provider = FuzzProvider(graph)
         resolver = Resolver(provider, max_iterations=1000)
-        try:
-            solution = resolver.resolve(
-                {"root": Range.singleton(1)}, constraints=constraints
-            )
-        except ResolutionError:
+        solution = resolve_or_prove_conflict(
+            resolver, {"root": Range.singleton(1)}, constraints=constraints
+        )
+        if solution is None:
             return
 
         for package, constraint_range in constraints.items():
@@ -926,11 +888,10 @@ class TestConstraintsRespected:
         constraints = self._draw_constraints(data, graph)
         provider = FuzzProvider(graph)
         resolver = Resolver(provider, max_iterations=1000)
-        try:
-            solution = resolver.resolve(
-                {"root": Range.singleton(1)}, constraints=constraints
-            )
-        except ResolutionError:
+        solution = resolve_or_prove_conflict(
+            resolver, {"root": Range.singleton(1)}, constraints=constraints
+        )
+        if solution is None:
             return
 
         root_required = set(graph.get("root", {}).get(1, {}).keys())
@@ -955,10 +916,9 @@ class TestConstraintsRespected:
         constraints = {target: Range.empty()}
         provider = FuzzProvider(graph)
         resolver = Resolver(provider, max_iterations=1000)
-        try:
+        with pytest.raises(ResolutionError) as caught:
             resolver.resolve({"root": Range.singleton(1)}, constraints=constraints)
-        except ResolutionError as error:
-            assert error.incompatibility is not None
+        assert is_proven_conflict(caught.value)
 
     @staticmethod
     def _draw_constraints(
