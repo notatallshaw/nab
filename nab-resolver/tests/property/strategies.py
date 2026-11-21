@@ -456,10 +456,9 @@ def mutual_back_edge_graphs(
         A@high -> B
         B      -> A
 
-    Circular deps create conditional subgraphs: B is only reachable
-    when a specific version of A is chosen, and B depends back on A.
-    Failures inside B must propagate back through A to a different A
-    version; if not, the resolver loops or falsely claims impossible.
+    The root admits the highest A, which selects a release of B that
+    depends on that A. Other releases and dependencies can force the
+    resolver to backtrack through this pair.
 
     See:
         https://github.com/python-poetry/poetry/issues/7398
@@ -493,28 +492,17 @@ def mutual_back_edge_graphs(
             package_versions[version] = deps
         graph[package] = package_versions
 
-    if len(packages) >= 2:
-        pkg_a, pkg_b = packages[0], packages[1]
-        a_versions = sorted(graph[pkg_a].keys())
-        high_v = a_versions[-1]
-        graph[pkg_a][high_v][pkg_b] = draw(dependency_ranges())
-        b_versions = sorted(graph[pkg_b].keys())
-        for bv in b_versions:
-            if draw(st.booleans()):
-                graph[pkg_b][bv][pkg_a] = draw(dependency_ranges())
+    # Make the two edges agree on actual releases, so the resolver can follow both.
+    pkg_a, pkg_b = packages[:2]
+    high_a = max(graph[pkg_a])
+    chosen_b = draw(st.sampled_from(sorted(graph[pkg_b])))
+    graph[pkg_a][high_a][pkg_b] = Range.singleton(chosen_b)
+    graph[pkg_b][chosen_b][pkg_a] = Range.singleton(high_a)
 
-    root_dep_count = draw(st.integers(min_value=1, max_value=min(3, len(packages))))
-    root_dep_packages = draw(
-        st.lists(
-            st.sampled_from(packages),
-            min_size=root_dep_count,
-            max_size=root_dep_count,
-            unique=True,
-        )
-    )
-    root_deps: dict[str, Range[int]] = {
-        dep_package: draw(dependency_ranges()) for dep_package in root_dep_packages
-    }
+    root_deps: dict[str, Range[int]] = {pkg_a: Range.full()}
+    others = draw(st.lists(st.sampled_from(packages[1:]), max_size=2, unique=True))
+    for package in others:
+        root_deps[package] = draw(dependency_ranges())
     graph["root"] = {1: root_deps}
     return graph
 
