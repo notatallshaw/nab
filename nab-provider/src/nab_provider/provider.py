@@ -1000,6 +1000,7 @@ class Provider:
         # name, the span-widened parent range per decided (name, version),
         # and the pure neighbor-gap range per (name, version).
         self._ascending_versions_cache: dict[str, list[Version]] = {}
+        self._narrowed_ranges: dict[tuple[str, VersionRange], VersionRange] = {}
         self._widened_ranges: dict[tuple[str, Version], VersionRange] = {}
         self._gap_widened_ranges: dict[tuple[str, Version], VersionRange] = {}
 
@@ -3100,8 +3101,14 @@ class Provider:
         if version_list is None:
             return constraint
 
-        universe = self._ascending_versions(normalized, version_list)
-        return narrow_over_listing(constraint, universe)
+        # Conflict reports ask for the same ranges many times.
+        key = (normalized, constraint)
+        narrowed = self._narrowed_ranges.get(key)
+        if narrowed is None:
+            universe = self._ascending_versions(normalized, version_list)
+            narrowed = narrow_over_listing(constraint, universe)
+            self._narrowed_ranges[key] = narrowed
+        return narrowed
 
     def format_range(self, constraint: RangeProtocol[Version]) -> str:
         """Render ``constraint`` for a failure report.

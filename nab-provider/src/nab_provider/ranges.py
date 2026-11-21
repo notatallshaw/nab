@@ -84,7 +84,7 @@ def _requirement_over_listing(
     chosen = set(selected)
     holes: list[Version] = []
     for version in universe:
-        if version in bounded and version not in chosen:
+        if version not in chosen and version in bounded:
             holes.append(version)
             if len(holes) > _MAX_EXCLUSIONS:
                 return None
