@@ -336,6 +336,32 @@ class TestDownloadLock:
         assert transport.closed
         assert transport.close_calls == 1
 
+    def test_offline_download_uses_local_copy_with_matching_hash(
+        self, tmp_path: Path
+    ) -> None:
+        content = b"mirrored wheel"
+        digest = hashlib.sha256(content).hexdigest()
+        remote = make_wheel_artifact("foo", "1.0", sha256=digest, size=len(content))
+        source = tmp_path / "FOO-1.0-py3-none-any.whl"
+        source.write_bytes(content)
+        local = WheelArtifact(
+            filename=source.name,
+            url=source.as_uri(),
+            hashes=remote.hashes,
+            local_path=source,
+        )
+        pin = IndexPin(name="foo", version="1.0", index="local", wheels=(remote, local))
+        transport = _FakeTransport({})
+        output = tmp_path / "downloads"
+
+        result = download_lock(
+            LockInput(targets=_one({"foo": pin})), transport, output, offline=True
+        )
+
+        assert result.written == (output / remote.filename,)
+        assert result.written[0].read_bytes() == content
+        assert transport.requested == []
+
     def test_idempotent_skip_when_sha_matches(self, tmp_path: Path) -> None:
         wheel_bytes = b"BYTES"
         wheel_sha = hashlib.sha256(wheel_bytes).hexdigest()
