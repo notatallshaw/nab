@@ -1044,6 +1044,15 @@ def test_content_range_conversion_failure_is_unreadable(
     assert _parse_content_range("bytes 0-1/2") is None
 
 
+@pytest.mark.parametrize("unit", ["bytes", "Bytes", "BYTES"])
+def test_content_range_unit_is_case_insensitive(unit: str) -> None:
+    assert _parse_content_range(f"{unit} 2-5/10") == (2, 5, 10)
+
+
+def test_content_range_rejects_text_after_the_length() -> None:
+    assert _parse_content_range("bytes 2-5/10 bytes") is None
+
+
 def test_parse_content_range_at_int_limit() -> None:
     parsed = _parse_content_range(f"bytes 0-0/{_AT_LIMIT_DIGITS}")
     assert parsed == (0, 0, int(_AT_LIMIT_DIGITS))
