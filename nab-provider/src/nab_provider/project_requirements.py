@@ -12,7 +12,7 @@ __lazy_modules__ = (
 from typing import TYPE_CHECKING
 
 from ._vendor.packaging.specifiers import SpecifierSet
-from ._vendor.packaging.utils import canonicalize_name
+from ._vendor.packaging.utils import InvalidName, canonicalize_name
 from .metadata import validate_specifier_versions
 from .pep508 import parse_requirement
 
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 __all__ = [
     "InvalidProjectRequirementError",
     "add_extra_marker",
+    "normalize_project_extra",
     "parse_project_requirement",
     "parse_project_requires_python",
     "parse_requirements",
@@ -34,6 +35,15 @@ __all__ = [
 
 class InvalidProjectRequirementError(ValueError):
     """A pyproject.toml dependency or metadata value is invalid or unresolvable."""
+
+
+def normalize_project_extra(name: str) -> str:
+    """Validate and normalize a key from project.optional-dependencies."""
+    try:
+        return canonicalize_name(name, validate=True)
+    except InvalidName as exc:
+        msg = f"invalid extra name {name!r} in [project.optional-dependencies]"
+        raise InvalidProjectRequirementError(msg) from exc
 
 
 def add_extra_marker(dep_str: str, extra_name: str) -> str:

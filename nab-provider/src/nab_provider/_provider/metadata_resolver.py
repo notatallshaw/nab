@@ -28,7 +28,7 @@ __lazy_modules__ = (
 
 import logging
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeGuard
+from typing import TYPE_CHECKING, Literal, NamedTuple, TypeGuard
 from urllib.parse import urlsplit
 
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
@@ -58,6 +58,7 @@ from ..metadata import (
 from ..policy import BuildPolicy
 from ..project_requirements import (
     InvalidProjectRequirementError,
+    normalize_project_extra,
     parse_project_requirement,
     parse_project_requires_python,
     parse_requirements,
@@ -1045,7 +1046,7 @@ def augment_from_pyproject(
 
 
 def extend_with_extras(
-    requires_dist: list[Requirement], optional: dict[str, Any]
+    requires_dist: list[Requirement], optional: Mapping[str, object]
 ) -> list[str]:
     """Append extras-gated requirements and return Provides-Extra names.
 
@@ -1056,9 +1057,10 @@ def extend_with_extras(
     provides_extra: list[str] = []
     for extra_name, extra_deps in optional.items():
         source = f"[project].optional-dependencies extra {extra_name!r}"
+        extra = normalize_project_extra(extra_name)
         provides_extra.append(extra_name)
         requires_dist.extend(
-            parse_project_requirement(dep_str, source, extra=extra_name)
+            parse_project_requirement(dep_str, source, extra=extra)
             for dep_str in require_string_list(extra_deps, source)
         )
     return provides_extra
