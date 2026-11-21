@@ -179,10 +179,11 @@ The upper slice starts at `3.11.4.dev0`: PEP 440 excludes prereleases from `< "3
 at `3.11.4` would leave them uncovered. New dependencies may introduce further boundaries; Nab
 repeats until no new split is needed.
 
-Ordered comparisons, equality, inequality and compatible-release markers can split a minor. Nab
-rejects `python_full_version` comparisons it cannot represent as intervals: membership tests,
-arbitrary equality, non-version values, comparisons with another variable, and certain pre- or
-post-release boundaries inside the minor.
+Ordered comparisons, equality, inequality and compatible-release markers can split a minor. A
+dependency that tests for a local build, such as `"+" in python_full_version`, can select different
+packages on the same patch release. See
+[lockfile environments](../reference/lockfile-environments.md#local-python-builds) for local builds
+and the comparisons a minor target supports.
 
 ### Pin a patch release instead
 

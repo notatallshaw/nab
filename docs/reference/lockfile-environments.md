@@ -48,15 +48,20 @@ For example, both variables use the final-release boundary for `implementation_v
 Nab checks those bounds against the same CPython version. On PyPy the implementation version is
 independent of the Python language version.
 
-### Unsplit targets
-
-A minor with no marker boundary uses a plain `python_version == "3.13"` row with no
-`python_full_version` clause: a marker outside the target minor gives the same answer on every
-patch.
+### Local Python builds
 
 When a marker compares a literal to the running version, a local build can select different
 dependencies from the public release. For example, `"3.12.4" == python_full_version` is true on
 3.12.4 and false on 3.12.4+vendor. Nab resolves both builds when the comparison distinguishes them.
+
+The marker `"+" in python_full_version` selects local builds across the minor. Its negation selects
+public releases.
+
+### Unsplit targets
+
+If every consulted version marker has the same result throughout Python 3.13, the row needs only
+`python_version == "3.13"` for its Python bound. For example, `python_full_version >= "3.12"` holds
+throughout that minor.
 
 To resolve one patch release without splitting it:
 
