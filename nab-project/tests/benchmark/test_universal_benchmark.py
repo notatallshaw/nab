@@ -1494,6 +1494,29 @@ def test_unrepresentable_wall_time_invalidates_the_result(scope: str) -> None:
     assert not module.result_is_well_formed(report)
 
 
+@pytest.mark.parametrize("command", ["runner", "summary"])
+def test_universal_commands_reject_nested_result_labels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    output = tmp_path / "reports"
+    if command == "runner":
+        module = _harness()
+        monkeypatch.setattr(module, "SCENARIOS_DIR", tmp_path)
+        (tmp_path / "universal.toml").write_text("")
+        args = ["--commit", "topic/refresh"]
+    else:
+        module = _summary_harness()
+        args = ["topic/refresh"]
+
+    monkeypatch.setattr(module, "RESULTS_DIR", output)
+    monkeypatch.setattr(sys, "argv", [command, *args])
+    with pytest.raises(SystemExit) as error:
+        module.main()
+
+    assert error.value.code == 2
+    assert not output.exists()
+
+
 def test_summary_exits_nonzero_without_results(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

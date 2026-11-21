@@ -35,6 +35,7 @@ else:
 
 from benchmark_datetime import parse_datetime
 from benchmark_json import read_benchmark_json
+from benchmark_paths import result_directory_label
 from benchmark_source import get_git_source_state
 from universal_result import (
     MANIFEST_FILENAME,
@@ -622,6 +623,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--commit",
+        type=result_directory_label,
         default=None,
         help="Override the commit label used for the results directory",
     )
