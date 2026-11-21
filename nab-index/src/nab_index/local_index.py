@@ -228,6 +228,7 @@ def _scan_pep503_directory(
     unreachable = False
     yanked = 0
     nameless = 0
+    has_remote_files = False
     zip_sdists: set[str] = set()
 
     for anchor in anchors:
@@ -265,6 +266,11 @@ def _scan_pep503_directory(
         )
         if record is not None:
             files = _append_record(files, record, yanked=anchor.yanked)
+            has_remote_files = has_remote_files or record.local_path is None
+
+    # The filesystem client can read local files when other selection criteria tie.
+    if has_remote_files:
+        files.sort(key=lambda file: file.local_path is None)
 
     # A navigation link is not a release, so both counts below read the
     # anchors that name one.
