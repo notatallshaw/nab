@@ -234,9 +234,9 @@ def test_corpus_operator_sound_minimal_and_reproduces_tiers() -> None:
             ca_oracle = corpus.achievable_min_marker(
                 original_selection, universe, marker_vars
             )
-            cf_oracle = corpus.achievable_min_marker(
-                corpus.selects(marker, grid), grid, marker_vars
-            )
+            grid_selection = corpus.selects(marker, grid)
+            assert corpus.selects(cf_text, grid) == grid_selection
+            cf_oracle = corpus.achievable_min_marker(grid_selection, grid, marker_vars)
             assert len(ca_text or "") <= len(ca_oracle)
             assert len(cf_text or "") <= len(cf_oracle)
 
