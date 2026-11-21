@@ -584,14 +584,14 @@ constraints = [
 
 [weaviate-bigquery-grpc-hint]
 # https://github.com/pypa/pip/issues/13281#issuecomment-2862562444
-# Same thread: okhaliavka reports adding grpcio-tools>=1.31 helps.
+# The reporter saw less pip backtracking with grpcio-tools>=1.31 than with >=1.30.
 python_version = "3.11"
 platform_system = "Linux"
 datetime = "2025-05-08 10:32:05"
 requirements = [
     "google-cloud-bigquery>=3.27",
     "weaviate-client>=4.9.3",
-    "grpcio-tools>=1.30",
+    "grpcio-tools>=1.31",
 ]
 
 [paddleocr-full-stack]
