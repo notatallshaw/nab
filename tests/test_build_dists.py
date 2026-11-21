@@ -64,17 +64,26 @@ def test_source_dir_maps_umbrella_to_root() -> None:
     )
 
 
-def test_artifact_hashes_picks_only_distributions(tmp_path: Path) -> None:
+def test_artifact_hashes_keep_package_directories_and_skip_other_files(
+    tmp_path: Path,
+) -> None:
     pkg = tmp_path / "nab"
     pkg.mkdir()
     (pkg / "nab-0.0.3-py3-none-any.whl").write_bytes(b"wheel")
     (pkg / "nab-0.0.3.tar.gz").write_bytes(b"sdist")
     (pkg / "notes.txt").write_bytes(b"ignore me")
 
-    hashes = build_dists._artifact_hashes(tmp_path)
+    other = tmp_path / "nab-index"
+    other.mkdir()
+    (other / "nab-0.0.3.tar.gz").write_bytes(b"sdist")
 
-    assert set(hashes) == {"nab-0.0.3-py3-none-any.whl", "nab-0.0.3.tar.gz"}
-    assert hashes["nab-0.0.3.tar.gz"] == hashlib.sha256(b"sdist").hexdigest()
+    wheel = hashlib.sha256(b"wheel").hexdigest()
+    sdist = hashlib.sha256(b"sdist").hexdigest()
+    assert build_dists._artifact_hashes(tmp_path) == {
+        Path("nab/nab-0.0.3-py3-none-any.whl"): wheel,
+        Path("nab/nab-0.0.3.tar.gz"): sdist,
+        Path("nab-index/nab-0.0.3.tar.gz"): sdist,
+    }
 
 
 def test_smoke_installs_every_built_wheel_and_checks_both_entries(
