@@ -317,7 +317,7 @@ class PartialSolution(Generic[PackageType, VersionType]):
 
     def __init__(
         self,
-        range_type: type[RangeProtocol[Any]] = Range,
+        range_type: type[RangeProtocol[VersionType]] = Range,
         *,
         contradiction_epoch: int = 0,
     ) -> None:
