@@ -64,6 +64,7 @@ from benchmark_host import (
     parse_requires_matching_host,
     parse_target_marker_environment,
 )
+from benchmark_paths import is_portable_path_component
 from benchmark_source import get_git_source_state
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
@@ -332,23 +333,6 @@ def run_one(
         }
 
 
-_PORTABLE_COMPONENT_START = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
-)
-_PORTABLE_COMPONENT_CHARS = _PORTABLE_COMPONENT_START | frozenset(".-")
-_MAX_PORTABLE_COMPONENT_LENGTH = 128
-_WINDOWS_RESERVED_COMPONENTS = frozenset(
-    {
-        "aux",
-        "con",
-        "nul",
-        "prn",
-        *(f"com{number}" for number in range(1, 10)),
-        *(f"lpt{number}" for number in range(1, 10)),
-    }
-)
-
-
 class _SelectionError(ValueError):
     """Raised when benchmark inputs select an unsafe or missing path."""
 
@@ -448,23 +432,9 @@ def _retired_selector_replacement(spec: str) -> str | None:
     return None
 
 
-def _is_portable_path_component(value: str) -> bool:
-    """Return whether *value* fits the portable ASCII filename grammar."""
-    if (
-        not value
-        or len(value) > _MAX_PORTABLE_COMPONENT_LENGTH
-        or value[0] not in _PORTABLE_COMPONENT_START
-        or value.endswith(".")
-        or any(char not in _PORTABLE_COMPONENT_CHARS for char in value)
-    ):
-        return False
-    windows_basename = value.partition(".")[0].casefold()
-    return windows_basename not in _WINDOWS_RESERVED_COMPONENTS
-
-
 def _result_directory_label(value: str) -> str:
     """Validate a user-provided results-directory label."""
-    if not _is_portable_path_component(value):
+    if not is_portable_path_component(value):
         msg = f"commit label must use a portable ASCII filename, got {value!r}"
         raise argparse.ArgumentTypeError(msg)
     return value
@@ -482,7 +452,7 @@ def _result_directory(label: str) -> Path:
 
 def _scenario_file(toml_stem: str) -> Path:
     """Return a top-level TOML path contained by the scenarios directory."""
-    if not _is_portable_path_component(toml_stem):
+    if not is_portable_path_component(toml_stem):
         msg = (
             f"scenario file stem must use a portable ASCII filename, got {toml_stem!r}"
         )

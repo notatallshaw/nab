@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 from typing import cast
 
 from benchmark_json import read_benchmark_json
+from benchmark_paths import result_directory_label
 from universal_result import (
     MANIFEST_FILENAME,
     RESULT_SCHEMA_VERSION,
@@ -89,8 +91,11 @@ def authoritative_result_paths(
 
 def main() -> int:
     """Print a markdown table with one row per scenario."""
-    if len(sys.argv) > 1:
-        target_dir = RESULTS_DIR / sys.argv[1] / "universal"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("label", nargs="?", type=result_directory_label)
+    args = parser.parse_args()
+    if args.label is not None:
+        target_dir = RESULTS_DIR / args.label / "universal"
     else:
         # Pick the most recently modified universal/ dir.
         candidates = sorted(

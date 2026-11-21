@@ -66,6 +66,7 @@ from benchmark_host import (
     settings_hash,
 )
 from benchmark_json import read_benchmark_json
+from benchmark_paths import is_portable_path_component, result_directory_label
 from benchmark_source import get_git_commit, get_git_source_state
 from standard_result import valid_outcome, valid_statistics
 
@@ -108,22 +109,7 @@ STANDARD_STRATEGIES = (
     ResolutionStrategy.LOWEST_DIRECT,
 )
 _LOWER_HEX = frozenset("0123456789abcdef")
-_PORTABLE_COMPONENT_START = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
-)
-_PORTABLE_COMPONENT_CHARS = _PORTABLE_COMPONENT_START | frozenset(".-")
-_MAX_PORTABLE_COMPONENT_LENGTH = 128
 _MAX_STORAGE_COMPONENT_LENGTH = 255
-_WINDOWS_RESERVED_COMPONENTS = frozenset(
-    {
-        "aux",
-        "con",
-        "nul",
-        "prn",
-        *(f"com{number}" for number in range(1, 10)),
-        *(f"lpt{number}" for number in range(1, 10)),
-    }
-)
 _RESERVED_RESULT_DIRECTORIES = frozenset({"universal", "universal-selected"})
 _STANDARD_MANIFEST_FIELDS = frozenset(
     {
@@ -153,36 +139,10 @@ _STANDARD_MANIFEST_FIELDS = frozenset(
 )
 
 
-def _is_portable_path_component(
-    value: str,
-    *,
-    max_length: int = _MAX_PORTABLE_COMPONENT_LENGTH,
-) -> bool:
-    """Return whether *value* is a portable single filename component."""
-    if (
-        not value
-        or len(value) > max_length
-        or value[0] not in _PORTABLE_COMPONENT_START
-        or value.endswith(".")
-        or any(char not in _PORTABLE_COMPONENT_CHARS for char in value)
-    ):
-        return False
-    windows_basename = value.partition(".")[0].casefold()
-    return windows_basename not in _WINDOWS_RESERVED_COMPONENTS
-
-
-def _result_directory_label(value: str) -> str:
-    """Validate a user-provided results-directory label."""
-    if not _is_portable_path_component(value):
-        msg = f"result label must use a portable ASCII filename, got {value!r}"
-        raise argparse.ArgumentTypeError(msg)
-    return value
-
-
 def _is_standard_result_directory_component(value: str) -> bool:
     """Return whether *value* can name a standard result directory."""
     return bool(
-        _is_portable_path_component(value)
+        is_portable_path_component(value)
         and not value.casefold().endswith(".json")
         and value.casefold() not in _RESERVED_RESULT_DIRECTORIES
     )
@@ -192,8 +152,8 @@ def _is_standard_result_scenario_name(value: str) -> bool:
     """Return whether *value* can produce a standard JSON result filename."""
     filename = f"{value}.json"
     return bool(
-        _is_portable_path_component(value)
-        and _is_portable_path_component(
+        is_portable_path_component(value)
+        and is_portable_path_component(
             filename,
             max_length=_MAX_STORAGE_COMPONENT_LENGTH,
         )
@@ -264,7 +224,7 @@ def _safe_tree_members(root: Path) -> tuple[list[Path], list[Path]]:
                         msg = f"reserved result namespace must be a directory: {path}"
                         raise ValueError(msg)
                     continue
-                if not _is_portable_path_component(
+                if not is_portable_path_component(
                     entry.name,
                     max_length=_MAX_STORAGE_COMPONENT_LENGTH,
                 ):
@@ -1486,7 +1446,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run nab resolution scenarios")
     parser.add_argument(
         "--commit",
-        type=_result_directory_label,
+        type=result_directory_label,
         default=None,
         help="Label for this run (default: git short hash of HEAD)",
     )
@@ -1510,7 +1470,7 @@ def main(argv: list[str] | None = None) -> None:
     commit = args.commit
     if commit is None:
         try:
-            commit = _result_directory_label(get_git_commit(short=True))
+            commit = result_directory_label(get_git_commit(short=True))
         except (FileNotFoundError, subprocess.CalledProcessError):
             parser.error(
                 "cannot read the benchmark checkout's revision. "

@@ -111,7 +111,9 @@ python nab-project/benchmarks/universal_scenarios.py --scenario marker-heavy
 python nab-project/benchmarks/universal_summary.py
 ```
 
-`universal_summary.py` walks the latest results directory and prints a markdown table.
+`universal_summary.py` walks the latest results directory and prints a markdown table. To name a
+run, pass a portable filename such as `--commit topic-refresh` to the runner, then pass
+`topic-refresh` to the summary.
 
 Each result retains its per-target solutions and merged target-label pin projection. The runner
 exits nonzero after an unexpected resolution, timeout, lock-emission failure, or projection failure.
