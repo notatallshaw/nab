@@ -84,13 +84,14 @@ results can share a lock.
 nab-resolver   ->  standard library
 nab-markersets ->  nab-resolver; packaging, or nab-provider, by extra
 nab-provider   ->  nab-markersets, nab-resolver
-nab-index      ->  nab-provider, packaging
+nab-index      ->  nab-provider, nab-resolver, packaging
 nab-project    ->  nab-markersets, nab-provider, nab-index, nab-resolver, packaging
 nab            ->  nab-markersets, nab-provider, nab-index, nab-project, nab-resolver
 ```
 
 This shows only internal dependencies and `packaging`, which exists in two copies. `nab-index` uses
-the provider's file records, index configuration and fetch errors. `nab_provider.value` supplies
+the provider's file records, index configuration and fetch errors. Its Simple API client uses
+`nab_resolver.diagnostics` to explain malformed index responses. `nab_provider.value` supplies
 shared record behavior; concrete record types belong to their domain package. Fixed fields use
 `Final` annotations without runtime write guards.
 
@@ -295,8 +296,9 @@ type checks and dictionary keys. `tasks/check_boundaries.py` enforces these exce
 
 `nab-markersets` prefers the bundled copy, then released `packaging` 26.3 or newer. Standalone users
 install `nab-markersets[packaging]`. The `nab-markersets[nab-vendored-packaging]` extra installs the
-provider’s copy. The index and project also use released `packaging` for other APIs, but markers do
-not cross between copies.
+provider’s copy. The index and project also use released `packaging` for other APIs.
+`MarkerSet.from_marker` accepts a `Marker` from either copy and parses its text with the selected
+backend.
 
 The provider owns dependency classification by environment and extra; the project reuses it to check
 saved pins. CI tests the provider with only its declared internal dependencies installed.
