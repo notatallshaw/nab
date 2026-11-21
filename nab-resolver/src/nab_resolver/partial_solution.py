@@ -24,6 +24,7 @@ __lazy_modules__ = (
 import operator
 from collections import defaultdict
 from collections.abc import Mapping
+from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Final, Generic, TypeVar, cast, overload
 from weakref import ref
 
@@ -35,7 +36,7 @@ from .types import PackageType, RangeProtocol, VersionType
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
     from collections.abc import Set as AbstractSet
-    from typing import TypeAlias
+    from typing import Literal, TypeAlias
 
     from .types import Incompatibility, Term
 
@@ -54,11 +55,16 @@ __all__ = [
 # instead of holding every operand to the end.
 RANGE_OP_MEMO_MAX = 2_048
 
-# Marks a missing map entry, where None can itself be the stored value.
-_UNSET = object()
 
-# Marks a package that the live map did not hold when a snapshot was taken.
-_ABSENT = object()
+class _SnapshotState(Enum):
+    """Distinguish an uncaptured key from one absent when the snapshot was taken."""
+
+    UNSET = auto()
+    ABSENT = auto()
+
+
+_UNSET: Final[Literal[_SnapshotState.UNSET]] = _SnapshotState.UNSET
+_ABSENT: Final[Literal[_SnapshotState.ABSENT]] = _SnapshotState.ABSENT
 
 _ValueType = TypeVar("_ValueType")
 _DefaultType = TypeVar("_DefaultType")
@@ -76,9 +82,9 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
 
     def __init__(self, live: dict[PackageType, _ValueType]) -> None:
         self._live: dict[PackageType, _ValueType] = live
-        # A value or _ABSENT. Any rather than that union, which no checker
-        # narrows the sentinel back out of.
-        self._shadow: dict[PackageType, Any] = {}
+        self._shadow: dict[
+            PackageType, _ValueType | Literal[_SnapshotState.ABSENT]
+        ] = {}
 
     def freeze(self, package: PackageType) -> None:
         """Keep the package's current value before the live map moves on."""
@@ -107,7 +113,7 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
             return self._live[package]
         if frozen is _ABSENT:
             raise KeyError(package)
-        return cast("_ValueType", frozen)
+        return frozen
 
     # ``object`` rather than ``PackageType``: narrowing the key would not
     # substitute for ``Mapping.get``.
@@ -131,7 +137,7 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
             return self._live.get(package, default)
         if frozen is _ABSENT:
             return default
-        return cast("_ValueType", frozen)
+        return frozen
 
     @override
     def __contains__(self, package: object) -> bool:
