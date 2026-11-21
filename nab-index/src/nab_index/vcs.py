@@ -204,7 +204,7 @@ def _resolve_sha(
     mapping.
     """
     if request.ref and FULL_GIT_SHA_RE.match(request.ref):
-        return request.ref
+        return request.ref.lower()
 
     if require_pin:
         msg = (
