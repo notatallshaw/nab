@@ -40,7 +40,7 @@ from nab_index.atomic import atomic_write
 from nab_index.client import AsyncSimpleClient
 from nab_index.local_index import parse_file_url
 from nab_provider.errors import HttpError
-from nab_provider.value import HashableRecord, Record
+from nab_provider.value import HashableRecord, Record, replace
 
 from ._concurrency import validate_max_concurrency
 from .lockfile import ArchivePin, IndexPin, LocalPin, LockInput, VcsPin
@@ -204,19 +204,23 @@ def _iter_index_pin(canonical: str, pin: IndexPin) -> Iterable[DownloadEntry]:
 
 
 def _coalesce_download_targets(
-    artefacts: list[DownloadEntry],
+    artefacts: Iterable[DownloadEntry], *, offline: bool = False
 ) -> list[DownloadEntry]:
     """Coalesce casefold-equivalent names sharing ``(hash_algo, digest)``.
 
-    The first filename wins. A different identity raises
+    Keep the first output filename, using a local copy when offline.
+    A different identity raises
     :class:`DownloadError`.
     """
     by_name: dict[str, DownloadEntry] = {}
-    unique: list[DownloadEntry] = []
     for entry in artefacts:
         key = entry.filename.casefold()
         prior = by_name.get(key)
-        if prior is not None and (prior.hash_algo, prior.digest) != (
+        if prior is None:
+            by_name[key] = entry
+            continue
+
+        if (prior.hash_algo, prior.digest) != (
             entry.hash_algo,
             entry.digest,
         ):
@@ -227,10 +231,9 @@ def _coalesce_download_targets(
                 " Download them to separate directories."
             )
             raise DownloadError(msg)
-        if prior is None:
-            by_name[key] = entry
-            unique.append(entry)
-    return unique
+        if offline and prior.local_path is None and entry.local_path is not None:
+            by_name[key] = replace(entry, filename=prior.filename)
+    return list(by_name.values())
 
 
 def download_lock(
@@ -257,7 +260,9 @@ def download_lock(
     try:
         validate_max_concurrency(max_concurrency)
         output_dir.mkdir(parents=True, exist_ok=True)
-        artefacts = _coalesce_download_targets(list(iter_artifacts(lock_input)))
+        artefacts = _coalesce_download_targets(
+            iter_artifacts(lock_input), offline=offline
+        )
     except BaseException:
         asyncio.run(transport.aclose())
         raise
