@@ -9,6 +9,7 @@ from nab_index.local_index import is_file_url
 from nab_index.multi_index import IndexConfig
 from nab_project.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
 from nab_project.inputs import ResolveInputs
+from nab_provider._vendor.packaging.markers import default_environment
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
@@ -27,6 +28,7 @@ from nab_provider.provider import (
 )
 from nab_provider.requirements_file import expand_self_extras
 from nab_provider.serialization import SimpleSerialization
+from nab_provider.vcs_admission import admit_vcs_url
 from nab_provider.yanked_resolution import YankProxyProvider
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 from nab_resolver.types import RootRequirement
@@ -82,6 +84,46 @@ class BenchmarkRequirements(dict[str, VersionRange]):
         """Start with no ranges or original declarations."""
         super().__init__()
         self.declarations: list[Requirement] = []
+
+
+def parse_requirements(
+    requirement_strings: list[str],
+    *,
+    vcs_config: VcsConfig | None = None,
+    marker_environment: dict[str, str] | None = None,
+) -> BenchmarkRequirements:
+    """Return admitted declarations and ranges for one benchmark target.
+
+    Keep the original requirements for yanked-release admission. Equivalent
+    extra names share one resolver key, as they do in a project resolve.
+    """
+    config = vcs_config or VcsConfig()
+    env = dict(default_environment())
+    if marker_environment:
+        env.update(marker_environment)
+    reqs = BenchmarkRequirements()
+    for req_str in requirement_strings:
+        req = Requirement(req_str)
+        if req.marker is not None and not dependency_marker_holds(req.marker, env):
+            continue
+        if req.url is not None:
+            admit_vcs_url(req.url, config)
+            msg = (
+                f"VCS requirement admitted by policy but resolver path is not"
+                f" implemented: {req.name} @ {req.url}"
+            )
+            raise NotImplementedError(msg)
+        reqs.declarations.append(req)
+        name = canonicalize_name(req.name)
+        term = (
+            req.specifier.to_range()
+            if req.specifier
+            else VersionRange.full(admit_arbitrary=False)
+        )
+        reqs[name] = reqs.get(name, VersionRange.full()) & term
+        for extra in sorted(req.extras):
+            reqs[join_extra(name, extra)] = VersionRange.full(admit_arbitrary=False)
+    return reqs
 
 
 class YankStats:

@@ -37,13 +37,13 @@ else:
 from benchmark_config import (
     DEFAULT_INDEXES,
     DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS,
-    BenchmarkRequirements,
     YankStats,
     benchmark_index_settings,
     build_benchmark_config,
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
     expand_project_extras,
+    parse_requirements,
     parse_scenario_build_packages,
     parse_scenario_index_routes,
     parse_scenario_indexes,
@@ -76,9 +76,7 @@ from nab_project.fetch import (
     IndexRoute,
     index_routes,
 )
-from nab_provider._vendor.packaging.markers import default_environment
 from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
 from nab_provider.provider import (
@@ -89,7 +87,6 @@ from nab_provider.provider import (
     VcsPolicy,
     split_extra,
 )
-from nab_provider.vcs_admission import admit_vcs_url
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS, Resolver
 
@@ -652,60 +649,6 @@ def _requires_matching_host_logical_keys(rows: list[StandardScenario]) -> list[s
         ):
             required.append(row.logical_key)
     return sorted(required)
-
-
-def parse_requirements(
-    requirement_strings: list[str],
-    *,
-    vcs_config: VcsConfig | None = None,
-    marker_environment: dict[str, str] | None = None,
-) -> dict[str, VersionRange]:
-    """Convert PEP 508 requirement strings to resolver input.
-
-    Root requirements whose marker evaluates False against
-    ``marker_environment`` are dropped, matching pip / uv behaviour:
-    a top-level dependency with a marker is an opt-in per env.
-
-    Direct-URL requirements (``pkg @ git+https://...``) are screened by
-    :func:`nab_provider.vcs_admission.admit_vcs_url`; admission failures raise
-    :class:`UnsupportedVcsError`.  Admitted VCS requirements raise
-    :class:`NotImplementedError`.
-    """
-    config = vcs_config or VcsConfig()
-    env = _full_marker_environment(marker_environment)
-    reqs = BenchmarkRequirements()
-    for req_str in requirement_strings:
-        req = Requirement(req_str)
-        if req.marker is not None and not req.marker.evaluate(env):
-            continue
-        if req.url is not None:
-            admit_vcs_url(req.url, config)
-            msg = (
-                f"VCS requirement admitted by policy but resolver path is not"
-                f" implemented: {req.name} @ {req.url}"
-            )
-            raise NotImplementedError(msg)
-        reqs.declarations.append(req)
-        name = canonicalize_name(req.name)
-        term = (
-            req.specifier.to_range()
-            if req.specifier
-            else VersionRange.full(admit_arbitrary=False)
-        )
-        reqs[name] = reqs.get(name, VersionRange.full()) & term
-        for extra in sorted(req.extras):
-            reqs[f"{name}[{extra}]"] = VersionRange.full(admit_arbitrary=False)
-    return reqs
-
-
-def _full_marker_environment(
-    overlay: dict[str, str] | None,
-) -> dict[str, str]:
-    """Return the host marker env overlaid with ``overlay``."""
-    env = dict(default_environment())
-    if overlay:
-        env.update(overlay)
-    return env
 
 
 SCENARIO_WALL_TIMEOUT_SECONDS = 120
