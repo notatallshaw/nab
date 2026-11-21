@@ -119,6 +119,7 @@ if TYPE_CHECKING:
     from .diagnostics import Diagnostic
     from .fetch_port import FetchPort, Waitable
     from .overrides import IndexOverride, PackageOverride
+    from .ranges import DisplayNarrowing
     from .store import WheelMetadataContext
     from .tags import TagSet
     from .target import ResolveTarget
@@ -1000,7 +1001,7 @@ class Provider:
         # name, the span-widened parent range per decided (name, version),
         # and the pure neighbor-gap range per (name, version).
         self._ascending_versions_cache: dict[str, list[Version]] = {}
-        self._narrowed_ranges: dict[tuple[str, VersionRange], VersionRange] = {}
+        self._narrowed_ranges: dict[tuple[str, VersionRange], DisplayNarrowing] = {}
         self._widened_ranges: dict[tuple[str, Version], VersionRange] = {}
         self._gap_widened_ranges: dict[tuple[str, Version], VersionRange] = {}
 
@@ -3104,11 +3105,14 @@ class Provider:
         # Conflict reports ask for the same ranges many times.
         key = (normalized, constraint)
         narrowed = self._narrowed_ranges.get(key)
-        if narrowed is None:
+        if narrowed is None or (
+            narrowed.source is not None and narrowed.source is not constraint
+        ):
             universe = self._ascending_versions(normalized, version_list)
             narrowed = narrow_over_listing(constraint, universe)
             self._narrowed_ranges[key] = narrowed
-        return narrowed
+
+        return constraint if narrowed.result is None else narrowed.result
 
     def format_range(self, constraint: RangeProtocol[Version]) -> str:
         """Render ``constraint`` for a failure report.
