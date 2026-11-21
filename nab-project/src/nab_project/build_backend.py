@@ -22,7 +22,7 @@ __lazy_modules__ = (
     "tomli",
 )
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import tomli
 
@@ -34,8 +34,10 @@ from nab_provider.metadata import (
 )
 from nab_provider.project_requirements import (
     InvalidProjectRequirementError,
+    normalize_project_extra,
     parse_project_requirement,
     parse_project_requires_python,
+    parse_requirements,
     require_string_list,
 )
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
@@ -47,7 +49,7 @@ from ._build.errors import (
 from .paths import PathState, is_absent_error, path_state
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
     from pathlib import Path
 
     from nab_index.transport import AsyncHttpTransport
@@ -102,7 +104,7 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
     return project_metadata(project)
 
 
-def project_metadata(project: dict[str, Any]) -> WheelMetadata | None:
+def project_metadata(project: Mapping[str, object]) -> WheelMetadata | None:
     """Convert a static ``[project]`` table to :class:`WheelMetadata`."""
     name = project.get("name")
     version_raw = project.get("version")
@@ -127,69 +129,40 @@ def project_metadata(project: dict[str, Any]) -> WheelMetadata | None:
         raise InvalidProjectRequirementError(msg) from exc
 
     requires_python = parse_project_requires_python(project.get("requires-python"))
+    requires_dist, provides_extra = _project_dependencies(project)
 
     return WheelMetadata(
         name=canonicalize_name(name),
         version=version,
         requires_python=requires_python,
-        requires_dist=_collect_requires_dist(project),
-        provides_extra=sorted(_collect_provides_extra(project)),
+        requires_dist=requires_dist,
+        provides_extra=provides_extra,
     )
 
 
-def _collect_requires_dist(project: dict[str, Any]) -> list[Requirement]:
-    """Concatenate PEP 631 ``dependencies`` + ``optional-dependencies``.
-
-    Optional-dependencies entries get an ``; extra == "name"`` marker
-    appended (combined with any existing marker via ``and``).
-
-    Invalid shapes or PEP 508 entries raise
-    :class:`InvalidProjectRequirementError`.
-    """
-    out: list[Requirement] = []
-    _extend_with_dep_strings(
-        out,
-        project.get("dependencies", []),
-        source="[project].dependencies",
+def _project_dependencies(
+    project: Mapping[str, object],
+) -> tuple[list[Requirement], list[str]]:
+    """Read the requirements and declared extras from a static project table."""
+    source = "[project].dependencies"
+    requires_dist = parse_requirements(
+        require_string_list(project.get("dependencies", []), source), source
     )
-    for raw_extra, deps in sorted(_require_optional_dependencies(project).items()):
-        extra = canonicalize_name(str(raw_extra))
-        _extend_with_dep_strings(
-            out,
-            deps,
-            source=f"[project].optional-dependencies extra {raw_extra!r}",
-            extra=extra,
-        )
-    return out
-
-
-def _extend_with_dep_strings(
-    out: list[Requirement],
-    raw: object,
-    *,
-    source: str,
-    extra: str | None = None,
-) -> None:
-    out.extend(
-        parse_project_requirement(dep, source, extra=extra)
-        for dep in require_string_list(raw, source)
-    )
-
-
-def _require_optional_dependencies(project: dict[str, Any]) -> dict[str, Any]:
-    """Return ``[project.optional-dependencies]`` as a table, or raise."""
     optional = project.get("optional-dependencies", {})
     if not isinstance(optional, dict):
         msg = "[project].optional-dependencies must be a table"
         raise InvalidProjectRequirementError(msg)
-    return optional
 
-
-def _collect_provides_extra(project: dict[str, Any]) -> set[str]:
-    return {
-        canonicalize_name(str(extra))
-        for extra in _require_optional_dependencies(project)
-    }
+    extras = set()
+    for raw_extra, deps in sorted(optional.items()):
+        extra = normalize_project_extra(raw_extra)
+        extras.add(extra)
+        source = f"[project].optional-dependencies extra {raw_extra!r}"
+        requires_dist.extend(
+            parse_project_requirement(dep, source, extra=extra)
+            for dep in require_string_list(deps, source)
+        )
+    return requires_dist, sorted(extras)
 
 
 def extract_metadata(
