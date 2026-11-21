@@ -138,7 +138,9 @@ class InMemoryIndex:
         self._range_outcomes: dict[tuple[str, str, str], RangeOutcome] = {}
 
         # Share each text's parse across the target providers of one resolve.
-        self._parsed_metadata: dict[tuple[str, str], tuple[tuple[str, Any], ...]] = {}
+        self._parsed_metadata: dict[
+            tuple[str, str], tuple[tuple[str, WheelMetadata], ...]
+        ] = {}
         self._consistent_wheel_metadata: dict[str, dict[str, tuple[str, str]]] = {}
         self._consistent_metadata_contexts: dict[str, WheelMetadataContext] = {}
 
@@ -701,7 +703,7 @@ class InMemoryIndex:
 
     def get_parsed_metadata(
         self, package: str, version: str, source_text: str
-    ) -> Any | None:
+    ) -> WheelMetadata | None:
         """Return the parse cached for ``source_text``, if any."""
         for text, metadata in self._parsed_metadata.get((package, version), ()):
             if text == source_text:
@@ -709,7 +711,7 @@ class InMemoryIndex:
         return None
 
     def store_parsed_metadata(
-        self, package: str, version: str, metadata: Any, source_text: str
+        self, package: str, version: str, metadata: WheelMetadata, source_text: str
     ) -> None:
         """Cache a text's parse beside the version's other parses.
 
