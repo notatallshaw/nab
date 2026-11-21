@@ -154,26 +154,34 @@ class PromotingProvider(DictProvider):
 
 
 class _PendingClauseProvider(DictProvider):
-    """DictProvider that pushes a pre-canned incompatibility on every
-    ``choose_version`` call by populating a queue drained via
-    ``consume_pending_clauses``."""
+    """Publish a fixed set of clauses when a particular package is queried."""
 
     def __init__(
         self,
         packages: dict[str, dict[int, dict[str, Range]]],
         clauses: list[Incompatibility[str, int]],
+        *,
+        discover_on: str | None = None,
     ) -> None:
         super().__init__(packages)
-        self._queued = list(clauses)
-        self._fired = False
+        self._queued = clauses
+        self._discover_on = discover_on
+
+    @override
+    def choose_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
+        if package == self._discover_on:
+            self._discover_on = None
+        return super().choose_version(package, version_range)
 
     @override
     def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
-        """Return the queued clauses once, then nothing."""
-        if self._fired:
+        """Deliver the clauses once, after discovery."""
+        if self._discover_on is not None:
             return []
-        self._fired = True
-        return self._queued
+        queued, self._queued = self._queued, []
+        return queued
 
 
 class _NoCandidateProvider(DictProvider):
@@ -237,6 +245,35 @@ class TestPendingClausesHook:
         resolver = Resolver(provider)
         result = resolver.resolve({"root": Range.singleton(1)})
         assert result == {"root": 1, "foo": 1}
+
+    def test_clauses_about_earlier_choices_survive_backjump(self) -> None:
+        packages = {name: {1: {}, 2: {}} for name in ("a", "b", "c", "d", "last")}
+        # The conflict on c and d backjumps past the last decision but leaves
+        # a and b pinned. The other newly discovered clause still needs a check.
+        clauses: list[Incompatibility[str, int]] = [
+            Incompatibility(
+                [Term(left, Range.singleton(2)), Term(right, Range.singleton(2))],
+                cause=IncompatibilityCause.DEPENDENCY,
+            )
+            for left, right in (("c", "d"), ("a", "b"))
+        ]
+        provider = _PendingClauseProvider(packages, clauses, discover_on="last")
+        pins = Resolver(provider).resolve(dict.fromkeys(packages, Range.full()))
+
+        assert pins.keys() == packages.keys()
+        assert (pins["a"], pins["b"]) != (2, 2)
+        assert (pins["c"], pins["d"]) != (2, 2)
+
+    def test_empty_provider_clause_proves_a_conflict(self) -> None:
+        clause: Incompatibility[str, int] = Incompatibility(
+            [], cause=IncompatibilityCause.ROOT
+        )
+        provider = _PendingClauseProvider({"a": {1: {}}}, [clause])
+
+        with pytest.raises(ResolutionError) as caught:
+            Resolver(provider).solve({"a": Range.full()})
+
+        assert caught.value.incompatibility is clause
 
     def test_pending_clauses_replace_no_versions(self) -> None:
         """When choose_version returns None but pending clauses are queued,

@@ -18,8 +18,10 @@ from typing import TYPE_CHECKING, Any
 from .types import IncompatibilityState, SetRelation, Term
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from .resolver import Resolver
-    from .types import Incompatibility, RangeProtocol
+    from .types import Incompatibility, PackageType, RangeProtocol, VersionType
 
 # Bound once so the hot paths load a module global instead of a class attribute.
 _SATISFIED_REL = SetRelation.SATISFIED
@@ -68,17 +70,16 @@ def unit_propagation(
 
     Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#unit-propagation
     """
-    propagation_queue: deque[Any] = deque([changed_package])
-    in_queue: set[Any] = {changed_package}
+    propagation_queue: deque[Any] = deque()
+    in_queue: set[Any] = set()
 
     contradicted_at = resolver.clause_contradicted_at
     epoch = resolver.solution.contradiction_epoch
 
-    while propagation_queue:
-        package = propagation_queue.popleft()
-        in_queue.discard(package)
-        related_indices = resolver.package_to_incompatibilities.get(package, [])
-
+    related_indices: Sequence[int] = resolver.package_to_incompatibilities.get(
+        changed_package, ()
+    )
+    while True:
         for incompatibility_index in related_indices:
             if contradicted_at[incompatibility_index] == epoch:
                 continue
@@ -95,30 +96,42 @@ def unit_propagation(
 
             if isinstance(evaluation, Term):
                 negated_term = evaluation.negate()
-                range_before = resolver.solution.get(negated_term.package)
-                range_after = resolver.solution.derive(
-                    negated_term.package,
-                    negated_term.constraint,
-                    positive=negated_term.is_positive(),
-                    cause=incompatibility,
-                )
-
-                # A derive that empties a range advances the epoch, which
-                # retires the stamps taken before it.
+                changed = _derive_term(resolver, negated_term, incompatibility)
+                # An empty derived range invalidates earlier contradiction stamps.
                 epoch = resolver.solution.contradiction_epoch
+                if changed and negated_term.package not in in_queue:
+                    propagation_queue.append(negated_term.package)
+                    in_queue.add(negated_term.package)
 
-                if range_before != range_after:
-                    resolver.stats.derivations += 1
-                    resolver.observer.on_derivation(
-                        negated_term.package,
-                        positive=negated_term.is_positive(),
-                        cause=incompatibility,
-                    )
-                    if negated_term.package not in in_queue:
-                        propagation_queue.append(negated_term.package)
-                        in_queue.add(negated_term.package)
+        if propagation_queue:
+            package = propagation_queue.popleft()
+            in_queue.discard(package)
+            related_indices = resolver.package_to_incompatibilities.get(package, ())
+        elif resolver.unchecked_provider_clauses:
+            # A new clause may mention none of this round's changed packages.
+            # Leave later clauses queued if this one triggers a backjump.
+            related_indices = (resolver.unchecked_provider_clauses.popleft(),)
+        else:
+            return None
 
-    return None
+
+def _derive_term(
+    resolver: Resolver[PackageType, VersionType],
+    term: Term[PackageType, VersionType],
+    cause: Incompatibility[PackageType, VersionType],
+) -> bool:
+    """Record the derivation and notify the observer when its range changes."""
+    before = resolver.solution.get(term.package)
+    after = resolver.solution.derive(
+        term.package, term.constraint, positive=term.is_positive(), cause=cause
+    )
+    if before != after:
+        resolver.stats.derivations += 1
+        resolver.observer.on_derivation(
+            term.package, positive=term.is_positive(), cause=cause
+        )
+        return True
+    return False
 
 
 def evaluate_incompatibility(
