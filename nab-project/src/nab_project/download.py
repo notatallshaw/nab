@@ -20,6 +20,7 @@ __lazy_modules__ = (
     "nab_index.atomic",
     "nab_index.client",
     "nab_index.local_index",
+    "nab_project._concurrency",
     "nab_project.lockfile",
     "nab_provider.errors",
     "pathlib",
@@ -41,6 +42,7 @@ from nab_index.local_index import parse_file_url
 from nab_provider.errors import HttpError
 from nab_provider.value import HashableRecord, Record
 
+from ._concurrency import validate_max_concurrency
 from .lockfile import ArchivePin, IndexPin, LocalPin, LockInput, VcsPin
 
 if TYPE_CHECKING:
@@ -241,6 +243,7 @@ def download_lock(
 ) -> DownloadResult:
     """Download every artefact in ``lock_input`` into ``output_dir``.
 
+    ``max_concurrency`` must allow at least one download.
     Already-present files whose digest matches the recorded
     algorithm are left alone so the command is idempotent.
     Mismatched files are re-fetched and overwritten.  HTTP failures
@@ -252,6 +255,7 @@ def download_lock(
     served.
     """
     try:
+        validate_max_concurrency(max_concurrency)
         output_dir.mkdir(parents=True, exist_ok=True)
         artefacts = _coalesce_download_targets(list(iter_artifacts(lock_input)))
     except BaseException:
