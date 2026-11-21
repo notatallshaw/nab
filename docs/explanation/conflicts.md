@@ -106,10 +106,14 @@ exclusive:
 conflicts = [[{ group = "base" }, { group = "build" }, { group = "dev" }]]
 ```
 
-That forks three ways when the run selects `dev`, and two otherwise, since the set forks only over
-the members the selection activates. With `dev` selected, an install choosing it gets that group
-without the project's own dependencies. Declare two sets instead if `dev` should install alongside
-them, remembering that `build` can be in only one of them.
+That forks three ways when the run selects `dev`, and two otherwise. An installer choosing `dev`
+alone gets that group without the project's own dependencies.
+
+To install `dev` alongside the project's dependencies, put only `base` and `build` in the conflict
+set. A selected `dev` group must then resolve alongside either one. If its dependencies are
+incompatible with the build requirements, leave `build-group` and its conflict out of the runtime
+lock. Run `nab lock --groups dev` for development and `nab lock --build-requirements` for a separate
+build lock.
 
 > [!NOTE]
 > nab makes `base-group` the lock's default when `default-groups` is omitted. See
