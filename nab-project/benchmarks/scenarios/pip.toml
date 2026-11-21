@@ -1416,8 +1416,9 @@ requirements = [
 
 [pip-12592-triad-numpy-pre]
 # https://github.com/pypa/pip/issues/12592
-# --pre flag: pip picks numpy-2.0.0b1 then drops it when pandas pins don't
-# match, instead of backtracking on pandas.
+# The report compared two pip --pre runs. This is the variant that pinned NumPy.
+# PyPI no longer lists the beta files. The source archive is still on GitHub.
+unsupported_reason = "Requires the NumPy 2.0.0b1 files removed from PyPI and global prerelease selection"
 python_version = "3.12"
 platform_system = "Linux"
 datetime = "2024-03-23 21:19:29"
@@ -1437,13 +1438,14 @@ requirements = ["ipykernel"]
 
 [pip-12489-pycaret-sklearn14]
 # https://github.com/pypa/pip/issues/12489
-# pycaret 3.3.0 + scikit-learn 1.4 (bumped in PR) fails with ResolutionTooDeep.
+# The Windows job installed the PyCaret PR checkout with its full and test extras.
+# This is the last revision on that branch before the report.
+unsupported_reason = "Requires a local PyCaret build and PyOD 1.1.2 source metadata for the Windows target"
 python_version = "3.9"
 platform_system = "Windows"
 datetime = "2024-01-26 10:04:05"
 requirements = [
-    "pycaret==3.3.0",
-    "scikit-learn>=1.4",
+    "pycaret[full,test] @ git+https://github.com/pycaret/pycaret.git@fa4a5156f5379d9a3e57af57a7189823d493c44b",
 ]
 
 [pip-12275-old-pypi-date]
