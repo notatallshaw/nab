@@ -95,12 +95,13 @@ def build_all(outdir: Path, source_date_epoch: str) -> None:
         )
 
 
-def _artifact_hashes(root: Path) -> dict[str, str]:
-    """Map each built sdist/wheel name under ``root`` to its sha256."""
-    hashes: dict[str, str] = {}
+def _artifact_hashes(root: Path) -> dict[Path, str]:
+    """Map each archive's path relative to the build directory to its SHA-256."""
+    hashes: dict[Path, str] = {}
     for path in sorted(root.rglob("*")):
         if path.is_file() and path.name.endswith((".whl", ".tar.gz")):
-            hashes[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+            relative = path.relative_to(root)
+            hashes[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
     return hashes
 
 
