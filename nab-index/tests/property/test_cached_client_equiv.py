@@ -31,7 +31,7 @@ from nab_index.client import (
 )
 from nab_provider.value import replace
 
-from .strategies import PROPERTY_SETTINGS
+from .settings import PROPERTY_SETTINGS
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
