@@ -267,6 +267,21 @@ class TestDownloadLock:
         assert transport.closed
         assert transport.close_calls == 1
 
+    @pytest.mark.parametrize("limit", [0, -1])
+    def test_nonpositive_concurrency_closes_transport(
+        self, tmp_path: Path, limit: int
+    ) -> None:
+        transport = _FakeTransport({})
+        output = tmp_path / "wheels"
+        with pytest.raises(ValueError, match="max_concurrency"):
+            download_lock(
+                LockInput(targets=_one({})), transport, output, max_concurrency=limit
+            )
+
+        assert transport.close_calls == 1
+        assert transport.requested == []
+        assert not output.exists()
+
     @pytest.mark.parametrize("child", ["", "wheels"], ids=["output", "parent"])
     def test_output_directory_failure_closes_transport(
         self, tmp_path: Path, child: str
