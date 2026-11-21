@@ -28,7 +28,7 @@ from nab_provider._vendor.packaging.utils import (
     parse_wheel_filename,
 )
 
-from .strategies import DEEP_SETTINGS
+from .settings import DEEP_SETTINGS
 
 pytestmark = pytest.mark.property
 

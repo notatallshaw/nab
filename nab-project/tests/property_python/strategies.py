@@ -47,13 +47,6 @@ The ``deep`` profile (env ``HYPOTHESIS_PROFILE=deep``) bumps
 counter-examples that the default 100-example budget would miss.
 """
 
-DEEP_SETTINGS = settings(
-    max_examples=3000 if _DEEP else 300,
-    deadline=None,
-    suppress_health_check=[HealthCheck.too_slow],
-)
-"""Heavier settings for properties that benefit from more examples."""
-
 BRUTE_FORCE_SETTINGS = settings(
     max_examples=200 if _DEEP else 30,
     deadline=None,
