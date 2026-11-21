@@ -20,6 +20,7 @@ _BENCHMARKS = Path(__file__).resolve().parents[2] / "benchmarks"
 _SIBLINGS = (
     "benchmark_datetime",
     "benchmark_host",
+    "benchmark_paths",
     "benchmark_source",
     "universal_result",
 )
