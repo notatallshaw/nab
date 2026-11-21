@@ -243,6 +243,10 @@ match = [
 ]
 uploaded-prior-to = false
 
+# PyYAML 6.0.3 sets this in setup.py but labels it dynamic in its sdist.
+[tool.nab.packages."pyyaml==6.0.3"]
+requires-python = ">=3.8"
+
 # https://docs.pytest.org/en/stable/reference/reference.html#confval-addopts
 [tool.pytest.ini_options]
 minversion = "9.0"
