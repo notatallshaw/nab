@@ -14,6 +14,7 @@ __lazy_modules__ = (
     "nab_index._json_decode",
     "nab_index._pep503",
     "nab_index._repository_version",
+    "nab_index._simple_media",
     "nab_index.transport",
     "nab_provider.errors",
     "nab_provider.records",
@@ -56,12 +57,13 @@ from nab_provider.records import (
     defer_hashes,
     rehydrated_wheel,
 )
-from nab_provider.serialization import SimpleSerialization, simple_accept_header
+from nab_provider.serialization import SimpleSerialization
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from ._json_decode import decode_json
 from ._pep503 import json_listing
 from ._repository_version import check_repository_version
+from ._simple_media import is_html_listing, simple_accept_header
 from ._urljoin import join_url
 from .transport import IDENTITY_HEADERS, raise_unless_ok
 
@@ -399,18 +401,6 @@ def _header(response: HttpResponse, key: str) -> str | None:
     return _OBS_FOLD.sub(" ", value)
 
 
-def _is_html_listing(content_type: str | None) -> bool:
-    """Return True when a Content-Type names an HTML Simple-API serialization.
-
-    Covers :pep:`503`'s ``text/html`` and :pep:`691`'s
-    ``application/vnd.pypi.simple.vN+html``.
-    """
-    if content_type is None:
-        return False
-    media_type = content_type.partition(";")[0].strip().lower()
-    return media_type == "text/html" or media_type.endswith("+html")
-
-
 def _listing_body(
     response: HttpResponse,
     index_url: str,
@@ -429,7 +419,7 @@ def _listing_body(
     """
     body = response.content
     content_type = _header(response, "content-type")
-    is_html = _is_html_listing(content_type)
+    is_html = is_html_listing(content_type)
 
     if serialization is not SimpleSerialization.NEGOTIATE and is_html != (
         serialization is SimpleSerialization.HTML
