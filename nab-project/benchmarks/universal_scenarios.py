@@ -52,12 +52,13 @@ from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_project.build_policy import enforce_build_policy_for_targets
 from nab_project.fetch import FetchCoordinator
 from nab_project.inputs import ResolveInputs
-from nab_project.lockfile import build_pylock, render_lock
+from nab_project.lockfile import render_lock
 from nab_project.resolve import (
     ResolveResult,
     build_lock_input,
     resolve_with_coordinator,
 )
+from nab_provider._vendor.packaging.pylock import Pylock, PylockSelectError
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
@@ -133,39 +134,28 @@ def _scenario_wall_timeout() -> Generator[None, None, None]:
 
 
 def check_lock_consistency(result: ResolveResult) -> tuple[bool, list[str]]:
-    """Verify the marker-gated lock reproduces each tuple's solution.
-
-    Builds the real PEP 751 lock and, for each tuple, projects every
-    package marker onto that tuple's environment. The packages whose
-    markers admit the environment must be exactly that tuple's pins; a
-    missing one is an under-firing marker (a silently dropped dep), an
-    extra one an over-firing marker. The corpus declares no conflict
-    forks, so the markers are pure environment markers and the
-    projection is a plain ``marker.evaluate``.
-
-    Call only when ``result.success`` so the lock covers every tuple.
-    """
+    """Check that an installer can select each target's pins from the emitted lock."""
     lock_input = build_lock_input(result)
     try:
-        render_lock(lock_input)
-        pylock = build_pylock(lock_input)
+        pylock = Pylock.from_dict(tomllib.loads(render_lock(lock_input)))
     except Exception as exc:
         return False, [f"lock emission raised {type(exc).__name__}: {exc}"[:200]]
 
     problems: list[str] = []
     for tr in result.target_results:
         expected = {canonicalize_name(n): str(v) for n, v in tr.pins.items()}
-        selected: dict[str, str | None] = {}
-        duplicates: set[str] = set()
-        for pkg in pylock.packages:
-            marker = pkg.marker
-            if marker is not None and not marker.evaluate(tr.target.marker_env):
-                continue
-            name = canonicalize_name(str(pkg.name))
-            if name in selected:
-                duplicates.add(name)
-            selected[name] = str(pkg.version) if pkg.version is not None else None
-        if selected != expected or duplicates:
+        try:
+            selected = {
+                str(pkg.name): str(pkg.version) if pkg.version is not None else None
+                for pkg, _artifact in pylock.select(
+                    environment=dict(tr.target.marker_env), tags=tr.target.tags.ordered
+                )
+            }
+        except PylockSelectError as exc:
+            problems.append(f"{tr.target.label}: {exc}")
+            continue
+
+        if selected != expected:
             missing = sorted(expected.keys() - selected.keys())
             extra = sorted(selected.keys() - expected.keys())
             mismatch = sorted(
@@ -175,7 +165,7 @@ def check_lock_consistency(result: ResolveResult) -> tuple[bool, list[str]]:
             )
             problems.append(
                 f"{tr.target.label}: missing={missing} extra={extra} "
-                f"mismatch={mismatch} duplicate={sorted(duplicates)}"
+                f"mismatch={mismatch}"
             )
     return not problems, problems
 

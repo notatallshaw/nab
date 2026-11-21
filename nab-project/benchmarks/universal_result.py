@@ -8,7 +8,7 @@ from benchmark_datetime import is_valid_datetime
 from benchmark_json import valid_wall_time
 from benchmark_paths import is_portable_path_component
 
-RESULT_SCHEMA_VERSION = 4
+RESULT_SCHEMA_VERSION = 5
 MANIFEST_FILENAME = "_manifest.json"
 
 _MAX_STORAGE_COMPONENT_LENGTH = 255

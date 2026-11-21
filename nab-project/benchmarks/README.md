@@ -119,8 +119,9 @@ Each result retains its per-target solutions and merged target-label pin project
 exits nonzero after an unexpected resolution, timeout, lock-emission failure, or projection failure.
 
 The report records the Python versions selected from the scenario's range before resolution. A
-completed result must cover every requested Python version and platform. Rerun older scenarios to
-write this target list, or read their reports with the summary script from the original checkout.
+completed result must cover every requested Python version and platform. The installer must be able
+to select the expected packages from the emitted lock with each target's wheel tags. Rerun older
+scenarios for this check, or read their reports with the summary from the original checkout.
 
 A full run writes `_manifest.json` with the current scenario set. The summary follows that set,
 ignores removed result files, and accepts only complete runs that started and ended on the same
