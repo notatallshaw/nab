@@ -33,7 +33,6 @@ else:
     import tomli as tomllib  # type: ignore[no-redef]
 
 from benchmark_config import (
-    BenchmarkRequirements,
     YankStats,
     benchmark_index_settings,
     build_benchmark_config,
@@ -41,6 +40,7 @@ from benchmark_config import (
     build_benchmark_resolver_inputs,
     direct_packages_from_requirements,
     expand_project_extras,
+    parse_requirements,
     parse_scenario_build_packages,
     parse_scenario_index_routes,
     parse_scenario_indexes,
@@ -69,18 +69,13 @@ from benchmark_source import get_git_source_state
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_project.fetch import FetchCoordinator, index_routes
-from nab_provider._vendor.packaging.markers import default_environment
 from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
 from nab_provider.provider import (
     BuildPolicy,
     ResolutionStrategy,
-    VcsConfig,
     split_extra,
 )
-from nab_provider.vcs_admission import admit_vcs_url
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS, Resolver
 
@@ -181,48 +176,6 @@ def _runtime_manifest(host: BenchmarkHost) -> dict[str, str]:
         "release": marker_environment["platform_release"],
         "machine": marker_environment["platform_machine"],
     }
-
-
-def parse_requirements(
-    requirement_strings: list[str],
-    *,
-    vcs_config: VcsConfig | None = None,
-    marker_environment: dict[str, str] | None = None,
-) -> dict[str, VersionRange]:
-    config = vcs_config or VcsConfig()
-    env = _full_marker_environment(marker_environment)
-    reqs = BenchmarkRequirements()
-    for req_str in requirement_strings:
-        req = Requirement(req_str)
-        if req.marker is not None and not req.marker.evaluate(env):
-            continue
-        if req.url is not None:
-            admit_vcs_url(req.url, config)
-            msg = (
-                f"VCS requirement admitted by policy but resolver path is not"
-                f" yet implemented: {req.name} @ {req.url}"
-            )
-            raise NotImplementedError(msg)
-        reqs.declarations.append(req)
-        name = canonicalize_name(req.name)
-        term = (
-            req.specifier.to_range()
-            if req.specifier
-            else VersionRange.full(admit_arbitrary=False)
-        )
-        reqs[name] = reqs.get(name, VersionRange.full()) & term
-        for extra in sorted(req.extras):
-            reqs[f"{name}[{extra}]"] = VersionRange.full(admit_arbitrary=False)
-    return reqs
-
-
-def _full_marker_environment(
-    overlay: dict[str, str] | None,
-) -> dict[str, str]:
-    env = dict(default_environment())
-    if overlay:
-        env.update(overlay)
-    return env
 
 
 def run_one(
