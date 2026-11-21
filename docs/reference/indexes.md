@@ -36,7 +36,9 @@ fails the resolve without trying the next index.
 nab caches listings separately for each `serialization` setting.
 
 `serialization` is not settable on a `file://` index, `"negotiate"` included. A local index is read
-from disk with no `Accept` negotiation, so the key is rejected.
+from disk with no `Accept` negotiation, so the key is rejected. When a local HTML page lists both
+local files and HTTP links, nab lists the local files first to break ties between otherwise equally
+ranked artifacts.
 
 Nab reads Simple API version 1 pages. An unversioned page is treated as version 1.0. A newer minor
 version produces a warning. A higher major version stops the lock, even if another configured index
