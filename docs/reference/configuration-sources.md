@@ -49,8 +49,8 @@ naming both files.
 
 ## File locations
 
-Nab reads the system file at `/etc/nab/nab.toml`. The user file is `$XDG_CONFIG_HOME/nab/nab.toml`,
-or `~/.config/nab/nab.toml` when that variable is unset or empty.
+Nab reads the system file at `/etc/nab/nab.toml`. If `XDG_CONFIG_HOME` is an absolute path, the user
+file is `$XDG_CONFIG_HOME/nab/nab.toml`. Otherwise Nab reads `~/.config/nab/nab.toml`.
 
 Directory-level `nab.toml` discovery uses the directory containing `pyproject.toml` or, with
 `--script`, the script's directory. It does not search parent directories.
