@@ -4,7 +4,7 @@ from __future__ import annotations
 
 __lazy_modules__ = ("nab_provider._vendor.packaging.specifiers",)
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from ._vendor.packaging.ranges import VersionRange
 from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
@@ -37,21 +37,32 @@ def require_version_range(
     raise TypeError(msg)
 
 
+class DisplayNarrowing(NamedTuple):
+    """A cached display range. A missing result keeps the caller's constraint."""
+
+    result: VersionRange | None
+    # A fallback can use bounds from this particular input.
+    source: VersionRange | None = None
+
+
 def narrow_over_listing(
     constraint: VersionRange, universe: Sequence[Version]
-) -> VersionRange:
+) -> DisplayNarrowing:
     """Render the same selection over a known ascending release listing."""
     selected = [version for version in universe if version in constraint]
     if not selected:
-        return constraint
+        return DisplayNarrowing(None)
     if len(selected) == len(universe):
-        return VersionRange.full(admit_arbitrary=False)
+        return DisplayNarrowing(VersionRange.full(admit_arbitrary=False))
 
     spelled = _requirement_over_listing(constraint, universe, selected)
     if spelled is not None:
-        return spelled
+        return DisplayNarrowing(spelled)
+
+    # An interval containing no listed release keeps its original bounds after snapping.
     has_specifier = constraint.to_specifier_set() is not None
-    return constraint if has_specifier else constraint.snap_bounds(universe)
+    result = constraint if has_specifier else constraint.snap_bounds(universe)
+    return DisplayNarrowing(result, source=constraint)
 
 
 def _requirement_over_listing(

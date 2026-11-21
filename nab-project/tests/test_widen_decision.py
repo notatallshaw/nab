@@ -565,8 +565,20 @@ class TestNarrowForDisplay:
     def test_range_no_listed_version_satisfies_is_unchanged(self) -> None:
         """With nothing listed to state it over, the constraint stands."""
         provider = _listing_provider("p", ["1.0"])
-        constraint = SpecifierSet(">=5").to_range()
-        assert provider.narrow_for_display("p", constraint) is constraint
+        for requirement in (">=5", ">=5.0"):
+            constraint = SpecifierSet(requirement).to_range()
+            assert provider.narrow_for_display("p", constraint) is constraint
+
+    def test_snapping_preserves_bounds_outside_the_listing(self) -> None:
+        provider = _listing_provider("p", ["3", "1+cpu"])
+        window = VersionRange.from_bounds("0", "2")
+
+        for version in ("5", "5.0"):
+            constraint = window | VersionRange.singleton(version)
+            narrowed = provider.narrow_for_display("p", constraint)
+            assert provider.format_range(narrowed) == (
+                f"<VersionRange '[1+cpu, 1+cpu] | [{version}, {version}]'>"
+            )
 
     def test_narrowed_pin_complement_reads_as_a_requirement(self) -> None:
         """The complement of a pin reads as a requirement.
