@@ -43,14 +43,17 @@ def _derived_probe_reps(ops: list[tuple[object, ...]]) -> list[Rep]:
             rep = op[2]
             assert isinstance(rep, tuple)
             base.append(rep)
+
+    # Three derivations give six individual probes and four adjacent-pair probes.
+    sample = base[:3]
     out: list[Rep] = []
-    for rep in base[:5]:
+    for rep in sample:
         out.append(rep)
         out.append(rep_not(rep))
-    for left, right in itertools.pairwise(base):
+    for left, right in itertools.pairwise(sample):
         out.append(rep_or(left, right))
         out.append(rep_and(left, rep_not(right)))
-    return out[:10]
+    return out
 
 
 @given(
