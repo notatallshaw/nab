@@ -139,6 +139,14 @@ def reachable_packages(
     return reachable
 
 
+def is_proven_conflict(error: ResolutionError) -> bool:
+    """A solver fault can carry a diagnostic incompatibility without proving a conflict."""
+    return (
+        not isinstance(error, ResolutionTerminatedError)
+        and error.incompatibility is not None
+    )
+
+
 def resolve_or_prove_conflict(
     resolver: Resolver[str, int],
     requirements: dict[str, Range[int]],
@@ -148,10 +156,7 @@ def resolve_or_prove_conflict(
     try:
         return resolver.resolve(requirements, constraints)
     except ResolutionError as error:
-        if (
-            isinstance(error, ResolutionTerminatedError)
-            or error.incompatibility is None
-        ):
+        if not is_proven_conflict(error):
             raise
         return None
 
