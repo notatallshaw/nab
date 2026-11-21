@@ -99,8 +99,9 @@ def dependency_marker_holds(
     normalised.  It defaults to the empty set when ``environment`` omits it.
 
     A standard variable a marker names but ``environment`` omits raises
-    ``UndefinedEnvironmentName``.  The lockfile-only set variables are seeded
-    empty, so a marker that tests one evaluates to False rather than raising.
+    ``UndefinedEnvironmentName``. The lockfile-only sets ``extras`` and
+    ``dependency_groups`` are empty during resolution, so membership is false
+    and non-membership is true.
 
     A clause no comparison decides raises :class:`UnevaluableMarkerError`, and
     a marker that overruns a budget raises :class:`IntractableMarkerError`.
