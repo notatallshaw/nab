@@ -31,7 +31,7 @@ __lazy_modules__ = (
     "nab_resolver.root",
 )
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final, Generic, Protocol
 
@@ -277,6 +277,7 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
     ) -> list[Incompatibility[PackageType, VersionType]]:
         """Return incompatibilities the provider queued during ``choose_version``.
 
+        Each returned clause is checked even if it describes only earlier decisions.
         Drained after every ``choose_version`` call.  When non-empty AND
         ``choose_version`` returned None, the resolver suppresses the default
         ``NO_VERSIONS`` clause (which would persist across backjumps) so the
@@ -689,6 +690,7 @@ class Resolver(Generic[PackageType, VersionType]):
         # last seen contradicted; unit propagation skips a clause whose stamp
         # is still current.
         self.clause_contradicted_at: list[int] = []
+        self.unchecked_provider_clauses: deque[int] = deque()
 
         # Keyed by (package, dep_package, dep_constraint, dep_positive); used
         # to merge mergeable dependency clauses (pubgrub-rs's merge_dependents).
@@ -1178,6 +1180,7 @@ class Resolver(Generic[PackageType, VersionType]):
         self.incompatibilities.clear()
         self.package_to_incompatibilities.clear()
         self.clause_contradicted_at.clear()
+        self.unchecked_provider_clauses.clear()
         self.dependency_index.clear()
         self.recorded_dependencies.clear()
         self.solution = PartialSolution(range_type=self.range_type)

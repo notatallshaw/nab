@@ -150,7 +150,8 @@ def absorb_pending_clauses(resolver: Resolver[PackageType, VersionType]) -> bool
     clauses = list(resolver.provider.consume_pending_clauses())
     for incompatibility in clauses:
         _normalize_terms(resolver, incompatibility)
-        add_incompatibility(resolver, incompatibility)
+        index = add_incompatibility(resolver, incompatibility)
+        resolver.unchecked_provider_clauses.append(index)
     return bool(clauses)
 
 
