@@ -24,7 +24,7 @@ from enum import Enum, auto
 from functools import lru_cache
 from itertools import islice, pairwise, product
 from math import prod
-from typing import TYPE_CHECKING, Literal, NamedTuple, Protocol, cast
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Protocol, cast
 
 from ._compat import get_int_max_str_digits
 from ._packaging import (
@@ -59,6 +59,9 @@ if TYPE_CHECKING:
     from typing import TypeAlias
 
     from ._packaging import MarkerAtom, MarkerList
+
+    MarkerValue: TypeAlias = "str | AbstractSet[str]"
+    MarkerEnvironment: TypeAlias = "Mapping[str, MarkerValue]"
 
     # The walkers read the parser's recursive node types without mutating them.
     MarkerOperand: TypeAlias = "Variable | Value"
@@ -122,9 +125,14 @@ DOMAIN_REGISTRY: dict[str, str] = {
     "dependency_groups": DOMAIN_SET,
 }
 
-# Stands for both "this environment supplies no value" and "the enumeration
-# found no cell", neither of which None can say.
-_MISSING = object()
+
+class _Missing(Enum):
+    """A marker variable that the caller left unspecified."""
+
+    VALUE = auto()
+
+
+_MISSING: Final = _Missing.VALUE
 
 _MEMBERSHIP = frozenset({"in", "not in"})
 _ORDERED_UNDEFINED = frozenset({"~=", "==="})
@@ -1449,7 +1457,7 @@ def guarded_product_size(sizes: Iterable[int], max_cells: int) -> int:
 # ------------------------------------------------------------------- evaluation
 
 
-def prepare_environment(env: Mapping[str, object]) -> Mapping[str, object]:
+def prepare_environment(env: MarkerEnvironment) -> MarkerEnvironment:
     """Repair legacy CPython full versions for evaluation and restriction."""
     full = env.get("python_full_version")
     if full is None or full == "":
@@ -1459,14 +1467,14 @@ def prepare_environment(env: Mapping[str, object]) -> Mapping[str, object]:
     return env
 
 
-def as_name_set(value: object) -> frozenset[str]:
+def as_name_set(value: str | Iterable[str]) -> frozenset[str]:
     """Normalise a set-variable value: a non-empty str is one PEP 685 name."""
     if isinstance(value, str):
         return frozenset({canonicalize_name(value)}) if value else frozenset()
-    return frozenset(canonicalize_name(name) for name in cast("Iterable[str]", value))
+    return frozenset(canonicalize_name(name) for name in value)
 
 
-def _require(env: Mapping[str, object], key: str) -> object:
+def _require(env: MarkerEnvironment, key: str) -> MarkerValue:
     """Look a referenced variable up, matching packaging's missing-key contract."""
     try:
         return env[key]
@@ -1474,7 +1482,7 @@ def _require(env: Mapping[str, object], key: str) -> object:
         raise UndefinedEnvironmentName(key) from None
 
 
-def evaluate_atom(atom: Atom, env: Mapping[str, object]) -> bool:
+def evaluate_atom(atom: Atom, env: MarkerEnvironment) -> bool:
     """Evaluate one atom against a full environment (extras are sets)."""
     if atom.kind == AXIS_VALUE:
         if atom.derive_mm and "python_full_version" not in env:
@@ -1483,7 +1491,7 @@ def evaluate_atom(atom: Atom, env: Mapping[str, object]) -> bool:
         return atom.holds(_require(env, atom.variable))
     if atom.kind == AXIS_SET:
         return atom.holds(as_name_set(_require(env, atom.origin)))
-    names = cast("Container[str]", _require(env, atom.variable))
+    names = _require(env, atom.variable)
     return atom.holds(atom.literal in names)
 
 
@@ -1511,7 +1519,7 @@ def collect_atoms(node: Formula) -> list[Atom]:
     return out
 
 
-def reject_oversized_literals(node: Formula, env: Mapping[str, object]) -> None:
+def reject_oversized_literals(node: Formula, env: MarkerEnvironment) -> None:
     """Raise the bounded guard for an oversized literal or env value in a tree."""
     for atom in collect_atoms(node):
         if atom.kind == AXIS_SET:
@@ -1856,7 +1864,9 @@ def _materialize(
 # --------------------------------------------------------------------- restrict
 
 
-def _atom_env_value(atom: Atom, env: Mapping[str, object]) -> object:
+def _atom_env_value(
+    atom: Atom, env: MarkerEnvironment
+) -> MarkerValue | Literal[_Missing.VALUE]:
     """Return the env value the atom reads, or ``_MISSING`` when unprovided."""
     if atom.derive_mm:
         for key in ("python_full_version", "python_version"):
@@ -1867,7 +1877,7 @@ def _atom_env_value(atom: Atom, env: Mapping[str, object]) -> object:
     return env.get(key, _MISSING)
 
 
-def _restrict_value(atom: Atom, env: Mapping[str, object]) -> bool | None:
+def _restrict_value(atom: Atom, env: MarkerEnvironment) -> bool | None:
     """Return the atom's truth under ``env``, or ``None`` when unprovided."""
     value = _atom_env_value(atom, env)
     if value is _MISSING:
@@ -1875,13 +1885,11 @@ def _restrict_value(atom: Atom, env: Mapping[str, object]) -> bool | None:
     if atom.kind == AXIS_SET:
         return atom.holds(as_name_set(value))
     if atom.kind == AXIS_CONTAINS:
-        return atom.holds(atom.literal in cast("Container[str]", value))
+        return atom.holds(atom.literal in value)
     return atom.holds(value)
 
 
-def _restrict_row_value(
-    atom: Atom, env: Mapping[str, object], store: Memo
-) -> bool | None:
+def _restrict_row_value(atom: Atom, env: MarkerEnvironment, store: Memo) -> bool | None:
     """Read a row predicate through cached truths for string pins."""
     if (
         atom.kind == AXIS_VALUE
@@ -1906,7 +1914,7 @@ def _restrict_row_value(
     return _restrict_value(atom, env)
 
 
-def _restrict_cover_atom(atom: Atom, env: Mapping[str, object], store: Memo) -> Formula:
+def _restrict_cover_atom(atom: Atom, env: MarkerEnvironment, store: Memo) -> Formula:
     """Restrict a cover predicate, wrapping unresolved atoms."""
     resolved = _restrict_row_value(atom, env, store)
     if resolved is None:
@@ -1962,14 +1970,12 @@ def _substitute_values(node: Formula, lookup: Callable[[Atom], bool | None]) -> 
     return _map_leaves(node, replace)
 
 
-def restrict_tree(node: Formula, env: Mapping[str, object]) -> Formula:
+def restrict_tree(node: Formula, env: MarkerEnvironment) -> Formula:
     """Substitute the variables ``env`` provides, leaving the rest."""
     return _substitute_values(node, lambda atom: _restrict_value(atom, env))
 
 
-def _restrict_row_tree(
-    node: Formula, env: Mapping[str, object], store: Memo
-) -> Formula:
+def _restrict_row_tree(node: Formula, env: MarkerEnvironment, store: Memo) -> Formula:
     """Restrict a row tree through its operation-owned string truths."""
     return _substitute_values(node, lambda atom: _restrict_row_value(atom, env, store))
 
@@ -1977,7 +1983,7 @@ def _restrict_row_tree(
 # ------------------------------------------------------------------- evaluate
 
 
-def evaluate_tree(node: Formula, env: Mapping[str, object]) -> bool:
+def evaluate_tree(node: Formula, env: MarkerEnvironment) -> bool:
     """Evaluate a tree against a full environment (extras are sets)."""
     if isinstance(node, BoolConst):
         return node.value
