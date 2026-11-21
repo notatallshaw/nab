@@ -140,7 +140,7 @@ pyright = [
 ]
 ty = [
     {include-group = "type-common"},
-    "ty>=0.0.100",
+    "ty>=0.0.104",
 ]
 pyrefly = [
     {include-group = "type-common"},
@@ -158,7 +158,7 @@ types = [
     {include-group = "zuban"},
 ]
 lint = [
-    "ruff>=0.17.4",
+    "ruff>=0.17.5",
     "mdformat>=1.0.0",
     "mdformat-myst>=0.3.0",
     "mdformat-gfm-alerts>=2.1.0",
@@ -678,7 +678,7 @@ all = "error"
 # Gradual generic APIs and validated dynamic boundaries permit Any assignment.
 # Repeating runtime checks or adding casts only to restate those contracts is noise.
 unsound-assignment = "ignore"
-unsound-return-statement = "ignore"
+unsound-return = "ignore"
 # Empty values and None intentionally share these branches; keep input guards.
 truthiness-test-of-none-union = "ignore"
 redundant-condition-strict = "ignore"
@@ -688,7 +688,7 @@ include = ["nab-markersets/src/**"]
 
 [tool.ty.overrides.rules]
 unsound-assignment = "error"
-unsound-return-statement = "error"
+unsound-return = "error"
 
 [tool.ty.src]
 exclude = ["**/_vendor"]
