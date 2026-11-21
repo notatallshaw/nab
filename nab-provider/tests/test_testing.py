@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import parse_metadata
+from nab_provider.policy import BuildPolicy, LocalSource, SourceRequest
 from nab_provider.records import DEFAULT_INDEX_NAME, release_wheel_payload
 from nab_provider.testing import make_coordinator, make_metadata, make_sdist, make_wheel
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.mark.parametrize(
@@ -110,3 +116,30 @@ def test_ports_over_the_same_fixture_graph_have_independent_state() -> None:
     assert first.index.get_listing("pkg") == graph["pkg"]
     assert second.index.get_listing("pkg") is None
     assert second.calls_to("request_listing") == []
+
+
+def test_source_materialization_needs_a_handler(tmp_path: Path) -> None:
+    port = make_coordinator()
+    request = SourceRequest(
+        "demo",
+        LocalSource("demo", str(tmp_path)),
+        BuildPolicy.NEVER,
+        vcs_cache_dir=None,
+        archive_cache_dir=None,
+        require_pin=True,
+    )
+
+    with pytest.raises(NotImplementedError, match="materialize"):
+        port.materialize_source(request)
+
+    assert port.calls_to("materialize_source") == [(request,)]
+
+
+def test_source_build_needs_a_handler() -> None:
+    port = make_coordinator()
+    url = "https://example.org/demo-1.tar.gz"
+
+    with pytest.raises(NotImplementedError, match="build_sdist"):
+        port.build_sdist_metadata("demo", "1", url, ())
+
+    assert port.calls_to("build_sdist_metadata") == [("demo", "1", url, ())]
