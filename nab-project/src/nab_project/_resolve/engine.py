@@ -47,7 +47,7 @@ from nab_provider.policy import BuildPolicy, ResolutionStrategy
 from nab_provider.provider import ListingFilterCache, Provider, join_extra, split_extra
 from nab_provider.ranges import VersionRange
 from nab_provider.resolver_inputs import ProxyConstraints, build_resolver_inputs
-from nab_provider.target import micro_boundary_points, slices_from_points
+from nab_provider.target import MicroBoundaries, micro_boundaries
 from nab_provider.value import FACTORY, FactoryDefault, Record, factory_value, replace
 from nab_provider.yanked_resolution import YankProxyProvider
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
@@ -403,21 +403,24 @@ def _resolve_with_micro_narrowing(
     _reconcile_resolved_builds(
         result, fork_list, constraints, settings, base_requirements
     )
-    points: list[list[Version]] = [[] for _ in targets]
+    boundaries = [MicroBoundaries() for _ in targets]
     combined = result
     for _ in range(_MAX_MICRO_SPLIT_PASSES):
-        grown = _grow_micro_points(targets, points, combined)
+        grown = _grow_micro_boundaries(targets, boundaries, combined)
         if grown is None:
             return combined
-        points = grown
+        boundaries = grown
+        sliced = [
+            cuts.slices(target)
+            for target, cuts in zip(targets, boundaries, strict=True)
+        ]
         split_sigs = {
             env_signature(target)
-            for target, target_points in zip(targets, points, strict=True)
-            if target_points
+            for target, group in zip(targets, sliced, strict=True)
+            if len(group) > 1
         }
         slice_result = _resolve_slices(
-            targets,
-            points,
+            sliced,
             fork_list,
             constraints,
             settings,
@@ -437,8 +440,7 @@ def _resolve_with_micro_narrowing(
 
 
 def _resolve_slices(
-    targets: Sequence[ResolveTarget],
-    points: Sequence[Sequence[Version]],
+    sliced: Sequence[Sequence[ResolveTarget]],
     fork_list: Sequence[ResolveFork],
     constraints: Sequence[Requirement],
     settings: _EngineSettings,
@@ -451,21 +453,16 @@ def _resolve_slices(
     A fork's pass walks the whole matrix in order, folding in an unsplit
     target's first-pass pins rather than resolving it again.
     """
-    sliced: list[list[ResolveTarget]] = [
-        slices_from_points(target, target_points) if target_points else []
-        for target, target_points in zip(targets, points, strict=True)
-    ]
-
     accumulated = dict(preferences or {})
     results: list[TargetResult] = []
     for index, fork in enumerate(fork_list):
         # first_pass holds one contiguous run of results per fork, in order.
         fork_first = first_pass.target_results[
-            index * len(targets) : (index + 1) * len(targets)
+            index * len(sliced) : (index + 1) * len(sliced)
         ]
 
         for target_slices, first_result in zip(sliced, fork_first, strict=True):
-            if not target_slices:
+            if len(target_slices) == 1:
                 accumulated = _threaded_preferences(
                     accumulated, [first_result], align=settings.align
                 )
@@ -489,7 +486,7 @@ def _resolve_slices(
                 accumulated, pass_results, align=settings.align
             )
 
-    all_slices = [t for group in sliced for t in group]
+    all_slices = [t for group in sliced if len(group) > 1 for t in group]
     base_results, env_base_names = _base_pass(
         all_slices, base_requirements, constraints, settings, preferences or {}
     )
@@ -501,31 +498,31 @@ def _resolve_slices(
     )
 
 
-def _grow_micro_points(
+def _grow_micro_boundaries(
     targets: Sequence[ResolveTarget],
-    points: Sequence[Sequence[Version]],
+    boundaries: Sequence[MicroBoundaries],
     result: ResolveResult,
-) -> list[list[Version]] | None:
-    """Return ``points`` grown by the boundaries ``result`` consulted, or None.
+) -> list[MicroBoundaries] | None:
+    """Add the boundaries found in the latest resolve.
 
-    None means no target gained a split point.  A target's boundaries are
+    Return None when the target slices are unchanged. A target's boundaries are
     gathered from every slice it currently has.
     """
     consulted_by_sig: dict[EnvSignature, set[Marker]] = defaultdict(set)
     for tr in result.every_result:
         consulted_by_sig[env_signature(tr.target)] |= set(tr.consulted)
 
-    grown: list[list[Version]] = []
+    grown: list[MicroBoundaries] = []
     changed = False
-    for target, target_points in zip(targets, points, strict=True):
-        found = set(target_points)
-        for sliced in slices_from_points(target, target_points):
+    for target, previous in zip(targets, boundaries, strict=True):
+        found = previous
+        previous_slices = previous.slices(target)
+        for sliced in previous_slices:
             consulted = consulted_by_sig.get(env_signature(sliced), set())
-            found.update(micro_boundary_points(target, consulted))
-        ordered = sorted(found)
-        if ordered != list(target_points):
+            found = found.merge(micro_boundaries(target, consulted))
+        if found != previous and found.slices(target) != previous_slices:
             changed = True
-        grown.append(ordered)
+        grown.append(found)
     return grown if changed else None
 
 
