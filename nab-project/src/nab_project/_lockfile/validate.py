@@ -60,7 +60,7 @@ from nab_provider.marker_holds import (
 )
 from nab_provider.metadata import validate_specifier_versions
 from nab_provider.pep508 import parse_requirement
-from nab_provider.target import NonIntervalMarkerError, micro_boundary_points
+from nab_provider.target import NonIntervalMarkerError, micro_boundaries
 from nab_provider.value import HashableRecord
 
 from .. import toml_io, toml_writer
@@ -505,7 +505,7 @@ def _splits_micro_line(marker: Marker, target: ResolveTarget) -> bool:
     cannot tile is undecided here too, and the full resolve reports it.
     """
     try:
-        return bool(micro_boundary_points(target, [marker]))
+        return len(micro_boundaries(target, [marker]).slices(target)) > 1
     except NonIntervalMarkerError:
         return True
 
