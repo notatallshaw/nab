@@ -343,7 +343,36 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
             clause.replace("python_full_version", "implementation_version")
             for clause in bounds
         )
+    if consulted_version and (target.concrete_micro or target.host_faithful):
+        lexical = _version_membership_bounds(target, texts)
+        clauses.extend(sorted(lexical.difference(clauses)))
     return " and ".join(clauses)
+
+
+def _version_membership_bounds(target: ResolveTarget, texts: Sequence[str]) -> set[str]:
+    """Require the installer's version text to give the same membership answers."""
+    variables = _scanned_version_variables(target)
+    bounds: set[str] = set()
+    for text in texts:
+        if " in " not in text:
+            continue
+        for atom in MARKER_COMPARISON.finditer(text):
+            lhs, op, rhs = _clause_parts(atom)
+            if op not in {"in", "not in"}:
+                continue
+            if lhs.startswith(('"', "'")):
+                # Packaging reads the right operand as an environment key here.
+                rhs = rhs.strip("\"'")
+                variable = rhs
+            else:
+                variable = lhs
+            if variable not in variables:
+                continue
+
+            test = Marker(f"{lhs} in {rhs}")
+            membership = "in" if test.evaluate_prepared(target.marker_env) else "not in"
+            bounds.add(f"{lhs} {membership} {rhs}")
+    return bounds
 
 
 def _patch_bounds(

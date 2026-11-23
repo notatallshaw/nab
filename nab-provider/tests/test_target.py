@@ -1170,6 +1170,37 @@ class TestVersionEmission:
 
         return ResolveTarget.for_host(env_source=env_source, tags_source=_host_tags)
 
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            'python_full_version in "3.13.4+vendor"',
+            '"vendor" not in python_full_version',
+            'implementation_version not in "3.13.4+vendor"',
+            '"vendor" in implementation_version',
+            (
+                'python_full_version in "3.13.4+vendor" and sys_platform in "linux win32" '
+                'and python_full_version >= "3.12"'
+            ),
+        ],
+    )
+    def test_exact_build_preserves_string_membership(self, expression: str) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.13",
+            python_full_version="3.13.4+vendor",
+            spec=PlatformSpec("linux_x86_64"),
+        )
+        consulted = Marker(expression)
+        row = Marker(environment_declaration(target, [consulted]))
+        resolved = consulted.evaluate(target.marker_env)
+
+        for version in ("3.13.4+vendor", "3.13.4+VENDOR", "03.13.4+vendor"):
+            env = {
+                **target.marker_env,
+                "python_full_version": version,
+                "implementation_version": version,
+            }
+            assert row.evaluate(env) == (consulted.evaluate(env) == resolved)
+
     def test_an_unsplit_minor_emits_a_plain_row(self) -> None:
         """A minor no marker split reverts to a plain ``python_version`` row."""
         declaration = environment_declaration(self._minor(), ())
