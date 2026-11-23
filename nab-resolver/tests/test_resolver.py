@@ -59,75 +59,7 @@ from nab_resolver.types import (
     Term,
 )
 
-
-class DictProvider:
-    """In-memory provider for testing. Packages are strings, versions are ints."""
-
-    def __init__(self, packages: dict[str, dict[int, dict[str, Range]]]) -> None:
-        self._packages = packages
-
-    def _get_versions(self, package: str) -> list[int]:
-        if package not in self._packages:
-            return []
-        return sorted(self._packages[package].keys(), reverse=True)
-
-    def choose_version(
-        self, package: str, version_range: RangeProtocol[int]
-    ) -> int | None:
-        for version in self._get_versions(package):
-            if version in version_range:
-                return version
-        return None
-
-    def has_satisfying_version(
-        self, package: str, version_range: RangeProtocol[int]
-    ) -> bool:
-        return any(v in version_range for v in self._get_versions(package))
-
-    def get_dependencies(self, package: str, version: int) -> dict[str, Range]:
-        return self._packages.get(package, {}).get(version, {})
-
-    def begin_decision_scan(self) -> None:
-        """No-op: nothing in this stub moves under a scan."""
-
-    def prioritize(
-        self,
-        package: str,
-        version_range: RangeProtocol[int],
-        conflict_counts: Mapping[str, int],
-        culprit_counts: Mapping[str, int] | None = None,
-    ) -> object:
-        versions = self._get_versions(package)
-        return sum(1 for v in versions if v in version_range)
-
-    def is_ready(self, package: str) -> bool:
-        """All packages decidable immediately in tests."""
-        return True
-
-    def receive_partial_solution_hint(
-        self,
-        positive_ranges: Mapping[str, RangeProtocol[int]],
-        decisions: Mapping[str, int],
-    ) -> None:
-        """No-op: test provider does not use partial solution state."""
-
-    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
-        """No queued clauses for this in-memory provider."""
-        return []
-
-    def consume_force_backtrack_targets(self) -> list[str]:
-        """No force-backtrack signal from this provider."""
-        return []
-
-    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
-        """No widening: dependency clauses keep the exact decided version."""
-        return None
-
-    def narrow_for_display(
-        self, package: str, constraint: RangeProtocol[int]
-    ) -> RangeProtocol[int]:
-        """Identity: constraints render as stored."""
-        return constraint
+from .solver_fixtures import DictProvider, is_proven_conflict
 
 
 class PromotingProvider(DictProvider):
@@ -301,7 +233,7 @@ class TestPendingClausesHook:
         resolver = Resolver(provider)
         # Resolution fails because foo==2 can't be picked, but the failure
         # path goes through the queued clause rather than NO_VERSIONS.
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve({"root": Range.singleton(1)})
 
 
@@ -389,7 +321,7 @@ class TestConflictLearning:
             }
         )
         resolver = Resolver(provider)
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve({"root": Range.singleton(1)})
 
     def test_direct_conflict(self) -> None:
@@ -401,7 +333,7 @@ class TestConflictLearning:
             }
         )
         resolver = Resolver(provider)
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve(
                 {
                     "root": Range.singleton(1),
@@ -453,7 +385,7 @@ class TestMultiLevelConflict:
             }
         )
         resolver = Resolver(provider)
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve({"root": Range.singleton(1)})
 
 
@@ -540,7 +472,7 @@ class TestThreeWayConflict:
             }
         )
         resolver = Resolver(provider)
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve({"root": Range.singleton(1)})
 
 
@@ -567,7 +499,7 @@ class TestCircularDependencies:
             }
         )
         resolver = Resolver(provider)
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve({"root": Range.singleton(1)})
 
 
@@ -1238,7 +1170,7 @@ class TestResolverInternals:
         )
         resolver = Resolver(DictProvider({}))
         resolver.solution = solution
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             conflict_resolution(resolver, conflict)
 
     @pytest.mark.parametrize("terms", [[], [Term("absent", Range.singleton(1))]])
@@ -1542,7 +1474,7 @@ class TestBackjumpToRoot:
         must detect this and raise ResolutionError.
         """
         provider = DictProvider({"root": {1: {"foo": Range.full()}}, "foo": {}})
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             Resolver(provider).resolve({"root": Range.singleton(1)})
 
     def test_decision_satisfier_backjump_adjustment(self) -> None:
@@ -1566,7 +1498,7 @@ class TestBackjumpToRoot:
                 "c": {2: {}, 1: {}},
             }
         )
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             Resolver(provider).resolve({"root": Range.singleton(1)})
 
     def test_terminal_clause_reports_the_whole_derivation(self) -> None:
@@ -2984,7 +2916,7 @@ class TestRegressions:
             }
         )
         resolver = Resolver(provider)
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve({"root": Range.singleton(1)})
 
 
@@ -3409,7 +3341,7 @@ class TestSettledClauseSkip:
         auditor = StampAuditor(resolver)
         resolver.observer = auditor
 
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve({"a": Range.full()})
 
         assert auditor.stale == []
@@ -3463,7 +3395,7 @@ class TestSettledClauseSkip:
         resolver = Resolver(provider)
         assert resolver.resolve({"a": Range.full()}) == {"a": 2, "b": 2}
 
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve({"c": Range.full()})
 
         assert len(resolver.clause_contradicted_at) == len(resolver.incompatibilities)
@@ -3495,7 +3427,7 @@ class TestResolverStats:
         stats.package_conflict_counts["a"] += 1
         assert other.package_conflict_counts == {}
 
-    def test_counters_can_be_supplied(self) -> None:
+    def test_pattern_matching_reads_the_supplied_counters_positionally(self) -> None:
         stats: ResolverStats[str] = ResolverStats(
             1,
             2,
@@ -3514,6 +3446,13 @@ class TestResolverStats:
         assert (stats.targeted_backtracks, stats.incompatibilities_learned) == (7, 8)
         assert stats.package_conflict_counts == {"a": 1}
         assert stats.package_culprit_counts == {"b": 2}
+
+        match stats:
+            case ResolverStats(1, 2, 3, 4, 5, 6, 7, 8, conflicts, culprits):
+                assert conflicts == {"a": 1}
+                assert culprits == {"b": 2}
+            case _:
+                pytest.fail("ResolverStats did not match positionally")
 
     def test_equality_covers_every_counter_and_declines_other_types(self) -> None:
         """Vary one counter at a time, so none can drop out of __eq__."""
@@ -3550,28 +3489,6 @@ class TestResolverStats:
 
         with pytest.raises(AttributeError):
             _ = stats.__dict__
-
-    def test_pattern_matching_reads_every_counter_positionally(self) -> None:
-        """Ten sub-patterns, in declaration order rather than slot order."""
-        stats: ResolverStats[str] = ResolverStats(rounds=2, conflicts=5)
-
-        match stats:
-            case ResolverStats(
-                rounds,
-                decisions,
-                conflicts,
-                derivations,
-                backjumps,
-                restarts,
-                targeted_backtracks,
-                learned,
-                conflict_counts,
-                culprit_counts,
-            ):
-                assert (rounds, decisions, conflicts) == (2, 0, 5)
-                assert (derivations, backjumps, restarts) == (0, 0, 0)
-                assert (targeted_backtracks, learned) == (0, 0)
-                assert (conflict_counts, culprit_counts) == ({}, {})
 
     def test_repr_names_the_class_and_every_counter(self) -> None:
         assert repr(ResolverStats(rounds=2)) == (

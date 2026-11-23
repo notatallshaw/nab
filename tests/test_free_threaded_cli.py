@@ -441,7 +441,7 @@ def test_inputs_changing_during_resolution_do_not_receive_validation_evidence(
     assert not project.with_name("pylock.toml").exists()
 
 
-@pytest.mark.parametrize("declaration", ["pyproject", "nab.toml"])
+@pytest.mark.parametrize("declaration", ["pyproject", "nab.toml", "cli"])
 def test_specific_free_threaded_target_excludes_newer_standard_wheel(
     tmp_path: Path, declaration: str
 ) -> None:

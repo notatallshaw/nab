@@ -282,7 +282,8 @@ class WheelFile(_DeferredIntegrity, HashableRecord):
 
     __slots__ = (*__match_args__, "_metadata_url", "_raw_metadata")
 
-    _metadata_url: str
+    # Older pickles can contain the derived URL alone.
+    _metadata_url: tuple[str, str] | str | None
     _raw_metadata: object
     filename: str
     url: str
@@ -371,12 +372,16 @@ class WheelFile(_DeferredIntegrity, HashableRecord):
             return None
 
         try:
-            return self._metadata_url
+            cached = self._metadata_url
         except AttributeError:
-            parts = urlsplit(url)
-            url = urlunsplit(parts._replace(path=parts.path + ".metadata", fragment=""))
-            self._metadata_url = url
-            return url
+            cached = None
+        if isinstance(cached, tuple) and cached[0] is url:
+            return cached[1]
+
+        parts = urlsplit(url)
+        sidecar = urlunsplit(parts._replace(path=parts.path + ".metadata", fragment=""))
+        self._metadata_url = (url, sidecar)
+        return sidecar
 
 
 def release_wheel_payload(wheel: WheelFile) -> None:
@@ -395,6 +400,7 @@ def release_wheel_payload(wheel: WheelFile) -> None:
     """
     wheel.url = ""
     wheel.has_metadata = False
+    wheel._metadata_url = None
 
     # A deferred slot holding ``None`` reads back as one holding nothing.
     wheel._raw_hashes = None

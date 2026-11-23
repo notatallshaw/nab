@@ -2,7 +2,7 @@
 
 The UTF-8 JSON wire form is ``[header, rows]``. The header carries format,
 codec, sort-key scheme, source-body digest, served zip-sdist versions,
-sparse withdrawal flags, and the response page URL.
+sparse withdrawal flags, the response page URL and whether every file was withdrawn.
 An incompatible header, body digest or page URL is a cache miss.
 
 Rows preserve source order and tag each flat record as a wheel or sdist. A
@@ -38,6 +38,7 @@ from nab_provider.records import (
 )
 
 from ._json_decode import decode_json
+from ._listing import ListingDiagnostics, ListingResult
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -49,6 +50,7 @@ __all__ = [
     "ParsedListing",
     "corruption_reason",
     "decode",
+    "decode_listing",
     "encode",
     "parse_body_digest",
 ]
@@ -57,7 +59,7 @@ __all__ = [
 # blob surfacing under the current bucket. Bump it when the header or row shape
 # changes, or when the same body parses to different records: ``body_digest``
 # pins only the input.
-FORMAT_VERSION = 10
+FORMAT_VERSION = 11
 # Serialization variant that wrote the rows, so a future codec switch
 # self-heals rather than misdecodes.
 CODEC = 1
@@ -66,7 +68,7 @@ CODEC = 1
 KEY_SCHEME = 0
 
 _TOP_LEN = 2
-_HEADER_LEN = 7
+_HEADER_LEN = 8
 _PAIR_LEN = 2
 _TAG_WHEEL = 0
 _TAG_SDIST = 1
@@ -78,6 +80,7 @@ _H_DIGEST = 3
 _H_ZIP_SDISTS = 4
 _H_YANKS = 5
 _H_PAGE_URL = 6
+_H_ALL_YANKED = 7
 
 
 class _InvalidRecordError(ValueError):
@@ -97,6 +100,7 @@ def encode(
     zip_sdists: frozenset[str] = frozenset(),
     *,
     page_url: str | None = None,
+    all_yanked: bool | None = None,
 ) -> bytes:
     """Encode parsed listing ``files`` into a cache blob bound to ``body_digest``.
 
@@ -106,7 +110,8 @@ def encode(
     ``zip_sdists`` names the releases offered as a ``.zip`` sdist, including
     links that cannot become records. ``local_path`` is not stored (a
     parsed-cache entry always comes from a remote body) and ``metadata_url``
-    is a derived property, so neither rides the wire.
+    is a derived property, so neither rides the wire. Supply ``all_yanked``
+    from the page when parsing may have discarded live entries.
     """
     rows: list[list[object]] = []
     yanks: dict[str, bool | str] = {}
@@ -146,7 +151,10 @@ def encode(
             )
         if record.yanked:
             yanks[str(len(rows) - 1)] = record.yanked
-    header = [*_BUILD_ID, body_digest, sorted(zip_sdists), yanks, page_url]
+
+    if all_yanked is None:
+        all_yanked = bool(rows) and len(yanks) == len(rows)
+    header = [*_BUILD_ID, body_digest, sorted(zip_sdists), yanks, page_url, all_yanked]
 
     # Escape non-ASCII: a field kept verbatim from the listing, such as
     # ``requires_python``, can hold a lone surrogate with no UTF-8 form.
@@ -154,6 +162,14 @@ def encode(
 
 
 def decode(blob: bytes, policy: CachePolicy) -> ParsedListing | None:
+    """Restore the listing records and ZIP releases from a matching blob."""
+    result = decode_listing(blob, policy)
+    if result is None:
+        return None
+    return ParsedListing(result.files, result.diagnostics.zip_sdists)
+
+
+def decode_listing(blob: bytes, policy: CachePolicy) -> ListingResult | None:
     """Restore records when the build, response digest and page URL match.
 
     Return ``None`` for a stale or malformed entry so the caller can rebuild
@@ -180,9 +196,12 @@ def decode(blob: bytes, policy: CachePolicy) -> ParsedListing | None:
     # A blob whose header matches this build but whose rows or ``.zip`` cell
     # are the wrong shape must rebuild, not crash the resolve.
     try:
-        return ParsedListing(
-            _restore_yanks(_decode_rows(rows), header[_H_YANKS]),
-            _decode_zip_sdists(header[_H_ZIP_SDISTS]),
+        diagnostics = ListingDiagnostics(
+            all_yanked=header[_H_ALL_YANKED] is True,
+            zip_sdists=_decode_zip_sdists(header[_H_ZIP_SDISTS]),
+        )
+        return ListingResult(
+            _restore_yanks(_decode_rows(rows), header[_H_YANKS]), diagnostics
         )
     except (ValueError, TypeError):
         return None
@@ -231,6 +250,8 @@ def _current_header(value: JsonValue) -> list[JsonValue] | None:
         return None
 
     if len(value) != _HEADER_LEN or parse_body_digest(value[_H_DIGEST]) is None:
+        raise _InvalidRecordError
+    if type(value[_H_ALL_YANKED]) is not bool:
         raise _InvalidRecordError
     page_url = value[_H_PAGE_URL]
     if page_url is not None and not isinstance(page_url, str):

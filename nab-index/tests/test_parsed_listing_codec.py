@@ -39,6 +39,7 @@ _H_CODEC = 1
 _H_KEY_SCHEME = 2
 _H_DIGEST = 3
 _H_ZIP_SDISTS = 4
+_H_ALL_YANKED = 7
 
 # An sdist row is tag plus seven fields; the unknown-tag case relies on keeping
 # that arity so the tag check is what rejects it, not the unpack.
@@ -172,7 +173,7 @@ def test_lone_surrogate_in_field_round_trips() -> None:
 def test_blob_is_portable_json() -> None:
     """The wire form carries no interpreter tag, so any reader can decode it."""
     header, rows = json.loads(encode(SAMPLE, DIGEST))
-    assert header == [FORMAT_VERSION, CODEC, KEY_SCHEME, DIGEST, [], {}, None]
+    assert header == [FORMAT_VERSION, CODEC, KEY_SCHEME, DIGEST, [], {}, None, False]
     assert [row[0] for row in rows] == [_TAG_WHEEL, _TAG_SDIST, _TAG_WHEEL, _TAG_SDIST]
 
 
@@ -243,6 +244,7 @@ def test_valid_blob_decodes() -> None:
         (_H_DIGEST, None),
         (_H_DIGEST, "short"),
         (_H_DIGEST, "z" * 64),
+        (_H_ALL_YANKED, 1),
     ],
 )
 def test_malformed_header_is_reported_and_treated_as_a_miss(

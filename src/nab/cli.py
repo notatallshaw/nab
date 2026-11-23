@@ -163,9 +163,7 @@ def _painting(stream: object, choice: str) -> bool:
     refusal to stderr, so ``nab --help | less`` is plain while the refusal
     beside it on a terminal is not.
     """
-    isatty = getattr(stream, "isatty", None)
-    tty = isatty is not None and bool(isatty())
-    return bool(_load("nab.env").color_enabled(choice, isatty=tty))
+    return bool(_load("nab.env").color_for_stream(choice, stream))
 
 
 def _dispatch(parsed: Parsed, resume: Callable[[], None]) -> tuple[int, str, str]:

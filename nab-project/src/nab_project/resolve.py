@@ -485,7 +485,7 @@ def build_lock_input(
     """
     inputs = ResolveInputs() if inputs is None else inputs
     targets: dict[str, TargetLock] = {}
-    consulted: dict[EnvSignature, set[Marker]] = {}
+    consulted: defaultdict[EnvSignature, set[Marker]] = defaultdict(set)
     declaring: list[ResolveTarget] = []
     for tr in result.target_results:
         if tr.lock is None:
@@ -493,18 +493,15 @@ def build_lock_input(
 
         targets[tr.target.label] = tr.lock
 
-        # Conflict forks repeat an environment under different selections,
-        # so it is declared once, from everything every fork read.
-        signature = env_signature(tr.target)
-        if signature not in consulted:
-            consulted[signature] = set()
-            declaring.append(tr.target)
-        consulted[signature] |= tr.consulted
+        declaring.append(tr.target)
+        consulted[env_signature(tr.target)] |= tr.consulted
 
+    declarations = _declared_environments(declaring, consulted)
     return LockInput(
         targets=targets,
         env_base_names=dict(result.env_base_names),
-        environments=_declared_environments(declaring, consulted),
+        target_environments=declarations,
+        environments=[Marker(text) for text in dict.fromkeys(declarations.values())],
         requires_python=inputs.requires_python,
         created_by=created_by,
         extras=tuple(extras),
@@ -519,8 +516,8 @@ def build_lock_input(
 def _declared_environments(
     declaring: Sequence[ResolveTarget],
     consulted: Mapping[EnvSignature, set[Marker]],
-) -> list[Marker]:
-    """Build the lock's PEP 751 ``environments``, one per environment.
+) -> dict[str, str]:
+    """Collect the PEP 751 environment declaration for each target label.
 
     Every dependency whose marker was False on a target was dropped there,
     so an installer answering one of those markers differently needs a
@@ -561,10 +558,10 @@ def _declared_environments(
             )
             break
 
-    return [
-        Marker(environment_declaration(target, consulted[env_signature(target)]))
+    return {
+        target.label: environment_declaration(target, consulted[env_signature(target)])
         for target in declaring
-    ]
+    }
 
 
 class _ProjectTables(Record):
@@ -583,6 +580,9 @@ class _ProjectTables(Record):
     optional: Mapping[str, object]
     project_name: str | None
     build_requires: list[Requirement]
+    """``[build-system].requires``, read only when ``[tool.nab].build-group``
+    names a group for them.  A ``--build-requirements`` resolve carries them
+    in ``dependencies`` instead and leaves this empty."""
 
     def __init__(
         self,
@@ -597,10 +597,6 @@ class _ProjectTables(Record):
         self.optional = optional
         self.project_name = project_name
         self.build_requires = factory_value(build_requires, list)
-
-    """``[build-system].requires``, read only when ``[tool.nab].build-group``
-    names a group for them.  A ``--build-requirements`` resolve carries them
-    in ``dependencies`` instead and leaves this empty."""
 
 
 def _carried_by(
@@ -1188,44 +1184,15 @@ class _GroupConflict(HashableRecord):
         self.right_req = right_req
 
 
-def _find_self_empty_groups(
-    per_group: Mapping[str, list[Requirement]],
-    environment: Mapping[str, str],
-) -> list[_SelfEmptyGroup]:
-    """Return the groups whose own requirements on a package leave no version.
-
-    The result is sorted by ``(group, package)``.
-    """
-    self_empty: list[_SelfEmptyGroup] = []
-    for group in sorted(per_group):
-        ranges, sources = _group_package_ranges(per_group[group], environment)
-        self_empty.extend(
-            _SelfEmptyGroup(
-                group=group,
-                package=package,
-                reqs=", ".join(sources[package]),
-            )
-            for package in sorted(ranges)
-            if ranges[package].is_empty
-        )
-    return self_empty
-
-
 def _find_group_conflicts(
     per_group: Mapping[str, list[Requirement]],
     environment: Mapping[str, str],
-) -> list[_GroupConflict]:
-    """Return the direct group-vs-group conflicts under ``environment``.
+) -> tuple[list[_SelfEmptyGroup], list[_GroupConflict]]:
+    """Find contradictions within and between groups on this environment."""
+    self_empty: list[_SelfEmptyGroup] = []
 
-    Only direct conflicts are caught; one that emerges through a shared
-    transitive dependency falls through to the resolver.  A group that
-    already leaves no version on a package is left out of the pairing and
-    reported by :func:`_find_self_empty_groups` instead.  The result is
-    sorted by ``(left_group, right_group, package)``.
-    """
-    # Invert to: package -> the groups naming it directly, each with its
-    # folded range and the requirement strings behind it.  Sorted order
-    # makes every pair below read low-to-high.
+    # Index satisfiable ranges by package so only groups that share one are paired.
+    # Group order keeps the two names in each diagnostic stable.
     requirers: defaultdict[str, list[tuple[str, VersionRange, list[str]]]] = (
         defaultdict(list)
     )
@@ -1233,6 +1200,9 @@ def _find_group_conflicts(
         ranges, sources = _group_package_ranges(per_group[group], environment)
         for package, package_range in ranges.items():
             if package_range.is_empty:
+                self_empty.append(
+                    _SelfEmptyGroup(group, package, ", ".join(sources[package]))
+                )
                 continue
             requirers[package].append((group, package_range, sources[package]))
 
@@ -1252,8 +1222,7 @@ def _find_group_conflicts(
                     )
                 )
 
-    conflicts.sort(key=lambda c: (c.left_group, c.right_group, c.package))
-    return conflicts
+    return self_empty, conflicts
 
 
 def _tuple_scope(labels: set[str], targets: Sequence[ResolveTarget]) -> str:
@@ -1274,9 +1243,10 @@ def _check_group_disjointness(
     self_empty: dict[_SelfEmptyGroup, set[str]] = defaultdict(set)
     affected: dict[_GroupConflict, set[str]] = defaultdict(set)
     for target in targets:
-        for empty in _find_self_empty_groups(per_group, target.marker_env):
+        empty_groups, conflicts = _find_group_conflicts(per_group, target.marker_env)
+        for empty in empty_groups:
             self_empty[empty].add(target.label)
-        for conflict in _find_group_conflicts(per_group, target.marker_env):
+        for conflict in conflicts:
             affected[conflict].add(target.label)
 
     if not self_empty and not affected:

@@ -32,6 +32,8 @@ import bisect
 import logging
 import operator
 from collections import defaultdict, deque
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from enum import Enum
 from itertools import chain
 from types import MappingProxyType
@@ -107,7 +109,15 @@ from .vcs_admission import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+    from collections.abc import (
+        Callable,
+        Generator,
+        Iterable,
+        Iterator,
+        Mapping,
+        Sequence,
+    )
+    from contextlib import AbstractContextManager
     from datetime import datetime
     from pathlib import Path
 
@@ -327,6 +337,39 @@ class _ReleaseSnapshot:
                 self.releases.setdefault(version, []).append(dist)
 
 
+class _ListingFilters:
+    """Prepared data for one package page and the index that supplied it."""
+
+    __slots__ = (
+        "diagnosed",
+        "files",
+        "filtered",
+        "index_name",
+        "prepared",
+        "releases",
+        "tagged",
+    )
+
+    def __init__(
+        self, files: Sequence[DistFile] | None = None, index_name: str | None = None
+    ) -> None:
+        self.files = files
+        self.index_name = index_name
+        self.filtered: dict[
+            str | None, tuple[list[tuple[Version, DistFile]], tuple[int, ...]]
+        ] = {}
+        self.prepared: tuple[_listing.SharedListing, tuple[int, ...]] | None = None
+        self.diagnosed: dict[str | None, _diagnosis.BaseListingDiagnosis] = {}
+        self.tagged: dict[str | None, CandidatePreparation] = {}
+        self.releases: _ReleaseSnapshot | None = None
+
+
+# A nested read or a second thread can publish another page before tag ranking.
+_listing_read: ContextVar[tuple[Provider, str, _ListingFilters] | None] = ContextVar(
+    "listing_read", default=None
+)
+
+
 class ListingFilterCache:
     """Base listing-filter results shared across the targets of one resolve.
 
@@ -364,26 +407,47 @@ class ListingFilterCache:
         self._pythons = pythons
         self._target_count = target_count
 
-        self._entries: dict[
-            tuple[str, str | None],
-            tuple[list[tuple[Version, DistFile]], tuple[int, ...]],
-        ] = {}
-        self._prepared: dict[str, tuple[_listing.SharedListing, tuple[int, ...]]] = {}
-        self._diagnosed: dict[
-            tuple[str, str | None], _diagnosis.BaseListingDiagnosis
-        ] = {}
-        self._tagged: dict[str, dict[str | None, CandidatePreparation]] = {}
-        self._release_snapshots: dict[str, _ReleaseSnapshot] = {}
+        self._pages: dict[str, _ListingFilters] = {}
+
+    @contextmanager
+    def reading(
+        self, provider: Provider, package: str, files: Sequence[DistFile]
+    ) -> Generator[None, None, None]:
+        """Use one page's data for every filter until the read finishes."""
+        index_name = provider.coordinator.index.get_listing_index(package)
+        page = self._pages.get(package)
+        if page is None or page.files is not files or page.index_name != index_name:
+            page = self._pages[package] = _ListingFilters(files, index_name)
+
+        token = _listing_read.set((provider, package, page))
+        try:
+            yield
+        finally:
+            _listing_read.reset(token)
+
+    def _page(self, package: str) -> _ListingFilters:
+        active = _listing_read.get()
+        if active is not None:
+            provider, name, bound = active
+            if name == package and provider.listing_filter_cache is self:
+                return bound
+
+        # The cache methods can also be called directly, outside a provider read.
+        page = self._pages.get(package)
+        if page is None:
+            page = self._pages[package] = _ListingFilters()
+        return page
 
     def selected_release(
         self, package: str, files: Sequence[DistFile], version: Version
     ) -> tuple[Sequence[DistFile], ListingFilterCache]:
         """Return a complete release and a filter bound to this exact snapshot."""
         # Replacing a listing invalidates its release groups and prepared views.
-        snapshot = self._release_snapshots.get(package)
+        page = self._page(package)
+        snapshot = page.releases
         if snapshot is None or snapshot.files is not files:
             snapshot = _ReleaseSnapshot(files)
-            self._release_snapshots[package] = snapshot
+            page.releases = snapshot
 
         # Restricted preparation must stay separate from ordinary search.
         cache = snapshot.filters.get(version)
@@ -405,7 +469,8 @@ class ListingFilterCache:
         A memo hit replays the counters the filter raised onto ``stats``, so
         every target still reports the files it would have walked.
         """
-        entry = self._entries.get((package, python_version))
+        entries = self._page(package).filtered
+        entry = entries.get(python_version)
         if entry is not None:
             result, delta = entry
             _replay(stats, delta)
@@ -414,17 +479,18 @@ class ListingFilterCache:
         before = _counters(stats)
         result = compute()
 
-        self._entries[(package, python_version)] = (list(result), _since(before, stats))
+        entries[python_version] = (list(result), _since(before, stats))
         return result
 
     def tagged(
         self, package: str, python_version: str | None, tags: TagSet
     ) -> CandidateView:
         """Project the cache-owned base snapshot through this target's tags."""
-        by_python = self._tagged.setdefault(package, {})
+        page = self._page(package)
+        by_python = page.tagged
         prepared = by_python.get(python_version)
         if prepared is None:
-            records = self._entries[(package, python_version)][0]
+            records = page.filtered[python_version][0]
             previous = next(reversed(by_python.values()), None)
             prepared = (
                 previous
@@ -447,7 +513,8 @@ class ListingFilterCache:
         :meth:`filtered` does, and the caller must treat the result as
         read-only, since the other Pythons hold it too.
         """
-        entry = self._prepared.get(package)
+        page = self._page(package)
+        entry = page.prepared
         if entry is not None:
             result, delta = entry
             _replay(stats, delta)
@@ -456,7 +523,7 @@ class ListingFilterCache:
         before = _counters(stats)
         result = compute()
 
-        self._prepared[package] = (result, _since(before, stats))
+        page.prepared = (result, _since(before, stats))
         return result
 
     def diagnosed(
@@ -478,11 +545,11 @@ class ListingFilterCache:
         same totals behind.  The result is held by every target that shares
         the memo, so callers must treat it as read-only.
         """
-        key = (package, python_version)
-        entry = self._diagnosed.get(key)
+        entries = self._page(package).diagnosed
+        entry = entries.get(python_version)
         if entry is None:
             entry = compute()
-            self._diagnosed[key] = entry
+            entries[python_version] = entry
         return entry
 
 
@@ -1213,6 +1280,11 @@ class Provider:
         package's listing came from; ``None`` before any listing resolves
         or for synthetic (local / VCS / archive) sources.
         """
+        active = _listing_read.get()
+        if active is not None:
+            provider, name, page = active
+            if provider is self and name == canonical_name:
+                return page.index_name
         return self.coordinator.index.get_listing_index(canonical_name)
 
     def effective_build_policy(
@@ -1787,6 +1859,15 @@ class Provider:
             releases, cache, unchanged_only=unchanged_only
         )
 
+    def reading_listing(
+        self, normalized: str, files: Sequence[DistFile]
+    ) -> AbstractContextManager[None]:
+        """Bind shared filters to the files and index used for this read."""
+        cache = self.listing_filter_cache
+        return (
+            nullcontext() if cache is None else cache.reading(self, normalized, files)
+        )
+
     def filter_distributions(
         self, normalized: str, files: Sequence[WheelFile | SdistFile]
     ) -> list[tuple[Version, DistFile]]:
@@ -1809,22 +1890,28 @@ class Provider:
                 if (version := _listing.parsed_version(raw)) is not None
             }
 
-        cache = self.listing_filter_cache
-        if self._preferred_trial is not None:
-            files, cache = self._preferred_trial.select(
-                self, normalized, files, has_withdrawals=bool(raw_versions)
-            )
+        with self.reading_listing(normalized, files):
+            cache = self.listing_filter_cache
+            if self._preferred_trial is not None:
+                files, cache = self._preferred_trial.select(
+                    self, normalized, files, has_withdrawals=bool(raw_versions)
+                )
 
-        if not self.defer_yanked:
-            files = [
-                file
-                for file in files
-                if not file.yanked
-                or (normalized, _listing.parsed_version(file.version))
-                in self.yank_admissions
-            ]
+            if not self.defer_yanked:
+                admitted = [
+                    file
+                    for file in files
+                    if not file.yanked
+                    or (normalized, _listing.parsed_version(file.version))
+                    in self.yank_admissions
+                ]
 
-        return _listing.filter_distributions(self, normalized, files, cache)
+                # Withdrawals can have different admissions on another target.
+                if len(admitted) != len(files):
+                    cache = None
+                files = admitted
+
+            return _listing.filter_distributions(self, normalized, files, cache)
 
     def pick_best_candidate(
         self,
@@ -1982,40 +2069,40 @@ class Provider:
             if base_range is not None:
                 admit_range = version_range & base_range
 
-        if not self._admits_preference(
+        listed = self._listed_preference(
             normalized, version_list, admit_range, preferred
-        ):
+        )
+        if listed is None:
             return None
 
         usable = (
-            _extras.version_provides_extra(self, base, extra, preferred)
+            _extras.version_provides_extra(self, base, extra, listed)
             if extra is not None
-            else self._look_ahead_ok(normalized, preferred, check_decisions=True)
+            else self._look_ahead_ok(normalized, listed, check_decisions=True)
         )
-        return preferred if usable else None
+        return listed if usable else None
 
-    def _admits_preference(
+    def _listed_preference(
         self,
         normalized: str,
         version_list: list[tuple[Version, DistFile]],
         admit_range: VersionRange,
         preferred: Version,
-    ) -> bool:
-        """Report whether ``preferred`` is one of the listing's in-range versions.
-
-        A final release is answered by ``contains`` on the range plus a lookup
-        in the listing's picked-dist view.  A pre-release needs the ``filter``
-        walk instead: ``contains`` reads only the configured pre-release policy,
-        while ``filter`` also applies the PEP 440 buffering and the range's
-        opt-in region.
-        """
+    ) -> Version | None:
+        """Find the current release matching the preference and the requested range."""
         if preferred.is_prerelease:
-            all_versions = self.versions_only(normalized, version_list)
-            in_range = admit_range.filter(all_versions)
-            return preferred in in_range
-        return preferred in admit_range and preferred in self._wheel_by_version(
-            normalized, version_list
-        )
+            # The complete listing determines whether a fallback prerelease is admitted.
+            versions = self.versions_only(normalized, version_list)
+            admitted = admit_range.filter(versions)
+            return next((listed for listed in admitted if listed == preferred), None)
+
+        start = _metadata_resolver.release_start(version_list, preferred)
+        if start < len(version_list):
+            # Equal versions can have different text under a literal requirement.
+            listed = version_list[start][0]
+            if listed == preferred and listed in admit_range:
+                return listed
+        return None
 
     def has_satisfying_version(
         self, package: str, version_range: RangeProtocol[Version]
@@ -2632,6 +2719,10 @@ class Provider:
         ):
             versions = self.versions_cache.get(normalized)
             if versions is not None:
+                # A no-versions clause can cover more than the user's constraint.
+                constraint = self.constraints.get(normalized)
+                if constraint is not None:
+                    listing_range &= constraint
                 # A reporting query must not retain another requirement's domain.
                 recorded = (
                     self._listing_no_versions_reason(package, listing_range)
@@ -2727,7 +2818,8 @@ class Provider:
         before = _counters(self.stats)
         tag_counts = dict(self.tag_excluded_wheels_by_version)
         try:
-            diagnosis = _diagnosis.walk_listing(self, normalized, files)
+            with self.reading_listing(normalized, files):
+                diagnosis = _diagnosis.walk_listing(self, normalized, files)
         finally:
             _restore(self.stats, before)
             self.tag_excluded_wheels_by_version.clear()
@@ -2958,10 +3050,8 @@ class Provider:
 
         The reversed ``versions_only`` view of the post-filter listing, so
         pre-release, dev, post, and local versions all fence widening.
-        Yanked files are dropped at nab-index parse time and can never be
-        selected; if that ever moves into a provider-level filter, this
-        universe must be sourced below it, or widened ranges would span
-        selectable yanked versions.
+        A withdrawn version retained for admission also bounds the gap
+        around its neighbors.
         """
         cached = self._ascending_versions_cache.get(normalized)
         if cached is None:
@@ -3164,10 +3254,6 @@ class Provider:
                 self, self.fetch_versions(base), normalized, version
             )
 
-        # Before the cache check: a queued prefetch lands in deps_cache only
-        # when this decodes it.
-        _listing.parse_prefetched_metadata(self, cache_key)
-
         if cache_key in self.deps_cache:
             return self.deps_cache[cache_key]
         cached_unsupported = self._unsupported_sdists.get(cache_key)
@@ -3212,27 +3298,47 @@ class Provider:
             self.prefetch_new_deps(self.deps_cache[cache_key])
             return self.deps_cache[cache_key]
 
+        # A queued sidecar and a direct read must pass the same sibling check.
+        _listing.parse_prefetched_metadata(self, cache_key)
+        if cache_key in self.deps_cache:
+            return self._checked_index_dependencies(cache_key, versions)
+
         metadata_text, from_sdist = _metadata_resolver.resolve_metadata(
             self, versions, package, version
         )
-
         self._parse_and_cache_metadata_guarded(
             cache_key, metadata_text, from_sdist=from_sdist
         )
 
+        deps = self._checked_index_dependencies(cache_key, versions)
+        self.stats.metadata_fetched += 1
+        self.prefetch_new_deps(deps)
+        return deps
+
+    def _checked_index_dependencies(
+        self, cache_key: tuple[str, Version], versions: list[tuple[Version, DistFile]]
+    ) -> dict[str, VersionRange]:
+        """Return parsed dependencies after checking the resident wheels."""
+        package, version = cache_key
         if (
-            self.consistent_metadata_contexts is None
-            or not self.effective_assume_consistent_metadata(
-                normalized, version, self.serving_index(normalized)
+            self.consistent_metadata_contexts is not None
+            and self.effective_assume_consistent_metadata(
+                package, version, self.serving_index(package)
             )
         ):
+            return self.deps_cache[cache_key]
+
+        try:
             _metadata_resolver.check_sibling_metadata_divergence(
                 self, versions, package, version
             )
-
-        self.stats.metadata_fetched += 1
-        self.prefetch_new_deps(self.deps_cache[cache_key])
-
+        except Exception:
+            # A failed candidate probe can be followed by a real dependency read.
+            del self.deps_cache[cache_key]
+            del self._extra_deps[cache_key]
+            del self.deferred_url_extras[cache_key]
+            del self.metadata_cache[cache_key]
+            raise
         return self.deps_cache[cache_key]
 
     def _parse_and_cache_metadata_guarded(

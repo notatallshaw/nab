@@ -594,7 +594,7 @@ def _parse_metadata(
     )
 
     return WheelMetadata(
-        name=canonicalize_name(name_raw),
+        name=canonicalize_name(name_raw.strip()),
         version=version,
         requires_python=requires_python,
         requires_dist=requires_dist,

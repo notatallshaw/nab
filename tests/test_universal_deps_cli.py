@@ -363,6 +363,12 @@ def test_dynamic_sdist_hint_repairs_the_existing_assertion(
     assert not watchdog.wheels
 
 
+def _project_rules(body: str, rules: list[str]) -> str:
+    """Insert the suggested inline tables into the project's package rules."""
+    setting = f"package-rules = [{', '.join(rules)}]"
+    return body.replace("[tool.nab]\n", f"[tool.nab]\n{setting}\n")
+
+
 @pytest.mark.parametrize(
     "policy",
     [
@@ -392,14 +398,10 @@ def test_dynamic_sdist_hint_adds_a_disjoint_assertion(
 
     assert _lock(project) == 1
     failure = capsys.readouterr()
-    match = re.search(
-        r"add a (\[\[tool.nab.package-rules\]\]) entry with"
-        r" (match = \[.*?\]) and (assume-universal-deps = true)",
-        failure.err,
-    )
+    match = re.search(r"append (\{[^}]+\}) to package-rules", failure.err)
     assert match is not None, failure.err
 
-    project.write_text(body + "\n" + "\n".join(match.groups()) + "\n", encoding="utf-8")
+    project.write_text(_project_rules(body, [match[1]]), encoding="utf-8")
 
     assert _lock(project) == 0
     pylock = Pylock.from_dict(loads(capsys.readouterr().out))
@@ -407,6 +409,33 @@ def test_dynamic_sdist_hint_adds_a_disjoint_assertion(
     assert [str(package.version) for package in pylock.packages] == ["6.0.0"]
     assert pylock.packages[0].sdist is not None
     assert not pylock.packages[0].wheels
+
+
+def test_dynamic_sdist_hint_applies_to_a_plan_with_its_own_rules(
+    release_project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    plan = release_project.with_name("nab.toml")
+    existing = '{ match = ["elsewhere"], assume-universal-deps = false }'
+    settings = "[plans.ci.settings]\npackage-rules = "
+    plan.write_text(f"{settings}[{existing}]\n", encoding="utf-8")
+
+    assert _lock(release_project, "--plan", "ci") == 1
+    failure = capsys.readouterr().err
+    hint = next(
+        line for line in failure.splitlines() if "assume-universal-deps = true" in line
+    )
+    assert "settings.package-rules" in hint
+    rule = re.search(r"append (\{[^}]+\}) to package-rules", hint)
+    assert rule is not None
+
+    plan.write_text(f"{settings}[{existing}, {rule[1]}]\n", encoding="utf-8")
+    assert _lock(release_project, "--plan", "ci") == 0
+    locked = Pylock.from_dict(loads(capsys.readouterr().out))
+    assert {str(package.name) for package in locked.packages} == {
+        "watchdog",
+        "linux-dep",
+        "macos-dep",
+    }
 
 
 @pytest.mark.parametrize("duplicate", [False, True], ids=["single-file", "both-files"])
@@ -463,7 +492,7 @@ def test_dynamic_sdist_hint_requests_revision_of_a_legacy_selector(
     assert _lock(project) == 1
     failure = capsys.readouterr()
     assert "revise the scoped assume-universal-deps entries" in failure.err
-    assert "and assume-universal-deps = true" not in failure.err
+    assert "assume-universal-deps = true" not in failure.err
     assert "===" not in failure.err
 
     project.write_text(
@@ -576,23 +605,16 @@ def test_dynamic_sdist_hint_recovers_missing_wheel_metadata(
     )
     assert ports[-1].calls_to("build_sdist_metadata") == []
 
-    edits = re.findall(
-        r"add a (\[\[tool.nab.package-rules\]\]) entry with"
-        r" (match = \[.*?\]) and (assume-universal-deps = true|build-policy = \"build-remote\")",
-        failure.err,
-    )
+    edits = re.findall(r"append (\{[^}]+\}) to package-rules", failure.err)
     assert edits, failure.err
     if wheel_state == "unreadable" and mode == "universal" and not assumed:
         # Applying only the assertion cannot recover an unreadable wheel.
-        project.write_text(body + "\n" + "\n".join(edits[0]) + "\n", encoding="utf-8")
+        project.write_text(_project_rules(body, edits[:1]), encoding="utf-8")
         assert run(args) == 1
         assert 'build-policy = "build-remote"' in capsys.readouterr().err
         assert ports[-1].calls_to("build_sdist_metadata") == []
 
-    project.write_text(
-        body + "\n" + "\n\n".join("\n".join(edit) for edit in edits) + "\n",
-        encoding="utf-8",
-    )
+    project.write_text(_project_rules(body, edits), encoding="utf-8")
 
     assert run(args) == 0
     pylock = Pylock.from_dict(loads(capsys.readouterr().out))

@@ -31,7 +31,7 @@ from nab._download import download
 from nab._lock import lock
 from nab._run import effective_config
 from nab.cli import run
-from nab.config.ladder import OPTIONS, Scope, SourceRoots, docs_url
+from nab.config.ladder import OPTIONS, Scope, docs_url
 from nab.config.subflags import BY_PARENT
 from nab.config.values import SourceConfigError
 from nab_project.download import DownloadResult
@@ -1244,8 +1244,7 @@ def test_lock_exits_on_pyproject_user_key_via_fold(
 
 
 class TestNoOpLock:
-    """A representative `nab lock` at defaults is byte-identical pre/post the
-    config layer: the layered ladder is a pure no-op at defaults."""
+    """Explicit user defaults preserve the lock written with no user config."""
 
     def _lock_bytes(self, proj: Path, out: Path) -> bytes:
         with patch(
@@ -1259,39 +1258,18 @@ class TestNoOpLock:
         return out.read_bytes()
 
     def test_lock_output_byte_identical_at_defaults(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, hermetic_roots: Path
     ) -> None:
-        monkeypatch.delenv("NAB_OFFLINE", raising=False)
-        monkeypatch.delenv("NAB_CACHE_DIR", raising=False)
-        monkeypatch.delenv("NAB_RESOLUTION", raising=False)
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-empty"))
-        # Inject hermetic roots so the no-op guarantee does not depend on
-        # the host's /etc/nab/nab.toml (which the real roots would read).
-        sys_root = tmp_path / "sys" / "nab.toml"
-        usr_root = tmp_path / "usr" / "nab.toml"
-        monkeypatch.setattr(
-            nab_run,
-            "config_search_roots",
-            lambda pyproject: SourceRoots(
-                system_toml=sys_root,
-                user_toml=usr_root,
-                project_dir=pyproject.parent,
-                pyproject=pyproject,
-            ),
-        )
-        # A fixed uploaded-prior-to pins the lock anchor so created-at is
-        # deterministic; the remaining run-to-run stability is then purely
-        # the config layer's no-op-ness.
-        proj = _project(tmp_path, 'uploaded-prior-to = "2024-01-01T00:00:00Z"\n')
-        # Same project, locked twice: the layered config ladder is a pure
-        # no-op at defaults, so the output is byte-identical run to run.
+        # A fixed cutoff gives both locks the same creation time.
+        proj = _project(hermetic_roots, 'uploaded-prior-to = "2024-01-01T00:00:00Z"\n')
         first = self._lock_bytes(proj, tmp_path / "pylock.first.toml")
+
+        _write(tmp_path / "usr" / "nab.toml", 'format = "pylock"\noffline = false\n')
         second = self._lock_bytes(proj, tmp_path / "pylock.second.toml")
+
         assert first == second
-        # The lock carries the resolved pin: the config layer is a no-op,
-        # not a no-output.
-        assert b"foo" in first
-        assert b"1.0" in first
+        (package,) = tomli.loads(first.decode("utf-8"))["packages"]
+        assert (package["name"], package["version"]) == ("foo", "1.0")
 
 
 class TestProjectCliOverrides:

@@ -34,6 +34,7 @@ __lazy_modules__ = (
 from bisect import bisect_right
 from functools import lru_cache
 from typing import TYPE_CHECKING, ClassVar, Final, NamedTuple
+from urllib.parse import quote
 
 from nab_markersets.markersets import variable_names
 from nab_markersets.python_versions import validate_python_version
@@ -342,7 +343,36 @@ def environment_declaration(target: ResolveTarget, consulted: Iterable[Marker]) 
             clause.replace("python_full_version", "implementation_version")
             for clause in bounds
         )
+    if consulted_version and (target.concrete_micro or target.host_faithful):
+        lexical = _version_membership_bounds(target, texts)
+        clauses.extend(sorted(lexical.difference(clauses)))
     return " and ".join(clauses)
+
+
+def _version_membership_bounds(target: ResolveTarget, texts: Sequence[str]) -> set[str]:
+    """Require the installer's version text to give the same membership answers."""
+    variables = _scanned_version_variables(target)
+    bounds: set[str] = set()
+    for text in texts:
+        if " in " not in text:
+            continue
+        for atom in MARKER_COMPARISON.finditer(text):
+            lhs, op, rhs = _clause_parts(atom)
+            if op not in {"in", "not in"}:
+                continue
+            if lhs.startswith(('"', "'")):
+                # Packaging reads the right operand as an environment key here.
+                rhs = rhs.strip("\"'")
+                variable = rhs
+            else:
+                variable = lhs
+            if variable not in variables:
+                continue
+
+            test = Marker(f"{lhs} in {rhs}")
+            membership = "in" if test.evaluate_prepared(target.marker_env) else "not in"
+            bounds.add(f"{lhs} {membership} {rhs}")
+    return bounds
 
 
 def _patch_bounds(
@@ -1168,11 +1198,9 @@ class ResolveTarget(HashableRecord):
 
         Combines ``python_version``, ``sys_platform`` and
         ``platform_machine``, plus ``implementation_name`` when
-        :attr:`declares_implementation`, then every clause in
-        :attr:`micro_clauses`, which bound a slice of a split minor.  It
-        carries no conflict-fork ``selection``, so it selects this
-        target's platform/Python point, not which extras or groups are
-        active.
+        :attr:`declares_implementation`. An exact target adds its Python patch,
+        and a split minor adds its :attr:`micro_clauses`. Fork selections
+        add their extra and group clauses in :attr:`marker_string`.
         """
         env = self.marker_env
         marker = (
@@ -1182,7 +1210,12 @@ class ResolveTarget(HashableRecord):
         )
         if self.declares_implementation:
             marker += f' and implementation_name == "{self.implementation}"'
-        for clause in self.micro_clauses:
+        bounds = (
+            _patch_bounds(self, exclude_local_builds=False)
+            if self.concrete_micro
+            else self.micro_clauses
+        )
+        for clause in bounds:
             marker += f" and {clause}"
         return marker
 
@@ -1326,13 +1359,18 @@ class ResolveTarget(HashableRecord):
         """
         env = host_environment(env_source)
         apply_python_axis_overlay(env, python_axis_environment(python))
+        concrete = names_a_micro(Version(python))
+        label = _python_label(
+            env["python_version"],
+            env["implementation_name"],
+            env["python_full_version"] if concrete else None,
+        )
         return cls(
-            label=_python_label(env["python_version"], env["implementation_name"])
-            + f"-{_HOST_PLATFORM_LABEL}",
+            label=f"{label}-{_HOST_PLATFORM_LABEL}",
             marker_env=env,
             tags=TagSet.for_host_python(python, tags_source=tags_source),
             host_faithful=False,
-            concrete_micro=len(Version(python).release) >= _PYTHON_FULL_VERSION_PARTS,
+            concrete_micro=concrete,
         )
 
     @classmethod
@@ -1353,8 +1391,9 @@ class ResolveTarget(HashableRecord):
         pins the target to one concrete deployment micro and resolves it whole,
         the manual single-point alternative to splitting.
         """
+        label = _python_label(python_version, implementation, python_full_version)
         return cls(
-            label=_python_label(python_version, implementation) + f"-{spec.label}",
+            label=f"{label}-{spec.label}",
             marker_env=declared_environment(
                 python_version, spec, implementation, python_full_version
             ),
@@ -1368,6 +1407,22 @@ class ResolveTarget(HashableRecord):
             multi_implementation=multi_implementation,
             concrete_micro=python_full_version is not None,
         )
+
+
+def _check_python_patch(minor: str, full: str) -> None:
+    """Require a patch pin to identify an interpreter of the declared minor."""
+    try:
+        validate_python_version(minor, variable="python_version")
+        validate_python_version(full)
+        patch_minor = _language_minor(Version(full))
+        declared_minor = _language_minor(Version(minor))
+    except ValueError as exc:
+        msg = f"python-patches expects version strings, got {minor!r}: {full!r}: {exc}"
+        raise ValueError(msg) from exc
+
+    if patch_minor != declared_minor:
+        msg = f"python-patches value {full!r} is not a patch release of {minor!r}"
+        raise ValueError(msg)
 
 
 def declared_environment(
@@ -1392,7 +1447,11 @@ def declared_environment(
     resolve.  The lock does not carry the synthetic value: see
     :func:`unboundable_variables`.
     """
-    full = python_full_version or f"{python_version}.0"
+    if python_full_version is None:
+        full = f"{python_version}.0"
+    else:
+        _check_python_patch(python_version, python_full_version)
+        full = python_full_version
     return {
         **PLATFORM_MARKERS[spec.platform_id],
         **IMPLEMENTATION_MARKERS[implementation],
@@ -1532,6 +1591,30 @@ class Matrix(Record):
 
     def expand(self) -> list[ResolveTarget]:
         """Validate and expand the declared target groups in stable axis order."""
+        ordered = self._points()
+        patches = self.python_patches or {}
+        implementations = {point.implementation for point in ordered}
+        return [
+            ResolveTarget.for_declared(
+                python_version=point.python,
+                spec=point.platform,
+                implementation=point.implementation,
+                python_full_version=patches.get(point.python),
+                multi_implementation=len(implementations) > 1,
+            )
+            for point in ordered
+        ]
+
+    def target_count(self) -> int:
+        """Validate the declarations and count their distinct target coordinates."""
+        points = self._points()
+        # Full expansion checks the ABI when it builds each target's wheel tags.
+        for point in points:
+            point.platform.check_implementation(point.implementation)
+        return len(points)
+
+    def _points(self) -> list[_MatrixPoint]:
+        """Expand the matrix axes in the order shared by counting and resolution."""
         if self.python_order not in {"asc", "desc"}:
             msg = f"python_order must be 'asc' or 'desc'; got {self.python_order!r}"
             raise ValueError(msg)
@@ -1546,6 +1629,10 @@ class Matrix(Record):
                 " keys must be major.minor like '3.11'"
             )
             raise ValueError(msg)
+
+        # Check dormant pins as well as the ones selected by this matrix.
+        for minor, full in patches.items():
+            _check_python_patch(minor, full)
 
         self._validate_defaults_and_overrides()
         python_order = {
@@ -1563,20 +1650,9 @@ class Matrix(Record):
             )
 
         # Preserve each group's order while merging exact coordinates across groups.
-        ordered = sorted(
+        return sorted(
             dict.fromkeys(points), key=lambda point: python_order[point.python]
         )
-        implementations = {point.implementation for point in ordered}
-        return [
-            ResolveTarget.for_declared(
-                python_version=point.python,
-                spec=point.platform,
-                implementation=point.implementation,
-                python_full_version=patches.get(point.python),
-                multi_implementation=len(implementations) > 1,
-            )
-            for point in ordered
-        ]
 
     def _validate_defaults_and_overrides(self) -> None:
         """Validate even dormant bodies without enabling their implementations."""
@@ -1818,10 +1894,15 @@ def _pythons_in_range(spec: str) -> Iterable[str]:
             yield minor
 
 
-def _python_label(python_version: str, implementation: str) -> str:
-    """Render the interpreter half of a label, e.g. ``py311`` or ``pp311``."""
+def _python_label(
+    python_version: str, implementation: str, full_version: str | None
+) -> str:
+    """Include the explicit patch when naming a single interpreter build."""
     prefix = _IMPLEMENTATION_PREFIX.get(implementation, _DEFAULT_IMPLEMENTATION_PREFIX)
-    return prefix + python_version.replace(".", "")
+    minor = prefix + python_version.replace(".", "")
+    if full_version is None:
+        return minor
+    return f"{minor}-patch{quote(full_version, safe='+')}"
 
 
 def _selection_slug(selection: tuple[tuple[str, str], ...]) -> str:

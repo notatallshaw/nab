@@ -16,16 +16,17 @@ import contextlib
 import io
 import tarfile
 import tempfile
+import zipfile
 from pathlib import Path
 
 import pytest
-from hypothesis import given
+from hypothesis import example, given
 from hypothesis import strategies as st
 
 from nab_index.client import _extract_sdist_files, extract_sdist_archive
-from nab_index.local_index import parse_file_url
+from nab_index.file_urls import parse_file_url
 
-from .strategies import PROPERTY_SETTINGS
+from .settings import PROPERTY_SETTINGS
 
 pytestmark = pytest.mark.property
 
@@ -113,10 +114,14 @@ def test_extract_sdist_files_single_root_rule(
 
 
 @given(blob=st.binary(max_size=200))
+@example(blob=make_targz([("pkg-1/PKG-INFO", b"Name: pkg\n")]))
 @PROPERTY_SETTINGS
-def test_extract_sdist_files_never_raises_on_garbage(blob: bytes) -> None:
-    """Arbitrary bytes yield ``(None, None)``, never an exception."""
-    assert _extract_sdist_files(blob) == (None, None)
+def test_only_archives_can_yield_metadata(blob: bytes) -> None:
+    pkg_info, pyproject = _extract_sdist_files(blob)
+    if pkg_info is not None or pyproject is not None:
+        assert tarfile.is_tarfile(io.BytesIO(blob)) or zipfile.is_zipfile(
+            io.BytesIO(blob)
+        )
 
 
 _PKG_INFO = "Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\n"
@@ -226,5 +231,5 @@ path_segments = st.from_regex(r"[A-Za-z0-9 _.é京-]{1,12}", fullmatch=True).fil
 @PROPERTY_SETTINGS
 def test_parse_file_url_roundtrips_as_uri(segments: list[str]) -> None:
     """``parse_file_url`` inverts ``Path.as_uri`` for odd but legal paths."""
-    path = Path("/", *segments)
+    path = Path.cwd().joinpath(*segments)
     assert parse_file_url(path.as_uri()) == path

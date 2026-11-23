@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from operator import setitem
 from pathlib import Path
 from types import ModuleType
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from unittest.mock import MagicMock
 
 import pytest
@@ -27,6 +27,10 @@ from nab_provider.serialization import SimpleSerialization
 from nab_provider.target import ResolveTarget
 from nab_resolver.resolver import ResolverStats
 from nab_test_support.coordinator import make_coordinator
+
+if TYPE_CHECKING:
+    from nab_provider.testing import FakeFetchPort
+
 
 # The runner scripts loaded here import their siblings by bare name.
 pytestmark = [
@@ -297,7 +301,7 @@ def _sidecar(wheel: WheelFile) -> str:
     return url
 
 
-def _dropped_extra_coordinator() -> MagicMock:
+def _dropped_extra_coordinator() -> FakeFetchPort:
     """Return an index where aaa 3.0 no longer provides its x extra."""
     aaa_wheels = [_wheel("aaa", version) for version in ("1.0", "2.0", "3.0")]
     bbb_wheel = _wheel("bbb", "1.0")
@@ -513,7 +517,7 @@ def _resolve_dropped_extra(
     @contextmanager
     def fake_coordinator(
         *_args: object, **_kwargs: object
-    ) -> Generator[object, None, None]:
+    ) -> Generator[FakeFetchPort, None, None]:
         yield coordinator
 
     monkeypatch.setattr(module, "FetchCoordinator", fake_coordinator)
@@ -2970,42 +2974,44 @@ def test_resolve_scenario_records_no_pins_after_failure(
 
 
 @pytest.mark.parametrize(
-    ("constraint", "success", "error_fragments", "expected_packages"),
+    ("constraint", "expected_pins", "error_fragments"),
     [
         pytest.param(
+            "aaa==1.0", {"aaa": "1.0", "bbb": "1.0"}, (), id="older-constrained-release"
+        ),
+        pytest.param(
             "aaa==2.0",
-            True,
+            {"aaa": "2.0", "bbb": "1.0"},
             (),
-            2,
             id="constrained-version-provides-extra",
         ),
         pytest.param(
             "aaa==3.0",
-            False,
+            {},
             ("MissingExtraError", "aaa==3.0 does not provide extra 'x'"),
-            0,
             id="constrained-version-dropped-extra",
         ),
         pytest.param(
             "aaa<0.5",
-            False,
+            {},
             ("ResolutionError", "the user constrained aaa[x]", "0.5"),
-            0,
             id="constraint-empties-extra-proxy",
         ),
     ],
 )
 def test_standard_runner_applies_root_extra_constraints(
     constraint: str,
-    success: bool,
+    expected_pins: dict[str, str],
     error_fragments: tuple[str, ...],
-    expected_packages: int,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     result = _resolve_dropped_extra(monkeypatch, constraint)
 
     outcome = result["result"]
-    assert outcome["success"] is success
+    assert outcome["success"] is (not error_fragments)
+    assert outcome["pins"] == expected_pins
+    assert result["stats"]["packages_resolved"] == len(expected_pins)
+
     error = outcome["error"]
     if error_fragments:
         assert isinstance(error, str)
@@ -3013,7 +3019,6 @@ def test_standard_runner_applies_root_extra_constraints(
             assert fragment in error
     else:
         assert error is None
-    assert result["stats"]["packages_resolved"] == expected_packages
 
 
 def test_resolve_scenario_reports_the_counters_a_real_resolve_raised(

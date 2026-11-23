@@ -18,7 +18,7 @@ from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import Provider
 from nab_provider.testing import make_coordinator, make_wheel
 
-from .extra_fixtures import PYTHON_312, SECURITY_EXTRA_METADATA
+from .provider_fixtures import PYTHON_312, SECURITY_EXTRA_METADATA
 
 
 class TestAddClassifiedDep:

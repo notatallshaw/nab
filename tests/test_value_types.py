@@ -815,6 +815,13 @@ def test_copying_and_unpickling_restore_every_field(case: Case) -> None:
         assert _comparable(other) == _comparable(instance)
 
 
+def test_default_project_config_can_be_copied_and_pickled() -> None:
+    config = NabProjectConfig()
+    assert copy.deepcopy(config) == config
+    assert _round_trip_pickle(config) == config
+    assert config.index_overrides is not NabProjectConfig().index_overrides
+
+
 @pytest.mark.parametrize(
     ("cls", "required", "expected"),
     DEFAULTS,

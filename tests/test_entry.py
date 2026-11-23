@@ -13,6 +13,7 @@ import pytest
 import tomli
 
 import nab
+from nab import _entry
 from nab._entry import console_entry
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +62,7 @@ def test_the_cli_runs_with_the_collector_off_until_it_resumes(
     monkeypatch.setattr(gc, "freeze", lambda: events.append(("freeze", gc.isenabled())))
 
     def run_cli(resume: Callable[[], None]) -> None:
+        assert _entry.process_owns_collector
         events.append(("cli", gc.isenabled()))
         resume()
         events.append(("resumed", gc.isenabled()))
@@ -70,6 +72,7 @@ def test_the_cli_runs_with_the_collector_off_until_it_resumes(
     console_entry()
 
     assert events == [("cli", False), ("freeze", False), ("resumed", True)]
+    assert not _entry.process_owns_collector
 
 
 @pytest.mark.usefixtures("restored_gc_state", "stubbed_gc_freeze")

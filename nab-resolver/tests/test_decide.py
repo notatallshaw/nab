@@ -83,10 +83,8 @@ class RefiningRange(Range[int]):
             return NotImplemented
         return self._intervals == other._intervals and self._flag == _flag_of(other)
 
-    @override
-    def __hash__(self) -> int:
-        """Hash the version set together with the flag."""
-        return hash((self._intervals, self._flag))
+    # An unflagged range compares equal to a plain Range with the same bounds.
+    __hash__ = Range.__hash__
 
 
 def _flag_of(range_: object) -> bool:
@@ -96,6 +94,14 @@ def _flag_of(range_: object) -> bool:
 def _flagged(base: Range[int]) -> Range[int]:
     """Return a copy of ``base`` carrying the passenger flag."""
     return RefiningRange(base._intervals, flag=True)
+
+
+def test_refining_range_keys_respect_equality_with_plain_ranges() -> None:
+    plain = Range.singleton(1)
+    plain_and_flagged = {plain: "plain", _flagged(plain): "flagged"}
+
+    assert plain_and_flagged[RefiningRange.singleton(1)] == "plain"
+    assert plain_and_flagged[_flagged(plain)] == "flagged"
 
 
 class _RecordingObserver(ResolverObserver[Any, int]):

@@ -15,7 +15,7 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
-from hypothesis import given
+from hypothesis import example, given
 from hypothesis import strategies as st
 
 from ..lock_artifacts import make_sdist_artifact, make_wheel_artifact
@@ -36,7 +36,7 @@ from nab_project.lockfile import (
     build_pylock,
     write_lock,
 )
-from nab_provider._vendor.packaging.pylock import Pylock
+from nab_provider._vendor.packaging.pylock import PackageWheel, Pylock
 from nab_provider._vendor.packaging.utils import is_normalized_name
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
@@ -224,41 +224,32 @@ class TestDeterministicOutput:
         assert first == second
 
 
-def _multi_wheel(name: str, version: str) -> tuple[WheelArtifact, ...]:
-    """Build several wheels for one pin, each with several hashes.
-
-    The wheels are returned in a deliberately non-sorted filename order
-    so a caller can prove the emitter sorts them rather than echoing
-    insertion order.
-    """
+def _multi_wheel(
+    name: str, version: str, *, reverse: bool
+) -> tuple[WheelArtifact, ...]:
+    """Build the same wheels and hash tables in either order."""
     norm = name.replace("-", "_")
 
     def _wheel_with_hashes(tag: str, primary: str) -> WheelArtifact:
+        hashes = (
+            ("sha512", primary * 128),
+            ("sha256", primary * 64),
+            ("sha384", primary * 96),
+        )
         return WheelArtifact(
             filename=f"{norm}-{version}-{tag}.whl",
             url=f"https://example.com/{norm}-{version}-{tag}.whl",
-            hashes=(
-                ("sha512", primary * 128),
-                ("sha256", primary * 64),
-                ("sha384", primary * 96),
-            ),
+            hashes=hashes[::-1] if reverse else hashes,
             size=1024,
         )
 
-    return (
+    wheels = (
         _wheel_with_hashes("cp312-cp312-win_amd64", "f"),
         _wheel_with_hashes("cp310-cp310-manylinux_2_17_x86_64", "a"),
         _wheel_with_hashes("cp311-cp311-macosx_11_0_arm64", "c"),
     )
 
-
-def _reorder(seq: Sequence[object], shift: int) -> list[object]:
-    """Rotate ``seq`` by ``shift`` to get a different but complete order."""
-    items = list(seq)
-    if not items:
-        return items
-    shift %= len(items)
-    return items[shift:] + items[:shift]
+    return wheels[::-1] if reverse else wheels
 
 
 def _per_target_input(
@@ -266,26 +257,19 @@ def _per_target_input(
     names: Sequence[str],
     pythons: Sequence[str],
     versions_by_python: Mapping[str, str],
-    wheel_shift: int,
+    reverse_artifacts: bool,
 ) -> LockInput:
-    """Assemble a per-target ``LockInput`` over the given orderings.
-
-    ``pythons`` fixes the target order, the ``targets`` dict is built in
-    that order, and each pin's wheels are rotated by ``wheel_shift`` so
-    two calls with different orderings exercise the insertion-order paths
-    the emitter must neutralise.
-    """
+    """Build target and pin maps in the supplied order."""
     targets: dict[str, TargetLock] = {}
     for python in pythons:
         version = versions_by_python[python]
         per_name: dict[str, PinShape] = {}
         for name in names:
-            wheels = tuple(_reorder(_multi_wheel(name, version), wheel_shift))
             per_name[name] = IndexPin(
                 name=name,
                 version=version,
                 index="pypi",
-                wheels=wheels,  # type: ignore[arg-type]
+                wheels=_multi_wheel(name, version, reverse=reverse_artifacts),
             )
         target = _target(python)
         targets[target.label] = TargetLock(target=target, pins=per_name)
@@ -322,7 +306,7 @@ class TestQuoteShuffledInputInvariant:
                 names=names,
                 pythons=pythons,
                 versions_by_python=versions_by_python,
-                wheel_shift=0,
+                reverse_artifacts=False,
             )
         )
         shuffled = write_lock(
@@ -330,7 +314,7 @@ class TestQuoteShuffledInputInvariant:
                 names=list(reversed(names)),
                 pythons=list(reversed(pythons)),
                 versions_by_python=versions_by_python,
-                wheel_shift=1,
+                reverse_artifacts=True,
             )
         )
         assert shuffled == canonical
@@ -462,55 +446,48 @@ class TestQuoteUniversalPerTargetPackages:
         names=st.lists(canonical_names, min_size=1, max_size=3, unique=True),
         version_a=versions,
         version_b=versions,
+        same_hash=st.booleans(),
     )
+    @example(names=["a"], version_a="0.1", version_b="0.1", same_hash=False)
     @PROPERTY_SETTINGS
     def test_diverging_pins_emit_per_group(
-        self,
-        names: list[str],
-        version_a: str,
-        version_b: str,
+        self, names: list[str], version_a: str, version_b: str, *, same_hash: bool
     ) -> None:
-        """Diverging per-target pins emit one ``packages`` entry per group."""
+        """Each target must select its own release and wheel digest."""
         sha_a = "a" * 64
-        sha_b = "b" * 64
-        text = write_lock(
-            LockInput(
-                targets=_targets(
-                    (
-                        _target("3.10"),
-                        {
-                            name: IndexPin(
-                                name=name,
-                                version=version_a,
-                                index="pypi",
-                                wheels=(
-                                    make_wheel_artifact(
-                                        name.replace("-", "_"), version_a, sha256=sha_a
-                                    ),
-                                ),
-                            )
-                            for name in names
-                        },
-                    ),
-                    (
-                        _target("3.11"),
-                        {
-                            name: IndexPin(
-                                name=name,
-                                version=version_b,
-                                index="pypi",
-                                wheels=(
-                                    make_wheel_artifact(
-                                        name.replace("-", "_"), version_b, sha256=sha_b
-                                    ),
-                                ),
-                            )
-                            for name in names
-                        },
+        sha_b = sha_a if same_hash else "b" * 64
+        cases = [
+            (_target("3.10"), version_a, sha_a),
+            (_target("3.11"), version_b, sha_b),
+        ]
+
+        targets = {}
+        for target, version, digest in cases:
+            pins = {
+                name: IndexPin(
+                    name=name,
+                    version=version,
+                    index="pypi",
+                    wheels=(
+                        make_wheel_artifact(
+                            name.replace("-", "_"), version, sha256=digest
+                        ),
                     ),
                 )
+                for name in names
+            }
+            targets[target.label] = TargetLock(target, pins)
+
+        lock = Pylock.from_dict(tomllib.loads(write_lock(LockInput(targets=targets))))
+        assert len(lock.packages) == len(
+            {(version_a, sha_a), (version_b, sha_b)}
+        ) * len(names)
+        for target, version, digest in cases:
+            selected = list(
+                lock.select(environment=target.marker_env, tags=target.tags.ordered)
             )
-        )
-        data: Mapping[str, object] = tomllib.loads(text)
-        expected = (1 if version_a == version_b else 2) * len(names)
-        assert len(data["packages"]) == expected  # type: ignore[arg-type]
+            assert {pkg.name for pkg, _ in selected} == set(names)
+            for package, artifact in selected:
+                assert str(package.version) == version
+                assert isinstance(artifact, PackageWheel)
+                assert artifact.hashes == {"sha256": digest}

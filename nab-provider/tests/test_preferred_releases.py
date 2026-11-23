@@ -46,6 +46,26 @@ def test_release_groups_keep_aliases_and_reject_different_local_versions() -> No
     assert filters.shares_targets
 
 
+@pytest.mark.parametrize(
+    ("saved", "listed", "requirement", "expected"),
+    [
+        ("1.0", "1", "===1.0", None),
+        ("1.0", "1", "===1", "1"),
+        ("1.0", "1", ">=1", "1"),
+        ("1.0a1", "1a1", ">=1a1", "1a1"),
+        ("1.0a1", "1a1", ">=0", "2"),
+    ],
+)
+def test_preference_uses_the_listed_version_text(
+    saved: str, listed: str, requirement: str, expected: str | None
+) -> None:
+    port = make_coordinator([make_wheel(listed), make_wheel("2")], auto_metadata=True)
+    provider = Provider(port, target(), preferences={"pkg": Version(saved)})
+
+    choice = provider.choose_version("pkg", SpecifierSet(requirement).to_range())
+    assert (str(choice) if choice is not None else None) == expected
+
+
 def test_replaced_listing_rebuilds_release_groups_and_prepared_filters() -> None:
     old = [make_wheel("1", url="https://old.example/pkg.whl")]
     replacement = [make_wheel("1", url="https://new.example/pkg.whl")]

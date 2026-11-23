@@ -99,7 +99,9 @@ nab lock --setting 'user.lock-policy="reuse"'
 `project` and `user` identify the setting's scope. Strings need TOML quotes; arrays and inline
 tables use ordinary TOML syntax.
 
-- Relative paths are resolved from the working directory.
+- Relative paths in `project.local-sources` and relative `file:` URLs in `project.indexes` start in
+  the working directory. Workspace member paths, local `input-sources` paths and lock plan output
+  paths start in the directory containing the project file.
 - Assignments replace whole values. Repeating a key keeps its last value.
 - Recorded overrides omit embedded URL credentials. Supply authentication separately.
 

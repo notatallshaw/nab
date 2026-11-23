@@ -77,6 +77,7 @@ if TYPE_CHECKING:
         "requires-python",
         "wheel-tags",
         "invalid-version",
+        "yanked",
     ]
 
     # A prepared listing plus the cutoff verdicts taken over it, keyed by
@@ -100,8 +101,8 @@ class DropCause:
 
     :data:`REPORT_ORDER` is the order the clauses print in, which is not
     the order the filter applies.  A file is refused at the first rung that
-    objects, and the rungs run in this order: ``INVALID_VERSION``,
-    ``DIST_POLICY``, ``REQUIRES_PYTHON``, the four ``UPLOAD_TIME_*``, ``ZIP_SDIST``,
+    objects. The diagnostic checks ``INVALID_VERSION``, ``YANKED``, ``DIST_POLICY``,
+    ``REQUIRES_PYTHON``, the four ``UPLOAD_TIME_*``, ``ZIP_SDIST``,
     ``SDIST_REQUIRED_NO_SDIST``, ``WHEEL_TAGS``.
     """
 
@@ -115,6 +116,7 @@ class DropCause:
     REQUIRES_PYTHON: Final = "requires-python"
     WHEEL_TAGS: Final = "wheel-tags"
     INVALID_VERSION: Final = "invalid-version"
+    YANKED: Final = "yanked"
 
     REPORT_ORDER: Final = (
         UPLOAD_TIME_MISSING,
@@ -127,6 +129,7 @@ class DropCause:
         REQUIRES_PYTHON,
         WHEEL_TAGS,
         INVALID_VERSION,
+        YANKED,
     )
 
 

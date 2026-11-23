@@ -13,6 +13,7 @@ import logging
 import subprocess
 import tarfile
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 from unittest.mock import patch
@@ -94,7 +95,8 @@ from nab_provider.resolver_inputs import ProxyConstraints
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
 from nab_provider.testing import FakeFetchPort, make_metadata, make_sdist, make_wheel
-from nab_resolver.errors import ResolutionError
+from nab_resolver.errors import ResolutionError, ResolutionLimitError
+from nab_resolver.resolver import Resolver
 from nab_test_support.coordinator import make_coordinator
 
 if TYPE_CHECKING:
@@ -2030,22 +2032,24 @@ class TestRunPassConflict:
     """A contradictory root requirement returns a failure for each target."""
 
     def test_conflicting_requirements_fail_the_target(self) -> None:
-        """Pinned-but-different reqs surface as a failed TargetResult.
-
-        ``build_resolver_inputs`` raises before the resolver runs, so
-        the failure has to be caught per target rather than escaping the
-        whole pass.
-        """
-        results = _run_pass(
+        """The conflict proof identifies both individually available pins."""
+        wheels = [_make_wheel(v, package="pkg") for v in ("1.0", "2.0")]
+        coordinator = make_coordinator(listings={"pkg": wheels}, auto_metadata=True)
+        (result,) = _run_pass(
             [_linux_311()],
             _reqs("pkg==1.0", "pkg==2.0"),
             (),
-            _settings(make_coordinator(listings={}, auto_metadata=True), _no_build()),
+            _settings(coordinator, _no_build()),
             {},
         )
-        assert len(results) == 1
-        assert not results[0].success
-        assert isinstance(results[0].error, ResolutionError)
+        assert not result.success
+        assert type(result.error) is ResolutionError
+        proof = result.error.incompatibility
+        assert proof is not None
+        assert {node.origin for node in proof.walk() if node.origin is not None} == {
+            "pkg==1.0",
+            "pkg==2.0",
+        }
 
 
 class TestRunPassConstraintMarker:
@@ -2191,6 +2195,32 @@ class TestBuildLockInput:
         assert len(merged.targets) == 2
         versions = {lock.pins["pkg"].version for lock in merged.targets.values()}
         assert versions == {"1.0", "2.0"}
+
+    @pytest.mark.parametrize("second", ["3.13.4", "3.13.0+vendor"])
+    def test_lock_keeps_each_explicit_python_patch(self, second: str) -> None:
+        targets = [
+            ResolveTarget.for_declared(
+                python_version="3.13",
+                python_full_version=patch,
+                spec=PlatformSpec("linux_x86_64"),
+            )
+            for patch in ("3.13.0", second)
+        ]
+        releases = [_make_wheel(v, package="pkg") for v in ("1", "2")]
+        port = make_coordinator(listings={"pkg": releases}, auto_metadata=True)
+        roots = _reqs(
+            f'pkg==1; python_full_version != "{second}"',
+            f'pkg==2; python_full_version == "{second}"',
+        )
+        result = resolve_with_coordinator(port, targets, roots, inputs=_no_build())
+        assert result.success
+
+        lock = build_pylock(build_lock_input(result))
+        for target, version in zip(targets, ("1", "2"), strict=True):
+            ((package, _),) = lock.select(
+                environment=dict(target.marker_env), tags=target.tags.ordered
+            )
+            assert str(package.version) == version
 
     def test_a_marker_consulted_on_every_target_is_read_once(
         self, monkeypatch: pytest.MonkeyPatch
@@ -3032,6 +3062,25 @@ class TestSharedListingFilter:
         assert first_pin.version == "2.0"
         assert second_pin.wheels[0] is first_pin.wheels[0]
 
+    def test_wheel_aliases_remain_installable_on_each_target(self) -> None:
+        targets = self._targets("==3.11")
+        wheels = [
+            self._wheel("1.0", tag="py3-none-linux_x86_64"),
+            self._wheel("1.0", tag="py3-none-win_amd64"),
+        ]
+        assert wheels[0].url == wheels[1].url
+        result = resolve_with_coordinator(
+            self._coordinator(wheels), targets, _reqs("pkg"), inputs=_no_build()
+        )
+        result.raise_for_failure()
+        lock = build_pylock(build_lock_input(result))
+
+        for target, wheel in zip(targets, wheels, strict=True):
+            ((_, artifact),) = lock.select(
+                environment=target.marker_env, tags=target.tags.ordered
+            )
+            assert artifact.name == wheel.filename
+
     def test_shared_filter_runs_before_the_wheel_tag_pass(self) -> None:
         """Only the pre-tag list is shared: a linux-only wheel stays off Windows."""
         wheels = [
@@ -3210,6 +3259,98 @@ class TestMicroBoundaryNarrowing:
         # Three minors resolved once each, plus 3.10's two slices: no full re-run.
         assert len(labels) == 5
 
+    @pytest.mark.parametrize("available", [False, True], ids=["missing", "available"])
+    def test_exact_build_survives_another_builds_patch_split(
+        self, *, available: bool
+    ) -> None:
+        minor = ResolveTarget.for_declared(
+            python_version="3.13", spec=PlatformSpec("linux_x86_64")
+        )
+        exact = ResolveTarget.for_declared(
+            python_version="3.13",
+            python_full_version="3.13.0",
+            spec=PlatformSpec("linux_x86_64", free_threaded=True),
+        )
+        tag = "py3-none-any" if available else "cp313-cp313-manylinux_2_17_x86_64"
+        wheel = make_wheel("1", package="foo", tag=tag, hashes=(("sha256", "a" * 64),))
+        port = make_coordinator(
+            listings={"foo": [wheel], "mid": [_make_wheel("2", package="mid")]},
+            metadata_by_version={
+                "1": self._meta("foo", "1"),
+                "2": self._meta("mid", "2"),
+            },
+        )
+        roots = _reqs("foo", 'mid; python_full_version >= "3.13.4"')
+        result = resolve_with_coordinator(
+            port, [minor, exact], roots, base_requirements=roots, inputs=_no_build()
+        )
+
+        assert result.success is available
+        assert exact in result.targets
+        for rows in (result.target_results, result.base_results):
+            (exact_result,) = [row for row in rows if row.target == exact]
+            assert exact_result.success is available
+
+        if available:
+            # The exact build and the first slice both resolve at 3.13.0.
+            lock = build_pylock(build_lock_input(result))
+            later = ResolveTarget.for_declared(
+                python_version="3.13",
+                python_full_version="3.13.2",
+                spec=PlatformSpec("linux_x86_64"),
+            )
+            selected = lock.select(
+                environment=dict(later.marker_env), tags=later.tags.ordered
+            )
+            assert [package.name for package, _ in selected] == ["foo"]
+
+    @pytest.mark.parametrize(
+        ("dependencies", "constraints"),
+        [
+            (('mid==9; python_full_version < "3.13.4"',), ()),
+            ((), ("foo==1", 'foo==2; python_full_version < "3.13.4"')),
+        ],
+        ids=["unavailable-version", "conflicting-constraints"],
+    )
+    def test_failed_first_patch_retains_successful_later_patches(
+        self, dependencies: tuple[str, ...], constraints: tuple[str, ...]
+    ) -> None:
+        coordinator = self._coordinator(
+            {"1.0": self._meta("foo", "1.0", *dependencies)}
+        )
+        targets = Matrix(
+            python="==3.13", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+        result = resolve_with_coordinator(
+            coordinator,
+            targets,
+            _reqs("foo"),
+            inputs=_no_build(constraints=constraints),
+        )
+
+        earlier, later = result.target_results
+        assert not result.success
+        assert not earlier.success
+        assert earlier.target.python_full_version == "3.13.0"
+        assert later.success
+        assert later.target.python_full_version == "3.13.4"
+        assert later.pins == {"foo": Version("1.0")}
+
+    def test_iteration_limit_does_not_trigger_patch_retries(self) -> None:
+        coordinator = self._coordinator({"1.0": self._meta("foo", "1.0")})
+        targets = Matrix(
+            python="==3.13", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+        roots = _reqs('foo; python_full_version < "3.13.4"')
+        with patch.object(engine_mod, "Resolver", partial(Resolver, max_iterations=0)):
+            result = resolve_with_coordinator(
+                coordinator, targets, roots, inputs=_no_build()
+            )
+
+        (stopped,) = result.target_results
+        assert isinstance(stopped.error, ResolutionLimitError)
+        assert roots[0].marker in stopped.consulted
+
     def test_a_host_target_is_not_split(self) -> None:
         """A host target names a real micro, so no ``.0`` is synthesized and a
         full-version marker never splits it."""
@@ -3384,16 +3525,17 @@ class TestMicroBoundaryNarrowing:
             }
         )
 
-    def test_a_boundary_reachable_only_above_a_split_is_found(self) -> None:
+    def test_last_allowed_split_can_finish_the_resolve(self) -> None:
         """``top``'s 3.10.5 boundary is consulted only once ``mid`` is present,
         which needs 3.10.2 first.  The fixpoint re-splits until it settles."""
         targets = Matrix(
             python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)
         ).expand()
 
-        result = resolve_with_coordinator(
-            self._fixpoint_coordinator(), targets, _reqs("foo"), inputs=_no_build()
-        )
+        with patch.object(engine_mod, "_MAX_MICRO_SPLIT_PASSES", 2):
+            result = resolve_with_coordinator(
+                self._fixpoint_coordinator(), targets, _reqs("foo"), inputs=_no_build()
+            )
 
         assert result.success
         assert self._pins_by_label(result) == {

@@ -13,17 +13,14 @@ from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
+from .solver_fixtures import DictProvider, FlaggedRange
+
 
 @pytest.mark.parametrize("range_name", ["Range", "FlaggedRange"])
 @pytest.mark.parametrize("positive", [False, True])
 def test_propagation_does_not_reread_the_derived_range(
     monkeypatch: pytest.MonkeyPatch, range_name: str, positive: bool
 ) -> None:
-    # Workspace suites share the tests namespace; wait until collection has
-    # registered the sibling helper modules before importing them.
-    from .test_range_contract import FlaggedRange
-    from .test_resolver import DictProvider
-
     range_type: Any = Range if range_name == "Range" else FlaggedRange
     resolver = Resolver(DictProvider({}), range_type=range_type)
     constraint = range_type.singleton(2)

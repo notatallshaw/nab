@@ -20,6 +20,7 @@ than passed over.
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "json",
     "nab_provider._provider",
     "nab_provider._vendor.packaging.version",
     "nab_provider.errors",
@@ -28,6 +29,7 @@ __lazy_modules__ = (
     "re",
 )
 
+import json
 import re
 from typing import TYPE_CHECKING, Final
 
@@ -112,6 +114,7 @@ FILTER_KEYS: dict[Cause, str] = {
     # rather than a key.  It appears only where it shares a line with one.
     DropCause.WHEEL_TAGS: "wheel tags",
     DropCause.INVALID_VERSION: "unparseable versions",
+    DropCause.YANKED: "yanked files",
 }
 
 UPLOAD_TIME_CAUSES = frozenset(
@@ -542,16 +545,15 @@ def _shared_base_pass(
 ) -> BaseListingDiagnosis:
     """Run the base pass through the memo the listing filter's own base pass uses.
 
-    The rungs before the tag pass read the listing, the policy config and
-    the target Python and nothing else, which is the key
-    :meth:`~nab_provider.provider.ListingFilterCache.filtered` already
-    shares the filter's base pass under.  A matrix whose tuples differ only
-    by platform therefore walks each listing once per Python rather than
-    once per failing tuple.  The result is held by every target that shares
-    the memo, so callers must not mutate it.
+    Targets with the same Python and policy can share the walk before the
+    tag check. Withdrawal admissions belong to an individual provider.
+    Callers must preserve a shared result for the other targets.
     """
     cache = provider.listing_filter_cache
-    if cache is None:
+    # Providers sharing the listing can have different yanked-file admissions.
+    if cache is None or (
+        not provider.defer_yanked and any(file.yanked for file in files)
+    ):
         return _base_pass(provider, normalized, files, policy)
 
     return cache.diagnosed(
@@ -580,6 +582,14 @@ def _base_pass(
         version = _listing.parsed_version(dist.version)
         if version is None:
             dropped.append(DroppedFile(dist, None, DropCause.INVALID_VERSION))
+            continue
+
+        if (
+            dist.yanked
+            and not provider.defer_yanked
+            and (normalized, version) not in provider.yank_admissions
+        ):
+            dropped.append(DroppedFile(dist, version, DropCause.YANKED))
             continue
 
         if policy.overridden:
@@ -721,12 +731,14 @@ _SHORT_EMPTY: dict[Cause, str] = {
     DropCause.REQUIRES_PYTHON: "no file supports Python {py}",
     DropCause.WHEEL_TAGS: "no wheel matches this platform or Python",
     DropCause.INVALID_VERSION: "every file carries a version PEP 440 cannot parse",
+    DropCause.YANKED: "every available file is yanked",
 }
 
 # The line for a requirement whose matching releases were the ones refused,
 # where saying so is not the generic "<subject> excluded every version in
 # range": a line naming the target has to carry the range somewhere else.
 _SHORT_IN_RANGE: dict[Cause, str] = {
+    DropCause.YANKED: "every available file in range is yanked",
     DropCause.ZIP_SDIST: "legacy ZIP sdists in range require allow-zip-sdists = true",
     DropCause.REQUIRES_PYTHON: "no version in range supports Python {py}",
     DropCause.WHEEL_TAGS: "no wheel in range matches this platform or Python",
@@ -745,16 +757,17 @@ def empty_listing_diagnostic(
     version_range: VersionRange | None = None,
 ) -> Diagnostic:
     """Say why nothing on ``normalized``'s listing is usable on this target."""
-    dropped = [
-        record
+    if version_range is not None and any(
+        record.version is not None
+        and not version_range.contains(record.version, prereleases=True)
         for record in diagnosis.dropped
-        if record.cause != DropCause.ZIP_SDIST
-        or version_range is None
-        or (record.version is not None and record.version in version_range)
-    ]
-    groups = _groups(dropped)
-    if not groups and not diagnosis.unexplained:
-        return NO_MATCH
+    ):
+        # Changing a policy for an unrequested release cannot repair the lock.
+        return (
+            in_range_diagnostic(provider, normalized, version_range, diagnosis)
+            or NO_MATCH
+        )
+    groups = _groups(diagnosis.dropped)
     clauses = [_clause(cause, records, diagnosis) for cause, records in groups]
     if diagnosis.unexplained:
         clauses.append(_render(None, diagnosis.unexplained))
@@ -787,17 +800,16 @@ def in_range_diagnostic(
     version equal to one in ``kept`` survived under another form. It
     does not count.
     """
-    named = [
+    # Include refused prereleases even when a refused final also matches.
+    # Test each file's version before grouping: equal versions can have
+    # different text for a literal requirement.
+    asked = [
         record
         for record in diagnosis.dropped
-        if record.version is not None and record.version not in diagnosis.kept
+        if record.version is not None
+        and record.version not in diagnosis.kept
+        and version_range.contains(record.version, prereleases=True)
     ]
-    # Every version here was refused, so PEP 440's default of yielding a
-    # pre-release only when no final matched would leave its filter unnamed.
-    in_range = set(
-        version_range.filter({record.version for record in named}, prereleases=True)
-    )
-    asked = [record for record in named if record.version in in_range]
 
     groups = _groups(asked)
     if not groups:
@@ -937,6 +949,7 @@ def _join_names(names: Sequence[str]) -> str:
 # ``[singular|plural]`` picks the form it takes; ``{v}`` is the version the
 # clause quotes and ``{detail}`` the one value that cause carries.
 _CLAUSE_TEMPLATES: dict[Cause | None, str] = {
+    DropCause.YANKED: "{n} [file was|files were] yanked ([|newest: ]{v})",
     DropCause.ZIP_SDIST: (
         "allow-zip-sdists = false excluded {n} legacy ZIP [sdist|sdists]"
         " ([|newest: ]{v})"
@@ -1235,19 +1248,10 @@ def _covers_clause(packages: int) -> str:
 
 
 def _toml_key(name: str) -> str:
-    """Quote ``name`` as a TOML key, in whichever form reads back as ``name``.
-
-    An index is named by whatever the config called it, and nab accepts
-    either quote in that name, which would otherwise close the key the
-    remedy is writing it into.  A literal string takes a double quote and a
-    basic string takes the rest, escaping where the name holds both.
-    """
-    if '"' not in name:
-        return f'"{name}"'
-    if "'" not in name:
-        return f"'{name}'"
-    escaped = name.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    """Quote the index name as a single-line TOML basic key."""
+    # JSON escapes the same control characters except DEL. Keep Unicode literal
+    # so a non-BMP character cannot become two surrogate escapes in TOML.
+    return json.dumps(name, ensure_ascii=False).replace("\x7f", r"\u007f")
 
 
 # The single-file clause for a rung that took one named artifact, which the

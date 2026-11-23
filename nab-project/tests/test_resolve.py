@@ -3949,7 +3949,8 @@ class TestFindGroupConflictsManyGroups:
         per_group = self._disjoint_groups()
         per_group[self._LEFT].append(Requirement("shared<2"))
         per_group[self._RIGHT].append(Requirement("shared>=2"))
-        conflicts = _find_group_conflicts(per_group, environment={})
+        empty_groups, conflicts = _find_group_conflicts(per_group, environment={})
+        assert empty_groups == []
         assert len(conflicts) == 1
         conflict = conflicts[0]
         assert conflict.left_group == self._LEFT
@@ -3964,7 +3965,7 @@ class TestFindGroupConflictsManyGroups:
         per_group = self._disjoint_groups()
         per_group[self._LEFT].append(Requirement("shared>=1"))
         per_group[self._RIGHT].append(Requirement("shared<5"))
-        assert _find_group_conflicts(per_group, environment={}) == []
+        assert _find_group_conflicts(per_group, environment={}) == ([], [])
 
     def test_self_empty_group_pairs_with_nobody(self) -> None:
         """One group's own contradiction stays out of the pairwise walk."""
@@ -3973,7 +3974,11 @@ class TestFindGroupConflictsManyGroups:
             [Requirement("shared>=2"), Requirement("shared<1")]
         )
         per_group[self._RIGHT].append(Requirement("shared>=1"))
-        assert _find_group_conflicts(per_group, environment={}) == []
+        empty_groups, conflicts = _find_group_conflicts(per_group, environment={})
+        assert [(item.group, item.package) for item in empty_groups] == [
+            (self._LEFT, "shared")
+        ]
+        assert conflicts == []
 
 
 class TestResolvePyprojectGroupConflict:

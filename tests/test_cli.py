@@ -4300,7 +4300,7 @@ class TestLockCommandUniversal:
 
         err = capsys.readouterr().err
         assert f"Wrote {py311} (2 packages, tuple py311-linux_x86_64)" in err
-        assert f"Wrote {py312} (1 packages, tuple py312-linux_x86_64)" in err
+        assert f"Wrote {py312} (1 package, tuple py312-linux_x86_64)" in err
 
     def test_template_with_platform_id(self, tmp_path: Path) -> None:
         """``{platform_id}`` is also a valid template variable."""
@@ -4383,6 +4383,32 @@ class TestLockCommandUniversal:
         assert "both map to" in err
         assert "{platform_id}" in err
         assert not (tmp_path / "constraints-3.11.txt").exists()
+
+    def test_platform_directories_leading_to_one_file_are_refused(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        project = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = []\n[tool.nab]\nmode = "universal"\n'
+            '[tool.nab.matrix]\npython = "==3.12"\n'
+            'platforms = ["linux_x86_64", "windows_amd64"]\n',
+        )
+        for directory in ("linux_x86_64", "windows_amd64"):
+            (tmp_path / directory).mkdir()
+        destination = tmp_path / "requirements.txt"
+        destination.write_text("previous pins\n", encoding="utf-8")
+        template = tmp_path / "{platform_id}" / ".." / destination.name
+
+        with pytest.raises(SystemExit, match="1"):
+            lock(
+                project,
+                offline=True,
+                format="requirements-without-hashes",
+                output=template,
+            )
+
+        assert destination.read_text(encoding="utf-8") == "previous pins\n"
+        assert "put {platform_id} in the filename" in capsys.readouterr().err
 
     def test_template_unknown_placeholder_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -4482,7 +4508,7 @@ class TestLockCommandUniversal:
 
         err = capsys.readouterr().err
         assert f"Wrote {cpu} (2 packages, tuple py311-linux_x86_64-extra-cpu)" in err
-        assert f"Wrote {gpu} (1 packages, tuple py311-linux_x86_64-extra-gpu)" in err
+        assert f"Wrote {gpu} (1 package, tuple py311-linux_x86_64-extra-gpu)" in err
 
     def test_forked_collision_points_at_selection(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -4940,7 +4966,7 @@ class TestNoEmitWorkspace:
             return_value=self._alpha_and_foo_result(),
         ):
             lock(pyproject, output=out, no_emit_workspace=True)
-        assert "(1 packages)" in capsys.readouterr().err
+        assert "(1 package)" in capsys.readouterr().err
 
     def test_specific_requirements_drops_workspace_pin(self, tmp_path: Path) -> None:
         """Requirements format also honours --no-emit-workspace."""
@@ -5077,7 +5103,7 @@ class TestRelockDiffSummary:
         out = tmp_path / "pylock.toml"
         _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=out)
         err = capsys.readouterr().err
-        assert err.strip().endswith("(1 packages)")
+        assert err.strip().endswith("(1 package)")
 
     def test_relock_reports_added_upgraded_removed(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -5111,7 +5137,7 @@ class TestRelockDiffSummary:
         _emit(_stub_lock_input({"foo": V("2.0")}), format="pylock", output=out)
         capsys.readouterr()
         _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=out)
-        assert capsys.readouterr().err.strip().endswith("(1 packages: 1 downgraded)")
+        assert capsys.readouterr().err.strip().endswith("(1 package: 1 downgraded)")
 
     def test_relock_unchanged_prints_plain_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -5120,7 +5146,7 @@ class TestRelockDiffSummary:
         out = tmp_path / "pylock.toml"
         for _ in range(2):
             _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=out)
-        assert capsys.readouterr().err.strip().endswith("(1 packages)")
+        assert capsys.readouterr().err.strip().endswith("(1 package)")
 
     def test_relock_unchanged_with_local_pin_prints_plain_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -5158,7 +5184,7 @@ class TestRelockDiffSummary:
         )
         for _ in range(2):
             _emit(lock_input, format="pylock", output=out)
-        assert capsys.readouterr().err.strip().endswith("(1 packages)")
+        assert capsys.readouterr().err.strip().endswith("(1 package)")
 
     def test_unparseable_prior_falls_back_to_plain_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -5166,7 +5192,7 @@ class TestRelockDiffSummary:
         out = tmp_path / "pylock.toml"
         out.write_text("this is not valid toml === {[\n")
         _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=out)
-        assert capsys.readouterr().err.strip().endswith("(1 packages)")
+        assert capsys.readouterr().err.strip().endswith("(1 package)")
 
     def test_stdout_emits_no_diff(self, capsys: pytest.CaptureFixture[str]) -> None:
         _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=Path("-"))
@@ -5183,7 +5209,7 @@ class TestRelockDiffSummary:
             _emit(
                 _stub_lock_input({"foo": V("1.0")}), format="requirements", output=out
             )
-        assert capsys.readouterr().err.strip().endswith("(1 packages)")
+        assert capsys.readouterr().err.strip().endswith("(1 package)")
 
 
 class TestPylockOutputNameValidation:
@@ -7103,7 +7129,30 @@ class TestMain:
             )
         assert result.success
 
+    @pytest.fixture
+    def standalone_collector(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Exercise the collector policy used by the process entry point."""
+        monkeypatch.setattr("nab._entry.process_owns_collector", True)
+
+    @pytest.mark.parametrize("enabled", [True, False])
     @pytest.mark.usefixtures("restored_gc_state")
+    def test_embedded_lock_preserves_collector_policy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, enabled: bool
+    ) -> None:
+        path = _make_pyproject(tmp_path, '[project]\nname="example"\nversion="1"\n')
+        if enabled:
+            gc.enable()
+        else:
+            gc.disable()
+
+        def unexpected_freeze() -> None:
+            pytest.fail("an embedded lock froze the host's objects")
+
+        monkeypatch.setattr(gc, "freeze", unexpected_freeze, raising=False)
+        assert run(("lock", str(path), "--no-cache", "--offline", "--output", "-")) == 0
+        assert gc.isenabled() is enabled
+
+    @pytest.mark.usefixtures("restored_gc_state", "standalone_collector")
     def test_resolve_pauses_the_collector(self, tmp_path: Path) -> None:
         """The cyclic collector is off while the resolver runs, back on after."""
         pyproject = _make_pyproject(tmp_path)
@@ -7131,7 +7180,7 @@ class TestMain:
         sysconfig.get_config_var("Py_GIL_DISABLED") == 1,
         reason="requires generational garbage collection",
     )
-    @pytest.mark.usefixtures("restored_gc_state")
+    @pytest.mark.usefixtures("restored_gc_state", "standalone_collector")
     def test_resolve_promotes_what_it_allocated(self, tmp_path: Path) -> None:
         """Objects the resolve allocated end in generation 2, not generation 0."""
         pyproject = _make_pyproject(tmp_path)
@@ -7168,7 +7217,7 @@ class TestMain:
         assert not any(obj is graph for obj in gc.get_objects(generation=0))
         assert any(obj is graph for obj in gc.get_objects(generation=2))
 
-    @pytest.mark.usefixtures("restored_gc_state")
+    @pytest.mark.usefixtures("restored_gc_state", "standalone_collector")
     def test_resolve_without_gc_freeze_still_reenables_the_collector(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -7199,7 +7248,7 @@ class TestMain:
             )
         assert gc.isenabled()
 
-    @pytest.mark.usefixtures("restored_gc_state")
+    @pytest.mark.usefixtures("restored_gc_state", "standalone_collector")
     def test_resolve_reenables_the_collector_on_failure(self, tmp_path: Path) -> None:
         """A resolve that exits on an error still leaves the collector enabled."""
         pyproject = _make_pyproject(tmp_path)

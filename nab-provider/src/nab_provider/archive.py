@@ -19,7 +19,7 @@ __lazy_modules__ = (
 
 from .digest import is_hex_digest
 from .records import ACCEPTED_HASH_ALGORITHMS
-from .subdir import subdirectory_escapes
+from .subdir import decode_subdirectory
 from .value import SlottedValue
 
 __all__ = [
@@ -111,12 +111,10 @@ class ArchiveRequest(SlottedValue):
                 )
                 raise ArchiveRequestError(msg)
 
-        _reject_unsafe_subdirectory(subdirectory, raw_url)
+        try:
+            subdirectory = decode_subdirectory(subdirectory)
+        except ValueError as exc:
+            msg = f"unsafe archive subdirectory {subdirectory!r} in {raw_url!r}"
+            raise ArchiveRequestError(msg) from exc
+
         return cls(url=url, hashes=tuple(hashes), subdirectory=subdirectory)
-
-
-def _reject_unsafe_subdirectory(subdirectory: str, raw_url: str) -> None:
-    """Refuse a subdirectory that escapes the extracted tree."""
-    if subdirectory_escapes(subdirectory):
-        msg = f"unsafe archive subdirectory {subdirectory!r} in {raw_url!r}"
-        raise ArchiveRequestError(msg)

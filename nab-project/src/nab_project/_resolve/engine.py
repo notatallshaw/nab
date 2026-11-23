@@ -65,7 +65,7 @@ from ..lockfile import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
     from pathlib import Path
 
     from nab_provider._vendor.packaging.markers import Marker
@@ -405,21 +405,22 @@ def _resolve_with_micro_narrowing(
     )
     boundaries = [MicroBoundaries() for _ in targets]
     combined = result
-    for _ in range(_MAX_MICRO_SPLIT_PASSES):
-        grown = _grow_micro_boundaries(targets, boundaries, combined)
-        if grown is None:
-            return combined
+    remaining = _MAX_MICRO_SPLIT_PASSES
+    while (grown := _grow_micro_boundaries(targets, boundaries, combined)) is not None:
+        if remaining == 0:
+            msg = (
+                "environment micro-boundary splitting did not converge in"
+                f" {_MAX_MICRO_SPLIT_PASSES} passes"
+            )
+            raise ResolutionError(msg)
+
+        remaining -= 1
         boundaries = grown
         sliced = [
             cuts.slices(target)
             for target, cuts in zip(targets, boundaries, strict=True)
         ]
-        split_sigs = {
-            env_signature(target)
-            for target, group in zip(targets, sliced, strict=True)
-            if len(group) > 1
-        }
-        slice_result = _resolve_slices(
+        combined = _resolve_slices(
             sliced,
             fork_list,
             constraints,
@@ -428,15 +429,10 @@ def _resolve_with_micro_narrowing(
             base_requirements,
             result,
         )
-        combined = _merge_micro_results(targets, result, slice_result, split_sigs)
         _reconcile_resolved_builds(
             combined, fork_list, constraints, settings, base_requirements
         )
-    msg = (
-        "environment micro-boundary splitting did not converge in"
-        f" {_MAX_MICRO_SPLIT_PASSES} passes"
-    )
-    raise ResolutionError(msg)
+    return combined
 
 
 def _resolve_slices(
@@ -451,9 +447,11 @@ def _resolve_slices(
     """Resolve every split target's slices, one pass per fork.
 
     A fork's pass walks the whole matrix in order, folding in an unsplit
-    target's first-pass pins rather than resolving it again.
+    target's first-pass pins rather than resolving it again. Keep each such
+    result even if its marker values also occur on a target that splits.
     """
     accumulated = dict(preferences or {})
+    kept: list[TargetResult] = []
     results: list[TargetResult] = []
     for index, fork in enumerate(fork_list):
         # first_pass holds one contiguous run of results per fork, in order.
@@ -463,6 +461,7 @@ def _resolve_slices(
 
         for target_slices, first_result in zip(sliced, fork_first, strict=True):
             if len(target_slices) == 1:
+                kept.append(first_result)
                 accumulated = _threaded_preferences(
                     accumulated, [first_result], align=settings.align
                 )
@@ -486,15 +485,25 @@ def _resolve_slices(
                 accumulated, pass_results, align=settings.align
             )
 
+    unsplit = [group[0] for group in sliced if len(group) == 1]
     all_slices = [t for group in sliced if len(group) > 1 for t in group]
-    base_results, env_base_names = _base_pass(
+    base_results = _base_pass(
         all_slices, base_requirements, constraints, settings, preferences or {}
     )
+    if base_requirements is not None:
+        # Keep base results by input position too: two builds can share markers.
+        kept_base = [
+            tr
+            for group, tr in zip(sliced, first_pass.base_results, strict=True)
+            if len(group) == 1
+        ]
+        base_results = kept_base + base_results
+
     return ResolveResult(
-        targets=tuple(all_slices),
-        target_results=results,
+        targets=(*unsplit, *all_slices),
+        target_results=kept + results,
         base_results=base_results,
-        env_base_names=env_base_names,
+        env_base_names=_base_names(base_results),
     )
 
 
@@ -510,6 +519,9 @@ def _grow_micro_boundaries(
     """
     consulted_by_sig: dict[EnvSignature, set[Marker]] = defaultdict(set)
     for tr in result.every_result:
+        # A stopped search gives no reason to retry at a different patch.
+        if isinstance(tr.error, ResolutionTerminatedError):
+            continue
         consulted_by_sig[env_signature(tr.target)] |= set(tr.consulted)
 
     grown: list[MicroBoundaries] = []
@@ -524,37 +536,6 @@ def _grow_micro_boundaries(
             changed = True
         grown.append(found)
     return grown if changed else None
-
-
-def _merge_micro_results(
-    targets: Sequence[ResolveTarget],
-    result: ResolveResult,
-    slice_result: ResolveResult,
-    split_sigs: set[EnvSignature],
-) -> ResolveResult:
-    """Fold ``slice_result`` back over the first-pass ``result``.
-
-    A split target's ``.0`` entry and base pass are dropped from ``result``
-    and its slices taken from ``slice_result``; every unsplit target keeps
-    its first-pass entry.
-    """
-
-    def kept(results: Sequence[TargetResult]) -> list[TargetResult]:
-        return [tr for tr in results if env_signature(tr.target) not in split_sigs]
-
-    env_base_names = {
-        sig: names
-        for sig, names in result.env_base_names.items()
-        if sig not in split_sigs
-    }
-    env_base_names.update(slice_result.env_base_names)
-    unsplit = tuple(t for t in targets if env_signature(t) not in split_sigs)
-    return ResolveResult(
-        targets=(*unsplit, *slice_result.targets),
-        target_results=kept(result.target_results) + list(slice_result.target_results),
-        base_results=kept(result.base_results) + list(slice_result.base_results),
-        env_base_names=env_base_names,
-    )
 
 
 def _resolve_passes(
@@ -588,14 +569,14 @@ def _resolve_passes(
             accumulated, pass_results, align=settings.align
         )
 
-    base_results, env_base_names = _base_pass(
+    base_results = _base_pass(
         targets, base_requirements, constraints, settings, preferences or {}
     )
     return ResolveResult(
         targets=tuple(targets),
         target_results=results,
         base_results=base_results,
-        env_base_names=env_base_names,
+        env_base_names=_base_names(base_results),
     )
 
 
@@ -605,32 +586,36 @@ def _base_pass(
     constraints: Sequence[Requirement],
     settings: _EngineSettings,
     preferences: Mapping[str, Version],
-) -> tuple[list[TargetResult], dict[EnvSignature, frozenset[str]]]:
+) -> list[TargetResult]:
     """Resolve the no-member requirements per target, if there are any.
 
     The pass names the deps that install regardless of which member is chosen.
     """
     if base_requirements is None:
-        return [], {}
+        return []
 
     results = _run_pass(
         list(targets), base_requirements, constraints, settings, preferences
     )
 
-    env_base_names: dict[EnvSignature, frozenset[str]] = {}
     for tr in results:
-        if tr.success:
-            env_base_names[env_signature(tr.target)] = frozenset(
-                canonicalize_name(name) for name in tr.pins
-            )
-        else:
+        if not tr.success:
             _logger.warning(
                 "Base attribution skipped for tuple %s: %s",
                 tr.target.label,
                 tr.error,
             )
 
-    return results, env_base_names
+    return results
+
+
+def _base_names(results: Sequence[TargetResult]) -> dict[EnvSignature, frozenset[str]]:
+    """Collect the packages required without any conflict member."""
+    return {
+        env_signature(tr.target): frozenset(canonicalize_name(name) for name in tr.pins)
+        for tr in results
+        if tr.success
+    }
 
 
 def env_signature(target: ResolveTarget) -> EnvSignature:
@@ -800,13 +785,7 @@ def _reconcile_resolved_builds(
         _reconcile_build_results(
             result.base_results, base_requirements, constraints, settings, None
         )
-        result.env_base_names = {
-            env_signature(item.target): frozenset(
-                canonicalize_name(name) for name in item.pins
-            )
-            for item in result.base_results
-            if item.success
-        }
+        result.env_base_names = _base_names(result.base_results)
 
 
 def _same_build_selection(left: TargetResult, right: TargetResult) -> bool:
@@ -1200,7 +1179,12 @@ def _resolve_one_target(
         )
         resolver_constraints = ProxyConstraints(constraint_inputs.ranges)
     except ResolutionError as exc:
-        return TargetResult(target=target, success=False, error=exc)
+        return TargetResult(
+            target=target,
+            success=False,
+            error=exc,
+            consulted=_consulted_markers(requirements, constraints),
+        )
 
     preferences, model_hint = _target_preferences(
         settings, target, contexts, preferences
@@ -1277,6 +1261,9 @@ def _resolve_one_target(
             target=target,
             success=False,
             error=exc,
+            consulted=_consulted_markers(
+                requirements, constraints, provider.consulted_markers
+            ),
             wall_time=time.monotonic() - start,
             **_target_stats(resolver, provider, prior_stats),
         )
@@ -1323,7 +1310,9 @@ def _resolve_one_target(
         target=target,
         success=True,
         pins=pins,
-        consulted=_consulted_markers(provider, requirements, constraints),
+        consulted=_consulted_markers(
+            requirements, constraints, provider.consulted_markers
+        ),
         lock=target_lock,
         wall_time=elapsed,
         **stats,
@@ -1438,9 +1427,9 @@ def _root_keys(
 
 
 def _consulted_markers(
-    provider: Provider,
     requirements: Sequence[Requirement],
     constraints: Sequence[Requirement],
+    dependency_markers: Iterable[Marker] = (),
 ) -> frozenset[Marker]:
     """Every PEP 508 marker this resolve read.
 
@@ -1448,7 +1437,7 @@ def _consulted_markers(
     constraints are collected here, since their markers are evaluated
     before the provider exists.
     """
-    consulted = set(provider.consulted_markers)
+    consulted = set(dependency_markers)
     for req in itertools.chain(requirements, constraints):
         if req.marker is not None:
             consulted.add(req.marker)

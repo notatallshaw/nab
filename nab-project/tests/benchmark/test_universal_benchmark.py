@@ -14,7 +14,7 @@ import pytest
 from typing_extensions import Self
 
 from nab_project._resolve import engine
-from nab_project.lockfile import IndexPin, TargetLock, WheelArtifact
+from nab_project.lockfile import IndexPin, LockInput, TargetLock, WheelArtifact
 from nab_project.resolve import ResolveResult, TargetResult
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.tags import PlatformSpec
@@ -111,7 +111,7 @@ def _successful_result() -> tuple[ResolveTarget, ResolveResult]:
     return target, result
 
 
-def _result_data(result: dict, *, schema: int = 5) -> dict:
+def _result_data(result: dict, *, schema: int = 6) -> dict:
     complete_result = {
         "success": False,
         "resolution_success": None,
@@ -563,6 +563,40 @@ def test_lock_consistency_requires_an_installable_lock(
         assert all(detail in problems[0] for detail in errors)
     else:
         assert problems == []
+
+
+def test_matching_version_with_another_wheel_digest_fails_consistency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    target = ResolveTarget.for_declared(
+        python_version="3.12", spec=PlatformSpec("linux_x86_64")
+    )
+    wheel = WheelArtifact(
+        "foo-1-py3-none-any.whl",
+        "https://example.test/foo.whl",
+        (("sha256", "a" * 64),),
+    )
+    pin = IndexPin("foo", "1", "https://example.test/simple", wheels=(wheel,))
+    row = TargetResult(
+        target=target,
+        success=True,
+        pins={"foo": Version("1")},
+        lock=TargetLock(target, {"foo": pin}),
+    )
+    result = ResolveResult(targets=(target,), target_results=[row])
+    render = module.render_lock
+
+    def change_digest(value: LockInput) -> str:
+        return render(value).replace("a" * 64, "b" * 64)
+
+    monkeypatch.setattr(module, "render_lock", change_digest)
+    consistent, problems = module.check_lock_consistency(result)
+
+    assert not consistent
+    assert len(problems) == 1
+    assert target.label in problems[0]
+    assert "foo" in problems[0]
 
 
 def test_lock_inconsistency_fails_and_pins_are_retained(
@@ -1408,7 +1442,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "lock_consistent": None,
                 "error": "scenario exceeded wall-clock budget",
             },
-            5,
+            6,
             1,
         ),
         (
@@ -1420,7 +1454,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "timed_out": False,
                 "lock_consistent": None,
             },
-            5,
+            6,
             0,
         ),
         (
@@ -1432,7 +1466,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "timed_out": False,
                 "lock_consistent": None,
             },
-            5,
+            6,
             1,
         ),
         (
@@ -1444,7 +1478,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "timed_out": False,
                 "lock_consistent": True,
             },
-            4,
+            5,
             1,
         ),
     ],
@@ -1467,7 +1501,7 @@ def test_summary_exit_status(
     (result_dir / "_manifest.json").write_text(
         json.dumps(
             {
-                "benchmark_schema": 5,
+                "benchmark_schema": 6,
                 "commit": "run",
                 "source": _CLEAN_SOURCE,
                 "source_end": _CLEAN_SOURCE,
@@ -1551,7 +1585,7 @@ def test_summary_rejects_a_selected_run_manifest(
     (result_dir / "_manifest.json").write_text(
         json.dumps(
             {
-                "benchmark_schema": 5,
+                "benchmark_schema": 6,
                 "commit": "run",
                 "source": _CLEAN_SOURCE,
                 "source_end": _CLEAN_SOURCE,
@@ -1588,7 +1622,7 @@ def test_summary_requires_one_clean_source(
     (result_dir / "_manifest.json").write_text(
         json.dumps(
             {
-                "benchmark_schema": 5,
+                "benchmark_schema": 6,
                 "commit": "run",
                 "source": start,
                 "source_end": end,

@@ -166,6 +166,8 @@ def test_damaged_records_are_misses_for_each_reader(tmp_path: Path, kind: str) -
 
     if kind in {"body", "policy"}:
         assert cache.get_simple("demo") is None
+        policy_missing = cache.get_simple_policy("demo") is None
+        assert policy_missing == (kind == "policy")
     elif kind == "parsed":
         assert cache.get_simple_parsed("demo") is None
     elif kind == "sdist":

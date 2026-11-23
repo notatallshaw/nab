@@ -152,6 +152,33 @@ def test_crlf_document_with_long_description() -> None:
     assert [str(r) for r in md.requires_dist] == ["bar>=1.0"]
 
 
+def test_dependency_edits_stay_with_the_parsed_distribution() -> None:
+    dependency = 'Requires-Dist: demo[fast]>=1; python_version >= "3.10"\n'
+    text = "Name: first\nVersion: 1\n" + dependency * 2
+    edited, sibling = parse_metadata(text).requires_dist
+    edited.extras.add("docs")
+    edited.marker = None
+    next(iter(edited.specifier)).prereleases = True
+    edited.specifier &= SpecifierSet("<2")
+
+    other = parse_metadata("Name: second\nVersion: 1\n" + dependency)
+    for req in (sibling, other.requires_dist[0]):
+        assert str(req) == 'demo[fast]>=1; python_version >= "3.10"'
+        assert req.specifier.prereleases is None
+
+
+def test_python_requirement_edits_stay_with_the_parsed_distribution() -> None:
+    text = "Name: demo\nVersion: 1\nRequires-Python: >=3.9\n"
+    first = parse_metadata(text).requires_python
+    assert first is not None
+    first.prereleases = False
+    next(iter(first)).prereleases = True
+
+    second = parse_metadata(text).requires_python
+    assert second is not None
+    assert second.prereleases is None
+
+
 def test_equal_markers_are_interned() -> None:
     """The same marker text across different dep strings shares one object."""
     text = (

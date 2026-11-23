@@ -454,13 +454,10 @@ def _record_range_outcome(
         provider.stats.wheel_metadata_range_missing += 1
 
 
-def dists_at_version(
+def release_start(
     versions: Sequence[tuple[Version, DistFile]], version: Version
-) -> list[DistFile]:
-    """Return distributions at ``version`` in listing order.
-
-    The newest-first listing keeps each version's distributions adjacent.
-    """
+) -> int:
+    """Find the insertion point for a release in a newest-first listing."""
     low, high = 0, len(versions)
     while low < high:
         mid = (low + high) // 2
@@ -469,7 +466,17 @@ def dists_at_version(
             low = mid + 1
         else:
             high = mid
+    return low
 
+
+def dists_at_version(
+    versions: Sequence[tuple[Version, DistFile]], version: Version
+) -> list[DistFile]:
+    """Return distributions at ``version`` in listing order.
+
+    The newest-first listing keeps each version's distributions adjacent.
+    """
+    low = release_start(versions, version)
     stop = low
     while stop < len(versions) and versions[stop][0] == version:
         stop += 1
@@ -918,8 +925,8 @@ def _dynamic_sdist_remedy(
         else f"{canonical}=={version}"
     )
     return (
-        condition + "add a [[tool.nab.package-rules]] entry with"
-        f' match = ["{selector}"] and {setting}'
+        condition + f'append {{ match = ["{selector}"], {setting} }} to package-rules'
+        " (use settings.package-rules if the active lock plan defines it)"
     )
 
 
@@ -931,11 +938,13 @@ def _assumed_wheel_candidates(
     from .listing import base_distributions
 
     files = provider.coordinator.index.get_listing(package) or ()
-    candidates = [
-        dist
-        for candidate, dist in base_distributions(
+    with provider.reading_listing(package, files):
+        distributions = base_distributions(
             provider, package, files, provider.listing_filter_cache
         )
+    candidates = [
+        dist
+        for candidate, dist in distributions
         if candidate == version
         and isinstance(dist, WheelFile)
         and (not dist.yanked or (package, version) in provider.yank_admissions)

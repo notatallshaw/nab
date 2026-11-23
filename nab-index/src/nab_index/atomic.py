@@ -33,6 +33,7 @@ __all__ = [
     "atomic_write_chunks",
     "atomic_write_text",
     "create_staging_file",
+    "default_file_mode",
 ]
 
 _umask_lock = threading.Lock()
@@ -52,7 +53,7 @@ _STAGING_OPEN_FLAGS = (
 )
 
 
-def _default_mode() -> int:
+def default_file_mode() -> int:
     """Return the mode ``open`` would have given a new file.
 
     The umask can only be read by setting it, so set a restrictive one and
@@ -119,12 +120,12 @@ def _staged(path: Path) -> Generator[int, None, None]:
         try:
             mode = stat.S_IMODE(path.stat().st_mode)
         except FileNotFoundError:
-            mode = _default_mode()
+            mode = default_file_mode()
         except OSError:
             # Python versions differ in which metadata errors exists() suppresses.
             if path.exists():
                 raise
-            mode = _default_mode()
+            mode = default_file_mode()
         tmp_path.chmod(mode)
 
         # Path.replace would route around os.replace on Python 3.10

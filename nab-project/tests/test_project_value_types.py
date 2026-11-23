@@ -9,6 +9,8 @@ pinned here.  A new subclass also needs a case in the umbrella suite's
 
 from __future__ import annotations
 
+import pickle
+
 import pytest
 
 from nab_project.conflicts import (
@@ -32,6 +34,12 @@ _INSTANCES = [
     ConflictFork((("extra", "cpu"),), ("cpu",), (), ()),
     ResolveInputs(),
 ]
+
+
+def test_default_resolve_inputs_round_trip_through_pickle() -> None:
+    inputs = ResolveInputs()
+    assert pickle.loads(pickle.dumps(inputs)) == inputs  # noqa: S301
+    assert inputs.index_overrides is not ResolveInputs().index_overrides
 
 
 def test_empty_value_type_preserves_value_semantics() -> None:

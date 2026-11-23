@@ -644,13 +644,13 @@ def canary_v2_identity(
     if case.resolution is None:
         return CanaryV2Identity(case.scenario, scenario)
 
+    definition = dict(scenario)
+    definition.pop("resolution", None)
     if resolution is ResolutionStrategy.HIGHEST:
-        definition = dict(scenario)
-        definition.pop("resolution", None)
         return CanaryV2Identity(case.scenario, definition)
 
     # Preserve the clone TOMLs' field order in the serialized v2 input.
-    definition = {"resolution": resolution.value, **scenario}
+    definition = {"resolution": resolution.value, **definition}
     if ":" not in case.scenario:
         return CanaryV2Identity(case.scenario, definition)
     stem, name = case.scenario.split(":", 1)

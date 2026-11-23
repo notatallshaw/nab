@@ -16,6 +16,8 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "asyncio",
+    "concurrent.futures",
+    "contextvars",
     "hashlib",
     "nab_index.atomic",
     "nab_index.client",
@@ -32,8 +34,10 @@ import asyncio
 import hashlib
 import logging
 import posixpath
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, TypeVar
 from urllib.parse import urlsplit
 
 from nab_index.atomic import atomic_write
@@ -46,7 +50,8 @@ from ._concurrency import validate_max_concurrency
 from .lockfile import ArchivePin, IndexPin, LocalPin, LockInput, VcsPin
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Coroutine, Iterable
+    from typing import Any
 
     from nab_index.transport import AsyncHttpTransport
 
@@ -58,6 +63,7 @@ __all__ = [
     "DownloadResult",
     "download_lock",
     "iter_artifacts",
+    "run_download",
 ]
 
 
@@ -236,6 +242,32 @@ def _coalesce_download_targets(
     return list(by_name.values())
 
 
+_Result = TypeVar("_Result")
+
+
+def run_download(operation: Callable[[], Coroutine[Any, Any, _Result]]) -> _Result:
+    """Complete an async download on a fresh event loop.
+
+    When the caller already has a running loop, a worker thread runs the
+    operation in a copy of the caller's context.
+    """
+
+    def run() -> _Result:
+        return asyncio.run(operation())
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        # A running loop cannot drive a second loop on the same thread.
+        context = copy_context()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(lambda: context.run(run)).result()
+
+    return run()
+
+
 def download_lock(
     lock_input: LockInput,
     transport: AsyncHttpTransport,
@@ -264,10 +296,10 @@ def download_lock(
             iter_artifacts(lock_input), offline=offline
         )
     except BaseException:
-        asyncio.run(transport.aclose())
+        run_download(transport.aclose)
         raise
-    return asyncio.run(
-        _run_downloads(
+    return run_download(
+        lambda: _run_downloads(
             artefacts, transport, output_dir, max_concurrency, offline=offline
         )
     )

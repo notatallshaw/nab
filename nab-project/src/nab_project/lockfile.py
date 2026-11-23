@@ -119,6 +119,7 @@ __all__ = [
     "check_locked",
     "collect_dependency_requirements",
     "drop_workspace_pins",
+    "format_package_count",
     "is_valid_pylock_path",
     "package_metadata_override_records",
     "read_lockfile_anchor",
@@ -534,10 +535,15 @@ class Provenance(ValueType):
         created_at = self.created_at
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
+        try:
+            created_at = created_at.astimezone(timezone.utc)
+        except (OverflowError, ValueError) as exc:
+            msg = "the lock's created-at timestamp cannot be represented in UTC"
+            raise LockValidationError(msg) from exc
 
         block: dict[str, Any] = {
             "nab-version": self.nab_version,
-            "created-at": created_at.astimezone(timezone.utc),
+            "created-at": created_at,
             "command-line": list(self.command_line),
             "input-path": self.input_path,
             "mode": self.mode,
@@ -703,7 +709,8 @@ class LockInput(Record):
 
     ``environments`` is the lockfile-level set of permitted
     environments (PEP 751 ``environments``): what each target declared
-    of the environment it resolved for.
+    of the environment it resolved for. ``target_environments`` records the
+    declaration used for each label when emitting per-package markers.
 
     ``validation_inputs`` carries normalized declarations for producer-side checks.
 
@@ -726,9 +733,11 @@ class LockInput(Record):
         "base_group",
         "build_group",
         "validation_inputs",
+        "target_environments",
     )
 
     targets: Mapping[str, TargetLock]
+    target_environments: Mapping[str, str] | None = None
     env_base_names: Mapping[tuple[tuple[str, str], ...], frozenset[str]]
     environments: list[Marker]
     requires_python: str | None
@@ -745,6 +754,8 @@ class LockInput(Record):
     """``[tool.nab].base-group``: the group name the lock gives
     the project's own dependencies, or ``None`` to leave them unconditional."""
     build_group: str | None
+    """The group for ``[build-system].requires``, set by ``[tool.nab].build-group``.
+    With ``None``, the lock omits this group."""
 
     validation_inputs: Mapping[str, Any] | None
 
@@ -765,6 +776,7 @@ class LockInput(Record):
         base_group: str | None = None,
         build_group: str | None = None,
         validation_inputs: Mapping[str, Any] | None = None,
+        target_environments: Mapping[str, str] | None = None,
     ) -> None:
         """Collect the resolved targets and lockfile metadata."""
         self.targets = factory_value(targets, dict)
@@ -780,9 +792,7 @@ class LockInput(Record):
         self.base_group = base_group
         self.build_group = build_group
         self.validation_inputs = validation_inputs
-
-    """``[tool.nab].build-group``: the group name the lock gives
-    ``[build-system].requires``, or ``None`` to leave them out of the lock."""
+        self.target_environments = target_environments
 
     @property
     def active_groups(self) -> tuple[str, ...]:
@@ -852,6 +862,11 @@ def drop_workspace_pins(lock_input: LockInput, exclude: frozenset[str]) -> LockI
     return replace(lock_input, targets=targets)
 
 
+def format_package_count(count: int) -> str:
+    """Format the number of packages written to one output file."""
+    return "1 package" if count == 1 else f"{count} packages"
+
+
 def summarize_lock(lock_input: LockInput, prior: Mapping[str, Version] | None) -> str:
     """Summarise what was written: a package diff, or the tuple count.
 
@@ -877,7 +892,7 @@ def summarize_lock(lock_input: LockInput, prior: Mapping[str, Version] | None) -
         for name, pin in pins.items()
         if isinstance(pin, (IndexPin, ArchivePin))
     }
-    return f"{len(pins)} packages{_diff_summary(prior, versioned)}"
+    return f"{format_package_count(len(pins))}{_diff_summary(prior, versioned)}"
 
 
 def _diff_summary(

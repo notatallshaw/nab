@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -749,8 +750,41 @@ def test_download_entry_is_a_dataclass() -> None:
     assert hash(e)
 
 
-def test_download_event_loop_runs(tmp_path: Path) -> None:
-    """Cover the asyncio.run() branch by exercising it with no work."""
-    # download_lock spins up its own loop; make sure repeated calls work.
-    asyncio.run(asyncio.sleep(0))
-    download_lock(LockInput(targets=_one({})), _FakeTransport({}), tmp_path)  # type: ignore[arg-type]
+def test_download_from_a_running_event_loop(tmp_path: Path) -> None:
+    payload = b"wheel bytes"
+    pin = _index_pin(wheel_sha=hashlib.sha256(payload).hexdigest())
+    (wheel,) = pin.wheels
+    request_id: ContextVar[str] = ContextVar("request_id")
+
+    class Transport(_FakeTransport):
+        async def get(
+            self, url: str, *, headers: dict[str, str] | None = None
+        ) -> _FakeResponse:
+            assert request_id.get() == "wheel download"
+            return await super().get(url, headers=headers)
+
+    transport = Transport({wheel.url: payload})
+
+    async def download() -> None:
+        request_id.set("wheel download")
+        result = download_lock(
+            LockInput(targets=_one({"foo": pin})), transport, tmp_path
+        )
+        assert result.written == (tmp_path / wheel.filename,)
+
+    asyncio.run(download())
+    assert (tmp_path / wheel.filename).read_bytes() == payload
+    assert transport.close_calls == 1
+
+
+def test_invalid_download_from_a_running_loop_closes_its_transport(
+    tmp_path: Path,
+) -> None:
+    transport = _FakeTransport({})
+
+    async def attempt() -> None:
+        with pytest.raises(ValueError, match="max_concurrency"):
+            download_lock(LockInput(), transport, tmp_path, max_concurrency=0)
+
+    asyncio.run(attempt())
+    assert transport.close_calls == 1

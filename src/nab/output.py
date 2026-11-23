@@ -25,8 +25,9 @@ from nab_provider.value import Record
 from ._compat import override
 from .env import (
     NAB_VERBOSITY,
-    color_enabled,
+    color_for_stream,
     progress_suppressed,
+    stream_isatty,
     verbosity_name,
 )
 
@@ -87,12 +88,6 @@ class ColorChoice(enum.Enum):
     NEVER = "never"
 
 
-def _isatty(stream: IO[str]) -> bool:
-    """Whether ``stream`` is a terminal, tolerant of streams without ``isatty``."""
-    isatty = getattr(stream, "isatty", None)
-    return bool(isatty()) if isatty is not None else False
-
-
 def should_color(
     choice: ColorChoice, stream: IO[str], env: Mapping[str, str] | None = None
 ) -> bool:
@@ -106,8 +101,7 @@ def should_color(
     ``always`` and ``never`` decide without the stream, so a stream that
     cannot answer ``isatty()`` is never asked.
     """
-    tty = choice is ColorChoice.AUTO and _isatty(stream)
-    return color_enabled(choice.value, isatty=tty, environ=env)
+    return color_for_stream(choice.value, stream, env)
 
 
 # Standard ANSI SGR codes; the terminal theme remaps these, so we never
@@ -180,7 +174,7 @@ class Printer:
             progress
             and not progress_suppressed(env)
             and verbosity is Verbosity.NORMAL
-            and _isatty(self._err)
+            and stream_isatty(self._err)
         )
         self._err_lock = threading.Lock()
         self._progress_drawn = False

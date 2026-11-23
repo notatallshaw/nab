@@ -10,11 +10,11 @@ from nab_provider.archive import ArchiveRequest, ArchiveRequestError
 class TestArchiveRequestParse:
     def test_url_hash_and_subdirectory(self) -> None:
         req = ArchiveRequest.parse(
-            "https://ex.com/foo-1.0.tar.gz#sha256=abc&subdirectory=pkg"
+            "https://ex.com/foo-1.0.tar.gz#sha256=abc&subdirectory=src/a%20b+c%26d%2520"
         )
         assert req.url == "https://ex.com/foo-1.0.tar.gz"
         assert req.hashes == (("sha256", "abc"),)
-        assert req.subdirectory == "pkg"
+        assert req.subdirectory == "src/a b+c&d%20"
 
     def test_unknown_fragment_key_raises(self) -> None:
         with pytest.raises(ArchiveRequestError, match="unknown archive URL fragment"):
@@ -117,3 +117,9 @@ class TestArchiveRequestParse:
             ArchiveRequest.parse(
                 "https://ex.com/foo.tar.gz#sha256=abc&subdirectory=c\\d/../.."
             )
+
+
+@pytest.mark.parametrize("fragment", ["not%fftext", "nul%00byte"])
+def test_invalid_subdirectory_name(fragment: str) -> None:
+    with pytest.raises(ArchiveRequestError, match="subdirectory"):
+        ArchiveRequest.parse(f"https://ex.com/demo.tar.gz#subdirectory={fragment}")

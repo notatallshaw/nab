@@ -78,6 +78,11 @@ lock, nab records the patch interval where the consulted version markers give th
 the running interpreter. A marker that cannot be split into these intervals limits the lock to the
 observed build.
 
+If a dependency uses `in` or `not in` on the full Python version, two PEP 440-equivalent versions
+can give different answers. For example, `"vendor" in python_full_version` distinguishes
+`3.13.4+vendor` from `3.13.4+VENDOR`. A lock for an exact patch or the host preserves that
+membership test in its environment declaration.
+
 ### Unsupported boundaries
 
 On a minor-interval target, a consulted full-version marker must describe intervals. Nab rejects:

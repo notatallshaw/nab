@@ -25,7 +25,6 @@ import nab_index.cache as cache_mod
 import nab_index.cached_client as cached_client_mod
 from nab_index._pep503 import json_listing
 from nab_index.cache import (
-    CACHE_VERSION_SIMPLE_PARSED,
     CachePolicy,
     NullCache,
     OfflineError,
@@ -35,9 +34,9 @@ from nab_index.cached_client import (
     CachedAsyncSimpleClient,
     ParsedCacheStats,
     SdistArchiveHold,
+    _cache_control_lifetime,
     _freshness_lifetime,
     _header,
-    _max_age_directive,
     _parse_age,
 )
 from nab_index.client import (
@@ -219,6 +218,34 @@ def _field_lines(*lines: tuple[str, str]) -> HTTPHeaderDict:
 
 def _make_cache(tmp_path: Path) -> OnDiskCache:
     return OnDiskCache(tmp_path, "https://pypi.org/simple/")
+
+
+def test_file_diagnostics_follow_each_response() -> None:
+    installer = b'{"files":[{"filename":"pkg-1.exe","url":"pkg-1.exe"}]}'
+    transport = _FakeTransport(
+        [
+            _FakeResponse(installer),
+            _FakeResponse(ZIP_ONLY_BYTES),
+            _FakeResponse(b"", status=404),
+        ]
+    )
+    client = CachedAsyncSimpleClient(transport, NullCache())
+
+    async def read() -> None:
+        assert await client.get_files("pkg") == []
+        assert client.served_unreadable_only("pkg")
+        assert client.served_no_usable_file("pkg")
+
+        (archive,) = await client.get_files("pkg")
+        assert archive.filename == "pkg-1.0.zip"
+        assert not client.served_unreadable_only("pkg")
+        assert not client.served_no_usable_file("pkg")
+        assert client.served_zip_sdists("pkg") == frozenset({"1.0"})
+
+        assert await client.get_files("pkg") == []
+        assert not client.served_zip_sdists("pkg")
+
+    asyncio.run(read())
 
 
 class _MemoryPolicyCache(OnDiskCache):
@@ -646,10 +673,13 @@ class TestZipSdistListing:
         old_files = _parse_files(LISTING, "https://pypi.org/simple/", "pkg")
         header, rows = json.loads(encode_parsed(old_files, digest, frozenset({"1.0"})))
         header[0] = 6
-        bucket_version = "v0" if legacy_bucket else CACHE_VERSION_SIMPLE_PARSED
-        old_path = tmp_path / f"simple-parsed-{bucket_version}" / "pypi" / "pkg.parsed"
-        old_path.parent.mkdir(parents=True, exist_ok=True)
-        old_path.write_bytes(json.dumps([header, rows]).encode())
+        old_blob = json.dumps([header, rows]).encode()
+        if legacy_bucket:
+            old_path = tmp_path / "simple-parsed-v0" / "pypi" / "pkg.parsed"
+            old_path.parent.mkdir(parents=True)
+            old_path.write_bytes(old_blob)
+        else:
+            cache.put_simple_parsed("pkg", old_blob)
         transport = _FakeTransport()
 
         async def go() -> list[WheelFile | SdistFile]:
@@ -946,36 +976,53 @@ class TestFragmentedUrlSidecarFetch:
         assert transport.paths == [wheel_path + ".metadata"]
 
 
-class TestMaxAgeDirective:
+class TestCacheControlLifetime:
     def test_none_when_field_absent(self) -> None:
-        assert _max_age_directive(None) is None
+        assert _cache_control_lifetime(None) is None
 
     def test_none_when_directive_absent(self) -> None:
-        assert _max_age_directive("public") is None
+        assert _cache_control_lifetime("public") is None
 
     def test_extracts_value(self) -> None:
-        assert _max_age_directive("max-age=900, public") == 900
+        assert _cache_control_lifetime("max-age=900, public") == 900
 
     def test_extracts_value_with_spaces(self) -> None:
-        assert _max_age_directive("public, max-age = 1200") == 1200
+        assert _cache_control_lifetime("public, max-age = 1200") == 1200
 
     def test_leading_zeros_ignored(self) -> None:
-        assert _max_age_directive("max-age=00000000900") == 900
+        assert _cache_control_lifetime("max-age=00000000900") == 900
 
     def test_above_ceiling_clamped(self) -> None:
-        assert _max_age_directive("max-age=9999999999") == 2**31
+        assert _cache_control_lifetime("max-age=9999999999") == 2**31
 
     def test_digit_run_too_long_to_convert_clamped(self) -> None:
-        assert _max_age_directive("max-age=" + "9" * 9000) == 2**31
+        assert _cache_control_lifetime("max-age=" + "9" * 9000) == 2**31
 
     def test_directive_name_is_case_insensitive(self) -> None:
-        assert _max_age_directive("Max-Age=0") == 0
+        assert _cache_control_lifetime("Max-Age=0") == 0
 
     def test_uppercase_directive_among_others(self) -> None:
-        assert _max_age_directive("public, MAX-AGE = 30, must-revalidate") == 30
+        assert _cache_control_lifetime("public, MAX-AGE = 30, must-revalidate") == 30
 
     def test_quoted_value_extracted(self) -> None:
-        assert _max_age_directive('max-age="300"') == 300
+        assert _cache_control_lifetime('max-age="300"') == 300
+
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            ("mirror-max-age=3600, max-age=0", 0),
+            ('private="Age, max-age=3600", max-age=0', 0),
+            ('private="Age, no-cache, Size", max-age=60', 60),
+            (r'note="quoted \"value, no-cache, end", max-age=60', 60),
+            ('max-age=60, no-cache="Age, Size"', 0),
+            ("max-age=60, max-age=120", 60),
+            ("max-age=60s", 0),
+        ],
+    )
+    def test_only_complete_directives_set_freshness(
+        self, field: str, expected: int
+    ) -> None:
+        assert _cache_control_lifetime(field) == expected
 
 
 class TestFreshnessLifetime:
@@ -1237,7 +1284,7 @@ class TestGetFiles:
             "pkg",
             LISTING_BYTES,
             CachePolicy(
-                fetched_at=2_000_000_000,
+                fetched_at=int(time.time()),
                 max_age=99999,
                 etag="x",
             ),
@@ -2519,7 +2566,7 @@ class TestRedirectedProjectPage:
         cache.put_simple(
             "pkg",
             self._RELATIVE_LISTING,
-            CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None),
+            _fresh_policy(),
         )
 
         (wheel,) = self._run(_FakeTransport(), cache)
@@ -4044,6 +4091,15 @@ class TestGetSdistFiles:
 
 
 class TestSdistArchiveHold:
+    def test_negative_capacity_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="max_entries"):
+            SdistArchiveHold(-1)
+
+    def test_zero_capacity_keeps_no_archives(self) -> None:
+        hold = SdistArchiveHold(0)
+        hold.put("pkg", "1.0", b"one")
+        assert hold.take("pkg", "1.0") is None
+
     def test_the_oldest_archive_goes_when_the_hold_is_full(self) -> None:
         """A full hold evicts the oldest rather than growing."""
         hold = SdistArchiveHold(2)
@@ -4263,8 +4319,13 @@ class TestGetSdistArchive:
 
 
 class TestContextManager:
-    def test_aenter_returns_self_and_aclose_closes_transport(
-        self, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("options", "close_count"),
+        [({}, 1), ({"owns_transport": False}, 0)],
+        ids=["standalone", "shared"],
+    )
+    def test_context_closes_only_an_owned_transport(
+        self, tmp_path: Path, options: dict[str, bool], close_count: int
     ) -> None:
         cache = _make_cache(tmp_path)
         closes: list[bool] = []
@@ -4280,11 +4341,12 @@ class TestContextManager:
                 closes.append(True)
 
         async def go() -> None:
-            async with CachedAsyncSimpleClient(_Closer(), cache) as client:
-                assert isinstance(client, CachedAsyncSimpleClient)
+            client = CachedAsyncSimpleClient(_Closer(), cache, **options)
+            async with client as entered:
+                assert entered is client
 
         asyncio.run(go())
-        assert closes == [True]
+        assert len(closes) == close_count
 
 
 _RANGE_META = b"Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n\nbody\n"
@@ -4590,7 +4652,7 @@ def _get_files_and_zip_sdists(
 
 
 def _fresh_policy() -> CachePolicy:
-    return CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None)
+    return CachePolicy(fetched_at=int(time.time()), max_age=99999, etag=None)
 
 
 def _stale_policy() -> CachePolicy:
@@ -4885,7 +4947,7 @@ class TestNegativeCaching:
         cache.put_simple(
             "pkg",
             LISTING_BYTES,
-            CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag="x"),
+            CachePolicy(fetched_at=int(time.time()), max_age=99999, etag="x"),
         )
         cache.put_negative("pkg", _fresh_policy())
         transport = _FakeTransport()
@@ -4916,14 +4978,11 @@ class TestCorruptCachedListing:
     _NON_UTF8 = b'\xff\xfe{"files": []}'
     _WRONG_SHAPE = b'{"files": 123}'
 
-    def _fresh(self) -> CachePolicy:
-        return CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None)
-
     def test_truncated_cached_body_self_heals_online(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_simple("pkg", self._TRUNCATED, self._fresh())
+        cache.put_simple("pkg", self._TRUNCATED, _fresh_policy())
         transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
 
         with caplog.at_level(logging.WARNING, logger="nab_index.cached_client"):
@@ -4944,7 +5003,7 @@ class TestCorruptCachedListing:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_simple("pkg", self._NON_UTF8, self._fresh())
+        cache.put_simple("pkg", self._NON_UTF8, _fresh_policy())
         transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
 
         with caplog.at_level(logging.WARNING, logger="nab_index.cached_client"):
@@ -4964,7 +5023,7 @@ class TestCorruptCachedListing:
         over_nested_json: bytes,
     ) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_simple("pkg", over_nested_json, self._fresh())
+        cache.put_simple("pkg", over_nested_json, _fresh_policy())
         transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
 
         with caplog.at_level(logging.WARNING, logger="nab_index.cached_client"):
@@ -4983,7 +5042,7 @@ class TestCorruptCachedListing:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_simple("pkg", self._TRUNCATED, self._fresh())
+        cache.put_simple("pkg", self._TRUNCATED, _fresh_policy())
         transport = _FakeTransport()
 
         with (
@@ -4999,7 +5058,7 @@ class TestCorruptCachedListing:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_simple("pkg", self._TRUNCATED, self._fresh())
+        cache.put_simple("pkg", self._TRUNCATED, _fresh_policy())
         cache.put_negative("pkg", _fresh_policy())
         transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
 
@@ -5018,7 +5077,7 @@ class TestCorruptCachedListing:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_simple("pkg", self._TRUNCATED, self._fresh())
+        cache.put_simple("pkg", self._TRUNCATED, _fresh_policy())
         cache.put_negative("pkg", _fresh_policy())
         transport = _FakeTransport()
 
@@ -5035,7 +5094,7 @@ class TestCorruptCachedListing:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_simple("pkg", self._WRONG_SHAPE, self._fresh())
+        cache.put_simple("pkg", self._WRONG_SHAPE, _fresh_policy())
         transport = _FakeTransport()
 
         with (
@@ -5198,6 +5257,19 @@ def _debug_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
 
 class TestAssumeFreshFloor:
     """A read-time floor extends freshness without shortening it or writing disk."""
+
+    @pytest.mark.parametrize("floor", [None, 600])
+    def test_clock_before_cached_404_refetches_the_listing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, floor: int | None
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 1000.0)
+        cache = _make_cache(tmp_path)
+        cache.put_negative("pkg", CachePolicy(fetched_at=1200, max_age=0, etag=None))
+        transport = _FakeTransport([_FakeResponse(LISTING_BYTES)])
+
+        files = _run_get_files_floor(transport, cache, "pkg", min_fresh_seconds=floor)
+
+        assert [file.filename for file in files] == ["pkg-1.0-py3-none-any.whl"]
 
     def test_stale_positive_within_floor_serves_cached_no_transport(
         self,

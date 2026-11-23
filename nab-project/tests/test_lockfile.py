@@ -17,6 +17,7 @@ from typing import Any, ClassVar
 import pytest
 
 from nab_markersets._compat import get_int_max_str_digits
+from nab_provider.environment import marker_environment
 from nab_provider.policy import MetadataPolicy
 from nab_provider.value import replace
 
@@ -92,7 +93,12 @@ from nab_project.resolve import (
     resolve_with_coordinator,
 )
 from nab_provider._vendor.packaging.markers import Marker, default_environment
-from nab_provider._vendor.packaging.pylock import Package, PackageWheel, Pylock
+from nab_provider._vendor.packaging.pylock import (
+    Package,
+    PackageSdist,
+    PackageWheel,
+    Pylock,
+)
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
@@ -114,7 +120,7 @@ from nab_provider.target import (
     micro_boundary_points,
     slices_from_points,
 )
-from nab_provider.testing import make_metadata, make_wheel, pkg_override
+from nab_provider.testing import make_metadata, make_sdist, make_wheel, pkg_override
 from nab_test_support.coordinator import make_coordinator
 
 requires_int_limit = pytest.mark.skipif(
@@ -484,7 +490,7 @@ class TestPerTargetMarkerSimplification:
             LockInput(
                 targets=_targets(
                     (
-                        _target(platform="linux_x86_64"),
+                        _target("3.10", "linux_x86_64"),
                         {
                             "foo": IndexPin(
                                 name="foo",
@@ -495,7 +501,7 @@ class TestPerTargetMarkerSimplification:
                         },
                     ),
                     (
-                        _target(platform="macos_arm64"),
+                        _target("3.10", "macos_arm64"),
                         {
                             "foo": IndexPin(
                                 name="foo",
@@ -515,6 +521,109 @@ class TestPerTargetMarkerSimplification:
             "foo-1.0-cp310-cp310-linux_x86_64.whl",
             "foo-1.0-cp310-cp310-macosx_11_0_arm64.whl",
         ]
+
+        lock = Pylock.from_dict(data)
+        for platform, expected in (
+            ("linux_x86_64", linux_wheel),
+            ("macos_arm64", macos_wheel),
+        ):
+            target = _target("3.10", platform)
+            [(_, selected)] = lock.select(
+                environment=target.marker_env, tags=target.tags.ordered
+            )
+            assert isinstance(selected, PackageWheel)
+            assert selected.url == expected.url
+
+    def test_tag_compatible_but_python_excluded_wheel_remains_unavailable(self) -> None:
+        wheel = make_wheel(
+            "1", package="demo", requires_python="<3.13", hashes=(("sha256", "a" * 64),)
+        )
+        source = make_sdist("1", package="demo", hashes=(("sha256", "b" * 64),))
+        coordinator = make_coordinator(
+            listings={"demo": [wheel, source]},
+            metadata_text=make_metadata("demo", "1", requires_python="<3.13"),
+            sdist_pkg_info=make_metadata("demo", "1", metadata_version="2.2"),
+        )
+        targets = [_target("3.11"), _target("3.12"), _target("3.13")]
+        result = resolve_with_coordinator(coordinator, targets, [Requirement("demo")])
+        result.raise_for_failure()
+
+        lock = Pylock.from_dict(tomllib.loads(write_lock(build_lock_input(result))))
+        assert len(lock.packages) == 2
+        for target, expected in zip(targets, (wheel, wheel, source), strict=True):
+            [(_, selected)] = lock.select(
+                environment=target.marker_env, tags=target.tags.ordered
+            )
+            assert isinstance(selected, (PackageWheel, PackageSdist))
+            assert selected.url == expected.url
+            assert selected.hashes == dict(expected.hashes)
+
+    def test_same_named_wheels_keep_each_targets_artifact(self) -> None:
+        tag = "cp312-abi3-manylinux_2_17_x86_64"
+        linux312, linux313 = _target("3.12"), _target("3.13")
+        free_threaded = ResolveTarget.for_declared(
+            python_version="3.13", spec=PlatformSpec("linux_x86_64", free_threaded=True)
+        )
+        records = [
+            (linux312, make_wheel_artifact(tag=tag, sha256="a" * 64)),
+            (linux313, make_wheel_artifact(tag=tag, sha256="b" * 64)),
+            (
+                free_threaded,
+                make_wheel_artifact(tag="cp313-cp313t-manylinux_2_17_x86_64"),
+            ),
+        ]
+        locks = _targets(
+            *(
+                (target, {"foo": _index_pin().replace(wheels=(artifact,))})
+                for target, artifact in records
+            )
+        )
+        lock = Pylock.from_dict(tomllib.loads(write_lock(LockInput(targets=locks))))
+
+        assert len(lock.packages) == 2
+        for target, expected in records:
+            [(_, selected)] = lock.select(
+                environment=target.marker_env, tags=target.tags.ordered
+            )
+            assert isinstance(selected, PackageWheel)
+            assert selected.hashes == dict(expected.hashes)
+            assert selected.filename == expected.filename
+
+    def test_marker_overlay_preserves_a_targets_sdist_only_choice(self) -> None:
+        windows = _target("3.12", "windows_amd64")
+        overlay = _target("3.13").with_marker_overrides(
+            {"sys_platform": "win32", "platform_system": "Windows"}
+        )
+        wheel = make_wheel_artifact(tag="cp312-abi3-win_amd64")
+        pin = _index_pin().replace(wheels=(wheel,))
+        locks = _targets(
+            (windows, {"foo": pin}), (overlay, {"foo": pin.replace(wheels=())})
+        )
+        assert not overlay.tags_faithful
+
+        lock = Pylock.from_dict(tomllib.loads(write_lock(LockInput(targets=locks))))
+        consumer = _target("3.13", "windows_amd64")
+        [(_, artifact)] = lock.select(
+            environment=overlay.marker_env, tags=consumer.tags.ordered
+        )
+        assert isinstance(artifact, PackageSdist)
+
+    def test_indistinguishable_builds_cannot_select_different_universal_wheels(
+        self,
+    ) -> None:
+        ordinary = _target("3.13")
+        free_threaded = ResolveTarget.for_declared(
+            python_version="3.13", spec=PlatformSpec("linux_x86_64", free_threaded=True)
+        )
+        first = make_wheel_artifact(sha256="a" * 64)
+        second = make_wheel_artifact(sha256="b" * 64)
+        locks = _targets(
+            (ordinary, {"foo": _index_pin().replace(wheels=(first,))}),
+            (free_threaded, {"foo": _index_pin().replace(wheels=(second,))}),
+        )
+
+        with pytest.raises(LockValidationError, match=re.escape(first.filename)):
+            write_lock(LockInput(targets=locks))
 
     def test_requires_python_drops_when_targets_disagree(self) -> None:
         """``requires_python`` survives merging only when every target agrees."""
@@ -1360,11 +1469,16 @@ class TestConflictForkBaseDepDivergentClosure:
             base_names=frozenset({"foo"}),
         )
         pylock = build_pylock(lock_input)
-        markers = [
-            str(p.marker) for p in pylock.packages if str(p.name) == "telemetrylib"
-        ]
-        assert len(markers) == 2
-        assert all("in extras" in marker for marker in markers)
+
+        environment = marker_environment(self._LINUX.marker_env)
+        for extras, expected in [((), []), (("cpu",), ["1.0"]), (("gpu",), ["2.0"])]:
+            selected = pylock.select(environment=environment, extras=extras)
+            versions = [
+                str(package.version)
+                for package, _ in selected
+                if package.name == "telemetrylib"
+            ]
+            assert versions == expected
 
     def test_base_edge_only_some_forks_carry_stays_member_gated(self) -> None:
         # Only the cpu fork pins cudalib, a base dep of foo. The absent edge in
@@ -1798,6 +1912,22 @@ class TestProvenance:
         emitted = tomllib.loads(text)["tool"]["nab"]["created-at"]
         assert emitted == created
         assert emitted.utcoffset() == timedelta(0)
+
+    @pytest.mark.parametrize(
+        "created",
+        [
+            datetime.min.replace(tzinfo=timezone(timedelta(hours=1))),
+            datetime.max.replace(tzinfo=timezone(-timedelta(hours=1))),
+        ],
+    )
+    def test_created_at_outside_utc_range_is_rejected(self, created: datetime) -> None:
+        provenance = Provenance(
+            "1", created, ("nab", "lock"), "pyproject.toml", "specific"
+        )
+        lock = LockInput(targets=_one({}), provenance=provenance)
+
+        with pytest.raises(LockValidationError, match="created-at.*UTC"):
+            write_lock(lock)
 
     def test_naive_created_at_is_stamped_utc(self) -> None:
         """A naive ``created_at`` is stamped UTC rather than read as local time."""
@@ -2600,7 +2730,7 @@ class TestMarkerDisjointness:
         # A collision outside the pruned subspace still raises: cpu/gpu
         # are declared exclusive, but these two entries collide on the
         # cpu point itself (both fire when cpu is selected).
-        with pytest.raises(DisjointnessError, match="foo"):
+        with pytest.raises(DisjointnessError, match="foo") as caught:
             validate_marker_disjointness(
                 [
                     self._pkg("foo", "1.0", "'cpu' in extras"),
@@ -2611,6 +2741,8 @@ class TestMarkerDisjointness:
                 groups=(),
                 exclusive_groups=[frozenset({("extra", "cpu"), ("extra", "gpu")})],
             )
+        assert "extras=['cpu']" in str(caught.value)
+        assert "[tool.nab].conflicts" not in str(caught.value)
 
     def test_collision_hint_points_at_conflicts_key(self) -> None:
         # A membership-driven collision with no declaration surfaces a
@@ -7117,7 +7249,6 @@ class TestConflictSetCrossGating:
                     for (name, label), condition in axes.gates.items()
                 },
             },
-            environment_markers={},
         )
         memo = memo_type(expanded, 4_096)
         varying, fixed = axes.exclusion_groups

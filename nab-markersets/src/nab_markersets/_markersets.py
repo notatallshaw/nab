@@ -816,6 +816,7 @@ class Memo:
     """
 
     __slots__ = (
+        "_int_limit",
         "decisions",
         "gap_remaining",
         "gaps",
@@ -845,6 +846,14 @@ class Memo:
         self.row_work: _RowWork | None = None
         self.truths: dict[tuple[Atom, str], bool] = {}
         self.versions: dict[str, Version | None] = {}
+        self._int_limit = get_int_max_str_digits()
+
+    def for_current_parser(self) -> Memo:
+        """Refresh this store if the integer parsing limit has changed."""
+        if self._int_limit != get_int_max_str_digits():
+            # The caller keeps the same store and any subclass state.
+            Memo.__init__(self)
+        return self
 
 
 def _truth(atom: Atom, point: object, memo: Memo) -> bool:
@@ -1106,14 +1115,46 @@ def _version_pool(
     return result
 
 
-def _membership_candidates(atom: Atom, memo: Memo) -> list[str]:
-    subs = _substrings(atom.literal)
-    if atom.derive_mm:
-        # A1 tests a full version's major.minor; only version substrings are realisable.
-        return [
-            s for s in subs if _pooled_version(s.removesuffix(".*"), memo) is not None
-        ]
-    return subs
+def _membership_candidates(
+    atoms: Sequence[Atom], max_cells: int, memo: Memo
+) -> tuple[list[str], set[str]]:
+    """Enumerate bounded substrings and collect the raw members on version axes."""
+    points: list[str] = []
+    version_members: set[str] = set()
+    spent = 0
+    for atom in atoms:
+        if atom.kind != AXIS_VALUE or atom.op not in _MEMBERSHIP:
+            continue
+        spent += _substring_cost(atom.literal)
+        if spent > max_cells:
+            msg = f"substring enumeration exceeds max_cells={max_cells}"
+            raise IntractableMarkerSet(msg)
+
+        subs = _substrings(atom.literal)
+        if atom.derive_mm:
+            # A derived major.minor is always a version.
+            subs = [
+                s
+                for s in subs
+                if _pooled_version(s.removesuffix(".*"), memo) is not None
+            ]
+        elif is_version_dispatch(atom.variable):
+            version_members.update(subs)
+        points.extend(subs)
+    return points, version_members
+
+
+def _nonmember_versions(members: set[str], memo: Memo) -> Iterator[str]:
+    """Represent each parseable member outside every raw membership literal."""
+    for text in sorted(members):
+        version = _pooled_version(text, memo)
+        if version is None:
+            continue
+        # Leading zeroes preserve the version and the number of release components.
+        alias = str(version)
+        while alias in members:
+            alias = f"0{alias}"
+        yield alias
 
 
 def _dedupe_candidates(
@@ -1246,16 +1287,8 @@ def _value_candidates(
         candidates.append(_other_representative(literals))
     candidates.extend(literals)
 
-    # Cap substring enumeration across the whole axis, not per literal.
-    spent = 0
-    for atom in atoms:
-        if atom.kind == AXIS_VALUE and atom.op in _MEMBERSHIP:
-            spent += _substring_cost(atom.literal)
-            if spent > max_cells:
-                msg = f"substring enumeration exceeds max_cells={max_cells}"
-                raise IntractableMarkerSet(msg)
-            candidates.extend(_membership_candidates(atom, memo))
-
+    substrings, version_members = _membership_candidates(atoms, max_cells, memo)
+    candidates.extend(substrings)
     candidates.extend(_contains_candidates(atoms, literals, max_cells))
 
     if is_version_dispatch(variable):
@@ -1271,6 +1304,8 @@ def _value_candidates(
                 memo=memo,
             )
         )
+    if version_members:
+        candidates.extend(_nonmember_versions(version_members, memo))
     return _dedupe_candidates(
         candidates,
         variable=variable,
@@ -1803,6 +1838,7 @@ def is_empty(node: Formula, max_cells: int, store: Memo | None = None) -> bool:
         one_off.mask_remaining = 0
         return _decide_empty(node, max_cells, one_off).empty
 
+    store.for_current_parser()
     key = (node.key(), max_cells)
     decided = store.decisions.get(key)
     if decided is None:
@@ -1822,7 +1858,7 @@ def witness(
     result is never wrong; ``None`` is weaker than empty, because the search
     reads the same cells the decisions do.
     """
-    memo = Memo() if store is None else store
+    memo = Memo() if store is None else store.for_current_parser()
     for cell in _enumerate_cells(node, _cell_space(node, max_cells, memo)):
         env = _materialize(cell)
         try:
@@ -2362,7 +2398,7 @@ def universe_is_empty(
     universe: Formula, max_cells: int, store: Memo | None = None
 ) -> bool:
     """Whether a universe admits no environment: every top-level disjunct is empty."""
-    shared = Memo() if store is None else store
+    shared = Memo() if store is None else store.for_current_parser()
     return all(
         is_empty(disjunct, max_cells, shared)
         for disjunct in _universe_disjuncts(universe)
@@ -2379,7 +2415,7 @@ def equivalent_within_rows(
     max_work: int | None = None,
 ) -> bool:
     """Compare original trees per row, sharing an existing work budget if present."""
-    shared = Memo() if store is None else store
+    shared = Memo() if store is None else store.for_current_parser()
     previous_work = _work_meter.remaining
     if previous_work is None:
         _work_meter.remaining = max_work
@@ -3226,7 +3262,7 @@ def simplify_within(
     ``max_cells`` bounds each decision and the direct truth-table payload.
     ``max_work`` covers the direct attempt and greedy fallback together.
     """
-    shared = Memo() if store is None else store
+    shared = Memo() if store is None else store.for_current_parser()
     previous_work = _work_meter.remaining
     _work_meter.remaining = max_work
     try:

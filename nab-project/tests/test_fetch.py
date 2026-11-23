@@ -16,6 +16,7 @@ import zipfile
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import CoroutineType
 from typing import Any, NoReturn
 
 import httpx
@@ -52,6 +53,7 @@ from nab_project.fetch import (
 )
 from nab_project.inputs import ResolveInputs
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.errors import IndexAccessError
 from nab_provider.metadata import WheelMetadata
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import (
@@ -62,8 +64,13 @@ from nab_provider.policy import (
 )
 from nab_provider.provider import Provider
 from nab_provider.serialization import SimpleSerialization
-from nab_provider.store import metadata_pending_key, sdist_artifact_key
+from nab_provider.store import (
+    metadata_pending_key,
+    range_pending_key,
+    sdist_artifact_key,
+)
 from nab_provider.testing import make_wheel, pkg_override
+from nab_provider.yanking import mark_yanked
 
 
 @pytest.fixture
@@ -84,20 +91,16 @@ def _coord(**kwargs: object) -> FetchCoordinator:
     return coord
 
 
-def _wait_until(predicate: Callable[[], bool], timeout: float = 5) -> bool:
-    """Return whether ``predicate`` holds before ``timeout``.
-
-    The coordinator finishes some work without setting the waiter's event, so
-    waiting on the event itself would just spend the whole timeout.
-    """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
+def _prefetched_metadata(
+    coord: FetchCoordinator, package: str, version: str, sidecar: str
+) -> str | None:
+    """Wait for the speculative fetch without submitting another request."""
+    deadline = time.monotonic() + 5
+    while not coord.index.has_metadata(package, version, sidecar):
+        if time.monotonic() >= deadline:
+            break
         time.sleep(0.01)
-
-    # One last look, in case the work landed during the final sleep.
-    return predicate()
+    return coord.index.get_metadata(package, version, sidecar)
 
 
 class _FetcherDeath(BaseException):
@@ -188,6 +191,76 @@ class TestFetchCoordinator:
             event = coord.request_metadata("second", "1.0", "https://f.com/second")
             assert event.wait(timeout=5)
         assert coord.index.get_metadata("second", "1.0", "https://f.com/second") == "ok"
+
+    @pytest.mark.parametrize("retry_shutdown", [False, True])
+    def test_restart_waits_for_transport_cleanup(
+        self, monkeypatch: pytest.MonkeyPatch, *, retry_shutdown: bool
+    ) -> None:
+        closing = threading.Event()
+        release = threading.Event()
+        workers: set[threading.Thread] = set()
+
+        class SlowClose(Urllib3AsyncTransport):
+            async def aclose(self) -> None:
+                workers.add(threading.current_thread())
+                closing.set()
+                assert release.wait(5)
+                await super().aclose()
+
+        coord = FetchCoordinator(SlowClose())
+        coord.start()
+        try:
+            with monkeypatch.context() as patch:
+                patch.setattr("nab_project.fetch._COORDINATOR_JOIN_TIMEOUT_SECONDS", 0)
+                coord.shutdown()
+            assert closing.wait(5)
+            with pytest.raises(RuntimeError, match="still shutting down"):
+                coord.start()
+            release.set()
+            if retry_shutdown:
+                coord.shutdown()
+            else:
+                (first,) = workers
+                first.join(timeout=5)
+                assert not first.is_alive()
+            coord.start()
+        finally:
+            release.set()
+            coord.shutdown()
+
+        assert len(workers) == 2
+        assert all(not worker.is_alive() for worker in workers)
+
+    def test_restart_after_a_cleanup_error_serves_a_new_request(
+        self, tmp_path: Path
+    ) -> None:
+        class TransientClose(Urllib3AsyncTransport):
+            failed = False
+
+            async def aclose(self) -> None:
+                if not self.failed:
+                    self.failed = True
+                    raise OSError("temporary close failure")
+                await super().aclose()
+
+        index = tmp_path / "pkg"
+        index.mkdir()
+        (index / "index.html").write_text(
+            '<a href="pkg-1-py3-none-any.whl">pkg-1-py3-none-any.whl</a>'
+        )
+        coord = FetchCoordinator(
+            TransientClose(), indexes=[IndexConfig("local", tmp_path.as_uri())]
+        )
+        coord.start()
+        coord.shutdown()
+        with pytest.raises(RuntimeError, match="temporary close failure"):
+            coord.request_listing("pkg")
+
+        with coord:
+            assert coord.request_listing("pkg").wait(5)
+            files = coord.index.get_listing("pkg")
+            assert files is not None
+            assert [file.version for file in files] == ["1"]
 
     @respx.mock
     def test_request_listing(self) -> None:
@@ -352,16 +425,9 @@ class TestFetchCoordinator:
             return_value=httpx.Response(200, text=metadata_body)
         )
         with _coord() as coord:
-            event = coord.request_listing("pkg")
-            event.wait(timeout=5)
-            # Wait for the async prefetch of the newest wheel's sidecar.
+            assert coord.request_listing("pkg").wait(timeout=5)
             sidecar = "https://f.com/pkg-3.0-py3-none-any.whl.metadata"
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline:
-                if coord.index.has_metadata("pkg", "3.0", sidecar):
-                    break
-                time.sleep(0.01)
-            assert coord.index.has_metadata("pkg", "3.0", sidecar)
+            assert _prefetched_metadata(coord, "pkg", "3.0", sidecar) == metadata_body
 
     @respx.mock
     def test_listing_prefetch_derives_urls_only_for_submitted_wheels(
@@ -383,8 +449,9 @@ class TestFetchCoordinator:
         respx.get("https://pypi.org/simple/pkg/").mock(
             return_value=httpx.Response(200, json=listing)
         )
+        metadata_body = "Metadata-Version: 2.1\n"
         respx.get(url__regex=r".*\.whl\.metadata$").mock(
-            return_value=httpx.Response(200, text="Metadata-Version: 2.1\n")
+            return_value=httpx.Response(200, text=metadata_body)
         )
 
         derived: list[str] = []
@@ -399,13 +466,8 @@ class TestFetchCoordinator:
 
         sidecar = "https://f.com/pkg-15.0-py3-none-any.whl.metadata"
         with _coord() as coord:
-            coord.request_listing("pkg").wait(timeout=5)
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline and not coord.index.has_metadata(
-                "pkg", "15.0", sidecar
-            ):
-                time.sleep(0.01)
-            assert coord.index.has_metadata("pkg", "15.0", sidecar)
+            assert coord.request_listing("pkg").wait(timeout=5)
+            assert _prefetched_metadata(coord, "pkg", "15.0", sidecar) == metadata_body
 
         # Only the newest version's wheel, not all 15.
         assert derived == ["pkg-15.0-py3-none-any.whl"]
@@ -830,7 +892,11 @@ class TestFetchCoordinator:
 
     def test_shutdown_completes_after_startup_crash(self) -> None:
         """shutdown() returns when the fetcher crashed at startup."""
-        coord = _coord(index_routes=[IndexRoute(name="foo", index="missing")])
+        transport = HttpxAsyncTransport(http2=False)
+        coord = FetchCoordinator(
+            transport, index_routes=[IndexRoute(name="foo", index="missing")]
+        )
+
         coord.start()
         assert coord._thread is not None
         coord._thread.join(timeout=5)
@@ -841,6 +907,7 @@ class TestFetchCoordinator:
         assert not coord._started
         assert coord._loop is None
         assert coord._async_q is None
+        assert transport._client.is_closed
 
     def test_startup_crash_surfaces_from_with_block(self) -> None:
         """The with form raises the crash error, not a teardown error."""
@@ -1678,24 +1745,163 @@ class TestFetchCoordinator:
             error = coord.index.get_sdist_archive_error("pkg", "digest")
             assert isinstance(error, OfflineError)
 
-    def test_file_index_still_closes_the_transport(self, tmp_path: Path) -> None:
-        """A file:// index client owns no transport; a direct archive fetch may."""
-        closed = threading.Event()
+    @pytest.mark.parametrize("http_indexes", [0, 1, 2])
+    def test_coordinator_closes_its_transport_once(
+        self, tmp_path: Path, http_indexes: int
+    ) -> None:
+        class RecordingTransport(Urllib3AsyncTransport):
+            closes = 0
 
-        class RecordingTransport(HttpxAsyncTransport):
             async def aclose(self) -> None:
-                closed.set()
+                self.closes += 1
                 await super().aclose()
 
-        wheelhouse = tmp_path / "wheelhouse"
-        wheelhouse.mkdir()
-        with FetchCoordinator(
-            transport=RecordingTransport(),  # type: ignore[arg-type]
-            indexes=[IndexConfig("local", wheelhouse.as_uri())],
-        ):
+        transport = RecordingTransport()
+        indexes = [IndexConfig("local", tmp_path.as_uri())]
+        indexes.extend(
+            IndexConfig(f"remote-{i}", f"https://example.com/{i}/")
+            for i in range(http_indexes)
+        )
+
+        with FetchCoordinator(transport, indexes=indexes):
             pass
 
-        assert closed.is_set()
+        assert transport.closes == 1
+
+    @respx.mock
+    def test_worker_exit_wakes_active_and_queued_requests(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        entered = threading.Event()
+        release = threading.Event()
+        escaped: list[BaseException | None] = []
+        monkeypatch.setattr(
+            threading, "excepthook", lambda args: escaped.append(args.exc_value)
+        )
+        completed, active, queued = (
+            f"https://files.example.com/{name}" for name in ("done", "active", "queued")
+        )
+
+        async def stop(_request: httpx.Request) -> NoReturn:
+            entered.set()
+            assert release.wait(5)
+            raise SystemExit("worker stopped")
+
+        respx.get(active).mock(side_effect=stop)
+        coord = _coord()
+        coord.start()
+        try:
+            first = coord.request_metadata("active", "1", active)
+            assert entered.wait(5)
+            second = coord.request_metadata("queued", "1", queued)
+            assert coord.request_metadata("queued", "1", queued) is second
+
+            # An index result can already be published when shutdown catches the batch.
+            published = coord.request_metadata("done", "1", completed)
+            coord.index.store_metadata("done", "1", "metadata", metadata_url=completed)
+            assert published.is_set()
+            release.set()
+
+            for package, url, event in (
+                ("active", active, first),
+                ("queued", queued, second),
+            ):
+                assert event.wait(5)
+                error = coord.index.get_metadata_error(package, "1", url)
+                assert isinstance(error, IndexAccessError)
+                assert "worker stopped" in str(error)
+        finally:
+            release.set()
+            coord.shutdown()
+
+        assert len(escaped) == 1
+        assert isinstance(escaped[0], SystemExit)
+        assert coord.index.get_metadata("done", "1", completed) == "metadata"
+
+    def test_crash_between_claiming_and_submitting_a_range_read(self) -> None:
+        coord = _coord()
+        url = "https://files.example.com/p.whl"
+        event, _ = coord.index.get_or_create_pending(range_pending_key("p", "1", url))
+        coord._record_crash(SystemExit("worker stopped"))
+
+        coord._submit(fetch_requests.RangeMetadata("p", "1", url, waiter=event))
+
+        assert event.is_set()
+        error = coord.index.get_metadata_error("p", "1", url)
+        assert isinstance(error, IndexAccessError)
+        assert "worker stopped" in str(error)
+
+    def test_worker_exit_during_task_creation_closes_the_handler(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rejected = []
+        escaped = []
+        monkeypatch.setattr(
+            threading, "excepthook", lambda args: escaped.append(args.exc_value)
+        )
+
+        def stop(handler: CoroutineType[Any, Any, None]) -> NoReturn:
+            rejected.append(handler)
+            raise SystemExit("scheduler stopped")
+
+        with _coord() as coord, monkeypatch.context() as patch:
+            patch.setattr(asyncio, "create_task", stop)
+            assert coord.request_listing("pkg").wait(5)
+
+        assert len(escaped) == 1
+        assert isinstance(escaped[0], SystemExit)
+        assert len(rejected) == 1
+        assert rejected[0].cr_frame is None
+        error = coord.index.get_listing_error("pkg")
+        assert isinstance(error, IndexAccessError)
+        assert "scheduler stopped" in str(error)
+
+    def test_task_scheduling_failure_completes_its_request_and_continues(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        first = (tmp_path / "a-1-py3-none-any.whl.metadata").as_uri()
+        sidecar = tmp_path / "b-1-py3-none-any.whl.metadata"
+        sidecar.write_text("metadata")
+        second = sidecar.as_uri()
+        create_task = asyncio.create_task
+
+        def refuse_once(_handler: object) -> NoReturn:
+            monkeypatch.setattr(asyncio, "create_task", create_task)
+            raise RuntimeError("scheduler busy")
+
+        with _coord(indexes=[IndexConfig("local", tmp_path.as_uri())]) as coord:
+            monkeypatch.setattr(asyncio, "create_task", refuse_once)
+            a, b = coord.request_metadata_batch(
+                [("a", "1", first, None), ("b", "1", second, None)]
+            )
+
+            assert a[2].wait(5)
+            error = coord.index.get_metadata_error("a", "1", first)
+            assert isinstance(error, RuntimeError)
+            assert str(error) == "scheduler busy"
+            assert b[2].wait(5)
+            assert coord.index.get_metadata("b", "1", second) == "metadata"
+
+    @respx.mock
+    def test_cancelled_metadata_wakes_its_waiter_and_finishes_the_batch(self) -> None:
+        cancelled = "https://files.example.com/a.whl.metadata"
+        available = "https://files.example.com/b.whl.metadata"
+
+        async def cancel(_request: httpx.Request) -> NoReturn:
+            raise asyncio.CancelledError
+
+        respx.get(cancelled).mock(side_effect=cancel)
+        respx.get(available).mock(return_value=httpx.Response(200, text="metadata"))
+        with _coord() as coord:
+            first, second = coord.request_metadata_batch(
+                [("a", "1", cancelled, None), ("b", "1", available, None)]
+            )
+            assert first[2].wait(5)
+            assert second[2].wait(5)
+            assert isinstance(
+                coord.index.get_metadata_error("a", "1", cancelled), IndexAccessError
+            )
+            assert coord.index.get_metadata("b", "1", available) == "metadata"
 
     @respx.mock
     def test_request_metadata_batch_deduplicates(self) -> None:
@@ -2611,25 +2817,20 @@ class TestSiblingWheelMetadata:
         )
         return linux, win
 
-    def _await_metadata(self, coord: FetchCoordinator) -> None:
-        """Wait for the prefetch of the wheel the listing publishes first."""
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and not coord.index.has_metadata(
-            "foo", "1.0", f"https://f.example/{_SIBLING_LINUX}.metadata"
-        ):
-            time.sleep(0.01)
+    def _assert_linux_prefetched(self, coord: FetchCoordinator) -> None:
+        sidecar = f"https://f.example/{_SIBLING_LINUX}.metadata"
+        assert (
+            _prefetched_metadata(coord, "foo", "1.0", sidecar)
+            == _SIBLING_LINUX_BODY.decode()
+        )
 
     @respx.mock
     def test_listing_prefetch_takes_the_wheel_the_provider_will_pick(self) -> None:
         """The prefetch fetches one wheel per version: the first with a sidecar."""
         linux, win = self._routes()
         with _coord() as coord:
-            coord.request_listing("foo").wait(timeout=5)
-            self._await_metadata(coord)
-            text = coord.index.get_metadata(
-                "foo", "1.0", f"https://f.example/{_SIBLING_LINUX}.metadata"
-            )
-            assert text == _SIBLING_LINUX_BODY.decode()
+            assert coord.request_listing("foo").wait(timeout=5)
+            self._assert_linux_prefetched(coord)
         assert linux.call_count == 1
         assert win.call_count == 0
 
@@ -2645,15 +2846,17 @@ class TestSiblingWheelMetadata:
         """
         linux, win = self._routes()
         with _coord(cache_dir=tmp_path) as coord:
-            coord.request_listing("foo").wait(timeout=5)
-            self._await_metadata(coord)
+            assert coord.request_listing("foo").wait(timeout=5)
+            self._assert_linux_prefetched(coord)
 
         win_hash = ("sha256", hashlib.sha256(_SIBLING_WIN_BODY).hexdigest())
         win_url = f"https://f.example/{_SIBLING_WIN}.metadata"
         with _coord(cache_dir=tmp_path) as coord:
-            coord.request_listing("foo").wait(timeout=5)
-            self._await_metadata(coord)
-            coord.request_metadata("foo", "1.0", win_url, win_hash).wait(timeout=5)
+            assert coord.request_listing("foo").wait(timeout=5)
+            self._assert_linux_prefetched(coord)
+            assert coord.request_metadata("foo", "1.0", win_url, win_hash).wait(
+                timeout=5
+            )
             assert coord.index.get_metadata_error("foo", "1.0", win_url) is None
             win_text = coord.index.get_metadata("foo", "1.0", win_url)
             assert win_text == _SIBLING_WIN_BODY.decode()
@@ -3441,6 +3644,23 @@ class TestWarmSyncListingPath:
             assert _listing_submits(calls) == []
             assert coord.warm_sync_stats.listing_hits == 1
 
+    def test_warm_hit_stores_the_all_yanked_report(self, tmp_path: Path) -> None:
+        cache = OnDiskCache(tmp_path, _PYPI)
+        file = mark_yanked(_sync_sdist("1.0"), reason="withdrawn")
+        body = json.dumps(
+            {
+                "files": [
+                    {"filename": file.filename, "url": file.url, "yanked": "withdrawn"}
+                ]
+            }
+        ).encode()
+        _warm_parsed(cache, "pkg", [file], body=body)
+
+        with _coord(cache_dir=tmp_path) as coord:
+            assert coord.request_listing("pkg").is_set()
+            assert coord.warm_sync_stats.listing_hits == 1
+            assert coord.index.is_all_yanked_listing("pkg")
+
     def test_warm_hit_stores_the_releases_the_parse_dropped(
         self, tmp_path: Path
     ) -> None:
@@ -3569,8 +3789,9 @@ class TestWarmSyncTailOffload:
     @respx.mock
     def test_offloaded_tail_prefetches_metadata(self, tmp_path: Path) -> None:
         """The offloaded tail enqueues the newest version's metadata and it lands."""
+        metadata_body = "Metadata-Version: 2.1\n"
         respx.get(url__regex=r".*\.whl\.metadata$").mock(
-            return_value=httpx.Response(200, text="Metadata-Version: 2.1\n")
+            return_value=httpx.Response(200, text=metadata_body)
         )
         cache = OnDiskCache(tmp_path, _PYPI)
         files: list[WheelFile | SdistFile] = [_sync_wheel("1.0"), _sync_wheel("2.0")]
@@ -3598,12 +3819,7 @@ class TestWarmSyncTailOffload:
             sidecar = "https://f.example/pkg-2.0-py3-none-any.whl.metadata"
             assert meta_submits == {("pkg", "2.0", sidecar)}
 
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline and not coord.index.has_metadata(
-                "pkg", "2.0", sidecar
-            ):
-                time.sleep(0.01)
-            assert coord.index.has_metadata("pkg", "2.0", sidecar)
+            assert _prefetched_metadata(coord, "pkg", "2.0", sidecar) == metadata_body
 
     @respx.mock
     def test_dead_loop_runs_tail_inline(self, tmp_path: Path) -> None:

@@ -634,16 +634,19 @@ def test_standard_requires_python_keeps_every_admitted_micro_slice(
     ] == ["3.14.3", "3.14.5"]
 
 
-def test_reuse_policy_preserves_the_standard_saved_check(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("bound", "reusable"), [("==1", True), (">=2", False)])
+def test_reuse_policy_preserves_the_standard_saved_check(
+    tmp_path: Path, bound: str, *, reusable: bool
+) -> None:
     lock, path, inputs, targets = _saved(tmp_path)
     current = snapshot_inputs(path, inputs, targets)
 
     assert can_reuse_saved_lock(lock, path, current, inputs, targets)
 
-    path.write_text(path.read_text().replace("demo>=1", "demo>=2"))
+    path.write_text(path.read_text().replace("demo>=1", f"demo{bound}"))
     current = snapshot_inputs(path, inputs, targets)
 
-    assert not can_reuse_saved_lock(lock, path, current, inputs, targets)
+    assert can_reuse_saved_lock(lock, path, current, inputs, targets) is reusable
 
 
 @pytest.mark.parametrize(
