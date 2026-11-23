@@ -690,15 +690,14 @@ def _lock_one(
 
 def _download_input(url: str, backend: str) -> bytes:
     """Download an input with the same HTTP backend as dependency resolution."""
-    import asyncio  # noqa: PLC0415 - used only for configured source inputs
-
     from nab_index.client import AsyncSimpleClient  # noqa: PLC0415
+    from nab_project.download import run_download  # noqa: PLC0415
 
     async def download() -> bytes:
         async with AsyncSimpleClient(_make_resolve_transport(backend)) as client:
             return await client.download(url)
 
-    return asyncio.run(download())
+    return run_download(download)
 
 
 def _lock_output(

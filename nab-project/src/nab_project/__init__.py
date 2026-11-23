@@ -15,6 +15,7 @@ Supported imports:
     nab_project.lock_policy  LockPolicy
     nab_project.lock_preferences  LockPreferences, read_lock_preferences
     nab_project.lockfile  resolve_dependency_references
+    nab_project.download  run_download
     nab_project.inputs  ResolveInputs
     nab_project.resolve  ResolveResult, TargetResult, resolve_for_targets,
         plan_project_inputs, complete_project_requirements

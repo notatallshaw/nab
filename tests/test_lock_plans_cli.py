@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import tarfile
@@ -401,11 +402,19 @@ def test_configured_http_download_uses_the_selected_transport(
         async def aclose(self) -> None:
             calls.append("closed")
 
-    monkeypatch.setattr(
-        "nab._lock._make_resolve_transport", lambda backend: Transport()
-    )
-    assert _download_input("https://source.example/a.tar.gz", "urllib3") == b"archive"
-    assert calls == ["https://source.example/a.tar.gz", "closed"]
+    def transport(backend: str) -> Transport:
+        calls.append(backend)
+        return Transport()
+
+    monkeypatch.setattr("nab._lock._make_resolve_transport", transport)
+
+    async def fetch() -> None:
+        assert (
+            _download_input("https://source.example/a.tar.gz", "urllib3") == b"archive"
+        )
+
+    asyncio.run(fetch())
+    assert calls == ["urllib3", "https://source.example/a.tar.gz", "closed"]
 
 
 def test_batch_provenance_replays_each_individual_plan(
