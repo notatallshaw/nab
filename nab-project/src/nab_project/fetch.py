@@ -108,11 +108,10 @@ __all__ = [
 ]
 
 
-# Maximum time the main thread waits for the fetcher thread to drain
-# its queue and exit on :meth:`FetchCoordinator.shutdown`.
 # How many fetches a resolve opens at once when its caller names no bound.
 DEFAULT_MAX_CONCURRENCY = 50
 
+# Maximum time shutdown waits for accepted requests and transport cleanup.
 _COORDINATOR_JOIN_TIMEOUT_SECONDS = 10
 
 # A warm listing whose parsed blob is smaller than this is declined to the
@@ -496,7 +495,7 @@ class FetchCoordinator:
             and isinstance(transport, IdleClosableTransport)
         ):
             self._idle_transport = transport
-            self._warm_sync_stats = WarmSyncStats()
+            self._begin_run()
             self._parsed_cache_stats = ParsedCacheStats()
         else:
             self.start()
@@ -523,20 +522,32 @@ class FetchCoordinator:
         return self._warm_sync_stats
 
     def start(self) -> None:
-        """Start the fetcher thread (idempotent)."""
+        """Start the fetcher, refusing a restart while its previous worker drains."""
         with self._start_lock:
-            if self._started:
+            if self._started and not self._stopping:
                 return
+            if self._thread is not None and self._thread.is_alive():
+                msg = "Fetcher thread is still shutting down"
+                raise RuntimeError(msg)
 
             # On-demand startup retains cache hits already counted in this run.
             if self._idle_transport is None:
-                self._warm_sync_stats = WarmSyncStats()
+                self._begin_run()
             self._start_worker()
+
+    def _begin_run(self) -> None:
+        """Start fresh counters and leave any previous worker failure behind."""
+        self._warm_sync_stats = WarmSyncStats()
+        self._crashed = False
+        self._crash_error = None
 
     def _start_worker(self) -> None:
         """Start and await one worker while the caller holds the startup lock."""
         self._started = True
         with self._submission_lock:
+            # A previous bounded shutdown may have left a finished worker installed.
+            self._loop = None
+            self._async_q = None
             self._stopping = False
         self._queue_ready = threading.Event()
         self._thread = threading.Thread(
@@ -556,7 +567,7 @@ class FetchCoordinator:
         self._queue_ready.wait()
 
     def shutdown(self) -> None:
-        """Signal the fetcher thread to exit and join it."""
+        """Signal shutdown and wait up to ten seconds for accepted work to finish."""
         with self._start_lock:
             idle = self._idle_transport
             self._idle_transport = None
@@ -575,8 +586,8 @@ class FetchCoordinator:
         thread.join(timeout=_COORDINATOR_JOIN_TIMEOUT_SECONDS)
 
         with self._start_lock:
-            # Another caller may have replaced the worker while the join waited.
-            if self._thread is thread:
+            # A timed-out worker still owns its queue, loop and transport.
+            if self._thread is thread and not thread.is_alive():
                 self._thread = None
                 self._started = False
                 # A later start must wait for its own worker.
@@ -607,9 +618,11 @@ class FetchCoordinator:
 
         with self._submission_lock:
             queue = self._async_q
-            if queue is not None and self._schedule(queue.put_nowait, item):
-                if item is None:
-                    self._stopping = True
+            submitted = queue is not None and self._schedule(queue.put_nowait, item)
+            if item is None:
+                # A worker can still be closing a transport after startup failed.
+                self._stopping = True
+            if submitted:
                 return
         self._refuse(item)
 

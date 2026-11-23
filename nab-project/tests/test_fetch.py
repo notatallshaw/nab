@@ -190,6 +190,76 @@ class TestFetchCoordinator:
             assert event.wait(timeout=5)
         assert coord.index.get_metadata("second", "1.0", "https://f.com/second") == "ok"
 
+    @pytest.mark.parametrize("retry_shutdown", [False, True])
+    def test_restart_waits_for_transport_cleanup(
+        self, monkeypatch: pytest.MonkeyPatch, *, retry_shutdown: bool
+    ) -> None:
+        closing = threading.Event()
+        release = threading.Event()
+        workers: set[threading.Thread] = set()
+
+        class SlowClose(Urllib3AsyncTransport):
+            async def aclose(self) -> None:
+                workers.add(threading.current_thread())
+                closing.set()
+                assert release.wait(5)
+                await super().aclose()
+
+        coord = FetchCoordinator(SlowClose())
+        coord.start()
+        try:
+            with monkeypatch.context() as patch:
+                patch.setattr("nab_project.fetch._COORDINATOR_JOIN_TIMEOUT_SECONDS", 0)
+                coord.shutdown()
+            assert closing.wait(5)
+            with pytest.raises(RuntimeError, match="still shutting down"):
+                coord.start()
+            release.set()
+            if retry_shutdown:
+                coord.shutdown()
+            else:
+                (first,) = workers
+                first.join(timeout=5)
+                assert not first.is_alive()
+            coord.start()
+        finally:
+            release.set()
+            coord.shutdown()
+
+        assert len(workers) == 2
+        assert all(not worker.is_alive() for worker in workers)
+
+    def test_restart_after_a_cleanup_error_serves_a_new_request(
+        self, tmp_path: Path
+    ) -> None:
+        class TransientClose(Urllib3AsyncTransport):
+            failed = False
+
+            async def aclose(self) -> None:
+                if not self.failed:
+                    self.failed = True
+                    raise OSError("temporary close failure")
+                await super().aclose()
+
+        index = tmp_path / "pkg"
+        index.mkdir()
+        (index / "index.html").write_text(
+            '<a href="pkg-1-py3-none-any.whl">pkg-1-py3-none-any.whl</a>'
+        )
+        coord = FetchCoordinator(
+            TransientClose(), indexes=[IndexConfig("local", tmp_path.as_uri())]
+        )
+        coord.start()
+        coord.shutdown()
+        with pytest.raises(RuntimeError, match="temporary close failure"):
+            coord.request_listing("pkg")
+
+        with coord:
+            assert coord.request_listing("pkg").wait(5)
+            files = coord.index.get_listing("pkg")
+            assert files is not None
+            assert [file.version for file in files] == ["1"]
+
     @respx.mock
     def test_request_listing(self) -> None:
         respx.get("https://pypi.org/simple/testpkg/").mock(
