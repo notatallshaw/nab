@@ -6333,15 +6333,15 @@ _PRUNE_MACOS = ResolveTarget.for_declared(
 )
 
 
-def _pkg_entry(pylock: object) -> object:
+def _pkg_entry(pylock: Pylock) -> Package:
     """The single ``pkg`` package entry of a built pylock."""
-    entries = [p for p in pylock.packages if str(p.name) == "pkg"]  # type: ignore[attr-defined]
+    entries = [package for package in pylock.packages if package.name == "pkg"]
     assert len(entries) == 1
     return entries[0]
 
 
-def _emitted_wheel_names(pkg_entry: object) -> set[str]:
-    return {w.name for w in (pkg_entry.wheels or [])}  # type: ignore[attr-defined]
+def _emitted_wheel_names(pkg_entry: Package) -> set[str | None]:
+    return {wheel.name for wheel in pkg_entry.wheels or ()}
 
 
 class TestLockWheelPrunePredicate:

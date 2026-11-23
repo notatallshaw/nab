@@ -44,7 +44,7 @@ from nab_project.fetch import (
     IndexRoute,
 )
 from nab_project.inputs import ResolveInputs
-from nab_project.resolve import build_resolver_inputs, resolve_with_coordinator
+from nab_project.resolve import resolve_with_coordinator
 from nab_provider._provider import build_remote, metadata_resolver
 from nab_provider._provider import listing as listing_mod
 from nab_provider._provider import listing_diagnosis as diagnosis_mod
@@ -70,6 +70,7 @@ from nab_provider.provider import (
     VcsConfig,
 )
 from nab_provider.records import rehydrated_wheel
+from nab_provider.resolver_inputs import build_resolver_inputs
 from nab_provider.store import sdist_artifact_key
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget

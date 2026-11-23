@@ -44,7 +44,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
 from urllib.parse import urlsplit
 
 import tomli
@@ -763,7 +763,7 @@ def environment_platform_spec(value: object) -> PlatformSpec:
     if isinstance(value, str):
         return _platform_spec(where, platform_id=value)
     if isinstance(value, dict):
-        return _parse_platform_table(where, cast("dict[str, Any]", value))
+        return _parse_platform_table(where, value)
     msg = f"{where} must be a platform id or a table, got {type(value).__name__}"
     raise SourceConfigError(msg)
 
@@ -2083,10 +2083,12 @@ def _parse_libc(key: str, value: object) -> Libc:
     if value is None:
         return DEFAULT_LIBC
     text = _parse_string_value(key, value)
-    if text not in LIBC_MAJOR:
-        msg = f"{key} must be one of {sorted(LIBC_MAJOR)!r}, got {text!r}"
-        raise SourceConfigError(msg)
-    return cast("Libc", text)
+    for family in LIBC_MAJOR:
+        if text == family:
+            return family
+
+    msg = f"{key} must be one of {sorted(LIBC_MAJOR)!r}, got {text!r}"
+    raise SourceConfigError(msg)
 
 
 def _parse_major_minor(key: str, value: object) -> tuple[int, int] | None:

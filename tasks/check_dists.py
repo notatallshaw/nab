@@ -86,7 +86,7 @@ def _dist_info(names: list[str]) -> str:
 SDIST_EXTRAS = {"nab-markersets": "[packaging]"}
 
 
-def install_each_sdist(dist_root: Path, scratch: Path) -> None:
+def _install_each_sdist(dist_root: Path, scratch: Path) -> None:
     """Install every sdist into its own venv, resolving siblings locally."""
     links = _find_links(dist_root)
     for package in PACKAGES:
@@ -97,7 +97,7 @@ def install_each_sdist(dist_root: Path, scratch: Path) -> None:
         build_dists.check_installed(python, package)
 
 
-def check_wheel_license(wheel: Path) -> None:
+def _check_wheel_license(wheel: Path) -> None:
     """Fail unless the wheel carries its LICENSE and records License-File."""
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
@@ -112,7 +112,7 @@ def check_wheel_license(wheel: Path) -> None:
         raise SystemExit(msg)
 
 
-def check_sdist_license(sdist: Path) -> None:
+def _check_sdist_license(sdist: Path) -> None:
     """Fail unless the sdist roots a regular-file LICENSE (never a symlink)."""
     root = sdist.name[: -len(".tar.gz")]
     member_name = f"{root}/LICENSE"
@@ -131,7 +131,7 @@ def check_sdist_license(sdist: Path) -> None:
             raise SystemExit(msg)
 
 
-def check_vendored_licenses(wheel: Path, sdist: Path) -> None:
+def _check_vendored_licenses(wheel: Path, sdist: Path) -> None:
     """Fail unless both nab-provider artifacts carry the vendored licenses."""
     with zipfile.ZipFile(wheel) as archive:
         wheel_names = archive.namelist()
@@ -154,13 +154,13 @@ def main() -> None:
         dist_root = workdir / "dist"
         build_dists.build_all(dist_root, source_date_epoch)
 
-        install_each_sdist(dist_root, workdir)
+        _install_each_sdist(dist_root, workdir)
         build_dists.smoke_test(dist_root)
 
         for package in PACKAGES:
-            check_wheel_license(build_dists.wheel_file(dist_root, package))
-            check_sdist_license(_sdist(dist_root, package))
-        check_vendored_licenses(
+            _check_wheel_license(build_dists.wheel_file(dist_root, package))
+            _check_sdist_license(_sdist(dist_root, package))
+        _check_vendored_licenses(
             build_dists.wheel_file(dist_root, "nab-provider"),
             _sdist(dist_root, "nab-provider"),
         )

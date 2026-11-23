@@ -56,7 +56,7 @@ def same_lock(before: bytes, after: bytes) -> bool:
 
 
 @contextlib.contextmanager
-def signed_candidate(
+def _signed_candidate(
     root: Path,
     repository: str,
     base: str,
@@ -160,7 +160,7 @@ def publish(root: Path, repository: str) -> bool:
         ".[].number",
     )
     base = run(root, "git", "rev-parse", "HEAD")
-    with signed_candidate(root, repository, base, additions) as head:
+    with _signed_candidate(root, repository, base, additions) as head:
         run(
             root,
             "git",

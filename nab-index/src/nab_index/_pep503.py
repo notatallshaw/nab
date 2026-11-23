@@ -67,9 +67,10 @@ def metadata_declaration(value: str | None) -> bool | dict[str, str] | None:
         return None
     if value == "true":
         return True
-    algo, sep, digest = value.partition("=")
-    if sep and algo and digest:
-        return {algo: digest}
+
+    algorithm, separator, digest = value.partition("=")
+    if separator and algorithm and digest:
+        return {algorithm: digest}
     return None
 
 
@@ -107,6 +108,7 @@ def _file_entry(anchor: Anchor, base_url: str) -> dict[str, object] | None:
         same_http_scheme = (
             base_url.startswith("https://") and url.startswith("https://")
         ) or (base_url.startswith("http://") and url.startswith("http://"))
+
         # An empty href or a different scheme can bypass urljoin's normalization.
         if (
             anchor.href

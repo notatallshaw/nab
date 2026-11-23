@@ -39,6 +39,7 @@ from nab_index.lazy_wheel import RangeOutcome
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
 from nab_index.parsed_listing import encode as encode_parsed
+from nab_index.response import ResponseBody
 from nab_index.transport import AsyncHttpTransport, HttpError, HttpResponse
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_project import _fetch_requests as fetch_requests
@@ -183,7 +184,7 @@ class TestFetchCoordinator:
                 pass
 
         respx.get(url__regex=r".*").mock(return_value=httpx.Response(200, text="ok"))
-        coord = FetchCoordinator(transport=ReusableTransport())  # type: ignore[arg-type]
+        coord = FetchCoordinator(transport=ReusableTransport())
         with coord:
             event = coord.request_metadata("first", "1.0", "https://f.com/first")
             assert event.wait(timeout=5)
@@ -879,7 +880,7 @@ class TestFetchCoordinator:
             escaped.append(args.exc_value)
 
         monkeypatch.setattr(threading, "excepthook", _collect)
-        coord = FetchCoordinator(transport=_FailingTransport(failure))  # type: ignore[arg-type]
+        coord = FetchCoordinator(transport=_FailingTransport(failure))
 
         coord.start()
         coord.shutdown()
@@ -1929,24 +1930,19 @@ class TestFetchCoordinator:
 
 class TestFetchCoordinatorCache:
     @respx.mock
-    def test_cache_dir_persists_listing(self, tmp_path: object) -> None:
+    def test_cache_dir_persists_listing(self, tmp_path: Path) -> None:
         """When cache_dir is set, a listing fetch writes to disk."""
-        from pathlib import Path
-
-        from nab_index.cache import OnDiskCache
-
-        cache_dir = tmp_path  # type: ignore[assignment]
         respx.get("https://pypi.org/simple/cached/").mock(
             return_value=httpx.Response(200, json=LISTING_JSON, headers={"etag": "v1"})
         )
         with FetchCoordinator(
             transport=HttpxAsyncTransport(),
-            cache_dir=Path(str(cache_dir)),
+            cache_dir=tmp_path,
         ) as coord:
             event = coord.request_listing("cached")
             event.wait(timeout=5)
         # Disk cache populated.
-        cache = OnDiskCache(Path(str(cache_dir)), "https://pypi.org/simple/")
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
         assert cache.get_simple("cached") is not None
 
     @respx.mock
@@ -2894,34 +2890,16 @@ def _parse_range(value: str) -> tuple[str, int, int]:
     return ("absolute", int(start), int(end))
 
 
-class _FakeRangeResponse:
+class _FakeRangeResponse(ResponseBody):
     def __init__(self, status: int, headers: dict[str, str], content: bytes) -> None:
-        self._status = status
-        self._headers = headers
-        self._content = content
-
-    @property
-    def status_code(self) -> int:
-        return self._status
-
-    @property
-    def headers(self) -> dict[str, str]:
-        return self._headers
-
-    @property
-    def content(self) -> bytes:
-        return self._content
-
-    @property
-    def text(self) -> str:
-        return self._content.decode("utf-8")
-
-    def json(self) -> object:
-        return json.loads(self._content)
+        super().__init__(content)
+        self.status_code = status
+        self.headers = headers
+        self.url = _RANGE_URL
 
     def raise_for_status(self) -> None:
-        if self._status >= 400:
-            msg = f"HTTP {self._status}"
+        if self.status_code >= 400:
+            msg = f"HTTP {self.status_code}"
             raise HttpError(msg)
 
 
@@ -2938,10 +2916,12 @@ class FakeRangeTransport:
         self, url: str, *, headers: dict[str, str] | None = None
     ) -> _FakeRangeResponse:
         await asyncio.sleep(0)
-        headers = headers or {}
-        rng = headers["Range"]
-        self.requests.append(rng)
-        return self._respond(rng)
+        range_header = (headers or {})["Range"]
+        self.requests.append(range_header)
+
+        response = self._respond(range_header)
+        response.url = url
+        return response
 
     async def aclose(self) -> None:
         return None
@@ -3001,7 +2981,7 @@ class TestRangeMetadataCoordinator:
                 return await super().get(url, headers=headers)
 
         transport = _HeldRangeTransport("well_behaved", _build_range_wheel())
-        with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
+        with FetchCoordinator(transport=transport) as coord:
             submitted: list[fetch_requests.FetchRequest] = []
             orig = coord._submit
 
@@ -3026,7 +3006,7 @@ class TestRangeMetadataCoordinator:
     def test_distinct_wheel_urls_enqueue_separately(self) -> None:
         transport = FakeRangeTransport("well_behaved", _build_range_wheel())
         other_url = _RANGE_URL.replace("py3-none-any", "cp312-cp312-macosx")
-        with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
+        with FetchCoordinator(transport=transport) as coord:
             submitted: list[fetch_requests.FetchRequest] = []
             orig = coord._submit
 
@@ -3045,7 +3025,7 @@ class TestRangeMetadataCoordinator:
 
     def test_handler_stores_text(self) -> None:
         transport = FakeRangeTransport("well_behaved", _build_range_wheel())
-        with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
+        with FetchCoordinator(transport=transport) as coord:
             event = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
             assert event.wait(timeout=5)
             assert (
@@ -3062,7 +3042,7 @@ class TestRangeMetadataCoordinator:
         transport = FakeRangeTransport(
             "well_behaved", _build_range_wheel(dist_info=None)
         )
-        with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
+        with FetchCoordinator(transport=transport) as coord:
             event = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
             assert event.wait(timeout=5)
             assert coord.index.get_metadata("widget", "1.0", _RANGE_URL) is None
@@ -3074,7 +3054,7 @@ class TestRangeMetadataCoordinator:
 
     def test_handler_stores_absent_on_unsupported(self) -> None:
         transport = FakeRangeTransport("gzip_range", _build_range_wheel())
-        with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
+        with FetchCoordinator(transport=transport) as coord:
             event = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
             assert event.wait(timeout=5)
             assert coord.index.get_metadata("widget", "1.0", _RANGE_URL) is None
@@ -3087,7 +3067,7 @@ class TestRangeMetadataCoordinator:
         transport = FakeRangeTransport(
             "well_behaved", _build_range_wheel(metadata=b"\xff\xfe not utf-8")
         )
-        with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
+        with FetchCoordinator(transport=transport) as coord:
             event = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
             assert event.wait(timeout=5)
             assert coord.index.get_metadata("widget", "1.0", _RANGE_URL) is None
@@ -3096,7 +3076,7 @@ class TestRangeMetadataCoordinator:
 
     def test_handler_stores_error_on_transport_failure(self) -> None:
         transport = FakeRangeTransport("error_500", _build_range_wheel())
-        with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
+        with FetchCoordinator(transport=transport) as coord:
             event = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
             assert event.wait(timeout=5)
             assert coord.index.get_metadata("widget", "1.0", _RANGE_URL) is None
@@ -3105,7 +3085,7 @@ class TestRangeMetadataCoordinator:
 
     def test_offline_cold_stores_absent(self) -> None:
         transport = FakeRangeTransport("well_behaved", _build_range_wheel())
-        with FetchCoordinator(transport=transport, offline=True) as coord:  # type: ignore[arg-type]
+        with FetchCoordinator(transport=transport, offline=True) as coord:
             event = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
             assert event.wait(timeout=5)
             assert coord.index.get_metadata("widget", "1.0", _RANGE_URL) is None
@@ -3345,7 +3325,7 @@ class TestWarmSyncListingPath:
         _warm_parsed(cache, "pkg", files)
 
         coord = FetchCoordinator(
-            transport=_RaiseOnGetTransport(),  # type: ignore[arg-type]
+            transport=_RaiseOnGetTransport(),
             cache_dir=tmp_path,
         )
         coord._warm_sync_min_blob_bytes = 0
@@ -3435,7 +3415,7 @@ class TestWarmSyncListingPath:
     def test_gate_default_threshold(self, tmp_path: Path) -> None:
         """A fresh coordinator carries the module default blob-size threshold."""
         coord = FetchCoordinator(
-            transport=HttpxAsyncTransport(),  # type: ignore[arg-type]
+            transport=HttpxAsyncTransport(),
             cache_dir=tmp_path,
         )
         try:

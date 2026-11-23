@@ -67,13 +67,13 @@ from nab_project.conflicts import (
     ConflictSet,
 )
 from nab_project.workspace import WorkspaceConfig
+from nab_provider.policy import ResolveMode
 from nab_provider.provider import (
     ArchiveSource,
     BuildPolicy,
     DecisionOrder,
     DistPolicy,
     ResolutionStrategy,
-    ResolveMode,
     VcsConfig,
     VcsPolicy,
     VcsSource,

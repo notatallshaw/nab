@@ -36,7 +36,7 @@ from .project_requirements import (
     require_string_list,
 )
 from .resolver_inputs import (
-    raise_for_unsatisfiable as raise_for_unsatisfiable,  # noqa: PLC0414  (re-export)
+    raise_for_unsatisfiable,
 )
 
 if TYPE_CHECKING:

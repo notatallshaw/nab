@@ -231,7 +231,7 @@ def speculative_prefetch(
     if root_range is not None and not (~root_range).is_empty:
         prefetch_root_batch(provider, normalized, versions, root_range)
     else:
-        prefetch_transitive_best(
+        _prefetch_transitive_best(
             provider, normalized, versions, version_range=version_range
         )
 
@@ -300,7 +300,7 @@ def prefetch_root_batch(
         provider.coordinator.request_metadata_batch(items)
 
 
-def metadata_prefetch_version(
+def _metadata_prefetch_version(
     provider: Provider,
     normalized: str,
     versions: list[tuple[Version, DistFile]],
@@ -332,7 +332,7 @@ def metadata_prefetch_version(
     return version
 
 
-def prefetch_transitive_best(
+def _prefetch_transitive_best(
     provider: Provider,
     normalized: str,
     versions: list[tuple[Version, DistFile]],
@@ -340,7 +340,7 @@ def prefetch_transitive_best(
     version_range: VersionRange | None = None,
 ) -> None:
     """Request one transitive guess without repeating cached or declined work."""
-    version = metadata_prefetch_version(
+    version = _metadata_prefetch_version(
         provider, normalized, versions, version_range=version_range
     )
     if version is None:
@@ -969,7 +969,7 @@ def python_or_time_cause(
     if cause is None:
         return None
     if cause == DropCause.UPLOAD_TIME_NAIVE:
-        raise InvalidUploadTimeError(naive_upload_time_message(normalized, dist))
+        raise InvalidUploadTimeError(_naive_upload_time_message(normalized, dist))
     provider.stats.excluded_by_time += 1
     return cause
 
@@ -1018,7 +1018,7 @@ def _python_or_shared_time_cause(
     if cause is None:
         return None
     if cause == DropCause.UPLOAD_TIME_NAIVE:
-        raise InvalidUploadTimeError(naive_upload_time_message(normalized, dist))
+        raise InvalidUploadTimeError(_naive_upload_time_message(normalized, dist))
     provider.stats.excluded_by_time += 1
     return cause
 
@@ -1261,7 +1261,7 @@ def upload_time_cause(dist: DistFile, cutoff: datetime | None) -> Cause | None:
     return None
 
 
-def naive_upload_time_message(normalized: str, dist: DistFile) -> str:
+def _naive_upload_time_message(normalized: str, dist: DistFile) -> str:
     """Return the error text for a candidate whose upload time carries no zone."""
     return (
         f"{normalized} {dist.version} has a timezone-naive upload time "
@@ -1282,7 +1282,7 @@ def _excluded_by_upload_time(
     if cause is None:
         return False
     if cause == DropCause.UPLOAD_TIME_NAIVE:
-        raise InvalidUploadTimeError(naive_upload_time_message(normalized, dist))
+        raise InvalidUploadTimeError(_naive_upload_time_message(normalized, dist))
     provider.stats.excluded_by_time += 1
     return True
 

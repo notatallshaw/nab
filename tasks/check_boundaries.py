@@ -231,7 +231,7 @@ def packages() -> list[Package]:
     return found
 
 
-def imported_paths(tree: ast.AST) -> list[tuple[str, int]]:
+def _imported_paths(tree: ast.AST) -> list[tuple[str, int]]:
     """Every absolute dotted path the module imports, with its line number."""
     found: list[tuple[str, int]] = []
     for node in ast.walk(tree):
@@ -325,7 +325,7 @@ def violations(package: Package, modules: dict[str, Package]) -> list[str]:
             for line in _direct_requirement_calls(package, path, tree)
         )
 
-        imports = set(imported_paths(tree))
+        imports = set(_imported_paths(tree))
         local_lines = {
             lineno
             for dotted, lineno in imports

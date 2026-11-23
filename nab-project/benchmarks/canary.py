@@ -117,13 +117,6 @@ class PreparedCanaryExecution(NamedTuple):
     host: BenchmarkHost
 
 
-class CanaryPreparation(NamedTuple):
-    """A prepared canary execution, or its host-inapplicable reason."""
-
-    execution: PreparedCanaryExecution | None
-    inapplicable_reason: str | None
-
-
 WALL_TIMEOUT_S = 60
 # Preserve contract v2 for comparisons with existing canary results.
 CANARY_CONTRACT_VERSION = 2
@@ -663,7 +656,7 @@ def _prepare_canary_execution(
     scenario_name: str,
     resolution_override: ResolutionStrategy | None,
     host: BenchmarkHost,
-) -> CanaryPreparation:
+) -> PreparedCanaryExecution | str:
     """Validate and prepare a supported canary scenario for this host."""
     validate_scenario_settings(scenario_name, scenario)
     trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(
@@ -703,7 +696,7 @@ def _prepare_canary_execution(
         requires_matching_host=requires_matching_host,
     )
     if admission.target is None:
-        return CanaryPreparation(None, admission.inapplicable_reason)
+        return admission.inapplicable_reason
     target = admission.target
 
     project_name = project_metadata.project_name
@@ -742,15 +735,12 @@ def _prepare_canary_execution(
         trust_unverified_sdist_deps=trust_unverified_sdist_deps,
         vcs=vcs_config,
     )
-    return CanaryPreparation(
-        PreparedCanaryExecution(
-            requirements=requirements,
-            constraints=constraints,
-            config=config,
-            target=target,
-            host=host,
-        ),
-        None,
+    return PreparedCanaryExecution(
+        requirements=requirements,
+        constraints=constraints,
+        config=config,
+        target=target,
+        host=host,
     )
 
 
@@ -807,11 +797,10 @@ def median_run(
         resolution_override=resolution_override,
         host=effective_host,
     )
-    if preparation.execution is None:
-        assert preparation.inapplicable_reason is not None
-        return [], {"skipped": preparation.inapplicable_reason}
+    if isinstance(preparation, str):
+        return [], {"skipped": preparation}
 
-    runs_data = [_run_prepared_canary(preparation.execution) for _ in range(runs)]
+    runs_data = [_run_prepared_canary(preparation) for _ in range(runs)]
     return runs_data, _summarize_runs(runs_data)
 
 

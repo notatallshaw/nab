@@ -344,7 +344,7 @@ def get_extra_dependencies(
 
     extra_map = provider.extra_deps_map.get(base_cache_key, {})
     if extra not in extra_map:
-        return handle_missing_extra(provider, normalized, extra, version, cache_key)
+        return _handle_missing_extra(provider, normalized, extra, version, cache_key)
 
     deps = dict(extra_map[extra])
     # Pin the base, intersected with any bound the extra itself
@@ -358,7 +358,7 @@ def get_extra_dependencies(
     return deps
 
 
-def handle_missing_extra(
+def _handle_missing_extra(
     provider: Provider,
     normalized: str,
     extra: str,

@@ -105,7 +105,7 @@ def _artifact_hashes(root: Path) -> dict[Path, str]:
     return hashes
 
 
-def verify_reproducible(dist: Path, source_date_epoch: str) -> None:
+def _verify_reproducible(dist: Path, source_date_epoch: str) -> None:
     """Build into ``dist``, build again into a temp dir, and compare hashes."""
     build_all(dist, source_date_epoch)
     first = _artifact_hashes(dist)
@@ -117,7 +117,7 @@ def verify_reproducible(dist: Path, source_date_epoch: str) -> None:
         raise SystemExit(msg)
 
 
-def twine_check(dist: Path) -> None:
+def _twine_check(dist: Path) -> None:
     """Run ``twine check --strict`` over every built artifact."""
     artifacts = [
         str(path)
@@ -137,7 +137,7 @@ def wheel_file(dist: Path, package: str) -> Path:
     return wheels[0]
 
 
-def wheel_version(wheel: Path) -> str:
+def _wheel_version(wheel: Path) -> str:
     """Read the version of an artifact before checking its installed CLI."""
     with zipfile.ZipFile(wheel) as archive:
         metadata_files = [
@@ -171,7 +171,7 @@ def check_installed(python: Path, *packages: str) -> None:
 def smoke_test(dist: Path) -> None:
     """Check wheel imports, typing markers, CLI help, and both entry versions."""
     wheels = [wheel_file(dist, package) for package in PACKAGES]
-    version = wheel_version(wheel_file(dist, "nab"))
+    version = _wheel_version(wheel_file(dist, "nab"))
     with tempfile.TemporaryDirectory() as tmp:
         python = create_install_env(Path(tmp) / "venv")
         _run([str(python), "-m", "pip", "install", *(str(wheel) for wheel in wheels)])
@@ -248,8 +248,8 @@ def main() -> None:
     _require_tools("git")
     dist = REPO_ROOT / "dist"
     epoch = source_date_epoch()
-    verify_reproducible(dist, epoch)
-    twine_check(dist)
+    _verify_reproducible(dist, epoch)
+    _twine_check(dist)
     smoke_test(dist)
     report_sizes(dist)
     print("dist/ built, reproducible, metadata-checked, and smoke-tested.")

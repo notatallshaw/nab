@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import logging
 import sys
+from collections.abc import Callable
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 
 import pytest
@@ -69,11 +70,14 @@ class _TTY(io.StringIO):
         return self._tty
 
 
-def _printer(**kwargs: object) -> tuple[Printer, io.StringIO, io.StringIO]:
+def _printer(
+    *,
+    verbosity: Verbosity = Verbosity.NORMAL,
+    color: ColorChoice = ColorChoice.AUTO,
+) -> tuple[Printer, io.StringIO, io.StringIO]:
     out = io.StringIO()
     err = io.StringIO()
-    printer = Printer(stdout=out, stderr=err, **kwargs)  # type: ignore[arg-type]
-    return printer, out, err
+    return Printer(stdout=out, stderr=err, verbosity=verbosity, color=color), out, err
 
 
 @pytest.mark.parametrize(
@@ -609,14 +613,14 @@ def test_reset_run_detaches_the_log_handler() -> None:
 def _enabled_reporter(
     *,
     color: ColorChoice = ColorChoice.NEVER,
-    clock: object = None,
+    clock: Callable[[], float] | None = None,
     min_interval: float = 0.05,
 ) -> tuple[ProgressReporter, _TTY]:
     err = _TTY(tty=True)
     printer = Printer(stderr=err, verbosity=Verbosity.NORMAL, color=color, env={})
     reporter = ProgressReporter(
         printer,
-        clock=clock if clock is not None else (lambda: 0.0),  # type: ignore[arg-type]
+        clock=clock if clock is not None else (lambda: 0.0),
         min_interval=min_interval,
     )
     return reporter, err

@@ -25,13 +25,13 @@ from nab_project.resolve import (
     ResolveResult,
     TargetResult,
     build_lock_input,
-    build_resolver_inputs,
 )
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.provider import VcsConfig
+from nab_provider.resolver_inputs import build_resolver_inputs
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 

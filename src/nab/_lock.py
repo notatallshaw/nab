@@ -185,7 +185,7 @@ _DEFAULT_PROJECT_PATH = Path("pyproject.toml")
 TUPLE_TEMPLATE_VARS = ("{python_version}", "{platform_id}", "{selection}")
 
 
-def is_stdout(output: Path | None) -> bool:
+def _is_stdout(output: Path | None) -> bool:
     return output is not None and str(output) == "-"
 
 
@@ -533,7 +533,7 @@ def _lock_one(
     anchor = _determine_lock_anchor(
         ladder,
         output=output,
-        format=settings.format,
+        output_format=settings.format,
         build_requirements=settings.build_requirements,
         upgrade=actions.upgrade,
     )
@@ -679,7 +679,7 @@ def _lock_one(
     _emit_or_exit(
         lambda: _emit(
             lock_input,
-            format=settings.format,
+            output_format=settings.format,
             output=output,
             script=path if input_format is InputFormat.SCRIPT else None,
             build_requirements=settings.build_requirements,
@@ -729,10 +729,10 @@ def _lock_output(
     ):
         output = _script_pylock_path(path)
 
-    _validate_pylock_output_name(output=output, format=settings.format)
+    _validate_pylock_output_name(output=output, output_format=settings.format)
     _validate_lock_mode(
         output=output,
-        format=settings.format,
+        output_format=settings.format,
         locked=locked,
         reproduce=reproduce,
         upgrade=upgrade,
@@ -759,15 +759,17 @@ def _script_pylock_path(path: Path) -> Path:
 def _emit(
     lock_input: LockInput,
     *,
-    format: str,  # noqa: A002 - shadows builtin by convention
+    output_format: str,
     output: Path | None,
     script: Path | None = None,
     build_requirements: bool = False,
     previous_lock: LockPreferences | None = None,
 ) -> None:
     """Write the resolved lock in the requested format."""
-    default_output = _default_output_path(format, build_requirements=build_requirements)
-    if format == "pylock":
+    default_output = _default_output_path(
+        output_format, build_requirements=build_requirements
+    )
+    if output_format == "pylock":
         _emit_pylock(
             lock_input,
             output=output,
@@ -778,7 +780,10 @@ def _emit(
         if script is not None:
             default_output = script.with_name(script.name + ".requirements.txt")
         _emit_requirements(
-            lock_input, format=format, output=output, default_output=default_output
+            lock_input,
+            output_format=output_format,
+            output=output,
+            default_output=default_output,
         )
 
 
@@ -809,7 +814,7 @@ _BUILD_DEFAULT_OUTPUT: dict[str, str] = {
 
 
 def _default_output_path(
-    format: str,  # noqa: A002 - shadows builtin by convention
+    output_format: str,
     *,
     build_requirements: bool = False,
 ) -> Path:
@@ -820,7 +825,7 @@ def _default_output_path(
     the PEP 751 ``pylock.<name>.toml`` filename form.
     """
     names = _BUILD_DEFAULT_OUTPUT if build_requirements else _DEFAULT_OUTPUT
-    return Path(names[format])
+    return Path(names[output_format])
 
 
 def _refuse_group_selection_with_build_requirements(
@@ -994,7 +999,7 @@ class _LockRun(Record):
 def _validate_lock_mode(
     *,
     output: Path | None,
-    format: str,  # noqa: A002 - matches the command's output format
+    output_format: str,
     locked: bool,
     reproduce: bool,
     upgrade: bool,
@@ -1010,7 +1015,7 @@ def _validate_lock_mode(
         sys.exit(1)
 
     if lock_policy is not LockPolicy.RESOLVE and (
-        format != "pylock" or is_stdout(output)
+        output_format != "pylock" or _is_stdout(output)
     ):
         printer().error("nondefault --lock-policy requires pylock output to a file.")
         sys.exit(1)
@@ -1019,7 +1024,7 @@ def _validate_lock_mode(
         printer().error("--lock-policy reuse cannot be combined with --reproduce.")
         sys.exit(1)
 
-    if (locked or reproduce) and (format != "pylock" or is_stdout(output)):
+    if (locked or reproduce) and (output_format != "pylock" or _is_stdout(output)):
         printer().error("lock checks are only supported for pylock output to a file.")
         sys.exit(1)
 
@@ -1419,19 +1424,20 @@ def _emit_pylock(
     previous_lock: LockPreferences | None = None,
 ) -> None:
     """Write the PEP 751 lock to a file, or print it."""
-    if is_stdout(output):
+    if _is_stdout(output):
         _print_lock(_write_lock_or_exit(lock_input, target=None))
         return
 
     target = output if output is not None else default_output
+
     # Read the prior pins before the write overwrites the file.
     prior = (
         read_lockfile_packages(target)
         if previous_lock is None
         else previous_lock.summary_versions()
     )
-    # Pass the target so wheel/sdist/directory paths are written relative
-    # to the lockfile's own directory, not the cwd.
+
+    # The emitter uses the target directory to write relative artifact paths.
     _write_lock_or_exit(lock_input, target=target)
     printer().done(f"Wrote {target} ({summarize_lock(lock_input, prior)})")
 
@@ -1538,7 +1544,7 @@ def _check_output_template(output: Path, template: str) -> None:
 def _emit_requirements(
     lock_input: LockInput,
     *,
-    format: str,  # noqa: A002 - shadows builtin by convention
+    output_format: str,
     output: Path | None,
     default_output: Path,
 ) -> None:
@@ -1567,9 +1573,9 @@ def _emit_requirements(
     Check that the template gives each target a distinct destination, then
     render and stage every file before replacing the first destination.
     """
-    with_hashes = format == "requirements"
+    with_hashes = output_format == "requirements"
     multi_target = len(lock_input.targets) > 1
-    if is_stdout(output) or (output is None and multi_target):
+    if _is_stdout(output) or (output is None and multi_target):
         text, _ = _render_requirements_or_exit(lock_input, with_hashes)
         _print_lock(text)
         return
@@ -1849,7 +1855,7 @@ def _reused_lock_anchor(
     ladder: ConfigLadder,
     *,
     output: Path | None,
-    format: str,  # noqa: A002 - shadows builtin by convention
+    output_format: str,
     build_requirements: bool = False,
 ) -> tuple[datetime | None, datetime | None]:
     """Return ``(absolute_cutoff, prior_lock_anchor)`` for the re-lock anchor.
@@ -1865,9 +1871,9 @@ def _reused_lock_anchor(
     absolute = lock_anchor(ladder)
     if absolute is not None:
         return absolute, None
-    if is_stdout(output) or format != "pylock":
+    if _is_stdout(output) or output_format != "pylock":
         return None, None
-    target = _default_output_path(format, build_requirements=build_requirements)
+    target = _default_output_path(output_format, build_requirements=build_requirements)
     return None, read_lockfile_anchor(output if output is not None else target)
 
 
@@ -1875,7 +1881,7 @@ def _determine_lock_anchor(
     ladder: ConfigLadder,
     *,
     output: Path | None,
-    format: str,  # noqa: A002 - shadows builtin by convention
+    output_format: str,
     build_requirements: bool = False,
     upgrade: bool,
 ) -> datetime:
@@ -1891,7 +1897,7 @@ def _determine_lock_anchor(
     absolute, prior = _reused_lock_anchor(
         ladder,
         output=output,
-        format=format,
+        output_format=output_format,
         build_requirements=build_requirements,
     )
     if upgrade:
@@ -1910,7 +1916,7 @@ def _determine_lock_anchor(
 def _validate_pylock_output_name(
     *,
     output: Path | None,
-    format: str,  # noqa: A002 - shadows builtin by convention
+    output_format: str,
 ) -> None:
     """Reject a ``--output`` name that PEP 751 would not recognise.
 
@@ -1920,7 +1926,7 @@ def _validate_pylock_output_name(
     name) and a bad name both exit 1, the latter with a suggested
     correction.
     """
-    if format != "pylock" or output is None or is_stdout(output):
+    if output_format != "pylock" or output is None or _is_stdout(output):
         return
 
     if is_valid_pylock_path(output):

@@ -292,7 +292,7 @@ def _build_tempdir(prefix: str) -> tempfile.TemporaryDirectory[str]:
 BuildChain = tuple[str, ...]
 """The builds already in progress beneath the first one, outermost first.
 
-Each entry is a ``chain_label`` for a build requirement nab is building so
+Each entry is a ``_chain_label`` for a build requirement nab is building so
 that some other build can run.  The chain is empty for the build a resolve
 asks for directly, and gains an entry every time a build requirement has to
 be built to populate an env.  Its length is how deep the recursion has gone,
@@ -300,7 +300,7 @@ and a repeated entry is a cycle.
 """
 
 
-def chain_label(name: str, version: str) -> str:
+def _chain_label(name: str, version: str) -> str:
     """Return a build's chain entry with a canonical package name."""
     return f"{canonicalize_name(name)} {version}"
 
@@ -322,7 +322,7 @@ class _PendingBuild(Record):
     @property
     def label(self) -> str:
         """The chain entry naming this build."""
-        return chain_label(self.name, self.version)
+        return _chain_label(self.name, self.version)
 
 
 class _WheelRequiresPythonError(BuildEnvError):
@@ -726,7 +726,7 @@ class NabBuildEnv:
             # the build with it.
             return pin.replace(wheels=(preferred,), sdist=None)
 
-        label = chain_label(pin.name, pin.version)
+        label = _chain_label(pin.name, pin.version)
         chain = self._chain
 
         if pin.sdist is None:
@@ -839,7 +839,7 @@ def _check_wheel_requires_python(
     name: str, version: str, wheel: Path, overrides: tuple[PackageOverride, ...]
 ) -> None:
     """Check host Python compatibility using wheel metadata and package overrides."""
-    label = chain_label(name, version)
+    label = _chain_label(name, version)
     try:
         text = read_wheel_metadata(wheel)
     except (UnreadableLocalIndexError, UnsupportedWheelError) as exc:

@@ -147,12 +147,12 @@ def _domain(variable: str) -> str:
     return DOMAIN_VERSION if kind == DOMAIN_TWIN else kind
 
 
-def is_version_dispatch(variable: str) -> bool:
+def _is_version_dispatch(variable: str) -> bool:
     """Whether a variable dispatches as a version, twins included."""
     return _domain(variable) == DOMAIN_VERSION
 
 
-def is_pure_version(variable: str) -> bool:
+def _is_pure_version(variable: str) -> bool:
     """Whether a variable's domain is version-only, no string fall-through."""
     return DOMAIN_REGISTRY[variable] == DOMAIN_VERSION
 
@@ -192,7 +192,7 @@ def _strict_version(text: str) -> bool:
     return True
 
 
-def derive_major_minor(full: str) -> str:
+def _derive_major_minor(full: str) -> str:
     """A1: ``python_version`` is the major.minor truncation of the full version."""
     try:
         release = Version(full).release
@@ -363,7 +363,7 @@ def _holds_value(atom: Atom, text: str) -> bool:
     """
     op, literal = atom.op, atom.literal
     if atom.derive_mm:
-        mm = derive_major_minor(text)
+        mm = _derive_major_minor(text)
         if atom.swapped:
             return _apply(literal, op, mm, key="python_version")
         return _apply(mm, op, literal, key="python_version")
@@ -728,13 +728,13 @@ def _make_set_atom(variable: str, op: str, literal: str, *, swapped: bool) -> Fo
     return AtomLeaf(Atom(AXIS_SET, variable, variable, op, name, positive=positive))
 
 
-def reject_oversized_version_literals(variable: str, literals: Sequence[str]) -> None:
+def _reject_oversized_version_literals(variable: str, literals: Sequence[str]) -> None:
     """Raise before an oversized numeric component reaches packaging.
 
     Past ``sys.get_int_max_str_digits()`` digits, packaging's ``Version`` raises
     a bare ValueError.
     """
-    if is_version_dispatch(variable) and any(
+    if _is_version_dispatch(variable) and any(
         _oversized_numeric(literal) for literal in literals
     ):
         msg = (
@@ -749,7 +749,7 @@ def _reject_mint_overflow(literals: Sequence[str]) -> None:
 
     Minting increments a numeric component, so a run at the limit width rolls
     one digit past it: this rejects at the limit, where
-    :func:`reject_oversized_version_literals` rejects past it.
+    :func:`_reject_oversized_version_literals` rejects past it.
     """
     limit = get_int_max_str_digits()
     if limit and any(
@@ -770,7 +770,7 @@ def _reject_undefined_operator(
     """Raise if ``op`` is undefined on ``literal``, tested against ``probe``."""
     if op not in _ORDERED_UNDEFINED:
         return
-    reject_oversized_version_literals(variable, (literal,))
+    _reject_oversized_version_literals(variable, (literal,))
     try:
         if swapped:
             _apply(literal, op, probe, key=variable)
@@ -1138,7 +1138,7 @@ def _membership_candidates(
                 for s in subs
                 if _pooled_version(s.removesuffix(".*"), memo) is not None
             ]
-        elif is_version_dispatch(atom.variable):
+        elif _is_version_dispatch(atom.variable):
             version_members.update(subs)
         points.extend(subs)
     return points, version_members
@@ -1166,7 +1166,7 @@ def _dedupe_candidates(
         if candidate in seen:
             continue
         # Python axes exclude versions no supported target can report.
-        if is_pure_version(variable):
+        if _is_pure_version(variable):
             version = _pooled_version(candidate, memo)
             if version is None or not supports_python_version(
                 version, variable=variable
@@ -1242,7 +1242,7 @@ def _reduce_work_exceeds(
     lower-bounds the ``_reduce_cells`` work. A pure-version axis counts only the
     version-parseable literals.
     """
-    pure = is_pure_version(variable)
+    pure = _is_pure_version(variable)
     seen: set[str] = set()
     for literal in literals:
         key = literal.removesuffix(".*") if pure else literal
@@ -1274,7 +1274,7 @@ def _value_candidates(
 ) -> list[str]:
     literals = [atom.literal for atom in atoms]
 
-    reject_oversized_version_literals(variable, literals)
+    _reject_oversized_version_literals(variable, literals)
     if _reduce_work_exceeds(variable, literals, len(atoms), max_cells, memo):
         msg = f"axis work over {len(atoms)} atoms exceeds max_cells={max_cells}"
         raise IntractableMarkerSet(msg)
@@ -1291,7 +1291,7 @@ def _value_candidates(
     candidates.extend(substrings)
     candidates.extend(_contains_candidates(atoms, literals, max_cells))
 
-    if is_version_dispatch(variable):
+    if _is_version_dispatch(variable):
         _reject_mint_overflow(literals)
         entries: list[tuple[Version, str]] = []
         for atom in atoms:
@@ -1478,7 +1478,7 @@ def partition_axis(
     return cached
 
 
-def guarded_product_size(sizes: Iterable[int], max_cells: int) -> int:
+def _guarded_product_size(sizes: Iterable[int], max_cells: int) -> int:
     """Multiply per-axis cell counts, raising past the guard."""
     total = 1
     for size in sizes:
@@ -1502,7 +1502,7 @@ def prepare_environment(env: MarkerEnvironment) -> MarkerEnvironment:
     return env
 
 
-def as_name_set(value: str | Iterable[str]) -> frozenset[str]:
+def _as_name_set(value: str | Iterable[str]) -> frozenset[str]:
     """Normalise a set-variable value: a non-empty str is one PEP 685 name."""
     if isinstance(value, str):
         return frozenset({canonicalize_name(value)}) if value else frozenset()
@@ -1517,7 +1517,7 @@ def _require(env: MarkerEnvironment, key: str) -> MarkerValue:
         raise UndefinedEnvironmentName(key) from None
 
 
-def evaluate_atom(atom: Atom, env: MarkerEnvironment) -> bool:
+def _evaluate_atom(atom: Atom, env: MarkerEnvironment) -> bool:
     """Evaluate one atom against a full environment (extras are sets)."""
     if atom.kind == AXIS_VALUE:
         if atom.derive_mm and "python_full_version" not in env:
@@ -1525,7 +1525,7 @@ def evaluate_atom(atom: Atom, env: MarkerEnvironment) -> bool:
             return atom.holds(_require(env, "python_version"))
         return atom.holds(_require(env, atom.variable))
     if atom.kind == AXIS_SET:
-        return atom.holds(as_name_set(_require(env, atom.origin)))
+        return atom.holds(_as_name_set(_require(env, atom.origin)))
     names = _require(env, atom.variable)
     return atom.holds(atom.literal in names)
 
@@ -1561,7 +1561,9 @@ def reject_oversized_literals(node: Formula, env: MarkerEnvironment) -> None:
             continue
         value = _atom_env_value(atom, env)
         if value is not _MISSING:
-            reject_oversized_version_literals(atom.variable, (atom.literal, str(value)))
+            _reject_oversized_version_literals(
+                atom.variable, (atom.literal, str(value))
+            )
 
 
 def membership_literals_of(node: Formula) -> frozenset[tuple[str, str]]:
@@ -1642,7 +1644,7 @@ def _cell_partitions(
     if deferred is not None:
         for index, size in deferred.items():
             sizes[index] = size
-    units = guarded_product_size((*sizes, leaf_count), max_cells)
+    units = _guarded_product_size((*sizes, leaf_count), max_cells)
 
     if deferred is not None:
         for index in deferred:
@@ -1685,12 +1687,16 @@ def _decide_empty(node: Formula, max_cells: int, store: Memo) -> _Decision:
     """Decide emptiness, returning the verdict with the work charged for it."""
     space = _cell_space(node, max_cells, store)
     size = prod(len(partition) for partition in space.partitions)
+
+    # A quick witness can avoid building masks for a large product.
     if size >= _WITNESS_PROBE_MIN_PRODUCT_CELLS and _has_early_witness(node, space):
         return _Decision(empty=False, units=space.units)
+
     if size < _MASK_CACHE_MIN_CELLS:
         truth, full = _compile_cell_truth_masks(space, size)
     else:
         truth, full = _cell_truth_masks(space, size, store=store)
+
     return _Decision(not _eval_mask(node, truth, full), space.units)
 
 
@@ -1889,11 +1895,11 @@ def _materialize(
         if variable in env:
             continue
         if variable == "python_version" and "python_full_version" in env:
-            env[variable] = derive_major_minor(str(env["python_full_version"]))
+            env[variable] = _derive_major_minor(str(env["python_full_version"]))
             continue
         env[variable] = "".join(sorted(lit for lit, present in items if present))
     if "python_full_version" in env and "python_version" not in env:
-        env["python_version"] = derive_major_minor(str(env["python_full_version"]))
+        env["python_version"] = _derive_major_minor(str(env["python_full_version"]))
     return env
 
 
@@ -1919,7 +1925,7 @@ def _restrict_value(atom: Atom, env: MarkerEnvironment) -> bool | None:
     if value is _MISSING:
         return None
     if atom.kind == AXIS_SET:
-        return atom.holds(as_name_set(value))
+        return atom.holds(_as_name_set(value))
     if atom.kind == AXIS_CONTAINS:
         return atom.holds(atom.literal in value)
     return atom.holds(value)
@@ -2024,7 +2030,7 @@ def evaluate_tree(node: Formula, env: MarkerEnvironment) -> bool:
     if isinstance(node, BoolConst):
         return node.value
     if isinstance(node, AtomLeaf):
-        return evaluate_atom(node.atom, env)
+        return _evaluate_atom(node.atom, env)
     if isinstance(node, NotNode):
         return not evaluate_tree(node.child, env)
     if isinstance(node, AndNode):
@@ -2048,7 +2054,7 @@ def _complement_version(atom: Atom, op: str, var: str) -> Formula:
     # Excluded middle holds for an unswapped ==/!= on a pure-version axis alone.
     # An ordered comparison has the prerelease hole, a twin may hold a
     # non-version, and a swapped literal is the specifier bound.
-    if op in ("==", "!=") and is_pure_version(var) and not atom.swapped:
+    if op in ("==", "!=") and _is_pure_version(var) and not atom.swapped:
         return AtomLeaf(atom.replaced(op="!=" if op == "==" else "=="))
     msg = f"no marker string spells the complement of {_render_atom(atom)}"
     raise UnserializableMarkerSet(msg)
@@ -2062,7 +2068,7 @@ def _flip_string_op(atom: Atom, flipped: str) -> Formula:
     local version where an ordered one does not, so the flipped atom can
     dispatch as a version and denote something else.
     """
-    if is_version_dispatch(atom.variable) and _builds_specifier(flipped, atom.literal):
+    if _is_version_dispatch(atom.variable) and _builds_specifier(flipped, atom.literal):
         msg = f"no marker string spells the complement of {_render_atom(atom)}"
         raise UnserializableMarkerSet(msg)
     return AtomLeaf(atom.replaced(op=flipped))
@@ -2079,7 +2085,7 @@ def _complement_string(atom: Atom, op: str) -> Formula:
     compares as a version wherever that value parses as one, and the table's
     reading holds only on the rest.
     """
-    if atom.swapped and is_version_dispatch(atom.variable):
+    if atom.swapped and _is_version_dispatch(atom.variable):
         msg = f"no marker string spells the complement of {_render_atom(atom)}"
         raise UnserializableMarkerSet(msg)
     if op in ("==", ">=", "<="):
@@ -2098,7 +2104,7 @@ def _complement_leaf(atom: Atom) -> Formula:
     if atom.kind in (AXIS_SET, AXIS_CONTAINS):
         return AtomLeaf(atom.replaced(positive=not atom.positive))
     op, var = atom.op, atom.variable
-    if is_version_dispatch(var) and _builds_specifier(op, atom.literal):
+    if _is_version_dispatch(var) and _builds_specifier(op, atom.literal):
         return _complement_version(atom, op, var)
     return _complement_string(atom, op)
 
@@ -3146,6 +3152,7 @@ def _split_row_patterns(
     """Enumerate every source truth pattern, including source-false witnesses."""
     if not row.within:
         return set()
+
     cell_units = max(1, (row.size + _PATTERN_BITS_PER_UNIT) // _PATTERN_BITS_PER_UNIT)
     prefix_units = max(
         1, (len(row.columns) + _PATTERN_BITS_PER_UNIT - 1) // _PATTERN_BITS_PER_UNIT
@@ -3159,8 +3166,10 @@ def _split_row_patterns(
     )
     if minimum > max_cells:
         return None
+
+    # Each region holds cells that agree on the source columns seen so far.
     regions = [(0, row.within)]
-    for position, value in enumerate(row.columns):
+    for position, column_mask in enumerate(row.columns):
         units = _pattern_buffer_units(
             columns=len(row.columns),
             cell_units=cell_units,
@@ -3175,17 +3184,19 @@ def _split_row_patterns(
             + len(regions) * (2 * cell_units + 2 * prefix_units + 3)
             + prefix_units
         )
+
         bit = 1 << position
-        complement = ~value
+        complement = ~column_mask
         refined = []
-        for prefix, region in regions:
-            positive = region & value
-            negative = region & complement
-            if positive:
-                refined.append((prefix | bit, positive))
-            if negative:
-                refined.append((prefix, negative))
+        for prefix, cells in regions:
+            true_cells = cells & column_mask
+            false_cells = cells & complement
+            if true_cells:
+                refined.append((prefix | bit, true_cells))
+            if false_cells:
+                refined.append((prefix, false_cells))
         regions = refined
+
     charge_work(len(regions) * (len(row.columns) + prefix_units + 1))
     return {prefix for prefix, _ in regions}
 

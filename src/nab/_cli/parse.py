@@ -232,13 +232,13 @@ def _walk(
     prog_path = prog
     unnamed_commands = tuple(commands)
     index = 0
-    ended = False
+    options_ended = False
 
     while index < len(argv):
         word = argv[index]
         index += 1
 
-        if not command and (ended or not is_option(word)):
+        if not command and (options_ended or not is_option(word)):
             if word not in commands:
                 raise _unknown_command(prog_path, word, commands)
             command = word
@@ -249,12 +249,12 @@ def _walk(
             # ended the root's options rather than the line's, and its
             # name is no longer a candidate a suggestion may offer.
             unnamed_commands = ()
-            ended = False
-        elif ended:
+            options_ended = False
+        elif options_ended:
             operands.append(word)
         elif word == "--":
-            ended = True
-        elif word.startswith(_LONG) and len(word) > len(_LONG):
+            options_ended = True
+        elif word.startswith(_LONG):
             index, eager = _long(
                 word,
                 argv,

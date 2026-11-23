@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from functools import partial
 from importlib.util import cache_from_source, module_from_spec, spec_from_file_location
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 from unittest.mock import MagicMock, patch
 
 import build
@@ -2074,22 +2074,16 @@ class TestNabBuildEnvInstall:
     """The ``install`` shortcut: empty list and the inner re-resolve path."""
 
     def test_install_empty_returns_immediately(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """An empty requirements list is a no-op (does not even touch
-        the venv state).  We assert by checking the resolve helper is
-        not called.
-        """
+        """An empty requirements list skips resolution in an active build env."""
         env = NabBuildEnv(requires=[], config=ResolveInputs())
-        # Avoid real venv creation by short-circuiting __enter__.
-        env._venv_path = tmp_path  # type: ignore[attr-defined]
-        env._python_executable = tmp_path / "python"  # type: ignore[attr-defined]
-        called = MagicMock()
-        monkeypatch.setattr(env, "_resolve_and_download", called)
-        env.install([])
-        called.assert_not_called()
+        resolve = MagicMock()
+        with env:
+            monkeypatch.setattr(env, "_resolve_and_download", resolve)
+            env.install([])
+
+        resolve.assert_not_called()
 
     def test_install_runs_inner_resolve_and_installs_wheels(
         self,
@@ -2107,8 +2101,8 @@ class TestNabBuildEnvInstall:
         venv_path.mkdir()
         wheel_dir = tmp_path / "wheels"
         wheel_dir.mkdir()
-        env._venv_path = venv_path  # type: ignore[attr-defined]
-        env._python_executable = venv_path / "python"  # type: ignore[attr-defined]
+        env._venv_path = venv_path
+        env._python_executable = venv_path / "python"
         fake_wheel = wheel_dir / "_extra_0" / "fake-1.0-py3-none-any.whl"
         monkeypatch.setattr(
             env, "_resolve_and_download", lambda *_a, **_k: [fake_wheel]
@@ -2137,8 +2131,8 @@ class TestNabBuildEnvInstall:
         env = NabBuildEnv(requires=[], config=ResolveInputs())
         venv_path = tmp_path / "venv"
         venv_path.mkdir()
-        env._venv_path = venv_path  # type: ignore[attr-defined]
-        env._python_executable = venv_path / "python"  # type: ignore[attr-defined]
+        env._venv_path = venv_path
+        env._python_executable = venv_path / "python"
 
         with pytest.raises(
             BuildEnvError, match="could not install extra build requirements"
@@ -2156,9 +2150,9 @@ class TestResolveAndDownload:
         """Run the inner resolve against stubs and return the settings it got."""
         from nab_project.resolve import ResolveResult, TargetResult
 
-        env._tmpdir = MagicMock()  # type: ignore[attr-defined]
-        env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
-        env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
+        env._tmpdir = MagicMock()
+        env._venv_path = tmp_path / "venv"
+        env._python_executable = tmp_path / "venv" / "bin" / "python"
         target = ResolveTarget.for_host()
         fake_result = ResolveResult(
             targets=(target,),
@@ -2254,9 +2248,9 @@ class TestResolveAndDownload:
         from nab_provider.target import ResolveTarget
 
         env = NabBuildEnv(requires=["foo"], config=ResolveInputs())
-        env._tmpdir = MagicMock()  # type: ignore[attr-defined]
-        env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
-        env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
+        env._tmpdir = MagicMock()
+        env._venv_path = tmp_path / "venv"
+        env._python_executable = tmp_path / "venv" / "bin" / "python"
         target = ResolveTarget.for_host()
         fake_result = ResolveResult(
             targets=(target,),
@@ -2346,9 +2340,9 @@ class TestResolveAndDownload:
             requires=["plugin @ https://example.com/plugin-1.0.tar.gz"],
             config=ResolveInputs(),
         )
-        env._tmpdir = MagicMock()  # type: ignore[attr-defined]
-        env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
-        env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
+        env._tmpdir = MagicMock()
+        env._venv_path = tmp_path / "venv"
+        env._python_executable = tmp_path / "venv" / "bin" / "python"
         wheel_dir = tmp_path / "wheels"
         wheel_dir.mkdir()
         with pytest.raises(BuildEnvError, match="build env resolve"):
@@ -2362,9 +2356,9 @@ class TestResolveAndDownload:
             requires=["setuptools\n>=61"],
             config=ResolveInputs(),
         )
-        env._tmpdir = MagicMock()  # type: ignore[attr-defined]
-        env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
-        env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
+        env._tmpdir = MagicMock()
+        env._venv_path = tmp_path / "venv"
+        env._python_executable = tmp_path / "venv" / "bin" / "python"
         wheel_dir = tmp_path / "wheels"
         wheel_dir.mkdir()
         with pytest.raises(BuildEnvError, match="build env resolve"):
@@ -2382,9 +2376,9 @@ class TestResolveAndDownload:
         from nab_provider.target import ResolveTarget
 
         env = NabBuildEnv(requires=["foo"], config=ResolveInputs())
-        env._tmpdir = MagicMock()  # type: ignore[attr-defined]
-        env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
-        env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
+        env._tmpdir = MagicMock()
+        env._venv_path = tmp_path / "venv"
+        env._python_executable = tmp_path / "venv" / "bin" / "python"
         target = ResolveTarget.for_host()
         fake_result = ResolveResult(
             targets=(target,),
@@ -2412,7 +2406,7 @@ class TestResolveAndDownload:
             env._resolve_and_download(wheel_dir)
 
 
-def _no_network(*_a: object, **_k: object) -> object:
+def _no_network(*_a: object, **_k: object) -> NoReturn:
     """Stand in for anything an offline build env must not call."""
     raise AssertionError("offline must not reach the network")
 
@@ -2458,9 +2452,9 @@ class TestBuildEnvMissingExtra:
         )
 
         env = NabBuildEnv(requires=["dummyreq[nope]"], config=ResolveInputs())
-        env._tmpdir = MagicMock()  # type: ignore[attr-defined]
-        env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
-        env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
+        env._tmpdir = MagicMock()
+        env._venv_path = tmp_path / "venv"
+        env._python_executable = tmp_path / "venv" / "bin" / "python"
         wheel_dir = tmp_path / "wheels"
         wheel_dir.mkdir()
 
@@ -2516,7 +2510,7 @@ class TestBuildEnvOffline:
             requires=requires,
             config=ResolveInputs(),
             offline=True,
-            transport_factory=_no_network,  # type: ignore[arg-type]
+            transport_factory=_no_network,
         )
         wheel_dir = tmp_path / "wheels"
         wheel_dir.mkdir()
@@ -2749,9 +2743,9 @@ class TestResolveAndDownloadSiblingWheels:
         monkeypatch.setattr("nab_project._build.env.download_lock", _fake_download)
 
         env = NabBuildEnv(requires=["demo"], config=ResolveInputs())
-        env._tmpdir = MagicMock()  # type: ignore[attr-defined]
-        env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
-        env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
+        env._tmpdir = MagicMock()
+        env._venv_path = tmp_path / "venv"
+        env._python_executable = tmp_path / "venv" / "bin" / "python"
 
         wheel_dir = tmp_path / "wheels"
         wheel_dir.mkdir()
@@ -4522,7 +4516,7 @@ class TestNabBuildEnvLifecycle:
         """
         env = NabBuildEnv(requires=[], config=ResolveInputs())
         env.__exit__(None, None, None)
-        assert env._tmpdir is None  # type: ignore[attr-defined]
+        assert env._tmpdir is None
 
     def test_exit_ignores_cleanup_error_after_success(
         self, monkeypatch: pytest.MonkeyPatch
@@ -4695,7 +4689,7 @@ class TestNabBuildEnvEnterInstall:
         env = NabBuildEnv(requires=["pip"], config=ResolveInputs())
         with pytest.raises(RuntimeError, match="resolve failed"):
             env.__enter__()
-        assert env._tmpdir is None  # type: ignore[attr-defined]
+        assert env._tmpdir is None
 
     def test_enter_wraps_venv_create_oserror(
         self,
@@ -4718,7 +4712,7 @@ class TestNabBuildEnvEnterInstall:
         env = NabBuildEnv(requires=[], config=ResolveInputs())
         with pytest.raises(BuildEnvError, match="build venv"):
             env.__enter__()
-        assert env._tmpdir is None  # type: ignore[attr-defined]
+        assert env._tmpdir is None
 
     def test_enter_wraps_venv_create_valueerror(
         self,
@@ -4734,7 +4728,7 @@ class TestNabBuildEnvEnterInstall:
         env = NabBuildEnv(requires=[], config=ResolveInputs())
         with pytest.raises(BuildEnvError, match="build venv"):
             env.__enter__()
-        assert env._tmpdir is None  # type: ignore[attr-defined]
+        assert env._tmpdir is None
 
     def test_enter_wraps_inner_project_write_oserror(
         self,
@@ -4775,7 +4769,7 @@ class TestNabBuildEnvEnterInstall:
         env = NabBuildEnv(requires=["pip"], config=ResolveInputs())
         with pytest.raises(BuildEnvError, match="could not populate the build env"):
             env.__enter__()
-        assert env._tmpdir is None  # type: ignore[attr-defined]
+        assert env._tmpdir is None
 
 
 class TestInstallWheelsCorruptArtifact:
@@ -4790,7 +4784,7 @@ class TestInstallWheelsCorruptArtifact:
         env = NabBuildEnv(requires=[], config=ResolveInputs())
         venv_path = tmp_path / "venv"
         venv_path.mkdir()
-        env._python_executable = venv_path / "bin" / "python"  # type: ignore[attr-defined]
+        env._python_executable = venv_path / "bin" / "python"
         return env
 
     def _scheme(self, tmp_path: Path) -> dict[str, str]:
@@ -4943,8 +4937,8 @@ class TestBuildEnvHeaderScheme:
         venv_path = tmp_path / "venv"
         venv_path.mkdir()
         (tmp_path / "wheels").mkdir()
-        env._venv_path = venv_path  # type: ignore[attr-defined]
-        env._python_executable = venv_path / "bin" / "python"  # type: ignore[attr-defined]
+        env._venv_path = venv_path
+        env._python_executable = venv_path / "bin" / "python"
 
         wheel = tmp_path / "greenlet-3.2.4-py3-none-any.whl"
         _make_installable_wheel(
@@ -4990,8 +4984,8 @@ class TestBuildEnvFollowUpInstall:
         venv_path = tmp_path / "venv"
         venv_path.mkdir()
         (tmp_path / "wheels").mkdir()
-        env._venv_path = venv_path  # type: ignore[attr-defined]
-        env._python_executable = venv_path / "bin" / "python"  # type: ignore[attr-defined]
+        env._venv_path = venv_path
+        env._python_executable = venv_path / "bin" / "python"
         site = venv_path / "site-packages"
         scheme = {
             "purelib": str(site),
@@ -5031,7 +5025,7 @@ class TestBuildEnvFollowUpInstall:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         env, scheme, site = self._env(tmp_path, monkeypatch)
-        env._scripts_dir = site.parent / "bin"  # type: ignore[attr-defined]
+        env._scripts_dir = site.parent / "bin"
         external_cache = tmp_path / "external-cache"
 
         def import_value() -> str:

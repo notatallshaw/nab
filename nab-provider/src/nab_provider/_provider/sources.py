@@ -37,26 +37,23 @@ if TYPE_CHECKING:
     from ..provider import Provider
 
 
-def index_local_sources(
-    provider: Provider,  # noqa: ARG001  (signature parity with index_vcs_sources)
-    sources: list[LocalSource],
-) -> dict[str, LocalSource]:
+def index_local_sources(sources: list[LocalSource]) -> dict[str, LocalSource]:
     """Validate ``LocalSource`` entries and return a canonical-name map.
 
     Admitted at every :class:`~nab_provider.provider.BuildPolicy` level; the
     policy only governs whether the backend may run when the static
     pyproject read returns nothing usable.
     """
-    if not sources:
-        return {}
-    out: dict[str, LocalSource] = {}
-    for src in sources:
-        canonical = canonicalize_name(src.name)
-        if canonical in out:
-            msg = f"duplicate local source for {src.name!r}"
+    sources_by_name: dict[str, LocalSource] = {}
+    for source in sources:
+        canonical = canonicalize_name(source.name)
+        if canonical in sources_by_name:
+            msg = f"duplicate local source for {source.name!r}"
             raise ValueError(msg)
-        out[canonical] = src
-    return out
+
+        sources_by_name[canonical] = source
+
+    return sources_by_name
 
 
 def seed_synthetic_listing(
@@ -124,15 +121,18 @@ def index_vcs_sources(
         )
         raise ValueError(report)
 
-    out: dict[str, VcsSource] = {}
-    for src in sources:
-        admit_vcs_url(src.url, provider.vcs_config)
-        canonical = canonicalize_name(src.name)
-        if canonical in out or canonical in provider.local_sources:
-            msg = f"duplicate source declared for {src.name!r}"
+    sources_by_name: dict[str, VcsSource] = {}
+    for source in sources:
+        admit_vcs_url(source.url, provider.vcs_config)
+
+        canonical = canonicalize_name(source.name)
+        if canonical in sources_by_name or canonical in provider.local_sources:
+            msg = f"duplicate source declared for {source.name!r}"
             raise ValueError(msg)
-        out[canonical] = src
-    return out
+
+        sources_by_name[canonical] = source
+
+    return sources_by_name
 
 
 def index_archive_sources(
@@ -146,24 +146,26 @@ def index_archive_sources(
     hash-verified, and which archive URLs are permitted is decided at config
     parse.
     """
-    if not sources:
-        return {}
-    out: dict[str, ArchiveSource] = {}
-    for src in sources:
+    sources_by_name: dict[str, ArchiveSource] = {}
+    for source in sources:
         # Guarantee a usable hash at the provider layer (config parse already
         # checks it, but a directly-built Provider would otherwise IndexError
         # when materialisation reads the first digest, or verify an empty one).
-        if not ArchiveRequest.parse(src.url).has_usable_hash:
-            msg = f"archive source {src.name!r} has no hash in its URL: {src.url!r}"
+        if not ArchiveRequest.parse(source.url).has_usable_hash:
+            msg = (
+                f"archive source {source.name!r} has no hash in its URL: {source.url!r}"
+            )
             raise ValueError(msg)
 
-        canonical = canonicalize_name(src.name)
+        canonical = canonicalize_name(source.name)
         if (
-            canonical in out
+            canonical in sources_by_name
             or canonical in provider.local_sources
             or canonical in provider.vcs_sources
         ):
-            msg = f"duplicate source declared for {src.name!r}"
+            msg = f"duplicate source declared for {source.name!r}"
             raise ValueError(msg)
-        out[canonical] = src
-    return out
+
+        sources_by_name[canonical] = source
+
+    return sources_by_name

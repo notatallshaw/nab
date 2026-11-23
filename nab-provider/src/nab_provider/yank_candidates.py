@@ -391,7 +391,7 @@ class YankCandidates:
         """Read dependencies and their original pin declarations for one candidate."""
         base = candidate.base
         try:
-            dependencies = candidate_dependencies(provider, candidate)
+            dependencies = _candidate_dependencies(provider, candidate)
         except (MetadataError, MissingExtraError) as exc:
             index = provider.coordinator.index
             for version, file in provider.versions_cache[base]:
@@ -567,7 +567,7 @@ class YankCandidates:
         return {name: candidate.version for name, candidate in selected.items()}, final
 
 
-def candidate_dependencies(
+def _candidate_dependencies(
     provider: Provider, candidate: Candidate
 ) -> dict[str, VersionRange]:
     """Read dependencies after applying the provider's missing-extra policy."""

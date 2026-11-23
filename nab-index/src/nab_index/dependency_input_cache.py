@@ -36,12 +36,15 @@ def _decode(raw: bytes, archive_hash: str) -> tuple[str, str]:
     if not isinstance(relative, str) or not isinstance(text, str):
         msg = "dependency input path and content must be strings"
         raise ValueError(msg)  # noqa: TRY004 - the serialized fields are malformed.
+
+    # The record must belong to this archive and contain intact text.
     if record.get("archive-sha256") != archive_hash:
         msg = "dependency input does not match its cache location"
         raise ValueError(msg)
     if record.get("content-sha256") != _digest(text):
         msg = "dependency input checksum mismatch"
         raise ValueError(msg)
+
     return relative, text
 
 
@@ -52,6 +55,7 @@ def read_text(bucket: Path, archive_hash: str, relative: str) -> str | None:
         stored_name, text = _decode((bucket / key).read_bytes(), archive_hash)
     except (OSError, ValueError):
         return None
+
     return text if stored_name == relative else None
 
 
