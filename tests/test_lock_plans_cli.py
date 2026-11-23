@@ -6,6 +6,7 @@ import hashlib
 import io
 import tarfile
 from contextlib import nullcontext
+from pathlib import Path
 
 import pytest
 
@@ -96,6 +97,27 @@ def test_project_policy_and_cli_table_subflags_keep_their_precedence(
     doc = toml_io.load_path(named.project.with_name("pylock.dev.toml"))
     assert any('python_version == "3.13"' in env for env in doc["environments"])
     assert any('sys_platform == "linux"' in env for env in doc["environments"])
+
+
+@pytest.mark.parametrize(
+    ("setting", "location"),
+    [
+        ('matrix = {python="==3.11.4", platforms=["linux_x86_64"]}', "settings.matrix"),
+        ("packages = []", "settings.package-rules"),
+        ("package-rules = {}", "settings.packages"),
+    ],
+)
+def test_plan_settings_errors_name_the_setting_in_the_plan(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], setting: str, location: str
+) -> None:
+    project = tmp_path / "pyproject.toml"
+    project.write_text('[project]\nname="app"\nversion="1"\n')
+    (tmp_path / "nab.toml").write_text(f"[plans.My_Plan.settings]\n{setting}\n")
+
+    assert run(("lock", str(project), "--plan", "my-plan", "--offline")) == 1
+    error = capsys.readouterr().err
+    assert "plan 'my-plan'" in error
+    assert f"this plan's {location}" in error
 
 
 def test_local_source_groups_are_prepared_without_rebinding_relative_sources(

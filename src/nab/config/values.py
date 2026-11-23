@@ -943,12 +943,22 @@ _PACKAGE_POLICY_FIELDS = (
 )
 
 
+def _package_table_hints(prefix: str | None) -> tuple[str, str]:
+    """Name both override forms where the user declared them."""
+    if prefix is None:
+        return (
+            "this plan's settings.packages table",
+            "this plan's settings.package-rules array",
+        )
+    return f"[{prefix}packages.<name>]", f"[[{prefix}package-rules]]"
+
+
 def parse_packages_sugar(
     value: object,
     where: str,
     *,
     anchor: datetime,
-    key_prefix: str = "tool.nab.",
+    key_prefix: str | None = "tool.nab.",
 ) -> list[PackageOverride]:
     """Parse name-keyed ``packages`` tables into per-package overrides.
 
@@ -958,12 +968,13 @@ def parse_packages_sugar(
     sugar form has no inner selector key.
     """
     if isinstance(value, list):
+        packages, rules = _package_table_hints(key_prefix)
         report = DiagnosticMessage(
-            (f"{where} is the name-keyed table form ([{key_prefix}packages.<name>])"),
+            f"{where} is the name-keyed table form ({packages})",
             suggestions=(
                 Suggestion(
                     "for one body across several requirements use "
-                    f"[[{key_prefix}package-rules]] with match = [...]"
+                    f"{rules} with match = [...]"
                 ),
             ),
         )
@@ -1008,7 +1019,7 @@ def parse_package_rules(
     where: str,
     *,
     anchor: datetime,
-    key_prefix: str = "tool.nab.",
+    key_prefix: str | None = "tool.nab.",
 ) -> list[PackageOverride]:
     """Parse ``package-rules`` arrays of tables into per-package overrides.
 
@@ -1018,12 +1029,13 @@ def parse_package_rules(
     index).
     """
     if not isinstance(value, list):
+        packages, rules = _package_table_hints(key_prefix)
         report = DiagnosticMessage(
-            (f"{where} must be an array of tables ([[{key_prefix}package-rules]])"),
+            f"{where} must be an array of tables ({rules})",
             suggestions=(
                 Suggestion(
                     "for per-package policy keyed by name use "
-                    f"[{key_prefix}packages.<name>].  Got {type(value).__name__}"
+                    f"{packages}.  Got {type(value).__name__}"
                 ),
             ),
         )
@@ -1987,15 +1999,17 @@ def _parse_conflict_member(item: object, where: str) -> ConflictMember:
 _MINOR_RELEASE_PARTS = 2
 
 
-def _patches_spelling(where: str, table: str) -> str:
+def _python_patches_location(where: str, table: str | None) -> str:
     """Return the source label for python-patches."""
     if where.endswith("*"):
         return f"{where[:-1]}python-patches"
+    if table is None:
+        return "this plan's settings.matrix table under the python-patches key"
     return f"[{table}.python-patches]"
 
 
 def _validate_matrix_python(
-    spec: str, where: str, table: str, *, key: str = "python"
+    spec: str, where: str, table: str | None, *, key: str = "python"
 ) -> None:
     """Reject a python axis finer than major.minor.
 
@@ -2026,7 +2040,7 @@ def _validate_matrix_python(
             msg = (
                 f"{where}.{key} axis is a language (minor) version only; "
                 f"{clause} is finer than major.minor. Put patch versions in "
-                f"{_patches_spelling(where, table)}."
+                f"{_python_patches_location(where, table)}."
             )
             raise SourceConfigError(msg)
 
@@ -2205,11 +2219,12 @@ _MATRIX_KEYS = frozenset(
 
 
 def parse_matrix(
-    value: object, where: str, *, table: str = "tool.nab.matrix"
+    value: object, where: str, *, table: str | None = "tool.nab.matrix"
 ) -> MatrixConfig:
     """Parse a matrix table.
 
-    ``table`` supplies the header used in sub-table errors.
+    ``table`` supplies the header used in sub-table errors. Plan settings
+    pass ``None`` because either project file can declare the plan.
     """
     if not isinstance(value, dict):
         msg = f"{where} must be a table, got {type(value).__name__}"
@@ -2268,7 +2283,7 @@ def _parse_matrix_platform_axis(value: object, where: str) -> tuple[PlatformSpec
 
 
 def _parse_matrix_overrides(
-    value: object, where: str, table: str
+    value: object, where: str, table: str | None
 ) -> dict[str, ImplementationOverride] | None:
     """Read the implementation category from the matrix override container."""
     if value is None:
@@ -2285,7 +2300,7 @@ def _parse_matrix_overrides(
 
 
 def _parse_implementation_overrides(
-    value: object, where: str, table: str
+    value: object, where: str, table: str | None
 ) -> dict[str, ImplementationOverride] | None:
     """Read keyed implementation bodies using the shared matrix axis parsers."""
     if value is None:
@@ -2313,7 +2328,11 @@ def _parse_implementation_overrides(
 
 
 def _parse_implementation_body(
-    body: Mapping[str, object], label: str, where: str, table: str, implementation: str
+    body: Mapping[str, object],
+    label: str,
+    where: str,
+    table: str | None,
+    implementation: str,
 ) -> ImplementationOverride:
     """Parse the axes one implementation replaces; omitted axes remain unset."""
     unknown = sorted(set(body) - {"python", "platforms", "free-threaded"})
@@ -2351,7 +2370,7 @@ def _parse_implementation_body(
 
 
 def _parse_matrix_include(
-    value: object, where: str, table: str
+    value: object, where: str, table: str | None
 ) -> tuple[MatrixInclude, ...]:
     """Parse independently expanded target groups with optional inherited axes."""
     if value is None:
@@ -2374,7 +2393,7 @@ def _parse_matrix_include(
 
 
 def _parse_matrix_include_body(
-    body: Mapping[str, object], where: str, table: str, index: int
+    body: Mapping[str, object], where: str, table: str | None, index: int
 ) -> MatrixInclude:
     """Read only the axes the entry explicitly replaces."""
     label = f"{where}.include[{index}]"
