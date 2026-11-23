@@ -918,8 +918,8 @@ def _dynamic_sdist_remedy(
         else f"{canonical}=={version}"
     )
     return (
-        condition + "add a [[tool.nab.package-rules]] entry with"
-        f' match = ["{selector}"] and {setting}'
+        condition + f'append {{ match = ["{selector}"], {setting} }} to package-rules'
+        " (use settings.package-rules if the active lock plan defines it)"
     )
 
 
