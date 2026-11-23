@@ -1081,6 +1081,7 @@ class FetchCoordinator:
             min_fresh_seconds=self._index_cache_floors.get(cfg.name),
             parsed_stats=self._parsed_cache_stats,
             sdist_archive_hold=self._sdist_archive_hold,
+            owns_transport=False,
         )
 
     async def _async_fetcher(self) -> None:

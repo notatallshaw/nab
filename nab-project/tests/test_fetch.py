@@ -1754,24 +1754,28 @@ class TestFetchCoordinator:
             error = coord.index.get_sdist_archive_error("pkg", "digest")
             assert isinstance(error, OfflineError)
 
-    def test_file_index_still_closes_the_transport(self, tmp_path: Path) -> None:
-        """A file:// index client owns no transport; a direct archive fetch may."""
-        closed = threading.Event()
+    @pytest.mark.parametrize("http_indexes", [0, 1, 2])
+    def test_coordinator_closes_its_transport_once(
+        self, tmp_path: Path, http_indexes: int
+    ) -> None:
+        class RecordingTransport(Urllib3AsyncTransport):
+            closes = 0
 
-        class RecordingTransport(HttpxAsyncTransport):
             async def aclose(self) -> None:
-                closed.set()
+                self.closes += 1
                 await super().aclose()
 
-        wheelhouse = tmp_path / "wheelhouse"
-        wheelhouse.mkdir()
-        with FetchCoordinator(
-            transport=RecordingTransport(),  # type: ignore[arg-type]
-            indexes=[IndexConfig("local", wheelhouse.as_uri())],
-        ):
+        transport = RecordingTransport()
+        indexes = [IndexConfig("local", tmp_path.as_uri())]
+        indexes.extend(
+            IndexConfig(f"remote-{i}", f"https://example.com/{i}/")
+            for i in range(http_indexes)
+        )
+
+        with FetchCoordinator(transport, indexes=indexes):
             pass
 
-        assert closed.is_set()
+        assert transport.closes == 1
 
     @respx.mock
     def test_request_metadata_batch_deduplicates(self) -> None:

@@ -4319,8 +4319,13 @@ class TestGetSdistArchive:
 
 
 class TestContextManager:
-    def test_aenter_returns_self_and_aclose_closes_transport(
-        self, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("options", "close_count"),
+        [({}, 1), ({"owns_transport": False}, 0)],
+        ids=["standalone", "shared"],
+    )
+    def test_context_closes_only_an_owned_transport(
+        self, tmp_path: Path, options: dict[str, bool], close_count: int
     ) -> None:
         cache = _make_cache(tmp_path)
         closes: list[bool] = []
@@ -4336,11 +4341,12 @@ class TestContextManager:
                 closes.append(True)
 
         async def go() -> None:
-            async with CachedAsyncSimpleClient(_Closer(), cache) as client:
-                assert isinstance(client, CachedAsyncSimpleClient)
+            client = CachedAsyncSimpleClient(_Closer(), cache, **options)
+            async with client as entered:
+                assert entered is client
 
         asyncio.run(go())
-        assert closes == [True]
+        assert len(closes) == close_count
 
 
 _RANGE_META = b"Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n\nbody\n"

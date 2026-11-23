@@ -419,8 +419,11 @@ class CachedAsyncSimpleClient(ListingReports):
         min_fresh_seconds: int | None = None,
         parsed_stats: ParsedCacheStats | None = None,
         sdist_archive_hold: SdistArchiveHold | None = None,
+        owns_transport: bool = True,
     ) -> None:
         """Create a cached client wrapping ``transport``.
+
+        Set ``owns_transport=False`` when the caller closes a shared transport.
 
         ``range_memo`` is the per-run range-capability memo shared across the
         indexes' clients; the coordinator owns the shared instance and injects
@@ -446,6 +449,7 @@ class CachedAsyncSimpleClient(ListingReports):
         """
         super().__init__()
         self._transport = transport
+        self._owns_transport = owns_transport
         self._cache = cache
         self._index_url = index_url.rstrip("/") + "/"
         self._offline = offline
@@ -470,7 +474,7 @@ class CachedAsyncSimpleClient(ListingReports):
         self._closed = False
 
     async def aclose(self) -> None:
-        """Wait for cache writes, then close the underlying transport."""
+        """Wait for cache writes, then close the transport if this client owns it."""
         self._closed = True
         if self._cache_writes:
             await asyncio.gather(*self._cache_writes, return_exceptions=True)
@@ -479,7 +483,8 @@ class CachedAsyncSimpleClient(ListingReports):
             pending.cancel()
         self._metadata_pending.clear()
         self._verified_sidecars.clear()
-        await self._transport.aclose()
+        if self._owns_transport:
+            await self._transport.aclose()
 
     async def __aenter__(self) -> Self:
         """Enter the async context manager."""
