@@ -115,6 +115,26 @@ class TestResolveGroupsToRequirements:
                 {"dev": [f"foo ; {over_nested_marker}"]}, ("dev",)
             )
 
+    def test_marker_can_exhaust_the_stack_before_packaging_rejects_its_depth(
+        self,
+    ) -> None:
+        marker = "(" * 150 + "os_name == 'posix'" + ")" * 150
+        frame = sys._getframe()
+        depth = 0
+        while frame is not None:
+            depth += 1
+            frame = frame.f_back
+
+        previous = sys.getrecursionlimit()
+        try:
+            sys.setrecursionlimit(depth + 160)
+            with pytest.raises(
+                InvalidProjectRequirementError, match="marker is nested"
+            ):
+                resolve_groups_to_requirements({"dev": [f"foo ; {marker}"]}, ("dev",))
+        finally:
+            sys.setrecursionlimit(previous)
+
     def test_over_deep_include_chain_names_the_chain(self) -> None:
         """An include chain beyond the recursion limit reports the include depth."""
         chain = _include_chain(sys.getrecursionlimit(), leaf="pytest")
