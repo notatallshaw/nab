@@ -3497,16 +3497,17 @@ class TestMicroBoundaryNarrowing:
             }
         )
 
-    def test_a_boundary_reachable_only_above_a_split_is_found(self) -> None:
+    def test_last_allowed_split_can_finish_the_resolve(self) -> None:
         """``top``'s 3.10.5 boundary is consulted only once ``mid`` is present,
         which needs 3.10.2 first.  The fixpoint re-splits until it settles."""
         targets = Matrix(
             python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)
         ).expand()
 
-        result = resolve_with_coordinator(
-            self._fixpoint_coordinator(), targets, _reqs("foo"), inputs=_no_build()
-        )
+        with patch.object(engine_mod, "_MAX_MICRO_SPLIT_PASSES", 2):
+            result = resolve_with_coordinator(
+                self._fixpoint_coordinator(), targets, _reqs("foo"), inputs=_no_build()
+            )
 
         assert result.success
         assert self._pins_by_label(result) == {

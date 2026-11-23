@@ -405,10 +405,16 @@ def _resolve_with_micro_narrowing(
     )
     boundaries = [MicroBoundaries() for _ in targets]
     combined = result
-    for _ in range(_MAX_MICRO_SPLIT_PASSES):
-        grown = _grow_micro_boundaries(targets, boundaries, combined)
-        if grown is None:
-            return combined
+    remaining = _MAX_MICRO_SPLIT_PASSES
+    while (grown := _grow_micro_boundaries(targets, boundaries, combined)) is not None:
+        if remaining == 0:
+            msg = (
+                "environment micro-boundary splitting did not converge in"
+                f" {_MAX_MICRO_SPLIT_PASSES} passes"
+            )
+            raise ResolutionError(msg)
+
+        remaining -= 1
         boundaries = grown
         sliced = [
             cuts.slices(target)
@@ -426,11 +432,7 @@ def _resolve_with_micro_narrowing(
         _reconcile_resolved_builds(
             combined, fork_list, constraints, settings, base_requirements
         )
-    msg = (
-        "environment micro-boundary splitting did not converge in"
-        f" {_MAX_MICRO_SPLIT_PASSES} passes"
-    )
-    raise ResolutionError(msg)
+    return combined
 
 
 def _resolve_slices(
