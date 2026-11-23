@@ -21,6 +21,7 @@ import pytest
 
 from nab_index.client import WheelHashMismatchError
 from nab_index.lazy_wheel import RangeOutcome
+from nab_index.response import ResponseBody
 from nab_index.transport import HttpError
 from nab_project.fetch import FetchCoordinator
 from nab_project.inputs import ResolveInputs
@@ -75,41 +76,18 @@ def _parse_range(value: str) -> tuple[str, int, int]:
     return ("absolute", int(start), int(end))
 
 
-class _FakeResponse:
+class _FakeResponse(ResponseBody):
     def __init__(
         self, status: int, headers: dict[str, str], content: bytes, url: str
     ) -> None:
-        self._status = status
-        self._headers = headers
-        self._content = content
-        self._url = url
-
-    @property
-    def status_code(self) -> int:
-        return self._status
-
-    @property
-    def url(self) -> str:
-        return self._url
-
-    @property
-    def headers(self) -> dict[str, str]:
-        return self._headers
-
-    @property
-    def content(self) -> bytes:
-        return self._content
-
-    @property
-    def text(self) -> str:
-        return self._content.decode("utf-8")
-
-    def json(self) -> object:
-        return json.loads(self._content)
+        super().__init__(content)
+        self.status_code = status
+        self.headers = headers
+        self.url = url
 
     def raise_for_status(self) -> None:
-        if self._status >= 400:
-            msg = f"HTTP {self._status}"
+        if self.status_code >= 400:
+            msg = f"HTTP {self.status_code}"
             raise HttpError(msg)
 
 
@@ -141,16 +119,16 @@ class FakeRangeTransport:
         self, url: str, *, headers: dict[str, str] | None = None
     ) -> _FakeResponse:
         await asyncio.sleep(0)
-        headers = headers or {}
-        rng = headers.get("Range")
-        self.requests.append((url, rng))
+        range_header = (headers or {}).get("Range")
+        self.requests.append((url, range_header))
+
         if url != _WHEEL_URL:
             return _FakeResponse(200, {"content-type": _JSON_MEDIA}, self.listing, url)
         if self.wheel_status is not None:
             return _FakeResponse(self.wheel_status, {}, b"", url)
-        if rng is None or self.ignore_range:
+        if range_header is None or self.ignore_range:
             return _FakeResponse(200, {}, self.wheel, url)
-        return self._range(rng)
+        return self._range(range_header)
 
     async def aclose(self) -> None:
         return None
@@ -193,7 +171,7 @@ def _resolve(coordinator: FetchCoordinator) -> ResolveResult:
 def test_cold_resolve_recovers_metadata_over_range(tmp_path: Path) -> None:
     """A sidecar-less wheel locks by recovering METADATA over ranged reads."""
     transport = FakeRangeTransport(_wheel_bytes(), _listing_body())
-    with FetchCoordinator(transport, cache_dir=tmp_path) as coordinator:  # type: ignore[arg-type]
+    with FetchCoordinator(transport, cache_dir=tmp_path) as coordinator:
         result = _resolve(coordinator)
         assert result.success
         assert result.target_results[0].pins == {"widget": Version("1.0")}
@@ -212,7 +190,7 @@ def test_resolve_fails_when_wheel_url_unserved(tmp_path: Path) -> None:
     """An advertised wheel the index cannot serve fails the resolve loudly."""
     transport = FakeRangeTransport(_wheel_bytes(), _listing_body(), wheel_status=404)
     with (
-        FetchCoordinator(transport, cache_dir=tmp_path) as coordinator,  # type: ignore[arg-type]
+        FetchCoordinator(transport, cache_dir=tmp_path) as coordinator,
         pytest.raises(HttpError),
     ):
         _resolve(coordinator)
@@ -225,7 +203,7 @@ def test_full_body_wheel_matching_published_hash_resolves(tmp_path: Path) -> Non
     transport = FakeRangeTransport(
         served, _listing_body({"sha256": published}), ignore_range=True
     )
-    with FetchCoordinator(transport, cache_dir=tmp_path) as coordinator:  # type: ignore[arg-type]
+    with FetchCoordinator(transport, cache_dir=tmp_path) as coordinator:
         result = _resolve(coordinator)
         assert result.success
         assert result.target_results[0].pins == {"widget": Version("1.0")}
@@ -247,7 +225,7 @@ def test_full_body_wheel_failing_published_hash_aborts(tmp_path: Path) -> None:
         served, _listing_body({"sha256": published}), ignore_range=True
     )
     with (
-        FetchCoordinator(transport, cache_dir=tmp_path) as coordinator,  # type: ignore[arg-type]
+        FetchCoordinator(transport, cache_dir=tmp_path) as coordinator,
         pytest.raises(WheelHashMismatchError),
     ):
         _resolve(coordinator)
@@ -256,14 +234,12 @@ def test_full_body_wheel_failing_published_hash_aborts(tmp_path: Path) -> None:
 def test_warm_offline_replay_serves_cache_without_ranging(tmp_path: Path) -> None:
     """A warmed cache serves the recovered METADATA offline with no range read."""
     warm = FakeRangeTransport(_wheel_bytes(), _listing_body())
-    with FetchCoordinator(warm, cache_dir=tmp_path) as coordinator:  # type: ignore[arg-type]
+    with FetchCoordinator(warm, cache_dir=tmp_path) as coordinator:
         _resolve(coordinator)
     assert warm.range_requests
 
     offline = FakeRangeTransport(_wheel_bytes(), _listing_body())
-    with FetchCoordinator(  # type: ignore[arg-type]
-        offline, cache_dir=tmp_path, offline=True
-    ) as coordinator:
+    with FetchCoordinator(offline, cache_dir=tmp_path, offline=True) as coordinator:
         result = _resolve(coordinator)
         assert result.success
         assert result.target_results[0].pins == {"widget": Version("1.0")}

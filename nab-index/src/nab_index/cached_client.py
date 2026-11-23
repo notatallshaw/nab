@@ -795,6 +795,7 @@ class CachedAsyncSimpleClient(ListingReports):
         """
         url = f"{self._index_url}{canonicalize_name(package)}/"
         headers = {"Accept": simple_accept_header(self._serialization)}
+
         # Older cache entries may have an ETag without the page that supplied it.
         if (
             policy.page_url is not None
@@ -802,6 +803,7 @@ class CachedAsyncSimpleClient(ListingReports):
             and is_sendable_etag(policy.etag)
         ):
             headers["If-None-Match"] = policy.etag
+
         response = await self._transport.get(url, headers=headers)
         if response.status_code == _HTTP_NOT_MODIFIED:
             if response.url != policy.page_url or "If-None-Match" not in headers:
@@ -809,7 +811,7 @@ class CachedAsyncSimpleClient(ListingReports):
                 return await self._fetch_simple(package)
 
             # A 304 stating no freshness of its own keeps the stored max-age.
-            new_policy = CachePolicy(
+            refreshed_policy = CachePolicy(
                 fetched_at=_freshness_start(response),
                 max_age=(
                     _freshness_lifetime(response)
@@ -823,23 +825,24 @@ class CachedAsyncSimpleClient(ListingReports):
 
             # Find the records before refreshing the policy, so a body that
             # will not parse keeps its stale window.
-            unmodified = self._unmodified_records(package, new_policy)
+            unmodified = self._unmodified_records(package, refreshed_policy)
             if unmodified is None:
                 # The 304 confirmed a body the cache can no longer read.
                 return await self._fetch_simple(package)
 
-            await self._refresh_simple_policy(package, new_policy)
+            await self._refresh_simple_policy(package, refreshed_policy)
             return unmodified
 
         if response.status_code == _HTTP_NOT_FOUND:
             self._cache.put_negative(package, self._negative_policy(response))
             return ListingResult([])
+
         raise_unless_ok(response, url)
         new_body = _listing_body(
             response, self._index_url, package, self._serialization
         )
 
-        unchanged: ListingResult | None = None
+        reused_listing: ListingResult | None = None
         if (
             policy.body_digest is not None
             and hashlib.sha256(new_body).hexdigest() == policy.body_digest
@@ -847,15 +850,15 @@ class CachedAsyncSimpleClient(ListingReports):
             # A 200 must still repair missing or corrupt cached representations.
             cached = self._cache.get_simple(package)
             if cached is not None and cached[1].body_digest == policy.body_digest:
-                unchanged = self._parsed_hit(
+                reused_listing = self._parsed_hit(
                     package, replace(policy, page_url=response.url)
                 )
 
         # Parse before caching so a bad body never poisons the cache.
         listing = (
             self._parse_listing(new_body, package, response.url)
-            if unchanged is None
-            else unchanged
+            if reused_listing is None
+            else reused_listing
         )
 
         new_policy = CachePolicy(
@@ -864,7 +867,7 @@ class CachedAsyncSimpleClient(ListingReports):
             etag=_header(response, "etag"),
             page_url=response.url,
         )
-        if unchanged is not None:
+        if reused_listing is not None:
             await self._refresh_simple_policy(
                 package, replace(new_policy, body_digest=policy.body_digest)
             )

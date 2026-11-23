@@ -49,7 +49,6 @@ from nab_project.resolve import (
     _group_requirements_by_group,
     _ProjectTables,
     build_lock_input,
-    build_resolver_inputs,
     inputs_for_build_requirements,
     resolve_for_targets,
     resolve_with_coordinator,
@@ -78,6 +77,7 @@ from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     expand_extra_requirements,
 )
+from nab_provider.resolver_inputs import build_resolver_inputs
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
 from nab_provider.testing import FakeFetchPort, make_metadata, make_wheel

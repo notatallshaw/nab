@@ -3152,6 +3152,7 @@ def _split_row_patterns(
     """Enumerate every source truth pattern, including source-false witnesses."""
     if not row.within:
         return set()
+
     cell_units = max(1, (row.size + _PATTERN_BITS_PER_UNIT) // _PATTERN_BITS_PER_UNIT)
     prefix_units = max(
         1, (len(row.columns) + _PATTERN_BITS_PER_UNIT - 1) // _PATTERN_BITS_PER_UNIT
@@ -3165,8 +3166,10 @@ def _split_row_patterns(
     )
     if minimum > max_cells:
         return None
+
+    # Each region holds cells that agree on the source columns seen so far.
     regions = [(0, row.within)]
-    for position, value in enumerate(row.columns):
+    for position, column_mask in enumerate(row.columns):
         units = _pattern_buffer_units(
             columns=len(row.columns),
             cell_units=cell_units,
@@ -3181,17 +3184,19 @@ def _split_row_patterns(
             + len(regions) * (2 * cell_units + 2 * prefix_units + 3)
             + prefix_units
         )
+
         bit = 1 << position
-        complement = ~value
+        complement = ~column_mask
         refined = []
-        for prefix, region in regions:
-            positive = region & value
-            negative = region & complement
-            if positive:
-                refined.append((prefix | bit, positive))
-            if negative:
-                refined.append((prefix, negative))
+        for prefix, cells in regions:
+            true_cells = cells & column_mask
+            false_cells = cells & complement
+            if true_cells:
+                refined.append((prefix | bit, true_cells))
+            if false_cells:
+                refined.append((prefix, false_cells))
         regions = refined
+
     charge_work(len(regions) * (len(row.columns) + prefix_units + 1))
     return {prefix for prefix, _ in regions}
 

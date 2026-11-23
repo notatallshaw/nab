@@ -96,9 +96,6 @@ from .policy import (
     SourceRequest,
     VcsSource,
 )
-from .policy import (
-    ResolveMode as ResolveMode,  # noqa: PLC0414  (re-export, importable from here)
-)
 from .ranges import VersionRange, narrow_over_listing, require_version_range
 from .records import DistFile, SdistFile, WheelFile
 from .value import Record, field_names

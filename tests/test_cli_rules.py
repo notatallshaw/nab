@@ -26,7 +26,7 @@ import subprocess
 import sys
 import types
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Protocol
 
 import pytest
 
@@ -1330,20 +1330,30 @@ class TestSuggestions:
         assert suggest("lok", ("cache", "config", "lock", "download")) == ("lock",)
 
 
+class _ProbeRun(Protocol):
+    def __call__(self, **values: object) -> None: ...
+
+
+class _ProbeCommand(types.ModuleType):
+    """A command module that records invocations unless a test supplies a hook."""
+
+    def __init__(self) -> None:
+        super().__init__("nab_probe_command")
+        self.calls: list[dict[str, object]] = []
+        self.run: _ProbeRun = self._record
+
+    def _record(self, **values: object) -> None:
+        self.calls.append(values)
+
+
 class TestDispatch:
     """What dispatch returns, including the two errors it catches."""
 
     @pytest.fixture
-    def command(self, monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
-        """A module standing in for a command, registered where import finds it."""
-        module = types.ModuleType("nab_probe_command")
-        module.calls = []  # type: ignore[attr-defined]
-
-        def run(**values: object) -> None:
-            module.calls.append(values)  # type: ignore[attr-defined]
-
-        module.run = run  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "nab_probe_command", module)
+    def command(self, monkeypatch: pytest.MonkeyPatch) -> _ProbeCommand:
+        """Register the probe where command imports will find it."""
+        module = _ProbeCommand()
+        monkeypatch.setitem(sys.modules, module.__name__, module)
         return module
 
     def _parsed(self, values: dict[str, object]) -> Parsed:
@@ -1359,7 +1369,7 @@ class TestDispatch:
     _PATHS: ClassVar = {"probe": ("path", "output")}
 
     def test_a_command_runs_with_its_paths_coerced(
-        self, command: types.ModuleType
+        self, command: _ProbeCommand
     ) -> None:
         parsed = self._parsed({"path": "pyproject.toml", "output": None, "cache": True})
 
@@ -1369,7 +1379,7 @@ class TestDispatch:
         ]
 
     def test_a_command_with_no_paths_to_coerce_still_runs(
-        self, command: types.ModuleType
+        self, command: _ProbeCommand
     ) -> None:
         parsed = self._parsed({"path": "x", "output": "y"})
 
@@ -1377,37 +1387,37 @@ class TestDispatch:
         assert command.calls == [{"path": "x", "output": "y"}]
 
     def test_a_command_that_exits_reports_its_status(
-        self, command: types.ModuleType
+        self, command: _ProbeCommand
     ) -> None:
         def run(**_values: object) -> None:
             raise SystemExit(3)
 
-        command.run = run  # type: ignore[attr-defined]
+        command.run = run
 
         assert dispatch(self._parsed({}), self._TABLE, {}) == (3, "")
 
     def test_a_command_that_exits_with_a_message_reports_it(
-        self, command: types.ModuleType
+        self, command: _ProbeCommand
     ) -> None:
         def run(**_values: object) -> None:
             raise SystemExit("nothing to lock")
 
-        command.run = run  # type: ignore[attr-defined]
+        command.run = run
 
         assert dispatch(self._parsed({}), self._TABLE, {}) == (1, "nothing to lock")
 
     def test_a_command_that_exits_with_no_status_succeeded(
-        self, command: types.ModuleType
+        self, command: _ProbeCommand
     ) -> None:
         def run(**_values: object) -> None:
             raise SystemExit
 
-        command.run = run  # type: ignore[attr-defined]
+        command.run = run
 
         assert dispatch(self._parsed({}), self._TABLE, {}) == (0, "")
 
     def test_the_resume_runs_between_the_import_and_the_command(
-        self, command: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+        self, command: _ProbeCommand, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """``resume`` marks the end of startup: the module is in, nothing has run."""
         events: list[str] = []
@@ -1421,7 +1431,7 @@ class TestDispatch:
         def run(**_values: object) -> None:
             events.append("command")
 
-        command.run = run  # type: ignore[attr-defined]
+        command.run = run
         monkeypatch.setattr(builtins, "__import__", record_import)
 
         dispatch(
@@ -1431,7 +1441,7 @@ class TestDispatch:
         assert events == ["import", "resume", "command"]
 
     def test_a_line_the_printer_refuses_never_resumes(
-        self, command: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+        self, command: _ProbeCommand, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A printer refusal leaves the caller state unchanged."""
         monkeypatch.setenv("NAB_VERBOSITY", "loud")
@@ -1445,7 +1455,7 @@ class TestDispatch:
         assert resumed == []
 
     def test_a_malformed_verbosity_is_a_usage_error_and_no_command_runs(
-        self, command: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+        self, command: _ProbeCommand, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("NAB_VERBOSITY", "loud")
 

@@ -60,7 +60,6 @@ from nab_project.resolve import (
     ResolveResult,
     TargetResult,
     build_lock_input,
-    build_resolver_inputs,
     resolve_with_coordinator,
 )
 from nab_provider._provider import listing as listing_mod
@@ -91,7 +90,7 @@ from nab_provider.provider import (
     VcsSource,
 )
 from nab_provider.requirements_file import expand_extra_requirements
-from nab_provider.resolver_inputs import ProxyConstraints
+from nab_provider.resolver_inputs import ProxyConstraints, build_resolver_inputs
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
 from nab_provider.testing import FakeFetchPort, make_metadata, make_sdist, make_wheel

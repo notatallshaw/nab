@@ -184,7 +184,7 @@ class TestFetchCoordinator:
                 pass
 
         respx.get(url__regex=r".*").mock(return_value=httpx.Response(200, text="ok"))
-        coord = FetchCoordinator(transport=ReusableTransport())  # type: ignore[arg-type]
+        coord = FetchCoordinator(transport=ReusableTransport())
         with coord:
             event = coord.request_metadata("first", "1.0", "https://f.com/first")
             assert event.wait(timeout=5)
@@ -880,7 +880,7 @@ class TestFetchCoordinator:
             escaped.append(args.exc_value)
 
         monkeypatch.setattr(threading, "excepthook", _collect)
-        coord = FetchCoordinator(transport=_FailingTransport(failure))  # type: ignore[arg-type]
+        coord = FetchCoordinator(transport=_FailingTransport(failure))
 
         coord.start()
         coord.shutdown()
@@ -3085,7 +3085,7 @@ class TestRangeMetadataCoordinator:
 
     def test_offline_cold_stores_absent(self) -> None:
         transport = FakeRangeTransport("well_behaved", _build_range_wheel())
-        with FetchCoordinator(transport=transport, offline=True) as coord:  # type: ignore[arg-type]
+        with FetchCoordinator(transport=transport, offline=True) as coord:
             event = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
             assert event.wait(timeout=5)
             assert coord.index.get_metadata("widget", "1.0", _RANGE_URL) is None
@@ -3325,7 +3325,7 @@ class TestWarmSyncListingPath:
         _warm_parsed(cache, "pkg", files)
 
         coord = FetchCoordinator(
-            transport=_RaiseOnGetTransport(),  # type: ignore[arg-type]
+            transport=_RaiseOnGetTransport(),
             cache_dir=tmp_path,
         )
         coord._warm_sync_min_blob_bytes = 0
@@ -3415,7 +3415,7 @@ class TestWarmSyncListingPath:
     def test_gate_default_threshold(self, tmp_path: Path) -> None:
         """A fresh coordinator carries the module default blob-size threshold."""
         coord = FetchCoordinator(
-            transport=HttpxAsyncTransport(),  # type: ignore[arg-type]
+            transport=HttpxAsyncTransport(),
             cache_dir=tmp_path,
         )
         try:

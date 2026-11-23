@@ -43,7 +43,7 @@ from datetime import datetime, timezone
 from functools import cached_property, lru_cache, reduce
 from itertools import product
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
 from nab_index.atomic import atomic_write_text
 from nab_markersets.conversions import PreparedMarkerSets
@@ -729,7 +729,8 @@ def _prepare_pylock(
     base = (lock_dir if lock_dir is not None else Path.cwd()).resolve()
     exclusion_groups = conflict_exclusion_groups(lock_input.conflicts)
     store = DecisionStore()
-    # Build once for the universe and coverage check.
+
+    # The marker universe and coverage check share the same converted rows.
     environment_rows, uses_implementation_version = _prepare_environment_rows(
         lock_input.environments
     )
@@ -766,7 +767,7 @@ def _prepare_pylock(
         uses_implementation_version=uses_implementation_version,
     )
 
-    tool: dict[str, Any] | None = (
+    tool: dict[str, object] | None = (
         {"nab": lock_input.provenance.to_block()}
         if lock_input.provenance is not None
         else None

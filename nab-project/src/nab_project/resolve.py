@@ -38,7 +38,6 @@ __lazy_modules__ = (
     "nab_provider.pep508",
     "nab_provider.provider",
     "nab_provider.requirements_file",
-    "nab_provider.resolver_inputs",
     "nab_provider.target",
     "nab_resolver.errors",
     "pathlib",
@@ -69,9 +68,6 @@ from nab_provider.requirements_file import (
     expand_self_extras,
     iter_group_requirements,
     self_extra_markers,
-)
-from nab_provider.resolver_inputs import (
-    build_resolver_inputs as build_resolver_inputs,  # noqa: PLC0414  (re-export)
 )
 from nab_provider.target import (
     UNBOUNDABLE_MARKER_VARIABLES,
@@ -1105,9 +1101,9 @@ def _group_package_ranges(
 ) -> tuple[dict[str, VersionRange], dict[str, list[str]]]:
     """Fold one group's direct requirements into per-package ranges.
 
-    Mirrors :func:`build_resolver_inputs` (marker filtering,
-    canonicalisation, intersection); URL requirements are skipped. Also
-    returns the requirement strings per package, for the conflict message.
+    Filter markers, canonicalise names, and intersect ranges as in
+    :func:`nab_provider.resolver_inputs.build_resolver_inputs`. Skip URL
+    requirements and retain requirement strings for conflict messages.
     """
     ranges: dict[str, VersionRange] = {}
     sources: dict[str, list[str]] = defaultdict(list)
