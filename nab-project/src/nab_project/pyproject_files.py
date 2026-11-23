@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from nab_provider._vendor.packaging.requirements import Requirement
+    from packaging.requirements import Requirement
 
 __all__ = [
     "MissingProjectTableError",

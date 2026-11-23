@@ -24,6 +24,7 @@ classifiers = [
 # a config file. A host that supplies its own IO takes this, the solver and the
 # marker algebra, and none of nab's HTTP client, cache, or build machinery.
 dependencies = [
+    "packaging>=26.4",
     "nab-markersets==0.0.31.dev0",
     "nab-resolver==0.0.31.dev0",
     "typing_extensions>=4.6",

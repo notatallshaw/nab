@@ -37,6 +37,11 @@ from benchmark_datetime import parse_datetime
 from benchmark_json import read_benchmark_json
 from benchmark_paths import result_directory_label
 from benchmark_source import get_git_source_state
+from packaging.pylock import Pylock, PylockSelectError
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
+from packaging.version import Version
 from universal_result import (
     MANIFEST_FILENAME,
     RESULT_SCHEMA_VERSION,
@@ -58,11 +63,6 @@ from nab_project.resolve import (
     build_lock_input,
     resolve_with_coordinator,
 )
-from nab_provider._vendor.packaging.pylock import Pylock, PylockSelectError
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.overrides import PackageOverride
 from nab_provider.provider import ResolutionStrategy
 from nab_provider.ranges import VersionRange

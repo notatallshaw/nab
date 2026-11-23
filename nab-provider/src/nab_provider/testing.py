@@ -13,7 +13,7 @@ request and :meth:`FakeFetchPort.calls_to` to inspect its calls.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_provider._vendor.packaging.utils",
+    "packaging.utils",
     "nab_provider.errors",
     "nab_provider.overrides",
     "nab_provider.pep508",
@@ -24,8 +24,9 @@ __lazy_modules__ = (
 import threading
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar
 
+from packaging.utils import canonicalize_name
+
 from ._compat import override
-from ._vendor.packaging.utils import canonicalize_name
 from .errors import IndexAccessError
 from .fetch_port import PrefetchSettings
 from .overrides import PackageOverride
@@ -44,9 +45,9 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
+    from packaging.requirements import Requirement
     from typing_extensions import Unpack
 
-    from ._vendor.packaging.requirements import Requirement
     from .metadata import WheelMetadata
     from .policy import (
         BuildPolicy,

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import pytest
+from packaging.ranges import VersionRange
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from nab_project._resolve.engine import _augment_resolution_error
 from nab_project.inputs import ResolveInputs
 from nab_project.resolve import resolve_with_coordinator
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import Provider
 from nab_provider.records import SdistFile
 from nab_provider.target import ResolveTarget

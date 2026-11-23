@@ -36,6 +36,9 @@ import pyproject_hooks
 import pytest
 import tomli
 from installer.utils import SCHEME_NAMES, Scheme
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 from nab_index.client import SdistFile, WheelFile
 from nab_index.httpx2_async_transport import Httpx2AsyncTransport
@@ -76,9 +79,6 @@ from nab_project.lockfile import (
 )
 from nab_project.resolve import ResolveResult, TargetResult, resolve_for_targets
 from nab_provider._provider.metadata_resolver import pick_dist
-from nab_provider._vendor.packaging.requirements import InvalidRequirement, Requirement
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.overrides import IndexOverride, PackageOverride
 from nab_provider.policy import MetadataPolicy
 from nab_provider.provider import (

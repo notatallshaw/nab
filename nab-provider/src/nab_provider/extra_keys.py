@@ -6,11 +6,11 @@ have to spell its key the same way.
 
 from __future__ import annotations
 
-__lazy_modules__ = ("nab_provider._vendor.packaging.utils",)
+__lazy_modules__ = ("packaging.utils",)
 
 import re
 
-from ._vendor.packaging.utils import canonicalize_name
+from packaging.utils import canonicalize_name
 
 __all__ = [
     "join_extra",

@@ -8,15 +8,14 @@ import sys
 import warnings
 
 import pytest
-from packaging.markers import Marker as ExternalMarker
-
-from nab_markersets import conversions as conversion_module
-from nab_markersets._packaging import (
+from packaging.markers import (
     InvalidMarker,
     Marker,
     UndefinedComparison,
     UndefinedEnvironmentName,
 )
+
+from nab_markersets import conversions as conversion_module
 from nab_markersets.conversions import MarkerSetCache
 from nab_markersets.errors import IntractableMarkerSet
 from nab_markersets.markersets import MarkerSet
@@ -31,14 +30,12 @@ ENV = {
 
 
 @pytest.fixture
-def conversions(monkeypatch: pytest.MonkeyPatch) -> list[str | Marker | ExternalMarker]:
+def conversions(monkeypatch: pytest.MonkeyPatch) -> list[str | Marker]:
     """Observe actual factory calls while retaining their original behavior."""
-    calls: list[str | Marker | ExternalMarker] = []
+    calls: list[str | Marker] = []
     original = MarkerSet.from_marker
 
-    def observed(
-        _cls: type[MarkerSet], source: str | Marker | ExternalMarker
-    ) -> MarkerSet:
+    def observed(_cls: type[MarkerSet], source: str | Marker) -> MarkerSet:
         calls.append(source)
         return original(source)
 
@@ -206,21 +203,6 @@ def test_warning_filter_changes_still_reparse_escaped_literals(
     assert len(conversions) == 3
 
 
-@pytest.mark.skipif(Marker is ExternalMarker, reason="requires both packaging backends")
-def test_foreign_markers_keep_the_original_conversion_path(
-    conversions: list[str | Marker | ExternalMarker],
-) -> None:
-    evaluator = MarkerSetCache()
-    native = Marker('sys_platform == "linux"')
-    foreign = ExternalMarker('sys_platform == "linux"')
-    assert evaluator.from_marker(native).evaluate(ENV)
-    assert evaluator.from_marker(foreign).evaluate(ENV)
-    assert evaluator.from_marker(foreign).evaluate(ENV)
-    assert len(conversions) == 3
-    assert conversions[1] is foreign
-    assert conversions[2] is foreign
-
-
 def test_native_rendering_recursion_keeps_the_bounded_error() -> None:
     frame = sys._getframe()
     depth = 0
@@ -295,7 +277,7 @@ def test_cached_sets_match_fresh_construction_across_environments(source: str) -
 
 
 def test_strings_and_string_subclasses_remain_fresh(
-    conversions: list[str | Marker | ExternalMarker],
+    conversions: list[str | Marker],
 ) -> None:
     class Source(str):
         """A string subclass accepted by the ordinary constructor."""
@@ -348,9 +330,7 @@ def test_cache_works_with_released_packaging_without_provider() -> None:
 import sys
 sys.modules["nab_provider"] = None
 from packaging.markers import Marker
-from nab_markersets._packaging import BACKEND
 from nab_markersets.conversions import MarkerSetCache
-assert BACKEND == "packaging"
 cache = MarkerSetCache()
 first = cache.from_marker(Marker('sys_platform == "linux"'))
 second = cache.from_marker(Marker('sys_platform == "linux"'))

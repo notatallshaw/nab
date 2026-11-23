@@ -6,20 +6,20 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-
-from nab_project.inputs import ResolveInputs
-from nab_project.lock_preferences import LockPreferences, read_lock_preferences
-from nab_project.resolve import resolve_with_coordinator
-from nab_provider._vendor.packaging.markers import Marker
-from nab_provider._vendor.packaging.pylock import (
+from packaging.markers import Marker
+from packaging.pylock import (
     Package,
     PackageArchive,
     PackageWheel,
     Pylock,
 )
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import Version
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+from packaging.version import Version
+
+from nab_project.inputs import ResolveInputs
+from nab_project.lock_preferences import LockPreferences, read_lock_preferences
+from nab_project.resolve import resolve_with_coordinator
 from nab_provider.environment import marker_environment
 from nab_provider.policy import BuildPolicy, DecisionOrder
 from nab_provider.provider import Provider

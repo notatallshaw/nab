@@ -6,7 +6,7 @@ __lazy_modules__ = (
     "nab_provider._provider.extras",
     "nab_provider._provider.listing_diagnosis",
     "nab_provider._provider.metadata_resolver",
-    "nab_provider._vendor.packaging.utils",
+    "packaging.utils",
     "nab_provider.errors",
     "nab_provider.extra_keys",
     "nab_provider.metadata",
@@ -17,14 +17,15 @@ __lazy_modules__ = (
 from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Final
 
+from packaging.ranges import VersionRange
+from packaging.utils import canonicalize_name
+
 from nab_resolver.errors import ResolutionInvariantError
 
 from ._compat import override
 from ._provider.extras import version_provides_extra
 from ._provider.listing_diagnosis import MetadataBlock
 from ._provider.metadata_resolver import classify_requirement, dists_at_version
-from ._vendor.packaging.ranges import VersionRange
-from ._vendor.packaging.utils import canonicalize_name
 from .errors import MetadataError, MissingExtraError
 from .extra_keys import split_extra
 from .metadata import intern_version
@@ -38,8 +39,9 @@ _UNRESTRICTED_RANGE = VersionRange.full()
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from ._vendor.packaging.requirements import Requirement
-    from ._vendor.packaging.version import Version
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+
     from .provider import DistFile, Provider, ProviderStats
 
 

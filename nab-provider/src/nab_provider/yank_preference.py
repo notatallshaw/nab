@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from packaging.ranges import VersionRange
+from packaging.requirements import Requirement
+
 from nab_resolver.resolver import ResolverStats
 
 from ._compat import override
-from ._vendor.packaging.ranges import VersionRange
-from ._vendor.packaging.requirements import Requirement
 from .preference import (
     IncompletePreferenceError,
     PreferenceSearch,
@@ -22,7 +23,8 @@ from .yank_candidates import Candidate
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from ._vendor.packaging.version import Version
+    from packaging.version import Version
+
     from .provider import Provider
     from .yank_candidates import YankCandidates
 

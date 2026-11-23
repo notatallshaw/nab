@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING
 
-from ._vendor.packaging.markers import (
+from packaging.markers import (
     UndefinedComparison,
     UndefinedEnvironmentName,
     default_environment,
@@ -14,7 +14,7 @@ from ._vendor.packaging.markers import (
 if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
 
-    from ._vendor.packaging.markers import Environment, Marker
+    from packaging.markers import Environment, Marker
 
 __all__ = [
     "EnvironmentSource",

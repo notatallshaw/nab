@@ -5,10 +5,10 @@ from __future__ import annotations
 from functools import partial
 
 import pytest
+from packaging.requirements import Requirement
 
 from nab_project.diagnostics import ResolutionMessage
 from nab_project.resolve import resolve_with_coordinator
-from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.policy import DistPolicy, MetadataPolicy
 from nab_provider.provider import Provider

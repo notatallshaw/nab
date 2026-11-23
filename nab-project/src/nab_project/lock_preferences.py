@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nab_provider._vendor.packaging.pylock import (
+from packaging.pylock import (
     Pylock,
     PylockSelectError,
     PylockValidationError,
 )
-from nab_provider._vendor.packaging.utils import canonicalize_name
+from packaging.utils import canonicalize_name
+
 from nab_provider.environment import marker_environment
 from nab_provider.tags import TagSet, parse_wheel_tag_set
 
@@ -20,8 +21,9 @@ if TYPE_CHECKING:
     from collections.abc import Collection
     from pathlib import Path
 
-    from nab_provider._vendor.packaging.tags import Tag
-    from nab_provider._vendor.packaging.version import Version
+    from packaging.tags import Tag
+    from packaging.version import Version
+
     from nab_provider.target import ResolveTarget
 
 __all__ = ["LockPreferences", "read_lock_preferences", "read_lockfile_packages"]

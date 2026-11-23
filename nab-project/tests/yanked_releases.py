@@ -6,7 +6,8 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
-from nab_provider._vendor.packaging.utils import canonicalize_name
+from packaging.utils import canonicalize_name
+
 from nab_provider.pep508 import parse_requirement
 from nab_provider.testing import make_metadata, make_wheel
 from nab_provider.yanking import mark_yanked

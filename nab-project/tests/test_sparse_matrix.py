@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import pytest
+from packaging.pylock import PackageWheel, PylockSelectError
+from packaging.requirements import Requirement
+from packaging.tags import Tag
 
 from nab_index.client import WheelFile
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import build_pylock
 from nab_project.resolve import build_lock_input, resolve_with_coordinator
-from nab_provider._vendor.packaging.pylock import PackageWheel, PylockSelectError
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.tags import Tag
 from nab_provider.provider import BuildPolicy
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, MatrixInclude, ResolveTarget

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_provider._vendor.packaging.specifiers",
+    "packaging.specifiers",
     "nab_provider.metadata",
     "nab_provider.project_requirements",
     "tokenize",
@@ -15,8 +15,8 @@ import tokenize
 from typing import TYPE_CHECKING, Any
 
 import tomli
+from packaging.specifiers import SpecifierSet
 
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider.metadata import validate_specifier_versions
 from nab_provider.project_requirements import (
     InvalidProjectRequirementError,
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
     from pathlib import Path
 
-    from nab_provider._vendor.packaging.requirements import Requirement
+    from packaging.requirements import Requirement
 
 __all__ = ["ScriptMetadata", "read_script_metadata"]
 

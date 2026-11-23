@@ -19,6 +19,10 @@ from unittest.mock import patch
 import httpx
 import pytest
 import respx
+from packaging.ranges import VersionRange
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.version import InvalidVersion, Version
 
 from nab_index.cache import CachePolicy, OnDiskCache
 from nab_index.client import (
@@ -48,10 +52,6 @@ from nab_project.resolve import resolve_with_coordinator
 from nab_provider._provider import build_remote, metadata_resolver
 from nab_provider._provider import listing as listing_mod
 from nab_provider._provider import listing_diagnosis as diagnosis_mod
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_provider.errors import YankAdmissionRequiredError
 from nab_provider.marker_holds import UnevaluableMarkerError, dependency_marker_holds
 from nab_provider.metadata import WheelMetadata
@@ -3189,7 +3189,7 @@ class TestLocalSources:
         member: the resolver reported "no versions of <member> in
         [3.3.0, 3.4.0.dev0)" because only the local source supplied that range.
         """
-        from nab_provider._vendor.packaging.specifiers import SpecifierSet
+        from packaging.specifiers import SpecifierSet
 
         self._write_local(
             tmp_path,
@@ -4222,7 +4222,7 @@ class TestEffectiveBuildPolicy:
         build backend (mocked here) along with the run's ``--offline``
         flag.
         """
-        from nab_provider._vendor.packaging.version import Version as _Version
+        from packaging.version import Version as _Version
 
         archive_bytes = b"sdist-archive-bytes"
         coordinator = make_coordinator(
@@ -4293,7 +4293,7 @@ class TestEffectiveBuildPolicy:
         augmenting or rebuilding the same sdist for every tuple. The cache key
         is the canonical name and version string.
         """
-        from nab_provider._vendor.packaging.version import Version as _Version
+        from packaging.version import Version as _Version
 
         coordinator = make_coordinator([make_sdist("1.0")], package="pkg")
         provider = Provider(coordinator, target=_PY312)

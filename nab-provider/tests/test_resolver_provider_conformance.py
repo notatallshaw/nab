@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import Provider
 from nab_provider.ranges import VersionRange
 from nab_provider.testing import make_coordinator, make_metadata, make_wheel

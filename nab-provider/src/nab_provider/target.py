@@ -22,9 +22,9 @@ from __future__ import annotations
 __lazy_modules__ = (
     "nab_markersets.markersets",
     "nab_markersets.python_versions",
-    "nab_provider._vendor.packaging.ranges",
-    "nab_provider._vendor.packaging.specifiers",
-    "nab_provider._vendor.packaging.version",
+    "packaging.ranges",
+    "packaging.specifiers",
+    "packaging.version",
     "nab_provider.conflict_kind",
     "nab_provider.environment",
     "nab_provider.marker_holds",
@@ -36,18 +36,19 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, ClassVar, Final, NamedTuple
 from urllib.parse import quote
 
-from nab_markersets.markersets import variable_names
-from nab_markersets.python_versions import validate_python_version
-
-from ._vendor.packaging import tags as ptags
-from ._vendor.packaging.markers import Marker, default_environment
-from ._vendor.packaging.ranges import VersionRange
-from ._vendor.packaging.specifiers import (
+from packaging import tags as ptags
+from packaging.markers import Marker, default_environment
+from packaging.ranges import VersionRange
+from packaging.specifiers import (
     InvalidSpecifier,
     Specifier,
     SpecifierSet,
 )
-from ._vendor.packaging.version import InvalidVersion, Version
+from packaging.version import InvalidVersion, Version
+
+from nab_markersets.markersets import variable_names
+from nab_markersets.python_versions import validate_python_version
+
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS, MARKER_VARIABLE_FOR_KIND
 from .environment import (
     EnvironmentSource,

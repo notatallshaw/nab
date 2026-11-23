@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pytest
+from packaging.version import Version
 
 from nab_provider._provider.build_remote import build_remote_sdist
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import OverrideConflictError, UnsupportedSdistError
 from nab_provider.metadata import parse_metadata
 from nab_provider.overrides import IndexOverride

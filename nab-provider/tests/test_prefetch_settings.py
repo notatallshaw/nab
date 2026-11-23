@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pytest
+from packaging.ranges import VersionRange
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.fetch_port import PrefetchSettings
 from nab_provider.provider import Provider
 from nab_provider.testing import make_coordinator, make_wheel

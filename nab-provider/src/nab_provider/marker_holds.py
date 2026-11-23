@@ -11,7 +11,7 @@ __lazy_modules__ = (
     "nab_markersets.conversions",
     "nab_markersets.errors",
     "nab_markersets.markersets",
-    "nab_provider._vendor.packaging.markers",
+    "packaging.markers",
     "nab_provider.conflict_kind",
     "nab_provider.environment",
 )
@@ -19,14 +19,15 @@ __lazy_modules__ = (
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
+from packaging.markers import (
+    Marker,
+    UndefinedComparison,
+)
+
 from nab_markersets.conversions import MarkerSetCache
 from nab_markersets.errors import IntractableMarkerSet
 from nab_markersets.markersets import MarkerSet, variable_names
 
-from ._vendor.packaging.markers import (
-    Marker,
-    UndefinedComparison,
-)
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS
 from .environment import (
     UnevaluableMarkerError,

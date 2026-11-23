@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nab_provider._vendor.packaging.markers import Marker
+from packaging.markers import Marker
 
 
 class TestFormatMarker:

@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import (
     ForeignMetadataError,
     IncompatiblePythonError,

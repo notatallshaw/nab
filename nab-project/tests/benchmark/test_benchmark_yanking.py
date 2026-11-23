@@ -8,8 +8,8 @@ from functools import partial
 from typing import TYPE_CHECKING, TypeVar
 
 import pytest
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.records import WheelFile
 from nab_provider.target import ResolveTarget
 from nab_provider.yanked_resolution import YankProxyProvider

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
+from packaging.markers import Marker, default_environment
 
-from nab_provider._vendor.packaging.markers import Marker, default_environment
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import (
     KNOWN_PYTHON_MINORS,
@@ -220,7 +220,7 @@ class TestMatrixExpand:
 
     def test_patch_level_marker_evaluation(self) -> None:
         """Patch-bound markers evaluate against the declared full version."""
-        from nab_provider._vendor.packaging.markers import Marker
+        from packaging.markers import Marker
 
         matrix = Matrix(
             python="==3.11",

@@ -7,6 +7,10 @@ from typing import Any, ClassVar
 from unittest.mock import patch
 
 import pytest
+from packaging.ranges import VersionRange
+from packaging.specifiers import SpecifierSet
+from packaging.tags import Tag
+from packaging.version import Version
 
 from nab_provider._provider import listing as listing_mod
 from nab_provider._provider import listing_diagnosis as diagnosis_mod
@@ -15,10 +19,6 @@ from nab_provider._provider.metadata_resolver import (
     dists_at_version,
     pick_dist_for_metadata,
 )
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.tags import Tag
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import (
     BuildPolicy,
     LocalSource,

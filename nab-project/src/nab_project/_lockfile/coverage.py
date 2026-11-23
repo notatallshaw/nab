@@ -33,7 +33,8 @@ from nab_provider.target import UNBOUNDABLE_MARKER_VARIABLES, declared_range_mar
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from nab_provider._vendor.packaging.markers import Marker
+    from packaging.markers import Marker
+
     from nab_provider.target import ResolveTarget
 
 

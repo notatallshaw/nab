@@ -12,7 +12,6 @@ __lazy_modules__ = (
     "itertools",
     "math",
     "nab_markersets._compat",
-    "nab_markersets._packaging",
     "nab_markersets.errors",
     "nab_markersets.python_versions",
 )
@@ -24,25 +23,22 @@ from enum import Enum, auto
 from functools import lru_cache
 from itertools import islice, pairwise, product
 from math import prod
-from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Protocol, cast
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, cast
 
-from ._compat import get_int_max_str_digits
-from ._packaging import (
+from packaging._parser import Op, Value, Variable, parse_marker
+from packaging._tokenizer import ParserSyntaxError
+from packaging.markers import (
     InvalidMarker,
-    InvalidSpecifier,
-    InvalidVersion,
-    Op,
-    ParserSyntaxError,
-    Specifier,
+    Marker,
     UndefinedComparison,
     UndefinedEnvironmentName,
-    Value,
-    Variable,
-    Version,
-    _eval_op,
-    canonicalize_name,
-    parse_marker,
+    _eval_op,  # Reuse packaging's marker evaluation semantics.
 )
+from packaging.specifiers import InvalidSpecifier, Specifier
+from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
+
+from ._compat import get_int_max_str_digits
 from .errors import IntractableMarkerSet, UnserializableMarkerSet
 from .python_versions import supports_python_version, validate_python_environment
 
@@ -58,7 +54,7 @@ if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
     from typing import TypeAlias
 
-    from ._packaging import MarkerAtom, MarkerList
+    from packaging._parser import MarkerAtom, MarkerList
 
     MarkerValue: TypeAlias = "str | AbstractSet[str]"
     MarkerEnvironment: TypeAlias = "Mapping[str, MarkerValue]"
@@ -514,36 +510,9 @@ def make_not(node: Formula) -> Formula:
 # ------------------------------------------------------------------- construction
 
 
-class MarkerLike(Protocol):
-    """A packaging ``Marker`` from either copy: released, or the fork nab vendors.
-
-    Structural, so a checker admits a ``Marker`` built by the copy the algebra
-    did not bind; :func:`_is_marker` is the same test at runtime.
-    """
-
-    def evaluate(
-        self,
-        environment: Mapping[str, str | AbstractSet[str]] | None = None,
-        context: Literal["metadata", "lock_file", "requirement"] = "metadata",
-    ) -> bool: ...
-
-
-def _is_marker(source: object) -> bool:
-    """Whether ``source`` is a packaging ``Marker``, from either copy.
-
-    Matched on the class rather than by ``isinstance``, because testing against
-    the copy that lost the probe would mean importing its marker stack, which
-    is the second copy this package exists to leave unloaded.
-    """
-    kind = type(source)
-    return kind.__qualname__ == "Marker" and kind.__module__.endswith(
-        "packaging.markers"
-    )
-
-
 def _parse_ast(source: object) -> Sequence[MarkerNode] | None:
     """Parse a marker with packaging; None for an empty marker."""
-    if _is_marker(source):
+    if type(source) is Marker:
         source = str(source)
     elif not isinstance(source, str):
         kind = type(source)
@@ -561,14 +530,14 @@ def _parse_ast(source: object) -> Sequence[MarkerNode] | None:
         raise InvalidMarker(str(exc)) from exc
 
 
-def parse(source: str | MarkerLike) -> Formula:
+def parse(source: str | Marker) -> Formula:
     """Parse a marker into the normalised op-tree."""
     parsed = _parse_ast(source)
     return TRUE if parsed is None else _convert(parsed)
 
 
 def parse_with_variables(
-    source: str | MarkerLike,
+    source: str | Marker,
 ) -> tuple[Formula, frozenset[str]]:
     """Convert a marker and collect names from its original parsed syntax."""
     parsed = _parse_ast(source)
@@ -581,7 +550,7 @@ def parse_with_variables(
     return tree, frozenset(names)
 
 
-def variable_names(source: str | MarkerLike) -> frozenset[str]:
+def variable_names(source: str | Marker) -> frozenset[str]:
     """Return every marker variable ``source`` names, as parsed.
 
     Builds no atoms, so a marker the algebra rejects still yields its names.
@@ -596,7 +565,7 @@ def variable_names(source: str | MarkerLike) -> frozenset[str]:
 
 
 def _parsed_comparisons(node: Sequence[MarkerNode]) -> Iterator[MarkerComparison]:
-    """Walk comparison tuples from either supported parser's recursive syntax."""
+    """Walk comparison tuples from packaging's parsed marker."""
     for item in node:
         if isinstance(item, str):
             continue
@@ -604,8 +573,7 @@ def _parsed_comparisons(node: Sequence[MarkerNode]) -> Iterator[MarkerComparison
             yield from _parsed_comparisons(item)
             continue
 
-        # Parser groups are lists, although its Sequence alias also admits tuples.
-        yield cast("MarkerComparison", item)
+        yield item
 
 
 def _collect_variables(node: Sequence[MarkerNode], names: set[str]) -> None:

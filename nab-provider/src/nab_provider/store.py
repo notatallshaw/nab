@@ -7,7 +7,7 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "hashlib",
-    "nab_provider._vendor.packaging.utils",
+    "packaging.utils",
     "nab_provider.metadata",
 )
 
@@ -16,7 +16,8 @@ from contextlib import contextmanager
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from ._vendor.packaging.utils import canonicalize_version
+from packaging.utils import canonicalize_version
+
 from .metadata import metadata_header_block, metadata_without_description
 
 if TYPE_CHECKING:

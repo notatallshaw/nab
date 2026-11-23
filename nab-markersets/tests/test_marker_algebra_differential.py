@@ -20,8 +20,9 @@ import itertools
 import random
 
 import pytest
+from packaging.markers import Marker
+from packaging.version import Version
 
-from nab_markersets._packaging import Marker, Version
 from nab_markersets.markersets import MarkerSet
 
 # Supported Python versions straddle the literals and their prerelease boundaries.

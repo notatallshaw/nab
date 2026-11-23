@@ -22,7 +22,7 @@ __lazy_modules__ = (
     "nab_project._build_remote",
     "nab_project._sources",
     "nab_project.toml_io",
-    "nab_provider._vendor.packaging.utils",
+    "packaging.utils",
     "nab_provider.fetch_port",
     "nab_provider.metadata",
     "nab_provider.policy",
@@ -31,7 +31,6 @@ __lazy_modules__ = (
     "nab_provider.serialization",
     "nab_provider.store",
     "nab_resolver.diagnostics",
-    "packaging.utils",
     "threading",
     "urllib.parse",
 )
@@ -43,7 +42,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-from packaging.utils import canonicalize_name as canonicalize_name_boundary
+from packaging.utils import canonicalize_name
 
 from nab_index.cache import CacheBackend, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import (
@@ -61,7 +60,6 @@ from nab_index.transport import (
     TunedHttpTransport,
     raise_unless_ok,
 )
-from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.errors import IndexAccessError
 from nab_provider.fetch_port import PrefetchSettings
 from nab_provider.metadata import static_project_from_table
@@ -1520,7 +1518,7 @@ class FetchCoordinator:
             req.package,
             req.version,
             req.url,
-            canonicalize_name_boundary(req.package),
+            canonicalize_name(req.package),
             req.hashes,
         )
         self.index.store_range_outcome(

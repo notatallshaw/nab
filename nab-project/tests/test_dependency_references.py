@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from packaging.markers import Marker
+from packaging.pylock import Pylock
 
 from nab_project import toml_io
 from nab_project.lockfile import (
@@ -23,8 +25,6 @@ from nab_project.lockfile import (
     render_lock,
     resolve_dependency_references,
 )
-from nab_provider._vendor.packaging.markers import Marker
-from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 

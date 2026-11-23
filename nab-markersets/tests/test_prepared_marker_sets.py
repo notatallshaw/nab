@@ -9,24 +9,21 @@ import sys
 import warnings
 
 import pytest
-from packaging.markers import Marker as ExternalMarker
+from packaging.markers import InvalidMarker, Marker, UndefinedComparison
 
 from nab_markersets import conversions as conversion_module
-from nab_markersets._packaging import InvalidMarker, Marker, UndefinedComparison
 from nab_markersets.conversions import PreparedMarkerSets
 from nab_markersets.errors import IntractableMarkerSet
 from nab_markersets.markersets import MarkerSet
 
 
 @pytest.fixture
-def conversions(monkeypatch: pytest.MonkeyPatch) -> list[str | Marker | ExternalMarker]:
+def conversions(monkeypatch: pytest.MonkeyPatch) -> list[str | Marker]:
     """Observe the real factory without replacing its results or failures."""
-    calls: list[str | Marker | ExternalMarker] = []
+    calls: list[str | Marker] = []
     original = MarkerSet.from_marker
 
-    def observed(
-        _cls: type[MarkerSet], marker: str | Marker | ExternalMarker
-    ) -> MarkerSet:
+    def observed(_cls: type[MarkerSet], marker: str | Marker) -> MarkerSet:
         calls.append(marker)
         return original(marker)
 
@@ -35,7 +32,7 @@ def conversions(monkeypatch: pytest.MonkeyPatch) -> list[str | Marker | External
 
 
 def test_prepare_is_fresh_but_validation_reuses_matching_text(
-    conversions: list[str | Marker | ExternalMarker],
+    conversions: list[str | Marker],
 ) -> None:
     owner = PreparedMarkerSets()
     marker = Marker('sys_platform == "linux"')
@@ -61,7 +58,7 @@ def test_prepare_is_fresh_but_validation_reuses_matching_text(
     "literal", ["x" * 64, "x" * 65, "'" * 64, "'" * 65, '"' * 64, '"' * 65]
 )
 def test_original_quoted_literal_boundary(
-    conversions: list[str | Marker | ExternalMarker], literal: str
+    conversions: list[str | Marker], literal: str
 ) -> None:
     quote = "'" if '"' in literal else '"'
     marker = Marker(f"os_name == {quote}{literal}{quote}")
@@ -73,7 +70,7 @@ def test_original_quoted_literal_boundary(
 
 def test_capacity_keeps_existing_handoffs(
     monkeypatch: pytest.MonkeyPatch,
-    conversions: list[str | Marker | ExternalMarker],
+    conversions: list[str | Marker],
 ) -> None:
     monkeypatch.setattr(conversion_module, "_PREPARED_MAX_ENTRIES", 2)
     markers = [Marker(f'os_name == "p{index}"') for index in range(3)]
@@ -88,7 +85,7 @@ def test_capacity_keeps_existing_handoffs(
 
 def test_total_text_budget_counts_each_distinct_key_once(
     monkeypatch: pytest.MonkeyPatch,
-    conversions: list[str | Marker | ExternalMarker],
+    conversions: list[str | Marker],
 ) -> None:
     first, second, third = (Marker(f'os_name == "p{index}"') for index in range(3))
     monkeypatch.setattr(
@@ -108,7 +105,7 @@ def test_total_text_budget_counts_each_distinct_key_once(
 
 
 def test_failed_preparation_leaves_validation_fresh(
-    conversions: list[str | Marker | ExternalMarker],
+    conversions: list[str | Marker],
 ) -> None:
     marker = Marker('os_name ~= "posix"')
     owner = PreparedMarkerSets()
@@ -119,20 +116,9 @@ def test_failed_preparation_leaves_validation_fresh(
     assert len(conversions) == 3
 
 
-@pytest.mark.skipif(Marker is ExternalMarker, reason="requires both packaging backends")
-def test_foreign_markers_are_never_handed_off(
-    conversions: list[str | Marker | ExternalMarker],
-) -> None:
-    owner = PreparedMarkerSets()
-    foreign = ExternalMarker('sys_platform == "linux"')
-    owner.prepare(foreign)
-    assert owner.convert(foreign).evaluate({"sys_platform": "linux"})
-    assert conversions == [foreign, foreign]
-
-
 def test_custom_renderers_are_never_handed_off(
     monkeypatch: pytest.MonkeyPatch,
-    conversions: list[str | Marker | ExternalMarker],
+    conversions: list[str | Marker],
 ) -> None:
     owner = PreparedMarkerSets()
     original = Marker.__str__
@@ -179,7 +165,7 @@ def test_handoff_keys_the_rendering_converted_by_the_factory(
 
 
 def test_warning_filter_changes_keep_escaped_conversions_fresh(
-    conversions: list[str | Marker | ExternalMarker],
+    conversions: list[str | Marker],
 ) -> None:
     owner = PreparedMarkerSets()
     with warnings.catch_warnings():
@@ -201,7 +187,7 @@ def test_warning_filter_changes_keep_escaped_conversions_fresh(
 
 
 def test_current_recursion_limit_selects_the_conversion_context(
-    conversions: list[str | Marker | ExternalMarker],
+    conversions: list[str | Marker],
 ) -> None:
     owner = PreparedMarkerSets()
     marker = Marker('os_name == "posix"')
@@ -249,7 +235,7 @@ def test_context_change_during_conversion_prevents_handoff(
     not hasattr(sys, "set_int_max_str_digits"), reason="requires a native digit limit"
 )
 def test_folded_away_long_original_literal_is_not_retained(
-    conversions: list[str | Marker | ExternalMarker],
+    conversions: list[str | Marker],
 ) -> None:
     previous = sys.get_int_max_str_digits()
     owner = PreparedMarkerSets()
@@ -353,9 +339,7 @@ def test_handoff_works_with_released_packaging_without_provider() -> None:
 import sys
 sys.modules["nab_provider"] = None
 from packaging.markers import Marker
-from nab_markersets._packaging import BACKEND
 from nab_markersets.conversions import PreparedMarkerSets
-assert BACKEND == "packaging"
 owner = PreparedMarkerSets()
 marker = Marker('sys_platform == "linux"')
 prepared = owner.prepare(marker)
@@ -374,7 +358,7 @@ assert not converted.evaluate({"sys_platform": "win32"})
 
 
 def test_strings_and_subclasses_keep_fresh_preparation_and_conversion(
-    conversions: list[str | Marker | ExternalMarker],
+    conversions: list[str | Marker],
 ) -> None:
     class Source(str):
         """A supported string with its concrete type retained at the factory."""

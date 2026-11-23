@@ -7,12 +7,12 @@ import weakref
 from collections.abc import Callable, Sequence
 
 import pytest
+from packaging.ranges import VersionRange
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 
 from nab_provider._provider import candidate_views
 from nab_provider._provider.candidate_views import CandidatePreparation
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import (
     MetadataHashMismatchError,
     SiblingMetadataDivergenceError,

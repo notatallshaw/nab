@@ -7,8 +7,8 @@ import subprocess
 import sys
 
 import pytest
+from packaging.ranges import VersionRange
 
-from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider.errors import OverrideConflictError
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import DecisionOrder, DistPolicy
@@ -20,7 +20,7 @@ from nab_resolver.resolver import Resolver
 _PROBE = """
 import sys
 
-from nab_provider._vendor.packaging.ranges import VersionRange
+from packaging.ranges import VersionRange
 from nab_provider.errors import OverrideConflictError
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import DecisionOrder, DistPolicy

@@ -10,6 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 import respx
+from packaging.version import Version
 
 import nab_index.cache as cache_mod
 from nab_index._pep503 import read_page
@@ -17,7 +18,6 @@ from nab_index.cache import CachePolicy, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import AsyncSimpleClient, WheelFile
 from nab_index.httpx_async_transport import HttpxAsyncTransport
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import Provider
 from nab_provider.testing import make_coordinator
 

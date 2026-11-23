@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import pytest
-
-from nab_provider._vendor.packaging.markers import InvalidMarker, Marker
+from packaging.markers import InvalidMarker, Marker
 
 
 @pytest.mark.parametrize(

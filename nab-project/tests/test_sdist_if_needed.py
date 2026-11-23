@@ -5,14 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
+from packaging.pylock import Pylock
+from packaging.ranges import VersionRange
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import IndexPin, build_pylock, build_target_lock
 from nab_project.resolve import build_lock_input, resolve_with_coordinator
-from nab_provider._vendor.packaging.pylock import Pylock
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import DistPolicy, MetadataPolicy
 from nab_provider.provider import Provider

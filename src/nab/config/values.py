@@ -18,9 +18,9 @@ __lazy_modules__ = (
     "nab_project.lock_policy",
     "nab_project.paths",
     "nab_project.workspace",
-    "nab_provider._vendor.packaging.specifiers",
-    "nab_provider._vendor.packaging.utils",
-    "nab_provider._vendor.packaging.version",
+    "packaging.specifiers",
+    "packaging.utils",
+    "packaging.version",
     "nab_provider.archive",
     "nab_provider.iso8601",
     "nab_provider.overrides",
@@ -48,6 +48,9 @@ from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar
 from urllib.parse import urlsplit
 
 import tomli
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.utils import InvalidName, canonicalize_name
+from packaging.version import Version
 
 from nab_index.file_urls import is_file_url
 from nab_markersets.python_versions import validate_python_version
@@ -62,9 +65,6 @@ from nab_project.lock_policy import LockPolicy
 from nab_project.paths import is_usable_path_name, resolve_path
 from nab_project.value import ValueType
 from nab_project.workspace import WorkspaceConfig
-from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
-from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.archive import ArchiveRequest, ArchiveRequestError
 from nab_provider.errors import ConfigError
 from nab_provider.iso8601 import parse_iso_datetime
@@ -107,7 +107,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
     from typing import TypedDict
 
-    from nab_provider._vendor.packaging.requirements import Requirement
+    from packaging.requirements import Requirement
 
     class _OverridePolicy(TypedDict, total=False):
         """Constructor arguments shared by package and index overrides."""

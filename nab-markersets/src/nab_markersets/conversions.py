@@ -9,13 +9,10 @@ __lazy_modules__ = (
 
 import re
 import sys
-from typing import TYPE_CHECKING
 
-from ._packaging import Marker
+from packaging.markers import Marker
+
 from .markersets import MarkerSet
-
-if TYPE_CHECKING:
-    from ._markersets import MarkerLike
 
 __all__ = ["MarkerSetCache", "PreparedMarkerSets"]
 
@@ -29,8 +26,8 @@ _QUOTED_LITERAL = re.compile(r"""(?:"[^"]*"|'[^']*')""")
 _NATIVE_MARKER_STR: object = Marker.__str__
 
 
-def _native_marker_text(marker: str | MarkerLike) -> str | None:
-    """Read an unchanged selected-backend renderer, leaving other inputs fresh."""
+def _native_marker_text(marker: str | Marker) -> str | None:
+    """Read an unchanged packaging marker renderer, leaving other inputs fresh."""
     if type(marker) is not Marker or Marker.__str__ is not _NATIVE_MARKER_STR:
         return None
     try:
@@ -51,7 +48,7 @@ class MarkerSetCache:
         """Start an empty operation-owned cache."""
         self._sets: dict[tuple[str, int], MarkerSet] = {}
 
-    def from_marker(self, marker: str | MarkerLike) -> MarkerSet:
+    def from_marker(self, marker: str | Marker) -> MarkerSet:
         """Reuse an eligible successful conversion under its parser context."""
         text = _native_marker_text(marker)
         if text is None:
@@ -90,7 +87,7 @@ class PreparedMarkerSets:
         self._sets: dict[tuple[str, int], MarkerSet] = {}
         self._characters = 0
 
-    def prepare(self, marker: str | MarkerLike) -> MarkerSet:
+    def prepare(self, marker: str | Marker) -> MarkerSet:
         """Convert afresh, retaining eligible successful results for the consumer."""
         text = _native_marker_text(marker)
         limit = sys.getrecursionlimit()
@@ -119,7 +116,7 @@ class PreparedMarkerSets:
         self._sets[key] = converted
         self._characters += len(text)
 
-    def convert(self, marker: str | MarkerLike) -> MarkerSet:
+    def convert(self, marker: str | Marker) -> MarkerSet:
         """Use a matching prepared conversion, or convert afresh without retention."""
         text = _native_marker_text(marker)
         if text is None:

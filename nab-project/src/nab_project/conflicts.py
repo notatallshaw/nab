@@ -8,14 +8,15 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "itertools",
-    "nab_provider._vendor.packaging.utils",
+    "packaging.utils",
 )
 
 import enum
 import itertools
 from typing import TYPE_CHECKING
 
-from nab_provider._vendor.packaging.utils import canonicalize_name
+from packaging.utils import canonicalize_name
+
 from nab_provider.conflict_kind import KIND_EXTRA, KIND_GROUP
 from nab_provider.errors import ConfigError
 

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import pytest
-
-from nab_provider._vendor.packaging.markers import (
+from packaging.markers import (
     Marker,
     UndefinedComparison,
     prepare_environment,
 )
-from nab_provider._vendor.packaging.version import Version
+from packaging.version import Version
+
 from nab_provider.environment import UnevaluableMarkerError, classify_dependency
 from nab_provider.metadata import parse_metadata
 from nab_provider.provider import Provider

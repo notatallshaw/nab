@@ -5,9 +5,8 @@ from __future__ import annotations
 from typing import TypedDict, TypeGuard
 
 from benchmark_json import valid_wall_time
-
-from nab_provider._vendor.packaging.utils import is_normalized_name
-from nab_provider._vendor.packaging.version import Version
+from packaging.utils import is_normalized_name
+from packaging.version import Version
 
 STAT_LABELS = {
     "rounds": "Rounds",

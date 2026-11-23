@@ -5,11 +5,11 @@ from __future__ import annotations
 import threading
 
 import pytest
+from packaging.ranges import VersionRange
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 
 from nab_provider._provider.lookahead import DepRangeUnion
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import Provider
 from nab_provider.records import WheelFile
 from nab_provider.testing import make_coordinator, make_metadata, make_sdist, make_wheel

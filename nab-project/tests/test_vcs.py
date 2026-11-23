@@ -6,6 +6,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.vcs import (
@@ -15,8 +17,6 @@ from nab_index.vcs import (
 from nab_project.fetch import FetchCoordinator
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import VcsPin, build_target_lock
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import WheelMetadata
 from nab_provider.provider import (
     BuildPolicy,

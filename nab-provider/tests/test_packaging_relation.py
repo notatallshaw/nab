@@ -1,4 +1,4 @@
-"""Tests for the vendored ``VersionRange.relation``.
+"""Tests for the packaging ``VersionRange.relation``.
 
 ``relation`` answers subset and disjointness in one interval walk, so a spec
 grid checks it against both the separate predicates and the intersection
@@ -10,9 +10,8 @@ from __future__ import annotations
 import itertools
 
 import pytest
-
-from nab_provider._vendor.packaging.ranges import RangeRelation, VersionRange
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from packaging.ranges import RangeRelation, VersionRange
+from packaging.specifiers import SpecifierSet
 
 # Single and double bounds, exclusions, wildcards, an epoch, a post, a local,
 # a pre-release naming clause, and the two ``===`` shapes.

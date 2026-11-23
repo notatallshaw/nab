@@ -7,10 +7,10 @@ import weakref
 from collections.abc import Callable, Mapping
 
 import pytest
+from packaging.ranges import VersionRange
+from packaging.specifiers import SpecifierSet
 
 from nab_provider._provider.metadata_resolver import pick_metadata_wheel
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider.provider import Provider
 from nab_provider.records import WheelFile
 from nab_provider.store import InMemoryIndex

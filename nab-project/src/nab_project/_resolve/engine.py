@@ -16,7 +16,7 @@ __lazy_modules__ = (
     "itertools",
     "nab_index.cache",
     "nab_project.lockfile",
-    "nab_provider._vendor.packaging.utils",
+    "packaging.utils",
     "nab_provider.errors",
     "nab_provider.policy",
     "nab_provider.provider",
@@ -36,8 +36,9 @@ from collections import defaultdict
 from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, TypedDict
 
+from packaging.utils import canonicalize_name
+
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
-from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.errors import (
     MetadataError,
     MissingExtraError,
@@ -68,9 +69,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
     from pathlib import Path
 
-    from nab_provider._vendor.packaging.markers import Marker
-    from nab_provider._vendor.packaging.requirements import Requirement
-    from nab_provider._vendor.packaging.version import Version
+    from packaging.markers import Marker
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+
     from nab_provider.diagnostics import Diagnostic
     from nab_provider.resolver_inputs import MarkerHolds
     from nab_provider.target import ResolveTarget

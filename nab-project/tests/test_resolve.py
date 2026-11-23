@@ -14,6 +14,11 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 import respx
+from packaging.markers import Marker, default_environment
+from packaging.pylock import Pylock
+from packaging.ranges import VersionRange
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from nab_index.client import SdistFile, WheelFile
 from nab_index.httpx_async_transport import HttpxAsyncTransport
@@ -54,11 +59,6 @@ from nab_project.resolve import (
     resolve_with_coordinator,
 )
 from nab_provider._provider import listing_diagnosis
-from nab_provider._vendor.packaging.markers import Marker, default_environment
-from nab_provider._vendor.packaging.pylock import Pylock
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import ConfigError
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.metadata import WheelMetadata

@@ -5,14 +5,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-
-from nab_provider._vendor.packaging import ranges
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from packaging import ranges
+from packaging.specifiers import SpecifierSet
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from nab_provider._vendor.packaging._ranges import Interval
+    from packaging._ranges import Interval
 
 
 @pytest.mark.parametrize("prereleases", [None, False, True])

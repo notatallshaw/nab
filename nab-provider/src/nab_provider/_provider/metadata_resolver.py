@@ -9,8 +9,8 @@ each ``Requires-Dist`` entry into base deps vs per-extra deps.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_provider._vendor.packaging.specifiers",
-    "nab_provider._vendor.packaging.utils",
+    "packaging.specifiers",
+    "packaging.utils",
     "nab_provider.environment",
     "nab_provider.errors",
     "nab_provider.extra_keys",
@@ -31,13 +31,14 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Literal, NamedTuple, TypeGuard
 from urllib.parse import urlsplit
 
+from packaging.ranges import VersionRange
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
+
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .._compat import override
-from .._vendor.packaging.ranges import VersionRange
-from .._vendor.packaging.specifiers import SpecifierSet
-from .._vendor.packaging.utils import canonicalize_name
-from .._vendor.packaging.version import InvalidVersion, Version
 from ..environment import UnevaluableMarkerError, classify_dependency, evaluate_prepared
 from ..errors import (
     ForeignMetadataError,
@@ -74,8 +75,9 @@ from ..vcs_admission import admit_vcs_url
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
-    from .._vendor.packaging.markers import Marker
-    from .._vendor.packaging.requirements import Requirement
+    from packaging.markers import Marker
+    from packaging.requirements import Requirement
+
     from ..provider import DistFile, Provider
     from ..store import InMemoryIndex, WheelMetadataContext
     from ..tags import TagSet

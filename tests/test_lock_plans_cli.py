@@ -10,10 +10,10 @@ from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
+from packaging.pylock import Pylock
 
 from nab.cli import run
 from nab_project import toml_io, toml_writer
-from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider.testing import FakeFetchPort
 
 from .lock_registry import Registry

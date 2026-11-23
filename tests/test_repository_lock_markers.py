@@ -4,10 +4,10 @@ from pathlib import Path
 from runpy import run_path
 
 import tomli
+from packaging.markers import Marker
 
 from nab_markersets.markersets import MarkerSet
 from nab_project._lockfile.pylock import _finalize_marker
-from nab_provider._vendor.packaging.markers import Marker
 
 _ROOT = Path(__file__).resolve().parents[1]
 

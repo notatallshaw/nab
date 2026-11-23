@@ -9,7 +9,7 @@ authors = [
     { name = "Damian Shaw", email = "damian.peter.shaw@gmail.com" },
 ]
 requires-python = ">=3.10"
-dependencies = ["nab-resolver==0.0.31.dev0"]
+dependencies = ["nab-resolver==0.0.31.dev0", "packaging>=26.4"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
@@ -22,16 +22,6 @@ classifiers = [
     "Typing :: Typed",
 ]
 
-# Pick the copy of packaging to run on; `nab_markersets._packaging` binds the
-# first of these at the floor. The floor is where the suite has been run, and
-# it is not open below: the engine reads `_parser.parse_marker`, `_parser.Op`,
-# `_parser.Variable`, `_parser.Value`, `_tokenizer.ParserSyntaxError` and
-# `markers._eval_op`, none of which packaging publishes, so a release may move
-# any of them and `test_the_private_packaging_names_the_engine_reaches` is what
-# says whether one did.
-[project.optional-dependencies]
-packaging = ["packaging>=26.3"]
-nab-vendored-packaging = ["nab-provider==0.0.31.dev0"]
 
 [project.urls]
 Homepage = "https://github.com/notatallshaw/nab"

@@ -70,8 +70,7 @@ WORKSPACES = {
     ),
 }
 
-# Every shipped tree. The vendored packaging tree under nab-provider is rebuilt
-# from upstream, so each checker's config in pyproject.toml leaves it out.
+# Every shipped tree.
 TYPED_TREES = [
     "nab-resolver/src",
     "nab-markersets/src",
@@ -91,13 +90,11 @@ TYPED_FILES = sorted(
     str(path)
     for tree in TYPED_TREES
     for path in Path(tree).rglob("*")
-    if path.suffix in {".py", ".pyi"} and "_vendor" not in path.parts
+    if path.suffix in {".py", ".pyi"}
 )
 
 # checker -> command; pyright reads its targets from [tool.pyright] in
-# pyproject.toml, the rest take them on the command line. Paths on pyrefly's
-# command line switch off the excludes in its config, so the vendored tree is
-# excluded again here.
+# pyproject.toml, the rest take them on the command line.
 TYPE_CHECKERS = {
     "mypy": ["mypy", *CHECKED],
     "pyright": ["pyright"],
@@ -108,7 +105,7 @@ TYPE_CHECKERS = {
         *TYPED_FILES,
         "tests/cli_bijection.py",
     ],
-    "pyrefly": ["pyrefly", "check", "--project-excludes", "**/_vendor/**", *CHECKED],
+    "pyrefly": ["pyrefly", "check", *CHECKED],
     "zuban": ["zuban", "check", *CHECKED],
 }
 
@@ -260,19 +257,12 @@ def tests(session: nox.Session) -> None:
 
 @nox.session
 def standalone(session: nox.Session) -> None:
-    """Run nab-markersets' suite with nab-provider absent.
-
-    Every other session installs nab-provider, whose vendored fork
-    ``nab_markersets`` binds in preference, so this is the only run that reaches
-    released packaging.
-    """
+    """Run nab-markersets' suite with nab-provider absent."""
     _install_lock(session, "tests")
 
-    # The extra, and without --no-deps, so the range nab-markersets declares is
-    # what pip resolves. The lock already pins a packaging inside that range,
-    # so nothing moves; a range that stopped covering it would fail here.
+    # Let pip resolve the marker algebra's declared dependencies.
     session.install(
-        "--no-build-isolation", "-e", "nab-resolver", "-e", "nab-markersets[packaging]"
+        "--no-build-isolation", "-e", "nab-resolver", "-e", "nab-markersets"
     )
 
     session.run("python", "-m", "pytest", "-n", "auto", "nab-markersets/tests")

@@ -6,15 +6,15 @@ import gc
 import weakref
 
 import pytest
+from packaging.ranges import VersionRange
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 from nab_provider._provider.metadata_resolver import (
     add_classified_dep,
     classify_requirement,
 )
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import Provider
 from nab_provider.testing import make_coordinator, make_wheel
 

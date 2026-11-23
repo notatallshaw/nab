@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from nab_index.client import WheelFile
 from nab_project.build_policy import enforce_build_policy_for_targets
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import build_pylock, resolve_dependency_references
 from nab_project.resolve import build_lock_input, resolve_with_coordinator
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.policy import BuildPolicy, ResolutionStrategy
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix

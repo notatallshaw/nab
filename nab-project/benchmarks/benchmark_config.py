@@ -5,14 +5,15 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import TYPE_CHECKING, NamedTuple
 
+from packaging.markers import default_environment
+from packaging.ranges import VersionRange
+from packaging.requirements import Requirement
+from packaging.utils import InvalidName, canonicalize_name
+
 from nab_index.local_index import is_file_url
 from nab_index.multi_index import IndexConfig
 from nab_project.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
 from nab_project.inputs import ResolveInputs
-from nab_provider._vendor.packaging.markers import default_environment
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
 from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
 from nab_provider.marker_holds import dependency_marker_holds, marker_uses_extra
 from nab_provider.overrides import PackageOverride
@@ -37,8 +38,9 @@ if TYPE_CHECKING:
     from collections.abc import AbstractSet, Callable, Mapping, Sequence
     from datetime import datetime
 
+    from packaging.version import Version
+
     from nab_project.fetch import FetchCoordinator
-    from nab_provider._vendor.packaging.version import Version
     from nab_provider.target import ResolveTarget
     from nab_resolver.resolver import Resolver
 

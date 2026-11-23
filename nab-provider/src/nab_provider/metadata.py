@@ -10,9 +10,9 @@ from __future__ import annotations
 __lazy_modules__ = (
     "contextlib",
     "logging",
-    "nab_provider._vendor.packaging.requirements",
-    "nab_provider._vendor.packaging.specifiers",
-    "nab_provider._vendor.packaging.version",
+    "packaging.requirements",
+    "packaging.specifiers",
+    "packaging.version",
     "nab_provider.pep508",
 )
 
@@ -22,16 +22,17 @@ from contextlib import suppress
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
-from ._vendor.packaging.requirements import Requirement
-from ._vendor.packaging.specifiers import SpecifierSet
-from ._vendor.packaging.version import InvalidVersion, Version
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.version import InvalidVersion, Version
+
 from .pep508 import parse_requirement
 from .value import FACTORY, FactoryDefault, Record, factory_value
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from ._vendor.packaging.markers import Marker
+    from packaging.markers import Marker
 
 __all__ = [
     "DEPENDENCY_FIELDS",

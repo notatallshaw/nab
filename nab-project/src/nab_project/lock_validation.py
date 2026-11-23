@@ -11,11 +11,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
 
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
+from packaging.version import Version
+
 from nab_index.file_urls import is_local_file_authority, parse_file_url
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.pep508 import parse_requirement
 from nab_provider.policy import (
     BuildPolicy,

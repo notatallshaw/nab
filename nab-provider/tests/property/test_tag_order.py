@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from types import ModuleType
-
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -11,7 +9,6 @@ from packaging import tags as upstream_tags
 from packaging import utils as upstream_utils
 from packaging.utils import BuildTag
 
-from nab_provider._vendor.packaging import tags as vendored_tags
 from nab_provider.records import WheelFile
 from nab_provider.tags import (
     _MACOS_TAG_FLOOR,
@@ -133,7 +130,7 @@ class TestTagOrderMatchesUpstream:
     def test_tag_order_matches_upstream(
         self, python_version: str, spec: PlatformSpec, implementation: str
     ) -> None:
-        """Vendored tag order equals the upstream-rebuilt order."""
+        """Nab tag order equals the upstream-rebuilt order."""
         if implementation == "pypy":
             spec = replace(spec, pypy_abi="pp73")
         platforms = _platform_tags_for_spec(spec)
@@ -149,105 +146,6 @@ class TestTagOrderMatchesUpstream:
             free_threaded=spec.free_threaded,
         )
         assert got == expected
-
-
-class TestMacPlatformsMatchesUpstream:
-    """The vendored ``mac_platforms`` must yield the same tags, in the same
-    order, as upstream ``packaging.tags.mac_platforms``.
-    """
-
-    @given(
-        version=st.tuples(st.integers(10, 15), st.integers(0, 16)),
-        arch=st.sampled_from(["x86_64", "arm64"]),
-    )
-    @PROPERTY_SETTINGS
-    def test_mac_platforms_matches_upstream(
-        self, version: tuple[int, int], arch: str
-    ) -> None:
-        """Vendored ``mac_platforms`` equals upstream for identical inputs."""
-        got = list(vendored_tags.mac_platforms(version=version, arch=arch))
-        expected = list(upstream_tags.mac_platforms(version=version, arch=arch))
-        assert got == expected
-
-
-tag_part = st.text(alphabet="abcdefgh0123456789_", min_size=1, max_size=8)
-compressed = st.lists(tag_part, min_size=1, max_size=3, unique=True).map(".".join)
-
-# Packaging 26.3 requires interpreter identifiers. Use inputs accepted by
-# both the vendored parser and the earlier released parser in this comparison.
-compressed_interpreters = st.lists(
-    tag_part.filter(str.isidentifier), min_size=1, max_size=3, unique=True
-).map(".".join)
-
-
-def _tag_expansion(
-    module: ModuleType, tag: str
-) -> frozenset[tuple[str, str, str]] | None:
-    """Expand ``tag`` to its triples, or ``None`` when ``module`` rejects it.
-
-    Each copy raises its own ``InvalidTag``, so a rejection has to fold into
-    the return value to be compared.
-    """
-    try:
-        raw = module.parse_tag(tag)
-    except ValueError:
-        return None
-    return frozenset((t.interpreter, t.abi, t.platform) for t in raw)
-
-
-@st.composite
-def tag_strings(draw: st.DrawFn) -> str:
-    """Draw a dash-joined tag string of three fields, or of one, two or four."""
-    count = 3 if draw(st.booleans()) else draw(st.sampled_from([1, 2, 4]))
-    fields = [draw(compressed_interpreters)]
-    fields += [draw(compressed) for _ in range(count - 1)]
-    return "-".join(fields)
-
-
-class TestParseTagMatchesUpstream:
-    """`PEP 425`_ compressed tag sets expand to a cross product;
-    vendored ``parse_tag`` must produce the same set as upstream for
-    any dotted tag string, and refuse the same strings.
-
-    .. _PEP 425: https://peps.python.org/pep-0425/#compressed-tag-sets
-    """
-
-    @given(tag=tag_strings())
-    @PROPERTY_SETTINGS
-    def test_parse_tag_matches_upstream(self, tag: str) -> None:
-        assert _tag_expansion(vendored_tags, tag) == _tag_expansion(upstream_tags, tag)
-
-
-class TestParseTagRejects:
-    """The validation the vendored ``parse_tag`` performs.
-
-    Pinned directly rather than differentially: an oracle older than 26.3
-    accepts what the vendored copy refuses.
-    """
-
-    @pytest.mark.parametrize(
-        "tag",
-        ["3.7-none-any", "0-0-0", "py 3-none-any", "py3.7-none-any"],
-    )
-    def test_rejects_non_identifier_interpreter(self, tag: str) -> None:
-        """A compressed set is refused whole when one member is not an identifier."""
-        with pytest.raises(vendored_tags.InvalidTag):
-            vendored_tags.parse_tag(tag)
-
-    @pytest.mark.parametrize("tag", ["py3--any", "py3-none-", "py3-none-any."])
-    def test_rejects_empty_component(self, tag: str) -> None:
-        with pytest.raises(vendored_tags.InvalidTag):
-            vendored_tags.parse_tag(tag)
-
-    @pytest.mark.parametrize("tag", ["py3-none", "py3-none-any-extra"])
-    def test_rejects_wrong_component_count(self, tag: str) -> None:
-        with pytest.raises(vendored_tags.InvalidTag):
-            vendored_tags.parse_tag(tag)
-
-    @pytest.mark.parametrize("tag", ["py3-none-any", "py2.py3-none-any", "_-none-0"])
-    def test_accepts_identifier_interpreters(self, tag: str) -> None:
-        """Only the interpreter field is held to the identifier rule."""
-        assert vendored_tags.parse_tag(tag)
 
 
 def _wheel(filename: str) -> WheelFile:

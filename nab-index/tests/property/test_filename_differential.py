@@ -2,11 +2,10 @@
 
 ``_parse_wheel_filename`` reimplements
 :func:`packaging.utils.parse_wheel_filename` minus the tag-set parse, and must
-accept the same filenames. Its oracle is nab-provider's vendored packaging,
-whose ``parse_tag`` ranks the wheel afterwards.
+accept the same filenames.
 
 ``_parse_sdist_filename`` accepts gzip-tar and ZIP sdists. Its oracle is the
-ambient :func:`packaging.utils.parse_sdist_filename`.
+:func:`packaging.utils.parse_sdist_filename`.
 
 A draw reaches any one filename shape only sometimes, so the rules are pinned
 by the corpus in ``nab-index/tests/client/test_filenames.py``.
@@ -19,14 +18,15 @@ import string
 import pytest
 from hypothesis import example, given
 from hypothesis import strategies as st
-from packaging.utils import InvalidSdistFilename, parse_sdist_filename
+from packaging.utils import (
+    InvalidSdistFilename,
+    InvalidWheelFilename,
+    parse_sdist_filename,
+    parse_wheel_filename,
+)
 
 from nab_index.client import _parse_sdist_filename, _parse_wheel_filename
 from nab_markersets._compat import get_int_max_str_digits
-from nab_provider._vendor.packaging.utils import (
-    InvalidWheelFilename,
-    parse_wheel_filename,
-)
 
 from .settings import DEEP_SETTINGS
 
@@ -112,7 +112,7 @@ def wheelish_filenames(draw: st.DrawFn) -> str:
 
 
 def oracle_wheel(filename: str) -> tuple[str, str] | None:
-    """Parse via the vendored packaging; ``None`` when it rejects."""
+    """Parse via packaging; ``None`` when it rejects."""
     try:
         name, version, _build, _tags = parse_wheel_filename(filename)
     except InvalidWheelFilename:
@@ -121,7 +121,7 @@ def oracle_wheel(filename: str) -> tuple[str, str] | None:
 
 
 def oracle_sdist(filename: str) -> tuple[str, str] | None:
-    """Parse via the ambient packaging; ``None`` when it rejects."""
+    """Parse via packaging; ``None`` when it rejects."""
     try:
         name, version = parse_sdist_filename(filename)
     except InvalidSdistFilename:
@@ -131,15 +131,15 @@ def oracle_sdist(filename: str) -> tuple[str, str] | None:
 
 @given(filename=wheelish_filenames())
 @DEEP_SETTINGS
-def test_wheel_parse_matches_vendored_structured(filename: str) -> None:
-    """Structured near-miss wheel filenames parse exactly like the vendored parser."""
+def test_wheel_parse_matches_packaging_structured(filename: str) -> None:
+    """Structured near-miss wheel filenames parse exactly like packaging."""
     assert _parse_wheel_filename(filename) == oracle_wheel(filename)
 
 
 @given(filename=st.text(min_size=0, max_size=40))
 @DEEP_SETTINGS
-def test_wheel_parse_matches_vendored_fuzz(filename: str) -> None:
-    """Arbitrary text with a ``.whl`` suffix parses exactly like the vendored parser."""
+def test_wheel_parse_matches_packaging_fuzz(filename: str) -> None:
+    """Arbitrary text with a ``.whl`` suffix parses exactly like packaging."""
     assert _parse_wheel_filename(filename + ".whl") == oracle_wheel(filename + ".whl")
 
 

@@ -6,7 +6,8 @@ from functools import partial
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from nab_provider._vendor.packaging.requirements import Requirement
+from packaging.requirements import Requirement
+
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.policy import ExtrasMode
 from nab_provider.provider import Provider

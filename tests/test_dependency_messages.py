@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+from packaging.version import Version
 
 from nab._resolve import _report_dependency_requirements
 from nab.cli import main
@@ -16,7 +17,6 @@ from nab.output import Printer, Verbosity
 from nab_project.declarations import DependencyDeclaration
 from nab_project.lockfile import TargetLock
 from nab_project.resolve import ResolveResult, TargetResult
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import make_metadata

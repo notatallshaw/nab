@@ -26,9 +26,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from packaging.ranges import VersionRange
+from packaging.version import Version
+
 from nab_provider._provider.priority import _NO_LISTING_PRIOR
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.priority import (
     CONFLICT_THRESHOLD,
     CULPRIT_DEMOTE_THRESHOLD,

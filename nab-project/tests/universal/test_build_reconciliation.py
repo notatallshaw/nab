@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from nab_index.client import WheelFile
 from nab_project.lock_preferences import LockPreferences
@@ -15,8 +17,6 @@ from nab_project.resolve import (
     build_lock_input,
     resolve_with_coordinator,
 )
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import Provider
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget

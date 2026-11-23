@@ -5,11 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
+from packaging.ranges import VersionRange
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 
 from nab_provider._provider.listing_diagnosis import MetadataBlock
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import MetadataError
 from nab_provider.policy import ExtrasMode
 from nab_provider.provider import Provider

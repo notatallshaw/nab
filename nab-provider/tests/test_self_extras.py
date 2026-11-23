@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
+from packaging.requirements import Requirement
 
-from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider.requirements_file import (
     expand_self_extras,
     self_extra_markers,

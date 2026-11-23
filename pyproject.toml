@@ -21,6 +21,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "packaging>=26.4",
     "nab-resolver==0.0.31.dev0",
     "nab-markersets==0.0.31.dev0",
     "nab-provider==0.0.31.dev0",
@@ -184,7 +185,7 @@ docs-live = [
     "sphinx-autobuild>=2025.8.25; python_version >= '3.12'",
 ]
 release = [
-    "packaging>=26.3",
+    "packaging>=26.4",
     "tomlkit>=0.15.2",
     "build>=1.6.1",
     "twine>=7.0.0",
@@ -241,6 +242,10 @@ match = [
     "nab-index",
 ]
 uploaded-prior-to = false
+
+# Admit the original files for the required packaging release.
+[tool.nab.packages."packaging==26.4"]
+uploaded-prior-to = "2026-11-23T21:44:12Z"
 
 # PyYAML 6.0.3 sets this in setup.py but labels it dynamic in its sdist.
 [tool.nab.packages."pyyaml==6.0.3"]
@@ -305,7 +310,6 @@ omit = [
     "*/tests/property/*",
     "*/tests/property_python/*",
     "*/test_crosshair_*.py",
-    "*/_vendor/*",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#report
@@ -360,7 +364,6 @@ exclude = [
     ".nox", ".pants.d", ".pytype", ".ruff_cache", ".svn", ".tox", ".venv",
     "__pypackages__", "buck-out", "dist", "node_modules", "venv", "docs/_build",
 ]
-extend-exclude = ["**/_vendor/**"]
 
 # https://docs.astral.sh/ruff/settings/#lintflake8-tidy-importsbanned-api
 # stdout carries the artefact a command was asked for and stderr carries the
@@ -574,8 +577,6 @@ include = [
     "src",
     "tests/cli_bijection.py",
 ]
-# The vendored packaging tree is rebuilt from upstream, so no checker holds it.
-exclude = ["**/_vendor"]
 # Editable installs hide the workspace packages from pyright's auto-detection;
 # point it at the source trees directly so cross-package imports resolve.
 extraPaths = [
@@ -599,7 +600,6 @@ project-includes = [
     "nab-index/src",
     "src",
 ]
-project-excludes = ["**/_vendor/**"]
 
 [tool.pyrefly.errors]
 # Dynamic generic APIs explicitly use Any; side effects need no discard assignment.
@@ -686,9 +686,6 @@ include = ["nab-markersets/src/**"]
 unsound-assignment = "error"
 unsound-return = "error"
 
-[tool.ty.src]
-exclude = ["**/_vendor"]
-
 # https://mypy.readthedocs.io/en/stable/config_file.html#using-a-pyproject-toml-file
 [tool.mypy]
 python_version = "3.10"
@@ -726,10 +723,6 @@ enable_error_code = [
 [[tool.mypy.overrides]]
 module = "nab_markersets.*"
 disallow_any_explicit = true
-
-[[tool.mypy.overrides]]
-module = "nab_provider._vendor.*"
-ignore_errors = true
 
 # zuban reads [tool.mypy] and turns this on where mypy leaves it off. The
 # guards it calls dead sit after exhaustive isinstance chains and are reached

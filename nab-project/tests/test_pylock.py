@@ -22,6 +22,11 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
+from packaging.markers import InvalidMarker, Marker
+from packaging.pylock import Package, PackageWheel
+from packaging.utils import canonicalize_name
+from packaging.version import Version
+
 from nab_markersets import _markersets as engine
 from nab_markersets import markersets
 from nab_markersets.conversions import PreparedMarkerSets
@@ -54,10 +59,6 @@ from nab_project.lockfile import (
     TargetLock,
     WheelArtifact,
 )
-from nab_provider._vendor.packaging.markers import InvalidMarker, Marker
-from nab_provider._vendor.packaging.pylock import Package, PackageWheel
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.marker_holds import IntractableMarkerError
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget, environment_declaration

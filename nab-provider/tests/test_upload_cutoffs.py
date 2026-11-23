@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import InvalidUploadTimeError, MetadataError
 from nab_provider.overrides import IndexOverride
 from nab_provider.provider import Provider

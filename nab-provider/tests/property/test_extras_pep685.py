@@ -17,8 +17,8 @@ from __future__ import annotations
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import (
     ExtrasMode,
     MissingExtraError,

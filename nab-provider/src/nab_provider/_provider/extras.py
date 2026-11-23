@@ -12,8 +12,8 @@ __lazy_modules__ = (
     "nab_provider._provider.listing_diagnosis",
     "nab_provider._provider.lookahead",
     "nab_provider._provider.metadata_resolver",
-    "nab_provider._vendor.packaging.ranges",
-    "nab_provider._vendor.packaging.utils",
+    "packaging.ranges",
+    "packaging.utils",
     "nab_provider.errors",
     "nab_provider.extra_keys",
     "nab_provider.policy",
@@ -22,8 +22,9 @@ __lazy_modules__ = (
 import logging
 from typing import TYPE_CHECKING
 
-from .._vendor.packaging.ranges import VersionRange
-from .._vendor.packaging.utils import canonicalize_name
+from packaging.ranges import VersionRange
+from packaging.utils import canonicalize_name
+
 from ..errors import MetadataError, MissingExtraError
 from ..extra_keys import join_extra
 from ..policy import ExtrasMode
@@ -32,9 +33,10 @@ from .lookahead import flush_pending_blocks
 from .metadata_resolver import refuse_url_dep
 
 if TYPE_CHECKING:
+    from packaging.version import Version
+
     from nab_resolver.types import RangeProtocol
 
-    from .._vendor.packaging.version import Version
     from ..provider import Provider
 
 

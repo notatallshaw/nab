@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
+from packaging.specifiers import SpecifierSet
 
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider.requirements_file import (
     raise_for_unsatisfiable,
 )

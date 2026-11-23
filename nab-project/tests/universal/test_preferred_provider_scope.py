@@ -6,14 +6,14 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_project.fetch import FetchCoordinator
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import IndexPin
 from nab_project.resolve import resolve_with_coordinator
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import InvalidUploadTimeError, MissingExtraError
 from nab_provider.policy import BuildPolicy, DecisionOrder
 from nab_provider.provider import Provider

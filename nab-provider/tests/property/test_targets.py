@@ -8,11 +8,10 @@ from itertools import product
 import pytest
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
-from packaging.markers import default_environment
+from packaging.markers import Marker, default_environment
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
-from nab_provider._vendor.packaging.markers import Marker
 from nab_provider.tags import DEFAULT_LIBC, LIBC_MAJOR, Libc, PlatformSpec
 from nab_provider.target import (
     IMPLEMENTATION_MARKERS,

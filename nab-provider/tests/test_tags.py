@@ -19,9 +19,9 @@ from contextlib import AbstractContextManager
 from unittest.mock import MagicMock, patch
 
 import pytest
+from packaging.tags import Tag
 
 from nab_markersets._compat import get_int_max_str_digits
-from nab_provider._vendor.packaging.tags import Tag
 from nab_provider.records import WheelFile
 from nab_provider.tags import (
     _PLATFORM_ARCH,

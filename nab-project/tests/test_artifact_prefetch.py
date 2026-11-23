@@ -8,12 +8,12 @@ import threading
 import httpx
 import pytest
 import respx
+from packaging.ranges import VersionRange
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_project.fetch import FetchCoordinator
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.fetch_port import PrefetchSettings
 from nab_provider.provider import Provider
 from nab_provider.records import WheelFile

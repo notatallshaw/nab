@@ -19,6 +19,10 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from unittest.mock import patch
 
 import pytest
+from packaging.markers import Marker
+from packaging.ranges import VersionRange
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from nab_index import vcs as vcs_mod
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
@@ -64,10 +68,6 @@ from nab_project.resolve import (
 )
 from nab_provider._provider import listing as listing_mod
 from nab_provider._provider import metadata_resolver
-from nab_provider._vendor.packaging.markers import Marker
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import ConfigError
 from nab_provider.marker_holds import DependencyMarkerEvaluator, dependency_marker_holds
 from nab_provider.metadata import WheelMetadata

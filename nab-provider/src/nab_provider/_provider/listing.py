@@ -10,8 +10,8 @@ from __future__ import annotations
 __lazy_modules__ = (
     "functools",
     "nab_provider._provider.metadata_resolver",
-    "nab_provider._vendor.packaging.specifiers",
-    "nab_provider._vendor.packaging.version",
+    "packaging.specifiers",
+    "packaging.version",
     "nab_provider.errors",
     "nab_provider.iso8601",
     "nab_provider.metadata",
@@ -24,8 +24,9 @@ __lazy_modules__ = (
 from functools import partial
 from typing import TYPE_CHECKING, Final, TypeGuard
 
-from .._vendor.packaging.specifiers import SpecifierSet
-from .._vendor.packaging.version import InvalidVersion, Version
+from packaging.specifiers import SpecifierSet
+from packaging.version import InvalidVersion, Version
+
 from ..errors import (
     ForeignMetadataError,
     IncompatiblePythonError,
@@ -50,9 +51,10 @@ if TYPE_CHECKING:
     from datetime import datetime
     from typing import Literal, TypeAlias
 
+    from packaging.ranges import VersionRange
+
     from nab_resolver.types import RangeProtocol
 
-    from .._vendor.packaging.ranges import VersionRange
     from ..fetch_port import Waitable
     from ..policy import ArchiveSource, LocalSource, VcsSource
     from ..provider import DistFile, ListingFilterCache, Provider, ProviderStats

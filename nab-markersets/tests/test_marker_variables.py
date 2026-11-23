@@ -5,10 +5,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import pytest
-from packaging.markers import Marker as ExternalMarker
+from packaging.markers import InvalidMarker, Marker, UndefinedComparison
 
 from nab_markersets import _markersets
-from nab_markersets._packaging import InvalidMarker, Marker, UndefinedComparison
 from nab_markersets.errors import IntractableMarkerSet
 from nab_markersets.markersets import MarkerSet, variable_names
 
@@ -49,15 +48,6 @@ def test_joint_construction_preserves_raw_names(
 def test_joint_construction_accepts_native_marker() -> None:
     converted, names = MarkerSet.from_marker_with_variables(
         Marker('sys_platform == "linux"')
-    )
-    assert names == frozenset({"sys_platform"})
-    assert converted.evaluate({"sys_platform": "linux"})
-    assert not converted.evaluate({"sys_platform": "win32"})
-
-
-def test_joint_construction_accepts_foreign_marker() -> None:
-    converted, names = MarkerSet.from_marker_with_variables(
-        ExternalMarker('sys_platform == "linux"')
     )
     assert names == frozenset({"sys_platform"})
     assert converted.evaluate({"sys_platform": "linux"})

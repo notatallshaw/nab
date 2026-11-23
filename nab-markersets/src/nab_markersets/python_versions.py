@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-__lazy_modules__ = ("nab_markersets._packaging",)
+__lazy_modules__ = ("packaging.version",)
 
 from typing import TYPE_CHECKING
 
-from ._packaging import InvalidVersion, Version
+from packaging.version import InvalidVersion, Version
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

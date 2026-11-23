@@ -6,8 +6,8 @@ import pickle
 from typing import TYPE_CHECKING, Final
 
 import pytest
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.value import HashableRecord, replace
 from nab_provider.yank_candidates import Candidate
 from nab_provider.yanked_resolution import MetadataProxy, PermissionProxy

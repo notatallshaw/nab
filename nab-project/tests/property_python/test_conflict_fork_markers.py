@@ -35,6 +35,8 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover - 3.10 fallback
     import tomli as tomllib  # type: ignore[no-redef]
 
+from packaging.pylock import Pylock
+
 from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
@@ -48,7 +50,6 @@ from nab_project.lockfile import (
     WheelArtifact,
     write_lock,
 )
-from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 

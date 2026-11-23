@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 import tomli
+from packaging.version import Version
 
 from nab.config.ladder import OPTIONS
 from nab.config.model import plan_targets, read_pyproject_config
@@ -14,7 +15,6 @@ from nab_project import _sources as sources
 from nab_project import build_backend
 from nab_project.workspace import read_workspace_members
 from nab_provider._provider import build_remote, metadata_resolver
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import SourceBuildPolicyError, UnsupportedSdistError
 from nab_provider.metadata import WheelMetadata
 from nab_provider.policy import BuildPolicy, SourceRequest

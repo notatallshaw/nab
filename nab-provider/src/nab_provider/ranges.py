@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-__lazy_modules__ = ("nab_provider._vendor.packaging.specifiers",)
+__lazy_modules__ = ("packaging.specifiers",)
 
 from typing import TYPE_CHECKING, NamedTuple
 
-from ._vendor.packaging.ranges import VersionRange
-from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.ranges import VersionRange
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from nab_resolver.types import RangeProtocol
+    from packaging.version import Version
 
-    from ._vendor.packaging.version import Version
+    from nab_resolver.types import RangeProtocol
 
 __all__ = ["VersionRange"]
 

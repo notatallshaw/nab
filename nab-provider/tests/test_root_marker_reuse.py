@@ -5,14 +5,14 @@ from __future__ import annotations
 import sys
 
 import pytest
+from packaging.markers import (
+    Marker,
+    UndefinedEnvironmentName,
+)
 from packaging.markers import Marker as ExternalMarker
 
 from nab_markersets.markersets import MarkerSet
 from nab_provider import marker_holds
-from nab_provider._vendor.packaging.markers import (
-    Marker,
-    UndefinedEnvironmentName,
-)
 from nab_provider.marker_holds import (
     DependencyMarkerEvaluator,
     IntractableMarkerError,

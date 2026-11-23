@@ -30,6 +30,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import tomli
+from packaging import markers as packaging_markers
+from packaging.pylock import Pylock
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from nab import _version as nab_version
 from nab import output as nab_output
@@ -87,10 +91,6 @@ from nab_project.resolve import (
     env_signature,
     resolve_for_targets,
 )
-from nab_provider._vendor.packaging import markers as packaging_markers
-from nab_provider._vendor.packaging.pylock import Pylock
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import ConfigError
 from nab_provider.provider import (
     InvalidUploadTimeError,

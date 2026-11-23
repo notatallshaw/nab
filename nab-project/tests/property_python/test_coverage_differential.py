@@ -20,10 +20,10 @@ import re
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from packaging.markers import Marker
+from packaging.version import Version
 
 from nab_project._lockfile.coverage import CoverageError, validate_marker_coverage
-from nab_provider._vendor.packaging.markers import Marker
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import (
     ResolveTarget,

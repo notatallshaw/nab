@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import pytest
+from packaging.version import Version
 
 from nab_provider._provider import metadata_resolver
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import IndexAccessError
 from nab_provider.provider import Provider
 from nab_provider.records import SdistFile, WheelFile

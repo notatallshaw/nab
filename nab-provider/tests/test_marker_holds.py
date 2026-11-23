@@ -10,9 +10,9 @@ from __future__ import annotations
 from collections.abc import Set as AbstractSet
 
 import pytest
+from packaging.markers import MARKERS_ALLOWING_SET, Marker
 
 from nab_markersets._compat import get_int_max_str_digits
-from nab_provider._vendor.packaging.markers import MARKERS_ALLOWING_SET, Marker
 from nab_provider.conflict_kind import EMPTY_MEMBERSHIP_SETS
 from nab_provider.marker_holds import (
     IntractableMarkerError,

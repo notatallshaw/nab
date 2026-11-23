@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nab_provider._vendor.packaging.ranges import VersionRange
+from packaging.ranges import VersionRange
+
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from nab_provider._vendor.packaging.specifiers import SpecifierSet
-    from nab_provider._vendor.packaging.version import Version
+    from packaging.specifiers import SpecifierSet
+    from packaging.version import Version
+
     from nab_resolver.resolver import Resolver
     from nab_resolver.types import Incompatibility, RangeProtocol
 

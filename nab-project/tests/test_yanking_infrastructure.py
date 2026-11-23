@@ -6,6 +6,9 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 import pytest
+from packaging.ranges import VersionRange
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from nab_project._resolve.engine import _warn_selected_yanks
 from nab_project.inputs import ResolveInputs
@@ -13,9 +16,6 @@ from nab_project.lockfile import IndexPin, LocalPin, LockValidationError, Target
 from nab_project.resolve import resolve_with_coordinator
 from nab_provider._provider.listing import parse_prefetched_metadata
 from nab_provider._provider.metadata_resolver import fetch_sdist_metadata
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import YankAdmissionRequiredError
 from nab_provider.policy import DistPolicy, ExtrasMode, MetadataPolicy
 from nab_provider.provider import Provider, ResolutionStrategy

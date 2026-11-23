@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import pytest
+from packaging.requirements import Requirement
 
 from nab_index.transport import HttpResponse
 from nab_project import _fetch_requests
 from nab_project.fetch import FetchCoordinator
 from nab_project.resolve import resolve_with_coordinator
-from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider.fetch_port import PrefetchSettings
 from nab_provider.provider import Provider
 from nab_provider.target import ResolveTarget

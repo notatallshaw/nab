@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from packaging.pylock import Pylock
+from packaging.ranges import VersionRange
+from packaging.version import Version
 
 from nab_project import toml_io, toml_writer
 from nab_project._resolve.engine import InstallContexts
@@ -34,9 +37,6 @@ from nab_project.resolve import (
     plan_project_inputs,
     resolve_with_coordinator,
 )
-from nab_provider._vendor.packaging.pylock import Pylock
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import parse_metadata
 from nab_provider.overrides import PackageOverride
 from nab_provider.pep508 import parse_requirement

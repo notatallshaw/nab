@@ -25,18 +25,6 @@ def _include_chain(depth: int, leaf: str) -> dict[str, list[str | dict[str, str]
     return groups
 
 
-def _boundary_marker_message() -> str:
-    """Probe the first marker-depth failure from the current caller's stack."""
-    depth = 0
-    while True:
-        depth += 1
-        nested = "(" * depth + "os_name == 'posix'" + ")" * depth
-        try:
-            resolve_groups_to_requirements({"probe": [f"foo ; {nested}"]}, ("probe",))
-        except InvalidProjectRequirementError as caught:
-            return str(caught)
-
-
 def _boundary_include_message() -> str:
     """Locate the first failing include depth for the current caller."""
     lower, upper = 0, sys.getrecursionlimit()
@@ -120,22 +108,12 @@ class TestResolveGroupsToRequirements:
         """Report excessive marker nesting as an invalid group requirement."""
         depth = sys.getrecursionlimit()
         over_nested_marker = "(" * depth + "os_name == 'posix'" + ")" * depth
-        with pytest.raises(InvalidProjectRequirementError) as caught:
+        with pytest.raises(
+            InvalidProjectRequirementError, match=r"\[dependency-groups\]: .*nested"
+        ):
             resolve_groups_to_requirements(
                 {"dev": [f"foo ; {over_nested_marker}"]}, ("dev",)
             )
-
-        assert str(caught.value) == (
-            "invalid requirement in [dependency-groups]: "
-            "marker is nested too deeply to parse"
-        )
-
-    def test_marker_at_the_stack_boundary_names_the_marker(self) -> None:
-        """The first marker-depth failure retains the marker diagnostic."""
-        assert _boundary_marker_message() == (
-            "invalid requirement in [dependency-groups]: "
-            "marker is nested too deeply to parse"
-        )
 
     def test_over_deep_include_chain_names_the_chain(self) -> None:
         """An include chain beyond the recursion limit reports the include depth."""

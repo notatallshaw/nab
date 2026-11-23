@@ -162,12 +162,7 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
     declaring ``2.0.0`` in its filename comes back as ``"2.0.0"``,
     not ``"2"``.
 
-    Those rejections aside, this accepts what nab-provider's vendored
-    ``parse_wheel_filename`` accepts, but discards the ``frozenset[Tag]`` the
-    tag parser builds and nab does not use. The vendored copy is the one to
-    match, not the released ``packaging`` this package depends on, because the
-    vendored tag parser ranks whatever is admitted here; the two can differ on
-    an empty project name, which releases before 26.3 accept.
+    This accepts the wheel tags that packaging accepts without building a tag set.
 
     A build tag past that same digit limit is admitted rather than rejected:
     ``parse_wheel_filename`` raises ``ValueError`` out of ``int()`` on one, but
@@ -211,13 +206,10 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
 def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
     """Parse a ``.tar.gz`` or ``.zip`` sdist filename to ``(canonical_name, version)``.
 
-    Accepts what nab-provider's vendored ``parse_sdist_filename`` accepts,
+    Accepts what packaging's ``parse_sdist_filename`` accepts,
     except filenames holding a NUL or with no UTF-8 form. Returns ``None`` for
     everything else, including a version digit run past CPython's int-from-string
-    limit, and never raises.  The vendored
-    copy is the one to match, not the released ``packaging`` this package
-    depends on; the two can differ on an empty project name, which releases
-    before 26.3 accept.
+    limit, and never raises.
 
     Legacy filenames with embedded build tags (e.g. ``cffi-1.0.2-2.tar.gz``)
     parse to a surprising ``(name="cffi-1-0-2", version="2")``, so callers

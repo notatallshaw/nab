@@ -8,8 +8,9 @@ from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import urlsplit
 
+from packaging.utils import canonicalize_name
+
 from nab_index.archive_files import source_relative_path
-from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.requirements_file import (
     expand_project_requirements,
     parse_requirements,
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
     from pathlib import Path
 
-    from nab_provider._vendor.packaging.requirements import Requirement
+    from packaging.requirements import Requirement
 
 __all__ = ["dependency_input_requirements", "input_table"]
 

@@ -9,9 +9,8 @@ from __future__ import annotations
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-
-from nab_provider._vendor.packaging.ranges import RangeRelation, VersionRange
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from packaging.ranges import RangeRelation, VersionRange
+from packaging.specifiers import SpecifierSet
 
 from .settings import PROPERTY_SETTINGS
 

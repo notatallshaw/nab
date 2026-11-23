@@ -32,9 +32,9 @@ __lazy_modules__ = (
     "nab_project._build.env",
     "nab_project._build.errors",
     "nab_project.paths",
-    "nab_provider._vendor.packaging.specifiers",
-    "nab_provider._vendor.packaging.utils",
-    "nab_provider._vendor.packaging.version",
+    "packaging.specifiers",
+    "packaging.utils",
+    "packaging.version",
     "nab_provider.errors",
     "nab_provider.metadata",
     "nab_provider.pep508",
@@ -64,11 +64,11 @@ from typing import TYPE_CHECKING, Any
 import build
 import pyproject_hooks
 import tomli
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name, parse_wheel_filename
+from packaging.version import Version
 
 from nab_index.local_index import wheel_metadata_member
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.utils import canonicalize_name, parse_wheel_filename
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import UnsupportedWheelError
 from nab_provider.metadata import (
     WheelMetadata,
@@ -91,8 +91,9 @@ from .errors import BuildBackendError
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
 
+    from packaging.requirements import Requirement
+
     from nab_index.transport import AsyncHttpTransport
-    from nab_provider._vendor.packaging.requirements import Requirement
 
     from ..inputs import ResolveInputs
 

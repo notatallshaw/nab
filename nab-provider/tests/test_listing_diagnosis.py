@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import pytest
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 
 from nab_provider._provider import listing as listing_mod
 from nab_provider._provider import listing_diagnosis as diagnosis_mod
@@ -24,8 +26,6 @@ from nab_provider._provider.listing_diagnosis import (
     OverrideLayer,
     ReasonKind,
 )
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.diagnostics import Diagnostic
 from nab_provider.errors import InvalidUploadTimeError
 from nab_provider.overrides import IndexOverride
@@ -47,7 +47,8 @@ from .provider_fixtures import short_reason
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from nab_provider._vendor.packaging.ranges import VersionRange
+    from packaging.ranges import VersionRange
+
     from nab_provider.provider import DistFile
 
 

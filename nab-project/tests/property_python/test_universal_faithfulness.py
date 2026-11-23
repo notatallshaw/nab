@@ -12,7 +12,7 @@ that means three end-to-end guarantees:
    leaking into other tuples.
 2. Byte-stability: shuffling every insertion-ordered input (tuple
    order, per-name order, wheel order) yields byte-identical output.
-3. Fixed point: emit -> parse -> emit through the vendored
+3. Fixed point: emit -> parse -> emit through the packaging
    ``packaging.pylock`` round-trip reproduces the same bytes.
 
 .. _PEP 751: https://peps.python.org/pep-0751/#packages
@@ -34,6 +34,8 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover - 3.10 fallback
     import tomli as tomllib  # type: ignore[no-redef]
 
+from packaging.pylock import Pylock
+
 from nab_project.lockfile import (
     IndexPin,
     LockInput,
@@ -42,7 +44,6 @@ from nab_project.lockfile import (
     WheelArtifact,
     write_lock,
 )
-from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 
@@ -231,7 +232,7 @@ class TestQuoteByteStabilityUnderShuffle:
 
 
 class TestEmitParseEmitFixedPoint:
-    """Emitted text parsed back through the vendored
+    """Emitted text parsed back through the packaging
     ``packaging.pylock`` and re-serialised must reproduce the same
     bytes.  A drift means the writer and the spec parser disagree
     about some field's canonical form, so a consumer that round-trips

@@ -10,7 +10,7 @@ from ``[project].version`` or took from the build backend.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_provider._vendor.packaging.utils",
+    "packaging.utils",
     "nab_provider.archive",
     "nab_provider.errors",
     "nab_provider.records",
@@ -20,9 +20,10 @@ __lazy_modules__ = (
 
 from typing import TYPE_CHECKING
 
+from packaging.utils import canonicalize_name
+
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
-from .._vendor.packaging.utils import canonicalize_name
 from ..archive import ArchiveRequest
 from ..errors import SourceNameMismatchError
 from ..records import SdistFile
@@ -31,7 +32,8 @@ from ..vcs_admission import VcsPolicy, admit_vcs_url
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from .._vendor.packaging.version import Version
+    from packaging.version import Version
+
     from ..metadata import WheelMetadata
     from ..policy import ArchiveSource, LocalSource, VcsSource
     from ..provider import Provider

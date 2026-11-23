@@ -6,14 +6,15 @@ import hashlib
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-from nab_index.file_urls import is_file_url, parse_file_url
-from nab_provider._vendor.packaging.markers import Marker, prepare_environment
-from nab_provider._vendor.packaging.pylock import (
+from packaging.markers import Marker, prepare_environment
+from packaging.pylock import (
     Pylock,
     PylockSelectError,
     PylockValidationError,
 )
-from nab_provider._vendor.packaging.utils import canonicalize_name
+from packaging.utils import canonicalize_name
+
+from nab_index.file_urls import is_file_url, parse_file_url
 from nab_provider.conflict_kind import EMPTY_MEMBERSHIP_SETS
 from nab_provider.environment import classify_dependency, marker_environment
 from nab_provider.marker_holds import dependency_marker_holds
@@ -37,13 +38,14 @@ if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
     from pathlib import Path
 
-    from nab_provider._vendor.packaging.pylock import (
+    from packaging.pylock import (
         PackageArchive,
         PackageSdist,
         PackageWheel,
     )
-    from nab_provider._vendor.packaging.requirements import Requirement
-    from nab_provider._vendor.packaging.version import Version
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+
     from nab_provider.metadata import WheelMetadata
     from nab_provider.target import ResolveTarget
 

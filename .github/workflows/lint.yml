@@ -48,18 +48,6 @@ jobs:
       - name: Run pre-commit on all files
         run: pre-commit run --show-diff-on-failure --color=always --all-files
 
-  vendor:
-    name: vendored packaging
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Rebuild and compare vendored packaging
-        run: tasks/vendor-packaging.sh --check
-
   boundaries:
     name: import boundaries
     runs-on: ubuntu-latest

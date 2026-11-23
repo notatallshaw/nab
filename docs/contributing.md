@@ -142,11 +142,10 @@ single workspace, or all of them, with:
 ```bash
 .venv/bin/nox -s tests                    # every workspace, each gated
 .venv/bin/nox -s tests -- project         # just one workspace
-.venv/bin/nox -s standalone               # nab-markersets on released packaging
+.venv/bin/nox -s standalone               # nab-markersets without nab-provider
 ```
 
-`standalone` is the only run without `nab-provider` installed, so `nab_markersets` binds released
-`packaging` rather than the vendored fork.
+`standalone` checks the marker algebra with only its own dependencies installed.
 
 Property-based tests are opt-in via marker:
 
@@ -177,9 +176,9 @@ are `TYPED_TREES` in `noxfile.py`.
 ## Checking policy
 
 Ruff enables `ALL`, with the exceptions in `pyproject.toml` and the test-directory configs.
-Formatting and linting include shipped `_build` modules; vendored sources and disposable build
-output stay excluded. Hook revisions and the shared development lock pin the reviewed tool versions.
-Refresh `pylock.dev.toml` after changing a dependency group.
+Formatting and linting include shipped `_build` modules; disposable build output stays excluded.
+Hook revisions and the shared development lock pin the reviewed tool versions. Refresh
+`pylock.dev.toml` after changing a dependency group.
 
 Mypy and Zuban use strict checking. Pyrefly and ty enable every diagnostic, with the exceptions
 below. Pyright enables strict inference and strict diagnostics individually because its named strict

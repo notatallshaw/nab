@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import pytest
+from packaging.markers import Marker
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 
 from nab_provider._provider.metadata_resolver import (
     TargetDepSignature,
     target_dep_signature,
 )
-from nab_provider._vendor.packaging.markers import Marker
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import WheelMetadata
 from nab_provider.provider import (
     BuildPolicy,

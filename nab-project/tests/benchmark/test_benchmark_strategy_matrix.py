@@ -16,12 +16,12 @@ from typing import TYPE_CHECKING, Literal
 from unittest.mock import MagicMock
 
 import pytest
+from packaging.tags import Tag
+from packaging.version import Version
 
 from nab_index.client import WheelFile
 from nab_index.multi_index import IndexConfig
 from nab_project.fetch import IndexRoute
-from nab_provider._vendor.packaging.tags import Tag
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import Provider, ProviderStats
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.target import ResolveTarget

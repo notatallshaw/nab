@@ -10,10 +10,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from packaging.requirements import Requirement
+
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import render_lock
 from nab_project.resolve import build_lock_input, resolve_with_coordinator
-from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider.policy import BuildPolicy, DecisionOrder
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix

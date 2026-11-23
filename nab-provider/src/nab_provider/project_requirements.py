@@ -3,23 +3,24 @@
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_provider._vendor.packaging.specifiers",
-    "nab_provider._vendor.packaging.utils",
+    "packaging.specifiers",
+    "packaging.utils",
     "nab_provider.metadata",
     "nab_provider.pep508",
 )
 
 from typing import TYPE_CHECKING
 
-from ._vendor.packaging.specifiers import SpecifierSet
-from ._vendor.packaging.utils import InvalidName, canonicalize_name
+from packaging.specifiers import SpecifierSet
+from packaging.utils import InvalidName, canonicalize_name
+
 from .metadata import validate_specifier_versions
 from .pep508 import parse_requirement
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from ._vendor.packaging.requirements import Requirement
+    from packaging.requirements import Requirement
 
 __all__ = [
     "InvalidProjectRequirementError",

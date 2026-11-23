@@ -16,8 +16,8 @@ __lazy_modules__ = (
     "nab_project",
     "nab_project._lockfile.groups",
     "nab_project.paths",
-    "nab_provider._vendor.packaging.specifiers",
-    "nab_provider._vendor.packaging.utils",
+    "packaging.specifiers",
+    "packaging.utils",
     "nab_provider.digest",
     "nab_provider.extra_keys",
     "nab_provider.iso8601",
@@ -39,10 +39,10 @@ from typing import TYPE_CHECKING, Protocol, TypeVar
 from urllib.parse import quote
 
 import tomli
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
 
 from nab_index.urls import strip_userinfo
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.digest import is_hex_digest
 from nab_provider.extra_keys import split_extra
 from nab_provider.iso8601 import parse_iso_datetime
@@ -58,8 +58,9 @@ from .groups import BASE_MEMBER
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
-    from nab_provider._vendor.packaging.utils import NormalizedName
-    from nab_provider._vendor.packaging.version import Version
+    from packaging.utils import NormalizedName
+    from packaging.version import Version
+
     from nab_provider.policy import ArchiveSource, LocalSource, VcsSource
     from nab_provider.records import IndexConfig
     from nab_provider.target import ResolveTarget

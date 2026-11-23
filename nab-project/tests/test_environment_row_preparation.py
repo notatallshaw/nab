@@ -5,12 +5,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import pytest
+from packaging.markers import Marker, UndefinedComparison
 
-from nab_markersets._packaging import UndefinedComparison
 from nab_markersets.markersets import DecisionStore, MarkerSet
 from nab_project._lockfile import coverage, pylock
 from nab_project.lockfile import LockInput, TargetLock
-from nab_provider._vendor.packaging.markers import Marker
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import (
     ResolveTarget,

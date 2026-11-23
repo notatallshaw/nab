@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.utils import InvalidName
 
 from nab_provider._provider.metadata_resolver import extend_with_extras
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.utils import InvalidName
 from nab_provider.marker_holds import IntractableMarkerError, UnevaluableMarkerError
 from nab_provider.project_requirements import add_extra_marker
 from nab_provider.requirements_file import (

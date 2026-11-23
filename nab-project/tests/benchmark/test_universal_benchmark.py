@@ -11,12 +11,12 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from packaging.version import Version
 from typing_extensions import Self
 
 from nab_project._resolve import engine
 from nab_project.lockfile import IndexPin, LockInput, TargetLock, WheelArtifact
 from nab_project.resolve import ResolveResult, TargetResult
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import FakeFetchPort, make_metadata, make_sdist, make_wheel

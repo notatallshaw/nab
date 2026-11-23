@@ -66,10 +66,10 @@ from benchmark_host import (
 )
 from benchmark_paths import is_portable_path_component
 from benchmark_source import get_git_source_state
+from packaging.ranges import VersionRange
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_project.fetch import FetchCoordinator, index_routes
-from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
 from nab_provider.provider import (
     BuildPolicy,
