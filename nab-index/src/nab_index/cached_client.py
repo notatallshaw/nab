@@ -337,6 +337,10 @@ class SdistArchiveHold:
 
     def __init__(self, max_entries: int = _DEFAULT_HELD_ARCHIVES) -> None:
         """Create a hold with room for ``max_entries`` archives."""
+        if max_entries < 0:
+            msg = f"max_entries must be nonnegative, got {max_entries}"
+            raise ValueError(msg)
+
         self._held: dict[tuple[str, str], bytes] = {}
         self._max_entries = max_entries
 

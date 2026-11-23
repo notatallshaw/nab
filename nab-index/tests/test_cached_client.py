@@ -4089,6 +4089,15 @@ class TestGetSdistFiles:
 
 
 class TestSdistArchiveHold:
+    def test_negative_capacity_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="max_entries"):
+            SdistArchiveHold(-1)
+
+    def test_zero_capacity_keeps_no_archives(self) -> None:
+        hold = SdistArchiveHold(0)
+        hold.put("pkg", "1.0", b"one")
+        assert hold.take("pkg", "1.0") is None
+
     def test_the_oldest_archive_goes_when_the_hold_is_full(self) -> None:
         """A full hold evicts the oldest rather than growing."""
         hold = SdistArchiveHold(2)
