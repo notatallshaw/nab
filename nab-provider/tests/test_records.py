@@ -70,6 +70,14 @@ def test_metadata_url_reuses_first_result() -> None:
     assert wheel.metadata_url is wheel.metadata_url
 
 
+def test_metadata_url_follows_a_changed_wheel_url() -> None:
+    wheel = make_wheel()
+    assert wheel.metadata_url == f"{WHEEL_URL}.metadata"
+
+    wheel.url = "https://mirror.example/pkg.whl?build=1#sha256=ab"
+    assert wheel.metadata_url == "https://mirror.example/pkg.whl.metadata?build=1"
+
+
 def test_memo_leaves_equality_and_hashing_alone() -> None:
     """Only the declared fields determine equality and hashing."""
     read, unread = make_wheel(), make_wheel()
