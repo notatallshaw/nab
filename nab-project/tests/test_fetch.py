@@ -91,20 +91,16 @@ def _coord(**kwargs: object) -> FetchCoordinator:
     return coord
 
 
-def _wait_until(predicate: Callable[[], bool], timeout: float = 5) -> bool:
-    """Return whether ``predicate`` holds before ``timeout``.
-
-    The coordinator finishes some work without setting the waiter's event, so
-    waiting on the event itself would just spend the whole timeout.
-    """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
+def _prefetched_metadata(
+    coord: FetchCoordinator, package: str, version: str, sidecar: str
+) -> str | None:
+    """Wait for the speculative fetch without submitting another request."""
+    deadline = time.monotonic() + 5
+    while not coord.index.has_metadata(package, version, sidecar):
+        if time.monotonic() >= deadline:
+            break
         time.sleep(0.01)
-
-    # One last look, in case the work landed during the final sleep.
-    return predicate()
+    return coord.index.get_metadata(package, version, sidecar)
 
 
 class _FetcherDeath(BaseException):
@@ -429,16 +425,9 @@ class TestFetchCoordinator:
             return_value=httpx.Response(200, text=metadata_body)
         )
         with _coord() as coord:
-            event = coord.request_listing("pkg")
-            event.wait(timeout=5)
-            # Wait for the async prefetch of the newest wheel's sidecar.
+            assert coord.request_listing("pkg").wait(timeout=5)
             sidecar = "https://f.com/pkg-3.0-py3-none-any.whl.metadata"
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline:
-                if coord.index.has_metadata("pkg", "3.0", sidecar):
-                    break
-                time.sleep(0.01)
-            assert coord.index.has_metadata("pkg", "3.0", sidecar)
+            assert _prefetched_metadata(coord, "pkg", "3.0", sidecar) == metadata_body
 
     @respx.mock
     def test_listing_prefetch_derives_urls_only_for_submitted_wheels(
@@ -460,8 +449,9 @@ class TestFetchCoordinator:
         respx.get("https://pypi.org/simple/pkg/").mock(
             return_value=httpx.Response(200, json=listing)
         )
+        metadata_body = "Metadata-Version: 2.1\n"
         respx.get(url__regex=r".*\.whl\.metadata$").mock(
-            return_value=httpx.Response(200, text="Metadata-Version: 2.1\n")
+            return_value=httpx.Response(200, text=metadata_body)
         )
 
         derived: list[str] = []
@@ -476,13 +466,8 @@ class TestFetchCoordinator:
 
         sidecar = "https://f.com/pkg-15.0-py3-none-any.whl.metadata"
         with _coord() as coord:
-            coord.request_listing("pkg").wait(timeout=5)
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline and not coord.index.has_metadata(
-                "pkg", "15.0", sidecar
-            ):
-                time.sleep(0.01)
-            assert coord.index.has_metadata("pkg", "15.0", sidecar)
+            assert coord.request_listing("pkg").wait(timeout=5)
+            assert _prefetched_metadata(coord, "pkg", "15.0", sidecar) == metadata_body
 
         # Only the newest version's wheel, not all 15.
         assert derived == ["pkg-15.0-py3-none-any.whl"]
@@ -2832,25 +2817,20 @@ class TestSiblingWheelMetadata:
         )
         return linux, win
 
-    def _await_metadata(self, coord: FetchCoordinator) -> None:
-        """Wait for the prefetch of the wheel the listing publishes first."""
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and not coord.index.has_metadata(
-            "foo", "1.0", f"https://f.example/{_SIBLING_LINUX}.metadata"
-        ):
-            time.sleep(0.01)
+    def _assert_linux_prefetched(self, coord: FetchCoordinator) -> None:
+        sidecar = f"https://f.example/{_SIBLING_LINUX}.metadata"
+        assert (
+            _prefetched_metadata(coord, "foo", "1.0", sidecar)
+            == _SIBLING_LINUX_BODY.decode()
+        )
 
     @respx.mock
     def test_listing_prefetch_takes_the_wheel_the_provider_will_pick(self) -> None:
         """The prefetch fetches one wheel per version: the first with a sidecar."""
         linux, win = self._routes()
         with _coord() as coord:
-            coord.request_listing("foo").wait(timeout=5)
-            self._await_metadata(coord)
-            text = coord.index.get_metadata(
-                "foo", "1.0", f"https://f.example/{_SIBLING_LINUX}.metadata"
-            )
-            assert text == _SIBLING_LINUX_BODY.decode()
+            assert coord.request_listing("foo").wait(timeout=5)
+            self._assert_linux_prefetched(coord)
         assert linux.call_count == 1
         assert win.call_count == 0
 
@@ -2866,15 +2846,17 @@ class TestSiblingWheelMetadata:
         """
         linux, win = self._routes()
         with _coord(cache_dir=tmp_path) as coord:
-            coord.request_listing("foo").wait(timeout=5)
-            self._await_metadata(coord)
+            assert coord.request_listing("foo").wait(timeout=5)
+            self._assert_linux_prefetched(coord)
 
         win_hash = ("sha256", hashlib.sha256(_SIBLING_WIN_BODY).hexdigest())
         win_url = f"https://f.example/{_SIBLING_WIN}.metadata"
         with _coord(cache_dir=tmp_path) as coord:
-            coord.request_listing("foo").wait(timeout=5)
-            self._await_metadata(coord)
-            coord.request_metadata("foo", "1.0", win_url, win_hash).wait(timeout=5)
+            assert coord.request_listing("foo").wait(timeout=5)
+            self._assert_linux_prefetched(coord)
+            assert coord.request_metadata("foo", "1.0", win_url, win_hash).wait(
+                timeout=5
+            )
             assert coord.index.get_metadata_error("foo", "1.0", win_url) is None
             win_text = coord.index.get_metadata("foo", "1.0", win_url)
             assert win_text == _SIBLING_WIN_BODY.decode()
@@ -3807,8 +3789,9 @@ class TestWarmSyncTailOffload:
     @respx.mock
     def test_offloaded_tail_prefetches_metadata(self, tmp_path: Path) -> None:
         """The offloaded tail enqueues the newest version's metadata and it lands."""
+        metadata_body = "Metadata-Version: 2.1\n"
         respx.get(url__regex=r".*\.whl\.metadata$").mock(
-            return_value=httpx.Response(200, text="Metadata-Version: 2.1\n")
+            return_value=httpx.Response(200, text=metadata_body)
         )
         cache = OnDiskCache(tmp_path, _PYPI)
         files: list[WheelFile | SdistFile] = [_sync_wheel("1.0"), _sync_wheel("2.0")]
@@ -3836,12 +3819,7 @@ class TestWarmSyncTailOffload:
             sidecar = "https://f.example/pkg-2.0-py3-none-any.whl.metadata"
             assert meta_submits == {("pkg", "2.0", sidecar)}
 
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline and not coord.index.has_metadata(
-                "pkg", "2.0", sidecar
-            ):
-                time.sleep(0.01)
-            assert coord.index.has_metadata("pkg", "2.0", sidecar)
+            assert _prefetched_metadata(coord, "pkg", "2.0", sidecar) == metadata_body
 
     @respx.mock
     def test_dead_loop_runs_tail_inline(self, tmp_path: Path) -> None:
