@@ -19,6 +19,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 import tomlkit
 from packaging.requirements import Requirement
@@ -235,14 +236,32 @@ def _run(program: str, *args: str) -> str:
 
 def _github_slug(remote_url: str) -> str | None:
     """Return ``owner/repo`` from a GitHub remote URL, or None if not GitHub."""
-    if "github.com" not in remote_url:
+    if "://" not in remote_url:
+        # Git also accepts SSH remotes written as git@host:owner/repo.
+        host, separator, path = remote_url.partition(":")
+        if not separator:
+            return None
+        remote_url = f"ssh://{host}/{path.lstrip('/')}"
+
+    try:
+        remote = urlsplit(remote_url)
+    except ValueError:
         return None
-    return remote_url.removesuffix(".git").split("github.com", 1)[-1].strip(":/")
+
+    if remote.scheme == "file" or remote.hostname not in {
+        "github.com",
+        "ssh.github.com",
+    }:
+        return None
+
+    slug = remote.path.strip("/").removesuffix(".git")
+    owner, _, repo = slug.partition("/")
+    return slug if owner and repo and "/" not in repo else None
 
 
 def _pr_url(branch: str) -> str | None:
-    """Return the GitHub create-PR URL for a pushed branch, if origin is GitHub."""
-    slug = _github_slug(_run("git", "remote", "get-url", "origin"))
+    """Return the create-PR URL when the branch was pushed to GitHub."""
+    slug = _github_slug(_run("git", "remote", "get-url", "--push", "origin"))
     if slug is None:
         return None
     return f"https://github.com/{slug}/pull/new/{branch}"
