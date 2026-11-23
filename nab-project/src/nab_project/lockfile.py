@@ -746,6 +746,8 @@ class LockInput(Record):
     """``[tool.nab].base-group``: the group name the lock gives
     the project's own dependencies, or ``None`` to leave them unconditional."""
     build_group: str | None
+    """The group for ``[build-system].requires``, set by ``[tool.nab].build-group``.
+    With ``None``, the lock omits this group."""
 
     validation_inputs: Mapping[str, Any] | None
 
@@ -781,9 +783,6 @@ class LockInput(Record):
         self.base_group = base_group
         self.build_group = build_group
         self.validation_inputs = validation_inputs
-
-    """``[tool.nab].build-group``: the group name the lock gives
-    ``[build-system].requires``, or ``None`` to leave them out of the lock."""
 
     @property
     def active_groups(self) -> tuple[str, ...]:

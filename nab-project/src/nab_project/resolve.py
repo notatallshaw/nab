@@ -583,6 +583,9 @@ class _ProjectTables(Record):
     optional: Mapping[str, object]
     project_name: str | None
     build_requires: list[Requirement]
+    """``[build-system].requires``, read only when ``[tool.nab].build-group``
+    names a group for them.  A ``--build-requirements`` resolve carries them
+    in ``dependencies`` instead and leaves this empty."""
 
     def __init__(
         self,
@@ -597,10 +600,6 @@ class _ProjectTables(Record):
         self.optional = optional
         self.project_name = project_name
         self.build_requires = factory_value(build_requires, list)
-
-    """``[build-system].requires``, read only when ``[tool.nab].build-group``
-    names a group for them.  A ``--build-requirements`` resolve carries them
-    in ``dependencies`` instead and leaves this empty."""
 
 
 def _carried_by(
