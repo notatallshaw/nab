@@ -2600,7 +2600,7 @@ class TestMarkerDisjointness:
         # A collision outside the pruned subspace still raises: cpu/gpu
         # are declared exclusive, but these two entries collide on the
         # cpu point itself (both fire when cpu is selected).
-        with pytest.raises(DisjointnessError, match="foo"):
+        with pytest.raises(DisjointnessError, match="foo") as caught:
             validate_marker_disjointness(
                 [
                     self._pkg("foo", "1.0", "'cpu' in extras"),
@@ -2611,6 +2611,8 @@ class TestMarkerDisjointness:
                 groups=(),
                 exclusive_groups=[frozenset({("extra", "cpu"), ("extra", "gpu")})],
             )
+        assert "extras=['cpu']" in str(caught.value)
+        assert "[tool.nab].conflicts" not in str(caught.value)
 
     def test_collision_hint_points_at_conflicts_key(self) -> None:
         # A membership-driven collision with no declaration surfaces a
