@@ -665,19 +665,20 @@ class TestFlatWheelhouse:
         assert len(result) == 1
 
     def test_skips_non_files(self, tmp_path: Path) -> None:
-        (tmp_path / "subdir").mkdir()
-        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        (tmp_path / "foo-2.0-py3-none-any.whl").mkdir()
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        _write_wheel(wheel, "foo", "1.0")
+
         client = LocalIndexClient(tmp_path.as_uri())
-        result = run(client.get_files("foo"))
-        assert len(result) == 1
+        assert [file.filename for file in run(client.get_files("foo"))] == [wheel.name]
 
     def test_unparseable_filename_skipped(self, tmp_path: Path) -> None:
-        (tmp_path / "not-a-wheel.whl").write_bytes(b"")
-        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        (tmp_path / "foo-invalid.whl").touch()
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        _write_wheel(wheel, "foo", "1.0")
+
         client = LocalIndexClient(tmp_path.as_uri())
-        result = run(client.get_files("foo"))
-        assert len(result) == 1
-        assert result[0].filename == "foo-1.0-py3-none-any.whl"
+        assert [file.filename for file in run(client.get_files("foo"))] == [wheel.name]
 
     def test_missing_root_returns_empty(self, tmp_path: Path) -> None:
         missing = tmp_path / "does-not-exist"
