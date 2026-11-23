@@ -757,16 +757,17 @@ def empty_listing_diagnostic(
     version_range: VersionRange | None = None,
 ) -> Diagnostic:
     """Say why nothing on ``normalized``'s listing is usable on this target."""
-    dropped = [
-        record
+    if version_range is not None and any(
+        record.version is not None
+        and not version_range.contains(record.version, prereleases=True)
         for record in diagnosis.dropped
-        if record.cause not in (DropCause.ZIP_SDIST, DropCause.YANKED)
-        or version_range is None
-        or (record.version is not None and record.version in version_range)
-    ]
-    groups = _groups(dropped)
-    if not groups and not diagnosis.unexplained:
-        return NO_MATCH
+    ):
+        # Changing a policy for an unrequested release cannot repair the lock.
+        return (
+            in_range_diagnostic(provider, normalized, version_range, diagnosis)
+            or NO_MATCH
+        )
+    groups = _groups(diagnosis.dropped)
     clauses = [_clause(cause, records, diagnosis) for cause, records in groups]
     if diagnosis.unexplained:
         clauses.append(_render(None, diagnosis.unexplained))
@@ -799,17 +800,16 @@ def in_range_diagnostic(
     version equal to one in ``kept`` survived under another form. It
     does not count.
     """
-    named = [
+    # Include refused prereleases even when a refused final also matches.
+    # Test each file's version before grouping: equal versions can have
+    # different text for a literal requirement.
+    asked = [
         record
         for record in diagnosis.dropped
-        if record.version is not None and record.version not in diagnosis.kept
+        if record.version is not None
+        and record.version not in diagnosis.kept
+        and version_range.contains(record.version, prereleases=True)
     ]
-    # Every version here was refused, so PEP 440's default of yielding a
-    # pre-release only when no final matched would leave its filter unnamed.
-    in_range = set(
-        version_range.filter({record.version for record in named}, prereleases=True)
-    )
-    asked = [record for record in named if record.version in in_range]
 
     groups = _groups(asked)
     if not groups:

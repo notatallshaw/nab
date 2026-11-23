@@ -1517,6 +1517,49 @@ class TestTheLadderSdistLine:
 class TestTheInRangeLead:
     """Which filters dropped the release the requirement asked for."""
 
+    @pytest.mark.parametrize(
+        ("spec", "short"),
+        [
+            (">=3", "no version matches the requirement"),
+            ("==2", "no wheel in range matches this platform or Python"),
+        ],
+    )
+    def test_empty_listing_omits_out_of_range_policy_repairs(
+        self, spec: str, short: str
+    ) -> None:
+        files = [sdist("1"), wheel("2", tag="cp312-cp312-win_amd64")]
+        diagnostic = diagnostic_for(
+            files, spec=spec, target=_LINUX312, dist_policy=DistPolicy.WHEEL_ONLY
+        )
+
+        assert diagnostic.short == short
+        assert not diagnostic.suggestions
+
+    def test_constraint_scopes_the_listing_report_for_a_broad_failure(self) -> None:
+        constraint = SpecifierSet("==2").to_range()
+        provider = build(
+            [sdist("1"), wheel("2", tag="cp312-cp312-win_amd64")],
+            target=_LINUX312,
+            dist_policy=DistPolicy.WHEEL_ONLY,
+            constraints={"pkg": constraint},
+        )
+        assert provider.choose_version("pkg", constraint) is None
+        diagnostic = provider.get_no_versions_reason("pkg", SpecifierSet("").to_range())
+
+        assert diagnostic is not None
+        assert diagnostic.short == "no wheel in range matches this platform or Python"
+        assert not diagnostic.suggestions
+
+    def test_literal_range_explains_only_the_matching_version_text(self) -> None:
+        diagnostic = diagnostic_for(
+            [sdist("1"), wheel("1.0.0", tag="cp312-cp312-win_amd64")],
+            spec="===1.0.0",
+            target=_LINUX312,
+            dist_policy=DistPolicy.WHEEL_ONLY,
+        )
+        assert diagnostic.short == "no wheel in range matches this platform or Python"
+        assert not diagnostic.suggestions
+
     def test_two_filters_read_as_a_pair(self) -> None:
         reason = reason_for(
             [

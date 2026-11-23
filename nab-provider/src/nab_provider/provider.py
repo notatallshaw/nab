@@ -2632,6 +2632,10 @@ class Provider:
         ):
             versions = self.versions_cache.get(normalized)
             if versions is not None:
+                # A no-versions clause can cover more than the user's constraint.
+                constraint = self.constraints.get(normalized)
+                if constraint is not None:
+                    listing_range &= constraint
                 # A reporting query must not retain another requirement's domain.
                 recorded = (
                     self._listing_no_versions_reason(package, listing_range)
