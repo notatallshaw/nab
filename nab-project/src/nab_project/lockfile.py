@@ -535,10 +535,15 @@ class Provenance(ValueType):
         created_at = self.created_at
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
+        try:
+            created_at = created_at.astimezone(timezone.utc)
+        except (OverflowError, ValueError) as exc:
+            msg = "the lock's created-at timestamp cannot be represented in UTC"
+            raise LockValidationError(msg) from exc
 
         block: dict[str, Any] = {
             "nab-version": self.nab_version,
-            "created-at": created_at.astimezone(timezone.utc),
+            "created-at": created_at,
             "command-line": list(self.command_line),
             "input-path": self.input_path,
             "mode": self.mode,

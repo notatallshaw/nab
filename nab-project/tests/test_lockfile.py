@@ -1799,6 +1799,22 @@ class TestProvenance:
         assert emitted == created
         assert emitted.utcoffset() == timedelta(0)
 
+    @pytest.mark.parametrize(
+        "created",
+        [
+            datetime.min.replace(tzinfo=timezone(timedelta(hours=1))),
+            datetime.max.replace(tzinfo=timezone(-timedelta(hours=1))),
+        ],
+    )
+    def test_created_at_outside_utc_range_is_rejected(self, created: datetime) -> None:
+        provenance = Provenance(
+            "1", created, ("nab", "lock"), "pyproject.toml", "specific"
+        )
+        lock = LockInput(targets=_one({}), provenance=provenance)
+
+        with pytest.raises(LockValidationError, match="created-at.*UTC"):
+            write_lock(lock)
+
     def test_naive_created_at_is_stamped_utc(self) -> None:
         """A naive ``created_at`` is stamped UTC rather than read as local time."""
         stamped = datetime(2026, 5, 7, 12, 0, 0, tzinfo=timezone.utc)
