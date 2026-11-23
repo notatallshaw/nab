@@ -3166,10 +3166,6 @@ class Provider:
                 self, self.fetch_versions(base), normalized, version
             )
 
-        # Before the cache check: a queued prefetch lands in deps_cache only
-        # when this decodes it.
-        _listing.parse_prefetched_metadata(self, cache_key)
-
         if cache_key in self.deps_cache:
             return self.deps_cache[cache_key]
         cached_unsupported = self._unsupported_sdists.get(cache_key)
@@ -3214,27 +3210,47 @@ class Provider:
             self.prefetch_new_deps(self.deps_cache[cache_key])
             return self.deps_cache[cache_key]
 
+        # A queued sidecar and a direct read must pass the same sibling check.
+        _listing.parse_prefetched_metadata(self, cache_key)
+        if cache_key in self.deps_cache:
+            return self._checked_index_dependencies(cache_key, versions)
+
         metadata_text, from_sdist = _metadata_resolver.resolve_metadata(
             self, versions, package, version
         )
-
         self._parse_and_cache_metadata_guarded(
             cache_key, metadata_text, from_sdist=from_sdist
         )
 
+        deps = self._checked_index_dependencies(cache_key, versions)
+        self.stats.metadata_fetched += 1
+        self.prefetch_new_deps(deps)
+        return deps
+
+    def _checked_index_dependencies(
+        self, cache_key: tuple[str, Version], versions: list[tuple[Version, DistFile]]
+    ) -> dict[str, VersionRange]:
+        """Return parsed dependencies after checking the resident wheels."""
+        package, version = cache_key
         if (
-            self.consistent_metadata_contexts is None
-            or not self.effective_assume_consistent_metadata(
-                normalized, version, self.serving_index(normalized)
+            self.consistent_metadata_contexts is not None
+            and self.effective_assume_consistent_metadata(
+                package, version, self.serving_index(package)
             )
         ):
+            return self.deps_cache[cache_key]
+
+        try:
             _metadata_resolver.check_sibling_metadata_divergence(
                 self, versions, package, version
             )
-
-        self.stats.metadata_fetched += 1
-        self.prefetch_new_deps(self.deps_cache[cache_key])
-
+        except Exception:
+            # A failed candidate probe can be followed by a real dependency read.
+            del self.deps_cache[cache_key]
+            del self._extra_deps[cache_key]
+            del self.deferred_url_extras[cache_key]
+            del self.metadata_cache[cache_key]
+            raise
         return self.deps_cache[cache_key]
 
     def _parse_and_cache_metadata_guarded(

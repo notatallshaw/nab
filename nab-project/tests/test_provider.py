@@ -10822,6 +10822,31 @@ class TestSiblingMetadataDivergence:
         # A hard crash, not an invalid-metadata candidate drop.
         assert ("pkg", self._V) not in provider._invalid_metadata
 
+        with pytest.raises(SiblingMetadataDivergenceError):
+            provider.get_dependencies("pkg", self._V)
+
+    def test_rejected_newer_release_checks_the_prefetched_siblings(self) -> None:
+        first = _sib_wheel("py2.py3-none-any")
+        sibling = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator(
+            listings={
+                "pkg": [make_wheel("2", package="pkg"), first, sibling],
+                "bar": [make_wheel("1", package="bar")],
+            },
+            metadata_by_version={"2": make_metadata("pkg", "2", "bar>=2")},
+        )
+        coordinator.index.store_metadata("bar", "1", make_metadata("bar", "1"))
+        for wheel, text in ((first, _sib_meta("bar")), (sibling, _sib_meta())):
+            coordinator.index.store_metadata(
+                "pkg", "1.0", text, metadata_url=wheel.metadata_url
+            )
+
+        # The incompatible bar requirement takes the scan past the first release.
+        with pytest.raises(SiblingMetadataDivergenceError):
+            resolve_with_coordinator(
+                coordinator, [_LINUX311], [Requirement("bar==1"), Requirement("pkg")]
+            )
+
     def test_check_issues_no_fetch(self) -> None:
         """The check reads stored text only; it never requests a fetch."""
         wheel_a = _sib_wheel("py2.py3-none-any")
