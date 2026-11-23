@@ -211,7 +211,7 @@ class TestExpandExtraRequirements:
             return req
 
         monkeypatch.setattr(
-            "nab_provider.requirements_file.parse_requirement", reversed_extras
+            "nab_provider.project_requirements.parse_requirement", reversed_extras
         )
         out = expand_extra_requirements(opt, "mypkg", ["all"])
         assert [r.name for r in out] == ["depA", "depB", "depC"]
