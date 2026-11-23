@@ -91,7 +91,7 @@ from ._sources import materialize_source
 from .toml_io import loads_if_valid
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from typing_extensions import Self
 
@@ -470,6 +470,8 @@ class FetchCoordinator:
 
         self._start_lock = threading.Lock()
         self._submission_lock = threading.Lock()
+        # Requests are unhashable; retain the objects until their tasks finish.
+        self._outstanding: dict[int, fetch_requests.FetchRequest] = {}
         self._stopping = False
         self._thread: threading.Thread | None = None
         self._idle_transport: IdleClosableTransport | None = None
@@ -612,21 +614,36 @@ class FetchCoordinator:
                 self._refuse(item)
                 raise
 
-        # An accepted listing can schedule its sidecar while shutdown is draining it.
-        queue = self._async_q
-        if queue is not None and threading.current_thread() is self._thread:
-            queue.put_nowait(item)
-            return
-
+        # Keep posting and waiter registration together: the worker can fail
+        # before the event loop even runs its queued put_nowait callback.
         with self._submission_lock:
-            queue = self._async_q
-            submitted = queue is not None and self._schedule(queue.put_nowait, item)
+            failure = self._crash_error if self._crashed else None
+            submitted = (item is None or failure is None) and self._enqueue(item)
             if item is None:
-                # A worker can still be closing a transport after startup failed.
                 self._stopping = True
-            if submitted:
                 return
-        self._refuse(item)
+
+            requests = item if isinstance(item, list) else (item,)
+            if submitted:
+                for request in requests:
+                    self._outstanding[id(request)] = request
+                return
+
+        if failure is None:
+            self._refuse(item)
+        else:
+            self._fail_unfinished(requests, failure)
+
+    def _enqueue(self, item: _QueueItem) -> bool:
+        """Post to the current queue while holding the submission lock."""
+        queue = self._async_q
+        if queue is None:
+            return False
+        if threading.current_thread() is self._thread:
+            # An accepted listing can enqueue a sidecar during shutdown.
+            queue.put_nowait(item)
+            return True
+        return self._schedule(queue.put_nowait, item)
 
     def _post_to_loop(self, callback: Callable[..., object], *args: object) -> bool:
         """Post a listing tail, or let the caller run it inline after shutdown."""
@@ -644,42 +661,49 @@ class FetchCoordinator:
             return False  # A crashed worker may already have closed its loop.
         return True
 
-    def _refuse(self, item: _QueueItem) -> None:
+    def _refuse(
+        self, item: fetch_requests.FetchRequest | list[fetch_requests.FetchRequest]
+    ) -> None:
         """Record a failure for each request in ``item``, unblocking waiters."""
-        # None is the shutdown sentinel; it has no waiters.
-        if item is None:
-            return
-
         batch = item if isinstance(item, list) else [item]
         for req in batch:
-            error = RuntimeError("Fetcher loop is not running, request refused")
-            if isinstance(req, fetch_requests.Listing):
-                self.index.store_listing_error(req.package, error)
-            elif isinstance(req, fetch_requests.SidecarMetadata):
-                self.index.store_metadata_error(
-                    req.package, req.version, error, req.url
-                )
-            elif isinstance(req, fetch_requests.RangeMetadata):
-                # A dead loop is a rung miss: unblock the waiter and let it fall
-                # through to the sdist rung, not a candidate-dropping error.
+            if isinstance(req, fetch_requests.RangeMetadata):
+                # A refused range read leaves the sdist fallback available.
                 self.index.store_range_absent(req.package, req.version, req.url)
-            elif isinstance(req, fetch_requests.SdistMetadata):
-                self.index.store_sdist_metadata_error(
-                    req.package, sdist_artifact_key(req.version, req.url), error
-                )
             else:
-                self.index.store_sdist_archive_error(
-                    req.package,
-                    sdist_artifact_key(req.version, req.url)
-                    if isinstance(req, fetch_requests.SdistArchive)
-                    else req.version,
-                    error,
+                self._publish_error(
+                    req, RuntimeError("Fetcher loop is not running, request refused")
                 )
 
     def _record_crash(self, error: BaseException) -> None:
-        """Record the failure that killed the fetcher thread."""
-        self._crash_error = error
-        self._crashed = True
+        """Stop accepting work and release callers whose result never arrived."""
+        with self._submission_lock:
+            self._crash_error = error
+            self._crashed = True
+            outstanding = self._outstanding
+            self._outstanding = {}
+
+        self._fail_unfinished(outstanding.values(), error)
+
+    def _fail_unfinished(
+        self,
+        pending: Iterable[fetch_requests.FetchRequest],
+        cause: BaseException,
+    ) -> None:
+        for request in pending:
+            if request.waiter is None or not request.waiter.is_set():
+                self._publish_error(
+                    request, IndexAccessError(f"Fetcher thread crashed: {cause}")
+                )
+
+    def _publish_error(
+        self, request: fetch_requests.FetchRequest, error: Exception
+    ) -> None:
+        """Store a hard failure before waking the request's own waiter."""
+        if isinstance(request, fetch_requests.Listing):
+            self.index.store_listing_error(request.package, error)
+        else:
+            self._record_versioned_failure(request, error, offline=False)
 
     def _check_alive(self) -> None:
         if not self._crashed:
@@ -780,7 +804,7 @@ class FetchCoordinator:
                 self._warm_sync_stats.declined_small_blob += 1
             self._warm_sync_stats.listing_declines += 1
 
-        self._submit(fetch_requests.Listing(package=package))
+        self._submit(fetch_requests.Listing(package=package, waiter=event))
         return event
 
     def _try_metadata_sync(self, package: str, version: str, url: str) -> bool:
@@ -818,6 +842,7 @@ class FetchCoordinator:
                     version=version,
                     url=url,
                     metadata_hash=metadata_hash,
+                    waiter=event,
                 )
             )
 
@@ -851,6 +876,7 @@ class FetchCoordinator:
                     version=version,
                     url=wheel_url,
                     hashes=wheel_hashes,
+                    waiter=event,
                 )
             )
         return event
@@ -879,6 +905,7 @@ class FetchCoordinator:
                     version=version,
                     url=url,
                     hashes=sdist_hashes,
+                    waiter=event,
                 )
             )
         return event
@@ -908,6 +935,7 @@ class FetchCoordinator:
                     version=version,
                     url=url,
                     hashes=sdist_hashes,
+                    waiter=event,
                 )
             )
         return event
@@ -934,6 +962,7 @@ class FetchCoordinator:
                     package=package,
                     version=version,
                     url=url,
+                    waiter=event,
                 )
             )
         return event
@@ -1002,6 +1031,7 @@ class FetchCoordinator:
                         version=version,
                         url=url,
                         metadata_hash=metadata_hash,
+                        waiter=event,
                     )
                 )
 
@@ -1162,27 +1192,41 @@ class FetchCoordinator:
             handler = self._handle(client, request, sem)
             try:
                 task = asyncio.create_task(handler)
-            except Exception as exc:  # noqa: BLE001 - the caller is waiting for this request
+            except BaseException as exc:
                 handler.close()
+                if not isinstance(exc, Exception):
+                    raise
                 self._record_fetch_failure(client, request, exc)
+                with self._submission_lock:
+                    self._outstanding.pop(id(request), None)
                 continue
             tasks.add(task)
-            task.add_done_callback(partial(self._finish_fetch, tasks, client, request))
+            task.add_done_callback(partial(self._finish_fetch, tasks, request))
 
     def _finish_fetch(
         self,
         tasks: set[asyncio.Task[None]],
-        client: CachedAsyncSimpleClient | LocalIndexClient | MultiIndexClient,
         request: fetch_requests.FetchRequest,
         task: asyncio.Task[None],
     ) -> None:
-        """Publish cancellation even if the task never entered its request handler."""
+        """Retire the request and publish any failure that escaped its handler."""
         tasks.discard(task)
+        with self._submission_lock:
+            self._outstanding.pop(id(request), None)
+        if request.waiter is not None and request.waiter.is_set():
+            return
         if task.cancelled():
             error = IndexAccessError(
                 f"{request.operation} fetch for {request.package} was cancelled"
             )
-            self._record_fetch_failure(client, request, error)
+            self._publish_error(request, error)
+        elif (failure := task.exception()) is not None:
+            self._publish_error(
+                request,
+                IndexAccessError(
+                    f"{request.operation} fetch for {request.package} failed: {failure}"
+                ),
+            )
 
     async def _handle(
         self,

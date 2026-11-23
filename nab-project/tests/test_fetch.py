@@ -16,6 +16,7 @@ import zipfile
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import CoroutineType
 from typing import Any, NoReturn
 
 import httpx
@@ -63,7 +64,11 @@ from nab_provider.policy import (
 )
 from nab_provider.provider import Provider
 from nab_provider.serialization import SimpleSerialization
-from nab_provider.store import metadata_pending_key, sdist_artifact_key
+from nab_provider.store import (
+    metadata_pending_key,
+    range_pending_key,
+    sdist_artifact_key,
+)
 from nab_provider.testing import make_wheel, pkg_override
 from nab_provider.yanking import mark_yanked
 
@@ -1777,6 +1782,94 @@ class TestFetchCoordinator:
             pass
 
         assert transport.closes == 1
+
+    @respx.mock
+    def test_worker_exit_wakes_active_and_queued_requests(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        entered = threading.Event()
+        release = threading.Event()
+        escaped: list[BaseException | None] = []
+        monkeypatch.setattr(
+            threading, "excepthook", lambda args: escaped.append(args.exc_value)
+        )
+        completed, active, queued = (
+            f"https://files.example.com/{name}" for name in ("done", "active", "queued")
+        )
+
+        async def stop(_request: httpx.Request) -> NoReturn:
+            entered.set()
+            assert release.wait(5)
+            raise SystemExit("worker stopped")
+
+        respx.get(active).mock(side_effect=stop)
+        coord = _coord()
+        coord.start()
+        try:
+            first = coord.request_metadata("active", "1", active)
+            assert entered.wait(5)
+            second = coord.request_metadata("queued", "1", queued)
+            assert coord.request_metadata("queued", "1", queued) is second
+
+            # An index result can already be published when shutdown catches the batch.
+            published = coord.request_metadata("done", "1", completed)
+            coord.index.store_metadata("done", "1", "metadata", metadata_url=completed)
+            assert published.is_set()
+            release.set()
+
+            for package, url, event in (
+                ("active", active, first),
+                ("queued", queued, second),
+            ):
+                assert event.wait(5)
+                error = coord.index.get_metadata_error(package, "1", url)
+                assert isinstance(error, IndexAccessError)
+                assert "worker stopped" in str(error)
+        finally:
+            release.set()
+            coord.shutdown()
+
+        assert len(escaped) == 1
+        assert isinstance(escaped[0], SystemExit)
+        assert coord.index.get_metadata("done", "1", completed) == "metadata"
+
+    def test_crash_between_claiming_and_submitting_a_range_read(self) -> None:
+        coord = _coord()
+        url = "https://files.example.com/p.whl"
+        event, _ = coord.index.get_or_create_pending(range_pending_key("p", "1", url))
+        coord._record_crash(SystemExit("worker stopped"))
+
+        coord._submit(fetch_requests.RangeMetadata("p", "1", url, waiter=event))
+
+        assert event.is_set()
+        error = coord.index.get_metadata_error("p", "1", url)
+        assert isinstance(error, IndexAccessError)
+        assert "worker stopped" in str(error)
+
+    def test_worker_exit_during_task_creation_closes_the_handler(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rejected = []
+        escaped = []
+        monkeypatch.setattr(
+            threading, "excepthook", lambda args: escaped.append(args.exc_value)
+        )
+
+        def stop(handler: CoroutineType[Any, Any, None]) -> NoReturn:
+            rejected.append(handler)
+            raise SystemExit("scheduler stopped")
+
+        with _coord() as coord, monkeypatch.context() as patch:
+            patch.setattr(asyncio, "create_task", stop)
+            assert coord.request_listing("pkg").wait(5)
+
+        assert len(escaped) == 1
+        assert isinstance(escaped[0], SystemExit)
+        assert len(rejected) == 1
+        assert rejected[0].cr_frame is None
+        error = coord.index.get_listing_error("pkg")
+        assert isinstance(error, IndexAccessError)
+        assert "scheduler stopped" in str(error)
 
     def test_task_scheduling_failure_completes_its_request_and_continues(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
