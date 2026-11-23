@@ -1557,15 +1557,7 @@ class TestSharedTagInstances:
 
 
 class TestWheelRankAgreesWithExpandedOrder:
-    """``wheel_rank`` places a wheel where the expanded order puts its tag.
-
-    ``rank`` reads the index off :attr:`TagSet.ordered`; ``wheel_rank`` adds
-    a platform's offset to its interpreter/abi block instead, and never
-    expands the product.  Two answers to one question, so every tag a target
-    accepts is asked both ways: an offset out by one would tie the last
-    platform of a block with the entry after it, and ``pick`` would then
-    break that pair on the build tag rather than on specificity.
-    """
+    """Compare the rank lookups with positions in the expanded tag sequence."""
 
     @pytest.mark.parametrize(
         "spec",
@@ -1579,11 +1571,9 @@ class TestWheelRankAgreesWithExpandedOrder:
     ) -> None:
         tags = TagSet.for_spec(python_version="3.13", spec=spec)
 
-        keys = {tag: tags.wheel_rank(f"p-1.0-{tag}.whl") for tag in tags.ordered}
-        assert None not in keys.values()
-
-        placed = {tag: key[0] for tag, key in keys.items() if key is not None}
-        assert placed == dict(tags.rank)
+        for index, tag in enumerate(tags.ordered):
+            assert tags.rank[tag] == index
+            assert tags.wheel_rank(f"p-1.0-{tag}.whl") == (index, (-1, ""))
 
 
 class TestPyPyAbiSelection:
