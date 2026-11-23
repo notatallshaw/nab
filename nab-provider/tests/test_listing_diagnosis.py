@@ -1244,10 +1244,22 @@ class TestTheTryLine:
             ("pypi", '"pypi"'),
             ("corp mirror", '"corp mirror"'),
             ("my.index", '"my.index"'),
-            ('corp "the" mirror', "'corp \"the\" mirror'"),
+            ('corp "the" mirror', r'"corp \"the\" mirror"'),
             ('it\'s "ours"', '"it\'s \\"ours\\""'),
+            (r"team\build", r'"team\\build"'),
+            ("team\nmirror", r'"team\nmirror"'),
+            ("mirror\x7f📦", '"mirror\\u007f📦"'),
         ],
-        ids=["bare", "spaced", "dotted", "quoted", "both-quotes"],
+        ids=[
+            "bare",
+            "spaced",
+            "dotted",
+            "quoted",
+            "both-quotes",
+            "backslash",
+            "newline",
+            "unicode",
+        ],
     )
     def test_a_per_index_cutoff_quotes_whatever_the_index_is_called(
         self, index_name: str, key: str

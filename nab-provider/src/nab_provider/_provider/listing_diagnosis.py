@@ -20,6 +20,7 @@ than passed over.
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "json",
     "nab_provider._provider",
     "nab_provider._vendor.packaging.version",
     "nab_provider.errors",
@@ -28,6 +29,7 @@ __lazy_modules__ = (
     "re",
 )
 
+import json
 import re
 from typing import TYPE_CHECKING, Final
 
@@ -1246,19 +1248,10 @@ def _covers_clause(packages: int) -> str:
 
 
 def _toml_key(name: str) -> str:
-    """Quote ``name`` as a TOML key, in whichever form reads back as ``name``.
-
-    An index is named by whatever the config called it, and nab accepts
-    either quote in that name, which would otherwise close the key the
-    remedy is writing it into.  A literal string takes a double quote and a
-    basic string takes the rest, escaping where the name holds both.
-    """
-    if '"' not in name:
-        return f'"{name}"'
-    if "'" not in name:
-        return f"'{name}'"
-    escaped = name.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    """Quote the index name as a single-line TOML basic key."""
+    # JSON escapes the same control characters except DEL. Keep Unicode literal
+    # so a non-BMP character cannot become two surrogate escapes in TOML.
+    return json.dumps(name, ensure_ascii=False).replace("\x7f", r"\u007f")
 
 
 # The single-file clause for a rung that took one named artifact, which the
