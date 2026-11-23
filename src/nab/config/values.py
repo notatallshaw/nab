@@ -1581,16 +1581,10 @@ def _parse_override_provides_extra(value: object, where: str) -> tuple[str, ...]
         )
         raise SourceConfigError(msg)
 
-    out: list[str] = []
-    for i, item in enumerate(value):
-        if not isinstance(item, str):
-            msg = (
-                f"{where}.provides-extra[{i}] must be a string, got"
-                f" {type(item).__name__}"
-            )
-            raise SourceConfigError(msg)
-        out.append(canonicalize_name(item))
-    return tuple(out)
+    return tuple(
+        _normalized_name(item, f"{where}.provides-extra[{i}]", "extra")
+        for i, item in enumerate(value)
+    )
 
 
 def _parse_override_index(entry: dict[str, Any], where: str) -> str | None:

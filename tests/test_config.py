@@ -4878,6 +4878,14 @@ class TestPackageOverrideProvidesExtra:
         with pytest.raises(ConfigError, match=r"provides-extra\[0\] must be a string"):
             read_pyproject_config(path, discover_workspace=False)
 
+    @pytest.mark.parametrize("name", ["", "dot env", "-dotenv"])
+    def test_invalid_extra_name_rejected(self, tmp_path: Path, name: str) -> None:
+        path = write(
+            tmp_path, f'[tool.nab.packages.flask]\nprovides-extra = ["async", "{name}"]'
+        )
+        with pytest.raises(ConfigError, match=r"provides-extra\[1\].*valid extra name"):
+            read_pyproject_config(path, discover_workspace=False)
+
     def test_overlapping_entries_rejected(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
