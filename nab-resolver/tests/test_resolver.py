@@ -59,7 +59,7 @@ from nab_resolver.types import (
     Term,
 )
 
-from .solver_fixtures import DictProvider
+from .solver_fixtures import DictProvider, is_proven_conflict
 
 
 class PromotingProvider(DictProvider):
@@ -233,7 +233,7 @@ class TestPendingClausesHook:
         resolver = Resolver(provider)
         # Resolution fails because foo==2 can't be picked, but the failure
         # path goes through the queued clause rather than NO_VERSIONS.
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve({"root": Range.singleton(1)})
 
 
@@ -321,7 +321,7 @@ class TestConflictLearning:
             }
         )
         resolver = Resolver(provider)
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve({"root": Range.singleton(1)})
 
     def test_direct_conflict(self) -> None:
@@ -333,7 +333,7 @@ class TestConflictLearning:
             }
         )
         resolver = Resolver(provider)
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve(
                 {
                     "root": Range.singleton(1),
@@ -385,7 +385,7 @@ class TestMultiLevelConflict:
             }
         )
         resolver = Resolver(provider)
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve({"root": Range.singleton(1)})
 
 
@@ -472,7 +472,7 @@ class TestThreeWayConflict:
             }
         )
         resolver = Resolver(provider)
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve({"root": Range.singleton(1)})
 
 
@@ -499,7 +499,7 @@ class TestCircularDependencies:
             }
         )
         resolver = Resolver(provider)
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve({"root": Range.singleton(1)})
 
 
@@ -1170,7 +1170,7 @@ class TestResolverInternals:
         )
         resolver = Resolver(DictProvider({}))
         resolver.solution = solution
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             conflict_resolution(resolver, conflict)
 
     @pytest.mark.parametrize("terms", [[], [Term("absent", Range.singleton(1))]])
@@ -1474,7 +1474,7 @@ class TestBackjumpToRoot:
         must detect this and raise ResolutionError.
         """
         provider = DictProvider({"root": {1: {"foo": Range.full()}}, "foo": {}})
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             Resolver(provider).resolve({"root": Range.singleton(1)})
 
     def test_decision_satisfier_backjump_adjustment(self) -> None:
@@ -1498,7 +1498,7 @@ class TestBackjumpToRoot:
                 "c": {2: {}, 1: {}},
             }
         )
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             Resolver(provider).resolve({"root": Range.singleton(1)})
 
     def test_terminal_clause_reports_the_whole_derivation(self) -> None:
@@ -2916,7 +2916,7 @@ class TestRegressions:
             }
         )
         resolver = Resolver(provider)
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve({"root": Range.singleton(1)})
 
 
@@ -3341,7 +3341,7 @@ class TestSettledClauseSkip:
         auditor = StampAuditor(resolver)
         resolver.observer = auditor
 
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve({"a": Range.full()})
 
         assert auditor.stale == []
@@ -3395,7 +3395,7 @@ class TestSettledClauseSkip:
         resolver = Resolver(provider)
         assert resolver.resolve({"a": Range.full()}) == {"a": 2, "b": 2}
 
-        with pytest.raises(ResolutionError):
+        with pytest.raises(ResolutionError, check=is_proven_conflict):
             resolver.resolve({"c": Range.full()})
 
         assert len(resolver.clause_contradicted_at) == len(resolver.incompatibilities)

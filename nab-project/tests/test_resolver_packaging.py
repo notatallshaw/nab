@@ -16,7 +16,7 @@ from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Term
 
-from .packaging_provider import PackagingProvider
+from .packaging_provider import PackagingProvider, resolve_or_prove_conflict
 
 V = Version
 
@@ -425,10 +425,9 @@ class TestConflictDetection:
                 "E": {V("1.0"): {"D": SpecifierSet("<1.0")}},
             },
         )
-        with pytest.raises(ResolutionError):
-            Resolver(provider, range_type=VersionRange, root_version="0").resolve(
-                {"root": VersionRange.singleton(V("1.0"))}
-            )
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        requirements = {"root": VersionRange.singleton(V("1.0"))}
+        assert resolve_or_prove_conflict(resolver, requirements) is None
 
     def test_direct_conflict(self) -> None:
         """Root requires foo>=2.0, user also requires foo<1.0."""
@@ -438,13 +437,12 @@ class TestConflictDetection:
                 "foo": {V("3.0"): {}, V("2.0"): {}, V("1.0"): {}},
             },
         )
-        with pytest.raises(ResolutionError):
-            Resolver(provider, range_type=VersionRange, root_version="0").resolve(
-                {
-                    "root": VersionRange.singleton(V("1.0")),
-                    "foo": SpecifierSet("<1.0").to_range(),
-                }
-            )
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        requirements = {
+            "root": VersionRange.singleton(V("1.0")),
+            "foo": SpecifierSet("<1.0").to_range(),
+        }
+        assert resolve_or_prove_conflict(resolver, requirements) is None
 
 
 class TestArbitraryAdmittingRootRange:
@@ -561,10 +559,9 @@ class TestMultiLevelConflict:
                 "z": {V("3.0"): {}, V("2.0"): {}, V("1.0"): {}},
             },
         )
-        with pytest.raises(ResolutionError):
-            Resolver(provider, range_type=VersionRange, root_version="0").resolve(
-                {"root": VersionRange.singleton(V("1.0"))}
-            )
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        requirements = {"root": VersionRange.singleton(V("1.0"))}
+        assert resolve_or_prove_conflict(resolver, requirements) is None
 
 
 class TestPreference:
@@ -647,10 +644,9 @@ class TestCircularDependencies:
                 "pkg1": {V("1.0"): {"pkg0": SpecifierSet("==2.0")}},
             },
         )
-        with pytest.raises(ResolutionError):
-            Resolver(provider, range_type=VersionRange, root_version="0").resolve(
-                {"root": VersionRange.singleton(V("1.0"))}
-            )
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+        requirements = {"root": VersionRange.singleton(V("1.0"))}
+        assert resolve_or_prove_conflict(resolver, requirements) is None
 
 
 class TestBruteForceRegression:

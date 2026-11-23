@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any, ClassVar
 
 from nab_resolver._compat import override
+from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 from nab_resolver.ranges import Range
 from nab_resolver.types import Incompatibility, RangeProtocol, RangeRelation
 
@@ -214,3 +215,11 @@ class FlaggedRange:
         if self.metadata:
             suffix += ", metadata"
         return f"FlaggedRange({self.base!r}{suffix})"
+
+
+def is_proven_conflict(error: ResolutionError) -> bool:
+    """A solver fault can carry a diagnostic incompatibility without proving a conflict."""
+    return (
+        not isinstance(error, ResolutionTerminatedError)
+        and error.incompatibility is not None
+    )
