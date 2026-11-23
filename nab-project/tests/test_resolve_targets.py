@@ -2032,22 +2032,24 @@ class TestRunPassConflict:
     """A contradictory root requirement returns a failure for each target."""
 
     def test_conflicting_requirements_fail_the_target(self) -> None:
-        """Pinned-but-different reqs surface as a failed TargetResult.
-
-        ``build_resolver_inputs`` raises before the resolver runs, so
-        the failure has to be caught per target rather than escaping the
-        whole pass.
-        """
-        results = _run_pass(
+        """The conflict proof identifies both individually available pins."""
+        wheels = [_make_wheel(v, package="pkg") for v in ("1.0", "2.0")]
+        coordinator = make_coordinator(listings={"pkg": wheels}, auto_metadata=True)
+        (result,) = _run_pass(
             [_linux_311()],
             _reqs("pkg==1.0", "pkg==2.0"),
             (),
-            _settings(make_coordinator(listings={}, auto_metadata=True), _no_build()),
+            _settings(coordinator, _no_build()),
             {},
         )
-        assert len(results) == 1
-        assert not results[0].success
-        assert isinstance(results[0].error, ResolutionError)
+        assert not result.success
+        assert type(result.error) is ResolutionError
+        proof = result.error.incompatibility
+        assert proof is not None
+        assert {node.origin for node in proof.walk() if node.origin is not None} == {
+            "pkg==1.0",
+            "pkg==2.0",
+        }
 
 
 class TestRunPassConstraintMarker:
