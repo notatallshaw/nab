@@ -13,6 +13,7 @@ import logging
 import subprocess
 import tarfile
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 from unittest.mock import patch
@@ -94,7 +95,8 @@ from nab_provider.resolver_inputs import ProxyConstraints
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
 from nab_provider.testing import FakeFetchPort, make_metadata, make_sdist, make_wheel
-from nab_resolver.errors import ResolutionError
+from nab_resolver.errors import ResolutionError, ResolutionLimitError
+from nab_resolver.resolver import Resolver
 from nab_test_support.coordinator import make_coordinator
 
 if TYPE_CHECKING:
@@ -3273,6 +3275,53 @@ class TestMicroBoundaryNarrowing:
                 environment=dict(later.marker_env), tags=later.tags.ordered
             )
             assert [package.name for package, _ in selected] == ["foo"]
+
+    @pytest.mark.parametrize(
+        ("dependencies", "constraints"),
+        [
+            (('mid==9; python_full_version < "3.13.4"',), ()),
+            ((), ("foo==1", 'foo==2; python_full_version < "3.13.4"')),
+        ],
+        ids=["unavailable-version", "conflicting-constraints"],
+    )
+    def test_failed_first_patch_retains_successful_later_patches(
+        self, dependencies: tuple[str, ...], constraints: tuple[str, ...]
+    ) -> None:
+        coordinator = self._coordinator(
+            {"1.0": self._meta("foo", "1.0", *dependencies)}
+        )
+        targets = Matrix(
+            python="==3.13", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+        result = resolve_with_coordinator(
+            coordinator,
+            targets,
+            _reqs("foo"),
+            inputs=_no_build(constraints=constraints),
+        )
+
+        earlier, later = result.target_results
+        assert not result.success
+        assert not earlier.success
+        assert earlier.target.python_full_version == "3.13.0"
+        assert later.success
+        assert later.target.python_full_version == "3.13.4"
+        assert later.pins == {"foo": Version("1.0")}
+
+    def test_iteration_limit_does_not_trigger_patch_retries(self) -> None:
+        coordinator = self._coordinator({"1.0": self._meta("foo", "1.0")})
+        targets = Matrix(
+            python="==3.13", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+        roots = _reqs('foo; python_full_version < "3.13.4"')
+        with patch.object(engine_mod, "Resolver", partial(Resolver, max_iterations=0)):
+            result = resolve_with_coordinator(
+                coordinator, targets, roots, inputs=_no_build()
+            )
+
+        (stopped,) = result.target_results
+        assert isinstance(stopped.error, ResolutionLimitError)
+        assert roots[0].marker in stopped.consulted
 
     def test_a_host_target_is_not_split(self) -> None:
         """A host target names a real micro, so no ``.0`` is synthesized and a

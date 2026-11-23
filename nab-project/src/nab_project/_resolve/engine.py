@@ -65,7 +65,7 @@ from ..lockfile import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
     from pathlib import Path
 
     from nab_provider._vendor.packaging.markers import Marker
@@ -517,6 +517,9 @@ def _grow_micro_boundaries(
     """
     consulted_by_sig: dict[EnvSignature, set[Marker]] = defaultdict(set)
     for tr in result.every_result:
+        # A stopped search gives no reason to retry at a different patch.
+        if isinstance(tr.error, ResolutionTerminatedError):
+            continue
         consulted_by_sig[env_signature(tr.target)] |= set(tr.consulted)
 
     grown: list[MicroBoundaries] = []
@@ -1174,7 +1177,12 @@ def _resolve_one_target(
         )
         resolver_constraints = ProxyConstraints(constraint_inputs.ranges)
     except ResolutionError as exc:
-        return TargetResult(target=target, success=False, error=exc)
+        return TargetResult(
+            target=target,
+            success=False,
+            error=exc,
+            consulted=_consulted_markers(requirements, constraints),
+        )
 
     preferences, model_hint = _target_preferences(
         settings, target, contexts, preferences
@@ -1251,6 +1259,9 @@ def _resolve_one_target(
             target=target,
             success=False,
             error=exc,
+            consulted=_consulted_markers(
+                requirements, constraints, provider.consulted_markers
+            ),
             wall_time=time.monotonic() - start,
             **_target_stats(resolver, provider, prior_stats),
         )
@@ -1297,7 +1308,9 @@ def _resolve_one_target(
         target=target,
         success=True,
         pins=pins,
-        consulted=_consulted_markers(provider, requirements, constraints),
+        consulted=_consulted_markers(
+            requirements, constraints, provider.consulted_markers
+        ),
         lock=target_lock,
         wall_time=elapsed,
         **stats,
@@ -1412,9 +1425,9 @@ def _root_keys(
 
 
 def _consulted_markers(
-    provider: Provider,
     requirements: Sequence[Requirement],
     constraints: Sequence[Requirement],
+    dependency_markers: Iterable[Marker] = (),
 ) -> frozenset[Marker]:
     """Every PEP 508 marker this resolve read.
 
@@ -1422,7 +1435,7 @@ def _consulted_markers(
     constraints are collected here, since their markers are evaluated
     before the provider exists.
     """
-    consulted = set(provider.consulted_markers)
+    consulted = set(dependency_markers)
     for req in itertools.chain(requirements, constraints):
         if req.marker is not None:
             consulted.add(req.marker)
