@@ -918,7 +918,7 @@ class Provider:
         )
 
         self.vcs_config = vcs_config or VcsConfig()
-        self.local_sources = _sources.index_local_sources(self, local_sources or [])
+        self.local_sources = _sources.index_local_sources(local_sources or [])
         self.vcs_cache_dir = vcs_cache_dir
         self.vcs_pins: dict[str, str] = {}
         self.vcs_sources = _sources.index_vcs_sources(self, vcs_sources or [])

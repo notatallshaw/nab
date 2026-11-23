@@ -12,8 +12,10 @@ import pytest
 from packaging.utils import canonicalize_name
 
 from nab_index import lazy_wheel
+from nab_index._json_decode import decode_json
 from nab_index.client import MalformedSimpleResponseError, WheelHashMismatchError
 from nab_index.lazy_wheel import (
+    _DEFAULT_TAIL,
     RangeCapability,
     RangeCapabilityMemo,
     RangeMetadataResult,
@@ -30,7 +32,11 @@ requires_int_limit = pytest.mark.skipif(
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
+
+    from nab_index.transport import AsyncHttpTransport, JsonValue
+
+    ResponseScript = Callable[["_ScriptedTransport", str, int, int], "_FakeResponse"]
 
 _META = b"Metadata-Version: 2.1\nName: widget\nVersion: 1.0\n\nBody text.\n"
 _URL = "https://files.example.org/packages/widget-1.0-py3-none-any.whl"
@@ -130,7 +136,10 @@ def _range_span(rng: str, total: int) -> int:
 
 
 class _FakeResponse:
-    def __init__(self, status: int, headers: dict[str, str], content: bytes) -> None:
+    def __init__(
+        self, status: int, headers: dict[str, str], content: bytes, *, url: str = _URL
+    ) -> None:
+        self.url = url
         self._status = status
         self._headers = headers
         self._content = content
@@ -151,10 +160,8 @@ class _FakeResponse:
     def text(self) -> str:
         return self._content.decode("utf-8")
 
-    def json(self) -> object:
-        import json
-
-        return json.loads(self._content)
+    def json(self) -> JsonValue:
+        return decode_json(self._content)
 
     def raise_for_status(self) -> None:
         if self._status >= 400:
@@ -179,9 +186,9 @@ class FakeRangeTransport:
         rng = headers.get("Range")
         enc = headers.get("Accept-Encoding")
         self.requests.append((rng, enc))
-        if rng is None:
-            return self._full()
-        return self._respond(rng)
+        response = self._full() if rng is None else self._respond(rng)
+        response.url = url
+        return response
 
     async def aclose(self) -> None:
         return None
@@ -248,14 +255,21 @@ class FakeRangeTransport:
 _NAME = canonicalize_name("widget")
 
 
-def _read(transport: object, url: str = _URL, **kwargs: object) -> RangeMetadataResult:
+def _read(
+    transport: AsyncHttpTransport,
+    url: str = _URL,
+    *,
+    wheel_hash: tuple[str, str] | None = None,
+    tail_size: int = _DEFAULT_TAIL,
+) -> RangeMetadataResult:
     return asyncio.run(
         read_wheel_metadata_over_range(
-            transport,  # type: ignore[arg-type]
+            transport,
             url,
             _NAME,
             RangeCapabilityMemo(),
-            **kwargs,  # type: ignore[arg-type]
+            wheel_hash=wheel_hash,
+            tail_size=tail_size,
         )
     )
 
@@ -328,11 +342,11 @@ def test_range_rejecting_host_memoizes_full_body() -> None:
     async def run() -> tuple[RangeMetadataResult, int]:
         memo = RangeCapabilityMemo()
         transport = FakeRangeTransport("reject_403", build_wheel())
-        await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         capability = memo.capability("files.example.org")
         assert capability is RangeCapability.FULL_BODY_ONLY
         before = len(transport.requests)
-        result = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        result = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         return result, len(transport.requests) - before
 
     result, second_requests = asyncio.run(run())
@@ -346,11 +360,11 @@ def test_cdn_miss_200_then_206_returns_to_ranges() -> None:
     async def run() -> tuple[RangeMetadataResult, RangeMetadataResult, int]:
         memo = RangeCapabilityMemo()
         transport = FakeRangeTransport("miss_200_then_206", build_wheel_member_front())
-        first = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        first = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         assert first.text == _META.decode("utf-8")
         assert memo.capability("files.example.org") is RangeCapability.SUFFIX_OK
         after_first = len(transport.requests)
-        second = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        second = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         return first, second, len(transport.requests) - after_first
 
     first, second, second_requests = asyncio.run(run())
@@ -474,7 +488,7 @@ _SCRIPTED_REQUEST_CAP = 20
 class _ScriptedTransport:
     """Serve responses from per-request-shape callables."""
 
-    def __init__(self, wheel: bytes, script: object) -> None:
+    def __init__(self, wheel: bytes, script: ResponseScript) -> None:
         self.wheel = wheel
         self.total = len(wheel)
         self.script = script
@@ -487,14 +501,18 @@ class _ScriptedTransport:
         if len(self.requests) >= _SCRIPTED_REQUEST_CAP:
             msg = f"reader still requesting after {_SCRIPTED_REQUEST_CAP} round trips"
             raise AssertionError(msg)
-        headers = headers or {}
-        rng = headers.get("Range")
-        if rng is None:
+
+        range_header = (headers or {}).get("Range")
+        if range_header is None:
             self.requests.append("full")
-            return self.script(self, "full", 0, 0)  # type: ignore[operator]
-        self.requests.append(rng)
-        kind, a, b = _parse_range(rng)
-        return self.script(self, kind, a, b)  # type: ignore[operator]
+            response = self.script(self, "full", 0, 0)
+        else:
+            self.requests.append(range_header)
+            kind, start, end = _parse_range(range_header)
+            response = self.script(self, kind, start, end)
+
+        response.url = url
+        return response
 
     async def aclose(self) -> None:
         return None
@@ -512,21 +530,24 @@ class _ScriptedTransport:
 
 
 def _run_scripted(
-    script: object,
+    script: ResponseScript,
     wheel: bytes | None = None,
     memo: RangeCapabilityMemo | None = None,
-    **kwargs: object,
+    *,
+    wheel_hash: tuple[str, str] | None = None,
+    tail_size: int = _DEFAULT_TAIL,
 ) -> RangeMetadataResult:
     transport = _ScriptedTransport(
         wheel if wheel is not None else build_wheel(), script
     )
     return asyncio.run(
         read_wheel_metadata_over_range(
-            transport,  # type: ignore[arg-type]
+            transport,
             _URL,
             _NAME,
             memo if memo is not None else RangeCapabilityMemo(),
-            **kwargs,  # type: ignore[arg-type]
+            wheel_hash=wheel_hash,
+            tail_size=tail_size,
         )
     )
 
@@ -939,14 +960,14 @@ def test_member_fetch_rejected_gzip_plain_get_is_missing() -> None:
 @pytest.mark.parametrize(
     "build", [build_wheel_member_front, lambda: build_wheel(padding=4000)]
 )
-def test_mid_read_404_raises(build: object) -> None:
+def test_mid_read_404_raises(build: Callable[[], bytes]) -> None:
     def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
         if kind == "suffix":
             return t.partial(max(0, t.total - a), t.total - 1)
         return _FakeResponse(404, {}, b"")
 
     with pytest.raises(HttpError):
-        _run_scripted(script, wheel=build(), tail_size=64)  # type: ignore[operator]
+        _run_scripted(script, wheel=build(), tail_size=64)
 
 
 def test_member_last_uses_directory_upper_bound() -> None:
@@ -1080,9 +1101,9 @@ def test_memo_suffix_ok_no_reprobe() -> None:
     async def run() -> RangeCapability:
         memo = RangeCapabilityMemo()
         transport = FakeRangeTransport("well_behaved", build_wheel())
-        await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         assert memo.capability("files.example.org") is RangeCapability.SUFFIX_OK
-        await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         return memo.capability("files.example.org")
 
     assert asyncio.run(run()) is RangeCapability.SUFFIX_OK
@@ -1092,9 +1113,9 @@ def test_memo_absolute_only_skips_reprobe() -> None:
     async def run() -> tuple[RangeCapability, int]:
         memo = RangeCapabilityMemo()
         transport = FakeRangeTransport("suffix_501", build_wheel())
-        await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         assert memo.capability("files.example.org") is RangeCapability.ABSOLUTE_ONLY
-        await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         return memo.capability("files.example.org"), transport.negative_requests
 
     capability, negatives = asyncio.run(run())
@@ -1106,7 +1127,7 @@ def test_memo_range_ignoring_host_stays_suffix_ok() -> None:
     async def run() -> tuple[RangeMetadataResult, int]:
         memo = RangeCapabilityMemo()
         transport = FakeRangeTransport("ignore_range_200", build_wheel())
-        first = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        first = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         assert first.text == _META.decode("utf-8")
         # A volunteered 200 answers the suffix request with the whole body, so
         # leading with the suffix form again costs the same single request on a
@@ -1114,7 +1135,7 @@ def test_memo_range_ignoring_host_stays_suffix_ok() -> None:
         # on a cache miss gets to serve cheap partial reads again.
         assert memo.capability("files.example.org") is RangeCapability.SUFFIX_OK
         before = len(transport.requests)
-        second = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        second = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         return second, len(transport.requests) - before
 
     result, second_requests = asyncio.run(run())
@@ -1127,25 +1148,23 @@ def test_memo_gzip_stays_unsupported() -> None:
     async def run() -> int:
         memo = RangeCapabilityMemo()
         transport = FakeRangeTransport("gzip_range", build_wheel())
-        result = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        result = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         assert result.outcome is RangeOutcome.UNSUPPORTED
         assert memo.capability("files.example.org") is RangeCapability.UNSUPPORTED
         first = len(transport.requests)
-        again = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        again = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         assert again.outcome is RangeOutcome.UNSUPPORTED
         return len(transport.requests) - first
 
     assert asyncio.run(run()) == 0
 
 
-def _read_full_body_only(script: object) -> RangeMetadataResult:
+def _read_full_body_only(script: ResponseScript) -> RangeMetadataResult:
     """Read against a host already memoed ``FULL_BODY_ONLY`` (a plain GET)."""
     memo = RangeCapabilityMemo()
     memo.record("files.example.org", RangeCapability.FULL_BODY_ONLY)
     transport = _ScriptedTransport(build_wheel(), script)
-    return asyncio.run(
-        read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
-    )
+    return asyncio.run(read_wheel_metadata_over_range(transport, _URL, _NAME, memo))
 
 
 def test_full_body_only_gzip_is_unsupported() -> None:
@@ -1170,8 +1189,8 @@ def test_memo_concurrent_single_flight() -> None:
         memo = RangeCapabilityMemo()
         transport = FakeRangeTransport("suffix_501", build_wheel())
         await asyncio.gather(
-            read_wheel_metadata_over_range(transport, _URL, _NAME, memo),  # type: ignore[arg-type]
-            read_wheel_metadata_over_range(transport, _URL, _NAME, memo),  # type: ignore[arg-type]
+            read_wheel_metadata_over_range(transport, _URL, _NAME, memo),
+            read_wheel_metadata_over_range(transport, _URL, _NAME, memo),
         )
         return transport.negative_requests
 
@@ -1182,11 +1201,11 @@ def test_memo_ignored_absolute_latches_full_body() -> None:
     async def run() -> tuple[RangeMetadataResult, int]:
         memo = RangeCapabilityMemo()
         transport = FakeRangeTransport("no_ranges", build_wheel())
-        await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         capability = memo.capability("files.example.org")
         assert capability is RangeCapability.FULL_BODY_ONLY
         before = len(transport.requests)
-        result = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        result = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         return result, len(transport.requests) - before
 
     result, second_requests = asyncio.run(run())
@@ -1209,11 +1228,11 @@ def test_unknown_length_host_latches_full_body_only() -> None:
     async def run() -> tuple[RangeMetadataResult, int]:
         memo = RangeCapabilityMemo()
         transport = _ScriptedTransport(build_wheel(), script)
-        first = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        first = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         assert first.text == _META.decode("utf-8")
         assert memo.capability("files.example.org") is RangeCapability.FULL_BODY_ONLY
         before = len(transport.requests)
-        second = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        second = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         return second, len(transport.requests) - before
 
     result, second_requests = asyncio.run(run())
@@ -1235,7 +1254,7 @@ def test_zero_length_artifact_does_not_latch_netloc() -> None:
     async def run() -> tuple[RangeMetadataResult, RangeCapability]:
         memo = RangeCapabilityMemo()
         transport = _ScriptedTransport(b"", script)
-        result = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        result = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         return result, memo.capability("files.example.org")
 
     result, capability = asyncio.run(run())
@@ -1248,12 +1267,12 @@ def test_reject_416_does_not_latch_netloc() -> None:
     async def run() -> tuple[RangeMetadataResult, int]:
         memo = RangeCapabilityMemo()
         transport = FakeRangeTransport("reject_416", build_wheel())
-        first = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        first = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         assert first.outcome is RangeOutcome.FULL_BODY
         # A 416 speaks for the one file, so the host is probed afresh.
         assert memo.capability("files.example.org") is RangeCapability.UNKNOWN
         before = len(transport.requests)
-        second = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+        second = await read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         return second, len(transport.requests) - before
 
     result, second_requests = asyncio.run(run())
@@ -1330,9 +1349,9 @@ def _wheel_method_99() -> bytes:
 @pytest.mark.parametrize(
     "shape", [_wheel_bad_utf8_name, _wheel_encrypted_metadata, _wheel_method_99]
 )
-def test_unreadable_wheel_is_missing(mode: str, shape: object) -> None:
+def test_unreadable_wheel_is_missing(mode: str, shape: Callable[[], bytes]) -> None:
     """Zip shapes the machinery cannot read step the ladder on, never raise."""
-    transport = FakeRangeTransport(mode, shape())  # type: ignore[operator]
+    transport = FakeRangeTransport(mode, shape())
     result = _read(transport)
     assert result.outcome is RangeOutcome.MISSING
     assert result.text is None
@@ -1357,24 +1376,24 @@ def test_probe_releases_when_owner_acquisition_fails() -> None:
                 if url == _URL:
                     owner_started.set()
                     await release_owner.wait()
-                    return _FakeResponse(404, {}, b"")
+                    return _FakeResponse(404, {}, b"", url=url)
                 if kind == "suffix":
                     start, end = max(0, total - a), total - 1
                 else:
                     start, end = a, min(b, total - 1)
                 headers_out = {"content-range": f"bytes {start}-{end}/{total}"}
-                return _FakeResponse(206, headers_out, wheel[start : end + 1])
+                return _FakeResponse(206, headers_out, wheel[start : end + 1], url=url)
 
             async def aclose(self) -> None:
                 return None
 
         transport = GatedTransport()
         owner = asyncio.create_task(
-            read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+            read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         )
         await owner_started.wait()
         waiter = asyncio.create_task(
-            read_wheel_metadata_over_range(transport, url_b, _NAME, memo)  # type: ignore[arg-type]
+            read_wheel_metadata_over_range(transport, url_b, _NAME, memo)
         )
         await asyncio.sleep(0)
         release_owner.set()
@@ -1418,18 +1437,18 @@ def test_probe_releases_once_capability_settles() -> None:
                         await waiter_done.wait()
                     start, end = a, min(b, total - 1)
                 headers_out = {"content-range": f"bytes {start}-{end}/{total}"}
-                return _FakeResponse(206, headers_out, wheel[start : end + 1])
+                return _FakeResponse(206, headers_out, wheel[start : end + 1], url=url)
 
             async def aclose(self) -> None:
                 return None
 
         transport = GatedTransport()
         owner = asyncio.create_task(
-            read_wheel_metadata_over_range(transport, _URL, _NAME, memo)  # type: ignore[arg-type]
+            read_wheel_metadata_over_range(transport, _URL, _NAME, memo)
         )
         await owner_suffix_started.wait()
         waiter = asyncio.create_task(
-            read_wheel_metadata_over_range(transport, url_b, _NAME, memo)  # type: ignore[arg-type]
+            read_wheel_metadata_over_range(transport, url_b, _NAME, memo)
         )
         await asyncio.sleep(0)
         release_owner_suffix.set()

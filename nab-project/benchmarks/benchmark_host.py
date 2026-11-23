@@ -8,7 +8,7 @@ import signal
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from nab_provider.target import (
     IMPLEMENTATION_MARKERS,
@@ -123,11 +123,17 @@ def parse_requires_matching_host(
 
 
 @dataclass(frozen=True, slots=True)
-class TargetAdmission:
-    """A resolve target, or why its required matching host is unavailable."""
+class _AdmittedTarget:
+    target: ResolveTarget
 
-    target: ResolveTarget | None
-    inapplicable_reason: str | None
+    inapplicable_reason: ClassVar[None] = None
+
+
+@dataclass(frozen=True, slots=True)
+class _UnavailableTarget:
+    inapplicable_reason: str
+
+    target: ClassVar[None] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,7 +163,7 @@ class BenchmarkHost:
         marker_environment: Mapping[str, str],
         *,
         requires_matching_host: bool,
-    ) -> TargetAdmission:
+    ) -> _AdmittedTarget | _UnavailableTarget:
         """Build a target, enforcing faithful tags when the host must match."""
         host_markers = self.target.marker_env
         host_tags = self.target.tags.ordered
@@ -168,14 +174,14 @@ class BenchmarkHost:
         ).with_marker_overrides(marker_environment)
 
         if requires_matching_host and not target.tags_faithful:
-            return TargetAdmission(None, HOST_TAG_MISMATCH_REASON)
+            return _UnavailableTarget(HOST_TAG_MISMATCH_REASON)
         if any(
             target.marker_env.get(key) != value
             for key, value in marker_environment.items()
         ):
             msg = "resolve target did not retain the scenario marker environment"
             raise ValueError(msg)
-        return TargetAdmission(target, None)
+        return _AdmittedTarget(target)
 
     def identity(self) -> dict[str, object]:
         """Return the host fields that determine benchmark execution."""

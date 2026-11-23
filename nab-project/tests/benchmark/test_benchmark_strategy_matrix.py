@@ -388,7 +388,7 @@ def _prepare_runner_parity(
     scenario = _runner_parity_scenario() if scenario is None else scenario
     host = _linux_host(standard)
     standard_execution = _prepare_standard_scenario(standard, scenario, host)
-    canary_preparation = canary._prepare_canary_execution(
+    canary_execution = canary._prepare_canary_execution(
         scenario,
         scenario_name="example",
         resolution_override=None,
@@ -396,8 +396,7 @@ def _prepare_runner_parity(
     )
     profile_inputs = profile.build_inputs("example", scenario, host=host)
 
-    canary_execution = canary_preparation.execution
-    assert canary_execution is not None
+    assert isinstance(canary_execution, canary.PreparedCanaryExecution)
     return standard_execution, canary_execution, profile_inputs
 
 

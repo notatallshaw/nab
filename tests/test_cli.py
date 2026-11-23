@@ -5101,7 +5101,7 @@ class TestRelockDiffSummary:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         out = tmp_path / "pylock.toml"
-        _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=out)
+        _emit(_stub_lock_input({"foo": V("1.0")}), output_format="pylock", output=out)
         err = capsys.readouterr().err
         assert err.strip().endswith("(1 package)")
 
@@ -5116,14 +5116,14 @@ class TestRelockDiffSummary:
             "removed2": V("1.0"),
             "removed3": V("1.0"),
         }
-        _emit(_stub_lock_input(prior), format="pylock", output=out)
+        _emit(_stub_lock_input(prior), output_format="pylock", output=out)
         capsys.readouterr()
 
         _emit(
             _stub_lock_input(
                 {"upgraded": V("2.0"), "added1": V("1.0"), "added2": V("1.0")}
             ),
-            format="pylock",
+            output_format="pylock",
             output=out,
         )
 
@@ -5134,9 +5134,9 @@ class TestRelockDiffSummary:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         out = tmp_path / "pylock.toml"
-        _emit(_stub_lock_input({"foo": V("2.0")}), format="pylock", output=out)
+        _emit(_stub_lock_input({"foo": V("2.0")}), output_format="pylock", output=out)
         capsys.readouterr()
-        _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=out)
+        _emit(_stub_lock_input({"foo": V("1.0")}), output_format="pylock", output=out)
         assert capsys.readouterr().err.strip().endswith("(1 package: 1 downgraded)")
 
     def test_relock_unchanged_prints_plain_line(
@@ -5145,7 +5145,9 @@ class TestRelockDiffSummary:
         """A re-lock with identical pins prints no diff suffix."""
         out = tmp_path / "pylock.toml"
         for _ in range(2):
-            _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=out)
+            _emit(
+                _stub_lock_input({"foo": V("1.0")}), output_format="pylock", output=out
+            )
         assert capsys.readouterr().err.strip().endswith("(1 package)")
 
     def test_relock_unchanged_with_local_pin_prints_plain_line(
@@ -5163,7 +5165,7 @@ class TestRelockDiffSummary:
             }
         )
         for _ in range(2):
-            _emit(lock_input, format="pylock", output=out)
+            _emit(lock_input, output_format="pylock", output=out)
         assert capsys.readouterr().err.strip().endswith("(2 packages)")
 
     def test_relock_unchanged_with_archive_pin_prints_plain_line(
@@ -5183,7 +5185,7 @@ class TestRelockDiffSummary:
             }
         )
         for _ in range(2):
-            _emit(lock_input, format="pylock", output=out)
+            _emit(lock_input, output_format="pylock", output=out)
         assert capsys.readouterr().err.strip().endswith("(1 package)")
 
     def test_unparseable_prior_falls_back_to_plain_line(
@@ -5191,11 +5193,15 @@ class TestRelockDiffSummary:
     ) -> None:
         out = tmp_path / "pylock.toml"
         out.write_text("this is not valid toml === {[\n")
-        _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=out)
+        _emit(_stub_lock_input({"foo": V("1.0")}), output_format="pylock", output=out)
         assert capsys.readouterr().err.strip().endswith("(1 package)")
 
     def test_stdout_emits_no_diff(self, capsys: pytest.CaptureFixture[str]) -> None:
-        _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=Path("-"))
+        _emit(
+            _stub_lock_input({"foo": V("1.0")}),
+            output_format="pylock",
+            output=Path("-"),
+        )
         captured = capsys.readouterr()
         assert "added" not in captured.err
         assert "packages" not in captured.err
@@ -5207,7 +5213,9 @@ class TestRelockDiffSummary:
         out = tmp_path / "requirements.txt"
         for _ in range(2):
             _emit(
-                _stub_lock_input({"foo": V("1.0")}), format="requirements", output=out
+                _stub_lock_input({"foo": V("1.0")}),
+                output_format="requirements",
+                output=out,
             )
         assert capsys.readouterr().err.strip().endswith("(1 package)")
 
@@ -5409,7 +5417,7 @@ class TestDetermineLockAnchor:
         self._write_prior(target)
         pyproject = _make_pyproject(tmp_path)
         anchor = _determine_lock_anchor(
-            _ladder(pyproject), output=target, format="pylock", upgrade=True
+            _ladder(pyproject), output=target, output_format="pylock", upgrade=True
         )
         assert anchor != self._RECORDED
         assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
@@ -5423,7 +5431,7 @@ class TestDetermineLockAnchor:
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             _determine_lock_anchor(
-                _ladder(pyproject), output=target, format="pylock", upgrade=True
+                _ladder(pyproject), output=target, output_format="pylock", upgrade=True
             )
         notice = err.getvalue()
         assert "--upgrade re-anchored" in notice
@@ -5438,7 +5446,7 @@ class TestDetermineLockAnchor:
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             _determine_lock_anchor(
-                _ladder(pyproject), output=None, format="pylock", upgrade=True
+                _ladder(pyproject), output=None, output_format="pylock", upgrade=True
             )
         assert err.getvalue() == ""
 
@@ -5455,7 +5463,7 @@ class TestDetermineLockAnchor:
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             anchor = _determine_lock_anchor(
-                _ladder(pyproject), output=target, format="pylock", upgrade=True
+                _ladder(pyproject), output=target, output_format="pylock", upgrade=True
             )
         assert err.getvalue() == ""
         assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
@@ -5463,7 +5471,7 @@ class TestDetermineLockAnchor:
     def test_stdout_returns_fresh(self, tmp_path: Path) -> None:
         pyproject = _make_pyproject(tmp_path)
         anchor = _determine_lock_anchor(
-            _ladder(pyproject), output=Path("-"), format="pylock", upgrade=False
+            _ladder(pyproject), output=Path("-"), output_format="pylock", upgrade=False
         )
         assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
 
@@ -5473,7 +5481,7 @@ class TestDetermineLockAnchor:
         anchor = _determine_lock_anchor(
             _ladder(pyproject),
             output=tmp_path / "requirements.txt",
-            format="requirements",
+            output_format="requirements",
             upgrade=False,
         )
         assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
@@ -5484,7 +5492,7 @@ class TestDetermineLockAnchor:
         monkeypatch.chdir(tmp_path)
         pyproject = _make_pyproject(tmp_path)
         anchor = _determine_lock_anchor(
-            _ladder(pyproject), output=None, format="pylock", upgrade=False
+            _ladder(pyproject), output=None, output_format="pylock", upgrade=False
         )
         assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
 
@@ -5493,7 +5501,7 @@ class TestDetermineLockAnchor:
         self._write_prior(target)
         pyproject = _make_pyproject(tmp_path)
         anchor = _determine_lock_anchor(
-            _ladder(pyproject), output=target, format="pylock", upgrade=False
+            _ladder(pyproject), output=target, output_format="pylock", upgrade=False
         )
         assert anchor == self._RECORDED
 
@@ -5505,7 +5513,7 @@ class TestDetermineLockAnchor:
         self._write_prior(tmp_path / "pylock.toml")
         pyproject = _make_pyproject(tmp_path)
         anchor = _determine_lock_anchor(
-            _ladder(pyproject), output=None, format="pylock", upgrade=False
+            _ladder(pyproject), output=None, output_format="pylock", upgrade=False
         )
         assert anchor == self._RECORDED
 
@@ -5519,7 +5527,7 @@ class TestDetermineLockAnchor:
             f'[tool.nab]\nuploaded-prior-to = "{self._ABSOLUTE.isoformat()}"\n',
         )
         anchor = _determine_lock_anchor(
-            _ladder(pyproject), output=target, format="pylock", upgrade=False
+            _ladder(pyproject), output=target, output_format="pylock", upgrade=False
         )
         assert anchor == self._ABSOLUTE
 
@@ -5535,7 +5543,7 @@ class TestDetermineLockAnchor:
             f'uploaded-prior-to = "{self._ABSOLUTE.isoformat()}"\n'
         )
         anchor = _determine_lock_anchor(
-            _ladder(pyproject), output=target, format="pylock", upgrade=False
+            _ladder(pyproject), output=target, output_format="pylock", upgrade=False
         )
         assert anchor == self._ABSOLUTE
 
@@ -5560,7 +5568,7 @@ class TestDetermineLockAnchor:
 
         monkeypatch.setattr("nab._run.config_search_roots", fake_roots)
         anchor = _determine_lock_anchor(
-            _ladder(pyproject), output=target, format="pylock", upgrade=False
+            _ladder(pyproject), output=target, output_format="pylock", upgrade=False
         )
         assert anchor == self._RECORDED
 
@@ -5571,7 +5579,7 @@ class TestDetermineLockAnchor:
             f'[tool.nab]\nuploaded-prior-to = "{self._ABSOLUTE.isoformat()}"\n',
         )
         anchor = _determine_lock_anchor(
-            _ladder(pyproject), output=None, format="pylock", upgrade=True
+            _ladder(pyproject), output=None, output_format="pylock", upgrade=True
         )
         assert anchor != self._ABSOLUTE
         assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
@@ -5584,7 +5592,7 @@ class TestDetermineLockAnchor:
             '[project]\ndependencies = ["foo"]\n[tool.nab]\nuploaded-prior-to = "P4D"\n',
         )
         anchor = _determine_lock_anchor(
-            _ladder(pyproject), output=target, format="pylock", upgrade=False
+            _ladder(pyproject), output=target, output_format="pylock", upgrade=False
         )
         assert anchor == self._RECORDED
 
@@ -6555,7 +6563,7 @@ class TestEmitHelpers:
 
     def test_emit_without_provenance(self, tmp_path: Path) -> None:
         out = tmp_path / "pylock.toml"
-        _emit(_stub_lock_input(), format="pylock", output=out)
+        _emit(_stub_lock_input(), output_format="pylock", output=out)
         # The output is a valid pylock without [tool.nab] provenance.
         text = out.read_text()
         assert 'lock-version = "1.0"' in text

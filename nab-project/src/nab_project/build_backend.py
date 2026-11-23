@@ -44,7 +44,7 @@ from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from . import toml_io
 from ._build.errors import (
-    BuildBackendError as BuildBackendError,  # noqa: PLC0414  (public re-export)
+    BuildBackendError,
 )
 from .paths import PathState, is_absent_error, path_state
 

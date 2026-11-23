@@ -694,15 +694,16 @@ def version_dists(
     name is a different set of artifacts in no promised order, so it is
     indexed whole and fresh.
     """
-    cacheable = version_list is provider.versions_cache.get(normalized)
-    if cacheable:
+    if version_list is provider.versions_cache.get(normalized):
         cached = provider.version_dists_cache.get(normalized)
         if cached is not None:
             return cached
+
         indexed = VersionDists.lazy(version_list, provider.wheel_tags, provider.target)
         provider.version_dists_cache[normalized] = indexed
         return indexed
 
+    # A caller-supplied listing can interleave artifacts from different versions.
     grouped: dict[Version, list[DistFile]] = {}
     for version, dist in version_list:
         grouped.setdefault(version, []).append(dist)
@@ -713,6 +714,7 @@ def version_dists(
         picked[version] = _pick_noting_siblings(
             dists, provider.wheel_tags, provider.target, version, sibling_wheels
         )
+
     return VersionDists(picked, sibling_wheels)
 
 
@@ -779,7 +781,7 @@ def _sdist_deps_need_dynamic(
     return not metadata_deps_are_static(metadata)
 
 
-def sdist_metadata_key(provider: Provider, package: str, version: Version) -> str:
+def _sdist_metadata_key(provider: Provider, package: str, version: Version) -> str:
     """Return the chosen archive's cache identity for metadata reconciliation."""
     sdist = find_sdist(provider.versions_cache.get(package, []), version)
     return (
@@ -796,13 +798,13 @@ def resolve_dynamic_sdist(
     package, version = cache_key
     canonical = canonicalize_name(package)
     index = provider.coordinator.index
-    source_key = sdist_metadata_key(provider, canonical, version)
+    source_key = _sdist_metadata_key(provider, canonical, version)
 
     cached = index.get_resolved_sdist_metadata(canonical, source_key)
     if cached is not None:
         return cached
 
-    augmented = augment_from_pyproject(provider, package, version, metadata)
+    augmented = _augment_from_pyproject(provider, package, version, metadata)
     if augmented is not None:
         index.store_resolved_sdist_metadata(canonical, source_key, augmented)
         return augmented
@@ -1003,7 +1005,7 @@ def _read_assumed_wheel(
     return text
 
 
-def augment_from_pyproject(
+def _augment_from_pyproject(
     provider: Provider,
     package: str,
     version: Version,
@@ -1025,7 +1027,7 @@ def augment_from_pyproject(
     from ..metadata import static_project_from_table
 
     data = provider.coordinator.index.get_sdist_pyproject(
-        package, sdist_metadata_key(provider, package, version)
+        package, _sdist_metadata_key(provider, package, version)
     )
     project = static_project_from_table(data) if data is not None else None
     if project is None:
@@ -1127,18 +1129,18 @@ def fetch_sdist_metadata(
     return provider.coordinator.index.get_metadata_with_origin(package, source_key)
 
 
-def requirement_gating(provider: Provider, req: Requirement) -> Gating:
+def _requirement_gating(provider: Provider, req: Requirement) -> Gating:
     """Say whether ``req`` applies to the base environment, to an extra, or to neither.
 
     ``"extra"`` reports only that some extra could select it.  Naming them is
-    :func:`marker_matched_extras`, which costs up to one marker evaluation per
+    :func:`_marker_matched_extras`, which costs up to one marker evaluation per
     provided extra.
     """
     marker = req.marker
     if marker is None:
         return "base"
     marker_id = id(marker)
-    if marker_matches_base(provider, marker, marker_id):
+    if _marker_matches_base(provider, marker, marker_id):
         return "base"
     if "extra" not in str(marker):
         return "excluded"
@@ -1159,18 +1161,18 @@ def classify_requirement(
     marker = req.marker
     if marker is None:
         return set()
-    gating = requirement_gating(provider, req)
+    gating = _requirement_gating(provider, req)
     if gating == "base":
         return set()
     if gating == "excluded" or not provided_extras:
         return None
-    matched_extras = marker_matched_extras(
+    matched_extras = _marker_matched_extras(
         provider, marker, id(marker), provided_extras
     )
     return matched_extras or None
 
 
-def marker_matches_base(provider: Provider, marker: Marker, marker_id: int) -> bool:
+def _marker_matches_base(provider: Provider, marker: Marker, marker_id: int) -> bool:
     """Evaluate ``marker`` against the env without ``extra`` set, cached.
 
     Every dependency marker the resolve reads passes through here, so this
@@ -1185,7 +1187,7 @@ def marker_matches_base(provider: Provider, marker: Marker, marker_id: int) -> b
     return result
 
 
-def marker_matched_extras(
+def _marker_matched_extras(
     provider: Provider,
     marker: Marker,
     marker_id: int,
@@ -1262,7 +1264,7 @@ def _metadata_from_sdist(
     requires_python = None
     if check_python:
         data = provider.coordinator.index.get_sdist_pyproject(
-            package, sdist_metadata_key(provider, package, version)
+            package, _sdist_metadata_key(provider, package, version)
         )
         project = project_with_static_requires_python(data, package)
         if project is not None:
@@ -1348,7 +1350,7 @@ def _reject_incompatible_python(
     raise IncompatiblePythonError(msg)
 
 
-def effective_metadata(
+def _effective_metadata(
     provider: Provider,
     cache_key: tuple[str, Version],
     metadata: WheelMetadata,
@@ -1412,7 +1414,7 @@ def cache_deps_from_metadata(
     :class:`ExtraDepsMap`.  Direct-URL requirements are the exception: whether
     one is refused now or deferred depends on which extras name it.
     """
-    metadata = effective_metadata(provider, cache_key, metadata)
+    metadata = _effective_metadata(provider, cache_key, metadata)
     _reject_incompatible_python(provider, cache_key, metadata)
 
     package = cache_key[0]
@@ -1427,8 +1429,8 @@ def cache_deps_from_metadata(
             _handle_url_dep(
                 provider, package, req, url, provided_extras, deferred_url_extras
             )
-        elif requirement_gating(provider, req) == "base":
-            add_base_dep(req, base_deps, provider.specifier_ranges)
+        elif _requirement_gating(provider, req) == "base":
+            _add_base_dep(req, base_deps, provider.specifier_ranges)
 
     provider.deps_cache[cache_key] = base_deps
     provider.defer_extra_deps(cache_key)
@@ -1445,10 +1447,9 @@ def _handle_url_dep(
 ) -> None:
     """Refuse a direct-URL requirement, or record it against its extras.
 
-    A requirement the environment excludes is dropped.  Needs the full
-    classification rather than :func:`requirement_gating`: an extra-gated URL
-    dep is refused only once one of its own extras is wanted, so the extras
-    naming it have to be known now.
+    An excluded requirement is dropped. For a requirement selected through
+    extras, record which extras select it so the URL is refused only when
+    one of those extras is requested.
     """
     req_extras = classify_requirement(provider, req, provided_extras)
     if req_extras is None:
@@ -1490,7 +1491,7 @@ class ExtraDepsMap(Mapping[tuple[str, Version], dict[str, dict[str, VersionRange
     ) -> dict[str, dict[str, VersionRange]]:
         built = self._extra_deps[cache_key]
         if built is None:
-            built = self._extra_deps[cache_key] = build_extra_deps(
+            built = self._extra_deps[cache_key] = _build_extra_deps(
                 self._provider, cache_key
             )
         return built
@@ -1508,14 +1509,14 @@ class ExtraDepsMap(Mapping[tuple[str, Version], dict[str, dict[str, VersionRange
         return len(self._extra_deps)
 
 
-def build_extra_deps(
+def _build_extra_deps(
     provider: Provider, cache_key: tuple[str, Version]
 ) -> dict[str, dict[str, VersionRange]]:
     """Split a parsed release's extra-gated requirements by the extras selecting them.
 
     Re-reads the metadata :func:`cache_deps_from_metadata` cached.  Every
     marker on it was evaluated there, so ``marker_base_cache`` answers
-    :func:`requirement_gating` and nothing new reaches ``consulted_markers``.
+    :func:`_requirement_gating` and nothing new reaches ``consulted_markers``.
     Direct-URL requirements stay out: :func:`_handle_url_dep` settled them at
     parse time.
     """
@@ -1529,12 +1530,12 @@ def build_extra_deps(
         marker = req.marker
         if req.url is not None or marker is None:
             continue
-        if requirement_gating(provider, req) != "extra":
+        if _requirement_gating(provider, req) != "extra":
             continue
 
-        matched = marker_matched_extras(provider, marker, id(marker), provided_extras)
+        matched = _marker_matched_extras(provider, marker, id(marker), provided_extras)
         if matched:
-            add_extra_dep(req, matched, extra_deps_map, provider.specifier_ranges)
+            _add_extra_dep(req, matched, extra_deps_map, provider.specifier_ranges)
 
     return extra_deps_map
 
@@ -1589,7 +1590,7 @@ def target_dep_signature(
     than routed through :func:`refuse_url_dep`: the pick already refused its own
     URL deps, so a sibling's URL dep is a divergence to report.
     """
-    metadata = effective_metadata(provider, cache_key, metadata)
+    metadata = _effective_metadata(provider, cache_key, metadata)
     provided_extras: set[str] = {canonicalize_name(e) for e in metadata.provides_extra}
     base_deps: dict[str, VersionRange] = {}
     extra_deps_map: dict[str, dict[str, VersionRange]] = {
@@ -1900,12 +1901,12 @@ def add_classified_dep(
 ) -> None:
     """Add a classified requirement to the appropriate dep set."""
     if req_extras:
-        add_extra_dep(req, req_extras, extra_deps_map, specifier_ranges)
+        _add_extra_dep(req, req_extras, extra_deps_map, specifier_ranges)
     else:
-        add_base_dep(req, base_deps, specifier_ranges)
+        _add_base_dep(req, base_deps, specifier_ranges)
 
 
-def add_base_dep(
+def _add_base_dep(
     req: Requirement,
     base_deps: dict[str, VersionRange],
     specifier_ranges: dict[str, VersionRange],
@@ -1926,7 +1927,7 @@ def add_base_dep(
         )
 
 
-def add_extra_dep(
+def _add_extra_dep(
     req: Requirement,
     req_extras: set[str],
     extra_deps_map: dict[str, dict[str, VersionRange]],
