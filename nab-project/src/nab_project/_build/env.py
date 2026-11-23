@@ -439,11 +439,10 @@ class NabBuildEnv:
         self._python_executable = _venv_python(self._venv_path)
         self._scripts_dir = self._python_executable.parent
 
-        scheme_paths = _venv_scheme_paths(self._python_executable)
-
         if not self._requires:
             return
 
+        scheme_paths = _venv_scheme_paths(self._python_executable)
         self._install_wheels(self._resolve_and_download(wheel_dir), scheme_paths)
 
     def _install_wheels(
