@@ -1343,18 +1343,15 @@ class TestParseMetadata:
         with pytest.raises(BuildBackendError, match="invalid Requires-Dist"):
             _parse_metadata(path)
 
-    def test_provides_extra_whitespace_stripped(self, tmp_path: Path) -> None:
-        """Surrounding whitespace on a Provides-Extra value is insignificant
-        per RFC 822; canonicalize_name does not strip it, so strip first."""
-        from nab_project._build.runner import _parse_metadata
-
+    def test_name_and_extras_strip_header_whitespace(self, tmp_path: Path) -> None:
         path = tmp_path / "METADATA"
         path.write_text(
-            "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+            "Metadata-Version: 2.1\nName: Demo_Name \t\nVersion: 1.0\n"
             "Provides-Extra: security \nProvides-Extra: docs\t\n",
             encoding="utf-8",
         )
-        meta = _parse_metadata(path)
+        meta = runner_mod._parse_metadata(path)
+        assert meta.name == "demo-name"
         assert meta.provides_extra == ["docs", "security"]
 
 
