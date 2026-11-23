@@ -21,7 +21,6 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nab_markersets.errors import IntractableMarkerSet
 from nab_project._lockfile.coverage import CoverageError, validate_marker_coverage
 from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.version import Version
@@ -127,17 +126,9 @@ class TestCoverageDifferential:
     def test_real_emit_pipeline_is_covered(
         self, matrix_points: list[tuple[str, str]], micros: list[int], variable: str
     ) -> None:
-        """Rows from the real emit pipeline pass the coverage check.
-
-        An ``IntractableMarkerSet`` on a large matrix is the algebra's
-        bounded-failure escape hatch, a sound non-emit the design allows;
-        only a false ``CoverageError`` is a coverage bug.
-        """
+        """The generated matrix rows must cover all their target slices."""
         targets, environments = _emit(matrix_points, micros, variable)
-        try:
-            validate_marker_coverage(targets, environments=environments)
-        except IntractableMarkerSet:
-            pass
+        validate_marker_coverage(targets, environments=environments)
 
     @given(
         minor=st.sampled_from(MINORS),
@@ -301,10 +292,7 @@ class TestCoverageOverRandomEmitShapes:
             targets, environments = _emit(
                 matrix_points, _random_boundaries(rng), variable
             )
-            try:
-                validate_marker_coverage(targets, environments=environments)
-            except IntractableMarkerSet:
-                continue
+            validate_marker_coverage(targets, environments=environments)
 
             # Dropping the sole row empties ``environments``, which validation
             # reads as an omitted field covering everything, so a gap needs a
@@ -313,14 +301,8 @@ class TestCoverageOverRandomEmitShapes:
                 continue
             drop = rng.randrange(len(environments))
             remaining = [row for index, row in enumerate(environments) if index != drop]
-            try:
+            with pytest.raises(CoverageError) as excinfo:
                 validate_marker_coverage(targets, environments=remaining)
-            except IntractableMarkerSet:
-                continue
-            except CoverageError as exc:
-                env = _witness_environment(exc)
-                assert environments[drop].evaluate(env)
-                _assert_witness_sound(exc, targets, remaining)
-            else:
-                msg = "dropping one row must produce a coverage gap"
-                raise AssertionError(msg)
+            env = _witness_environment(excinfo.value)
+            assert environments[drop].evaluate(env)
+            _assert_witness_sound(excinfo.value, targets, remaining)

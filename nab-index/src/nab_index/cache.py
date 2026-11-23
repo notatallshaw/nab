@@ -245,7 +245,8 @@ class CachePolicy(HashableRecord):
     def is_fresh(self, now: int | None = None) -> bool:
         """Return True if the entry is still within its freshness window."""
         current = int(time.time()) if now is None else now
-        return current - self.fetched_at < self.max_age
+        # A clock adjustment can put a persisted fetch time in the future.
+        return 0 <= current - self.fetched_at < self.max_age
 
 
 def _entry_mode(path: Path, on_error: Callable[[OSError], None] | None) -> int | None:
@@ -737,13 +738,14 @@ class OnDiskCache:
         its two fields), ``.parsed`` as a parsed-listing blob. Any other
         suffix is not a nab entry and is reported clean.
         """
+        suffix = path.suffix
+        if suffix not in (".policy", ".neg", ".json") and suffix not in _ENTRY_READERS:
+            return None
+
         try:
             raw = path.read_bytes()
         except OSError as exc:
             return f"unreadable: {exc.strerror or exc}"
-        suffix = path.suffix
-        if suffix not in (".policy", ".neg", ".json") and suffix not in _ENTRY_READERS:
-            return None
         if self._bucket_of(path) in _CHECKED_RECORD_BUCKETS:
             payload = _record_payload(
                 raw[:_CACHE_RECORD_HEADER_BYTES], raw[_CACHE_RECORD_HEADER_BYTES:]

@@ -11,13 +11,19 @@ to ``get_files`` so a future edit to either cannot drift them.
 from __future__ import annotations
 
 import json
+import time
 from asyncio import run as _run
 from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 
-from nab_index.cache import CACHE_VERSION_SIMPLE, CachePolicy, OnDiskCache
+from nab_index.cache import (
+    CACHE_VERSION_SIMPLE,
+    CachePolicy,
+    OnDiskCache,
+    _atomic_write_record,
+)
 from nab_index.cached_client import (
     CachedAsyncSimpleClient,
     read_fresh_parsed_listing,
@@ -116,7 +122,7 @@ def _warm_bound(
 ) -> tuple[list, str]:
     """Warm a package's body, policy, and a parsed blob bound to that body."""
     policy = CachePolicy(
-        fetched_at=2_000_000_000 if fresh else 0,
+        fetched_at=int(time.time()) if fresh else 0,
         max_age=99999 if fresh else 0,
         etag="e",
         page_url=_INDEX_NORM + "pkg/",
@@ -175,7 +181,7 @@ class TestReadFreshParsedListing:
     def test_corrupt_policy_returns_none(self, tmp_path: Path, raw: bytes) -> None:
         cache = _cache(tmp_path)
         _warm_bound(cache)
-        tmp_path.joinpath(*_POLICY_PATH_PARTS).write_bytes(raw)
+        _atomic_write_record(tmp_path.joinpath(*_POLICY_PATH_PARTS), raw)
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
 
     def test_over_nested_policy_returns_none(
@@ -185,7 +191,7 @@ class TestReadFreshParsedListing:
     ) -> None:
         cache = _cache(tmp_path)
         _warm_bound(cache)
-        tmp_path.joinpath(*_POLICY_PATH_PARTS).write_bytes(over_nested_json)
+        _atomic_write_record(tmp_path.joinpath(*_POLICY_PATH_PARTS), over_nested_json)
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
 
     def test_stale_online_returns_none(self, tmp_path: Path) -> None:
@@ -198,7 +204,7 @@ class TestReadFreshParsedListing:
         cache.put_simple(
             "pkg",
             _LISTING_BYTES,
-            CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None),
+            CachePolicy(fetched_at=int(time.time()), max_age=99999, etag=None),
         )
         assert cache.get_simple_parsed("pkg") is None
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
@@ -272,7 +278,7 @@ class TestIdenticalByConstruction:
         cache.put_simple(
             "pkg",
             _LISTING_BYTES,
-            CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None),
+            CachePolicy(fetched_at=int(time.time()), max_age=99999, etag=None),
         )
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
         client = CachedAsyncSimpleClient(_FakeTransport([]), cache, _INDEX)

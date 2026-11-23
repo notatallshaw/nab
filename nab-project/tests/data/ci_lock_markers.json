@@ -1,5 +1,5 @@
 {
-  "provenance": "The per-package markers of the eight .github/requirements/pylock.*.toml locks. Each raw marker is the byte string its lock carried before emission-time simplification; each golden is what the emitter writes for it now. Rebuild by reading the packages out of every lock before and after a tasks/refresh-locks.sh run.",
+  "provenance": "The eight .github/requirements/pylock.*.toml files at f785fded729126710d7f3babcb2c063420b90640 supply the raw package markers and environments. The same lockfiles at 68c7f09b8c4e4220e194e9f01e9d34de380b55bb supply the expected markers.",
   "locks": {
     "crosshair": {
       "environments": [

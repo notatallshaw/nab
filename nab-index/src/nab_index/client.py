@@ -343,8 +343,8 @@ def zip_sdist_versions(data: object, package: str) -> frozenset[str]:
 def holds_only_yanked(data: object) -> bool:
     """Whether a Simple-API body served file entries and yanked every one.
 
-    :pep:`592` yanks are never admitted, so such a page parses to no files
-    and would otherwise read as a package no configured index carries.
+    Check the raw entries because the parser can discard a live file whose
+    format it cannot read.
     """
     if not isinstance(data, dict):
         return False
@@ -352,8 +352,14 @@ def holds_only_yanked(data: object) -> bool:
     if not isinstance(raw_files, list):
         return False
 
-    entries = [entry for entry in raw_files if isinstance(entry, dict)]
-    return bool(entries) and all(entry.get("yanked") for entry in entries)
+    saw_entry = False
+    for entry in raw_files:
+        if not isinstance(entry, dict):
+            continue
+        if not entry.get("yanked"):
+            return False
+        saw_entry = True
+    return saw_entry
 
 
 def is_readable_filename(filename: str) -> bool:

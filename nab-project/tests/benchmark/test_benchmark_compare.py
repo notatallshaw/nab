@@ -74,6 +74,7 @@ def _manifest(
     module: ModuleType,
     label: str,
     source: dict[str, object],
+    settings: dict[str, object],
 ) -> dict[str, object]:
     available_logical = tuple(
         sorted(_COMPLETED_LOGICAL + _UNSUPPORTED_LOGICAL + _INAPPLICABLE_LOGICAL)
@@ -86,7 +87,7 @@ def _manifest(
         "source_end": source,
         "mode": "strategy-matrix",
         "strategies": list(_STRATEGIES),
-        "settings": _settings(),
+        "settings": settings,
         "corpus_hash": "c" * 64,
         "corpus_files": ["cases"],
         "selected_files": ["cases"],
@@ -153,10 +154,13 @@ def _write_run(
     *,
     source_commit: str,
     rounds: int = 1,
+    settings: dict[str, object] | None = None,
 ) -> Path:
     """Write one complete strategy-matrix run with all terminal states."""
     source = {"commit": source_commit, "dirty": False, "diff_hash": None}
-    manifest = _manifest(module, label, source)
+    manifest = _manifest(
+        module, label, source, _settings() if settings is None else settings
+    )
     run_dir = root / label
     run_dir.mkdir()
     (run_dir / module.MANIFEST_FILENAME).write_text(json.dumps(manifest))
@@ -323,19 +327,29 @@ def test_load_run_rejects_a_schema_three_manifest(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "mutate",
+    ("mutate", "reason"),
     [
-        pytest.param(lambda data: data["settings"].pop("host"), id="missing-host"),
         pytest.param(
-            lambda data: data["settings"].update(wall_timeout_seconds=0),
+            lambda settings: settings.pop("host"), "settings", id="missing-host"
+        ),
+        pytest.param(
+            lambda settings: settings.update(trust_unverified_sdist_deps_default=True),
+            "settings",
+            id="unverified-sdist-dependencies",
+        ),
+        pytest.param(
+            lambda settings: settings.update(wall_timeout_seconds=0),
+            "settings",
             id="zero-timeout",
         ),
         pytest.param(
-            lambda data: data["settings"]["host"].update(wheel_tags_count=True),
+            lambda settings: settings["host"].update(wheel_tags_count=True),
+            "host identity",
             id="boolean-tag-count",
         ),
         pytest.param(
-            lambda data: data["settings"]["host"].update(wheel_tags_hash="not-a-hash"),
+            lambda settings: settings["host"].update(wheel_tags_hash="not-a-hash"),
+            "host identity",
             id="invalid-tag-hash",
         ),
     ],
@@ -343,35 +357,17 @@ def test_load_run_rejects_a_schema_three_manifest(tmp_path: Path) -> None:
 def test_load_run_rejects_invalid_settings(
     tmp_path: Path,
     mutate: Callable[[dict], None],
+    reason: str,
 ) -> None:
     module = _harness()
-    run_dir = _write_run(module, tmp_path, "run", source_commit="a" * 40)
-    _rewrite_json(run_dir / module.MANIFEST_FILENAME, mutate)
-
-    with pytest.raises(module.ComparisonError):
-        module.load_run(run_dir)
-
-
-def test_load_run_rejects_a_trusted_sdist_default(tmp_path: Path) -> None:
-    module = _harness()
-    run_dir = _write_run(module, tmp_path, "run", source_commit="a" * 40)
-    manifest_path = run_dir / module.MANIFEST_FILENAME
-    _rewrite_json(
-        manifest_path,
-        lambda data: data["settings"].update(trust_unverified_sdist_deps_default=True),
+    settings = _settings()
+    mutate(settings)
+    run_dir = _write_run(
+        module, tmp_path, "run", source_commit="a" * 40, settings=settings
     )
 
-    manifest = json.loads(manifest_path.read_text())
-    settings_hash = module._settings_hash(manifest["settings"])
-    # Keep the result identities valid so only the changed default is rejected.
-    for execution_key in manifest["completed_execution_keys"]:
-        _rewrite_json(
-            run_dir / execution_key,
-            lambda data: data["input"].update(settings_hash=settings_hash),
-        )
-
     with pytest.raises(
-        module.ComparisonError, match="invalid standard benchmark settings"
+        module.ComparisonError, match=f"invalid standard benchmark {reason}"
     ):
         module.load_run(run_dir)
 
@@ -543,19 +539,11 @@ def test_comparison_rejects_manifest_identity_differences(tmp_path: Path) -> Non
     first = module.load_run(
         _write_run(module, tmp_path, "first", source_commit="a" * 40)
     )
-    second_dir = _write_run(module, tmp_path, "second", source_commit="b" * 40)
-    _rewrite_json(
-        second_dir / module.MANIFEST_FILENAME,
-        lambda data: data["settings"].update(max_iterations=100_000),
+    settings = _settings()
+    settings["max_iterations"] = 100_000
+    second_dir = _write_run(
+        module, tmp_path, "second", source_commit="b" * 40, settings=settings
     )
-    manifest = json.loads((second_dir / module.MANIFEST_FILENAME).read_text())
-    for key in manifest["completed_execution_keys"]:
-        _rewrite_json(
-            second_dir / key,
-            lambda data: data["input"].update(
-                settings_hash=module._settings_hash(manifest["settings"])
-            ),
-        )
     changed_identity = module.load_run(second_dir)
 
     with pytest.raises(module.ComparisonError, match="different identities"):

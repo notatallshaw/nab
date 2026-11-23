@@ -57,7 +57,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
 
 import tomli
 
-from nab_index.atomic import create_staging_file
+from nab_index.atomic import create_staging_file, default_file_mode
 from nab_project import toml_io
 from nab_project.input_source import (
     InputChangedError,
@@ -82,6 +82,7 @@ from nab_project.lockfile import (
     TargetLock,
     check_locked,
     drop_workspace_pins,
+    format_package_count,
     is_valid_pylock_path,
     package_metadata_override_records,
     read_lockfile_anchor,
@@ -92,7 +93,7 @@ from nab_project.lockfile import (
     write_requirements_with_hashes,
     write_requirements_without_hashes,
 )
-from nab_project.paths import PathState, path_state
+from nab_project.paths import PathState, path_state, realpath
 from nab_project.pyproject_files import (
     build_system_requires,
     project_dependencies,
@@ -689,15 +690,14 @@ def _lock_one(
 
 def _download_input(url: str, backend: str) -> bytes:
     """Download an input with the same HTTP backend as dependency resolution."""
-    import asyncio  # noqa: PLC0415 - used only for configured source inputs
-
     from nab_index.client import AsyncSimpleClient  # noqa: PLC0415
+    from nab_project.download import run_download  # noqa: PLC0415
 
     async def download() -> bytes:
         async with AsyncSimpleClient(_make_resolve_transport(backend)) as client:
             return await client.download(url)
 
-    return asyncio.run(download())
+    return run_download(download)
 
 
 def _lock_output(
@@ -1391,7 +1391,12 @@ def _check_reproduction(lock_input: LockInput, *, run: _LockRun) -> None:
     """Compare a fresh resolve with the committed lock, ignoring provenance."""
     target = _check_target_path(run)
     new_text = _render_or_exit(lambda: render_lock(lock_input, lock_dir=target.parent))
-    committed = _packages_only(target.read_text(encoding="utf-8"))
+    try:
+        committed = _packages_only(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
+        printer().error(f"--reproduce: cannot read lockfile {target}: {exc}")
+        raise SystemExit(1) from None
+
     if _packages_only(new_text) == committed:
         printer().done(f"Lockfile {target} is up to date.")
         return
@@ -1559,8 +1564,8 @@ def _emit_requirements(
     A plain path with several targets errors clearly: there is no
     one-file shape that pip can install from across all of them.
 
-    The templated shape is all-or-nothing: every tuple is rendered and
-    staged before any file is moved into place.
+    Check that the template gives each target a distinct destination, then
+    render and stage every file before replacing the first destination.
     """
     with_hashes = format == "requirements"
     multi_target = len(lock_input.targets) > 1
@@ -1578,7 +1583,7 @@ def _emit_requirements(
         _, count = _render_requirements_or_exit(
             lock_input, with_hashes, output_path=target
         )
-        printer().done(f"Wrote {target} ({count} packages)")
+        printer().done(f"Wrote {target} ({format_package_count(count)})")
         return
 
     _check_output_template(target, template)
@@ -1652,32 +1657,28 @@ def _refuse_collision(
     another pair sharing a path, so offering it would only move the error.
     """
     targets = [lock.target for lock in lock_input.targets.values()]
-    missing = [
-        name for name in _separating_vars(targets) if f"{{{name}}}" not in template
-    ]
+    separating = _separating_vars(targets)
+    missing = [name for name in separating if f"{{{name}}}" not in template]
 
     head = (
         f"tuples {first.target.label!r} and {second.target.label!r}"
-        f" both map to {path!r};"
+        f" both map to {path!r}"
     )
-    if not missing:
-        printer().error(
-            DiagnosticMessage(
-                f"{head} no --output template variable tells them apart",
-                suggestions=(Suggestion("emit pylock output instead"),),
-            )
+    if not separating:
+        message = f"{head}; no --output template variable tells them apart"
+        advice = "emit pylock output instead"
+    elif missing:
+        placeholders = _and_list([f"{{{name}}}" for name in missing])
+        message = (
+            f"{head}; --output {output} is missing a template variable to disambiguate"
         )
-        raise SystemExit(1)
-    placeholders = _and_list([f"{{{name}}}" for name in missing])
-    printer().error(
-        DiagnosticMessage(
-            (
-                f"{head} --output {output} is missing a template variable to "
-                "disambiguate"
-            ),
-            suggestions=(Suggestion(f"add {placeholders} to the path."),),
-        )
-    )
+        advice = f"add {placeholders} to the path."
+    else:
+        placeholders = _and_list([f"{{{name}}}" for name in separating])
+        message = head
+        advice = f"put {placeholders} in the filename."
+
+    printer().error(DiagnosticMessage(message, suggestions=(Suggestion(advice),)))
     raise SystemExit(1)
 
 
@@ -1685,21 +1686,23 @@ def _substituted_paths(
     lock_input: LockInput, output: Path, template: str
 ) -> dict[str, Path]:
     """Render the per-target output paths, refusing a template that collides."""
-    by_path: dict[str, TargetLock] = {}
+    by_path: dict[Path, TargetLock] = {}
     paths: dict[str, Path] = {}
     for label, lock in lock_input.targets.items():
-        substituted = template.format(**_template_values(lock.target))
-        if substituted in by_path:
+        path = Path(template.format(**_template_values(lock.target)))
+        # The writer replaces a directory entry, so resolve only its parent.
+        destination = realpath(path.parent) / path.name
+        if destination in by_path:
             _refuse_collision(
                 lock_input,
-                by_path[substituted],
+                by_path[destination],
                 lock,
                 output=output,
                 template=template,
-                path=substituted,
+                path=str(destination),
             )
-        by_path[substituted] = lock
-        paths[label] = Path(substituted)
+        by_path[destination] = lock
+        paths[label] = path
     return paths
 
 
@@ -1731,9 +1734,8 @@ def _write_requirements_files(rendered: list[_RenderedFile]) -> None:
             tmp, item = staged[0]
             tmp.replace(item.path)
             staged.popleft()
-            printer().done(
-                f"Wrote {item.path} ({item.pin_count} packages, tuple {item.label})"
-            )
+            packages = format_package_count(item.pin_count)
+            printer().done(f"Wrote {item.path} ({packages}, tuple {item.label})")
     except BaseException:
         for tmp, _ in staged:
             _discard(tmp)
@@ -1766,9 +1768,7 @@ def _destination_mode(output: Path) -> int:
     try:
         return stat.S_IMODE(output.stat().st_mode)
     except FileNotFoundError:
-        umask = os.umask(0)
-        os.umask(umask)
-        return 0o666 & ~umask
+        return default_file_mode()
 
 
 def _discard(staged: Path) -> None:

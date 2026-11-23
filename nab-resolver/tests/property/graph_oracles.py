@@ -18,7 +18,8 @@ from nab_resolver.resolver import Resolver
 from nab_resolver.root import ROOT
 from nab_resolver.types import Incompatibility, IncompatibilityCause
 
-from .providers import FuzzProvider, is_proven_conflict
+from ..solver_fixtures import is_proven_conflict
+from .providers import FuzzProvider
 from .strategies import PACKAGE_NAMES, non_empty_ranges, version_ranges
 
 Graph = dict[str, dict[int, dict[str, Range[int]]]]

@@ -158,6 +158,25 @@ class TestHasFullCommitSha:
 
 
 class TestAdmitVcsUrlBlock:
+    def test_refusal_keeps_the_local_file_url(self) -> None:
+        url = "git+file:///srv/project@main"
+        with pytest.raises(UnsupportedVcsError) as caught:
+            admit_vcs_url(url, VcsConfig())
+        assert url in str(caught.value)
+
+    @pytest.mark.parametrize(
+        ("url", "display"),
+        [
+            ("git+https://[", "<malformed URL>"),
+            ("relative/path", "<URL without a host>"),
+        ],
+    )
+    def test_refusal_of_an_unprintable_location(self, url: str, display: str) -> None:
+        with pytest.raises(UnsupportedVcsError) as caught:
+            admit_vcs_url(url, VcsConfig())
+        assert display in str(caught.value)
+        assert url not in str(caught.value)
+
     def test_block_default_refuses_vcs(self) -> None:
         with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
             admit_vcs_url(
@@ -209,6 +228,26 @@ class TestAdmitVcsUrlScheme:
 
 
 class TestAdmitVcsUrlRepo:
+    def test_refusal_displays_only_repository_locations(self) -> None:
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://reader@index.example/allowed?view=private",),
+        )
+        url = (
+            "git+https://reader@index.example/project@main?view=private"
+            "#subdirectory=src"
+        )
+        with pytest.raises(UnsupportedVcsError) as caught:
+            admit_vcs_url(url, config)
+
+        assert str(caught.value).splitlines() == [
+            "refusing VCS repo",
+            "    git+https://index.example/project@main",
+            "    reason: repo URL prefix not in vcs.allowed-repos.",
+            "    allowed prefixes: https://index.example/allowed",
+        ]
+
     def test_empty_repos_denies_all(self) -> None:
         # An empty allowed-repos under policy = "allow" admits nothing;
         # the user must list at least one repo prefix.

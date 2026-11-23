@@ -85,8 +85,8 @@ _RESOLVE_ANCHOR: ContextVar[datetime | None] = ContextVar(
 # rather than re-derived by splitting a human-facing ``where`` label.
 _DECLARING_DIR: ContextVar[Path | None] = ContextVar("_DECLARING_DIR", default=None)
 
-# Standalone nab.toml tables have no tool.nab prefix.
-_KEY_PREFIX: ContextVar[str] = ContextVar("_KEY_PREFIX", default="tool.nab.")
+# A standalone file uses an empty prefix. Plan hints address their settings locally.
+_KEY_PREFIX: ContextVar[str | None] = ContextVar("_KEY_PREFIX", default="tool.nab.")
 
 # One timestamp per inspector pass keeps equal relative values equal across files.
 _INSPECTOR_ANCHOR: ContextVar[datetime | None] = ContextVar(
@@ -135,7 +135,7 @@ def declaring_dir(directory: Path) -> Generator[None, None, None]:
 
 
 @contextmanager
-def key_prefix(prefix: str) -> Generator[None, None, None]:
+def key_prefix(prefix: str | None) -> Generator[None, None, None]:
     """Bind the declaring file's TOML key prefix for parser hints."""
     token = _KEY_PREFIX.set(prefix)
     try:
@@ -214,7 +214,9 @@ def _current_declaring_dir() -> Path:
 
 def parse_matrix(value: Any, where: str) -> values.MatrixConfig:
     """Return the ``matrix`` row's config, its table named for the declaring file."""
-    return values.parse_matrix(value, where, table=f"{_KEY_PREFIX.get()}matrix")
+    prefix = _KEY_PREFIX.get()
+    table = None if prefix is None else f"{prefix}matrix"
+    return values.parse_matrix(value, where, table=table)
 
 
 def _override_anchor() -> datetime:

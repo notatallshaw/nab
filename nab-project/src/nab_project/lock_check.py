@@ -283,7 +283,22 @@ def _check_constraints(
             raise LockConsistencyError(message)
 
 
-def _check_changed_bounds(  # noqa: PLR0913 - explicit saved-lock input and selector keywords
+def _inputs_unchanged(document: Mapping[str, Any], current: Mapping[str, Any]) -> bool:
+    """Reject changed selections and check whether all inputs match."""
+    record = _record(document)
+    if any(project.get("dynamic") for project in current["local"].values()):
+        message = "dynamic local metadata requires a lock update"
+        raise LockConsistencyError(message)
+    if record["all-inputs-sha256"] == validation_digest(current):
+        return True
+    if record["selection-inputs-sha256"] != selection_inputs_digest(current):
+        message = "dependency selections or policy changed; update the lock"
+        raise LockConsistencyError(message)
+    return False
+
+
+def _check_saved_inputs(  # noqa: PLR0913 - explicit saved-lock input and selector keywords
+    document: Mapping[str, Any],
     lock: Pylock,
     path: Path,
     current: Mapping[str, Any],
@@ -296,7 +311,10 @@ def _check_changed_bounds(  # noqa: PLR0913 - explicit saved-lock input and sele
     input_format: InputFormat,
     project_input: PreparedProjectInput | None = None,
 ) -> None:
-    """Validate compatible input edits using the standard package selections."""
+    """Check input fingerprints and validate changed bounds against the saved pins."""
+    if _inputs_unchanged(document, current):
+        return
+
     local = _current_local_metadata(current, inputs)
     forks, _ = plan_project_inputs(
         path,
@@ -360,16 +378,8 @@ def check_saved_lock(  # noqa: PLR0913 - public keyword API for independent lock
     try:
         lock = Pylock.from_dict(document)
         _check_local_artifacts(lock, lockfile.resolve().parent)
-        record = _record(document)
-        if any(project.get("dynamic") for project in current["local"].values()):
-            message = "dynamic local metadata requires a lock update"
-            raise LockConsistencyError(message)
-        if record["all-inputs-sha256"] == validation_digest(current):
-            return
-        if record["selection-inputs-sha256"] != selection_inputs_digest(current):
-            message = "dependency selections or policy changed; update the lock"
-            raise LockConsistencyError(message)
-        _check_changed_bounds(
+        _check_saved_inputs(
+            document,
             lock,
             path,
             current,
@@ -466,12 +476,14 @@ def can_reuse_saved_lock(  # noqa: PLR0913 - mirror the saved checker inputs and
             return False
 
         # Validation format 1 cannot distinguish every file-URL source identity.
-        saved = Pylock.from_dict(toml_io.load_path(lockfile))
+        document = toml_io.load_path(lockfile)
+        saved = Pylock.from_dict(document)
         if not _reuse_artifacts_supported(saved):
             return False
 
-        check_saved_lock(
-            lockfile,
+        _check_saved_inputs(
+            document,
+            saved,
             path,
             current,
             inputs,
@@ -488,6 +500,7 @@ def can_reuse_saved_lock(  # noqa: PLR0913 - mirror the saved checker inputs and
         LookupError,
         TypeError,
         RecursionError,
+        PylockSelectError,
         PylockValidationError,
     ):
         return False

@@ -823,7 +823,7 @@ class TestAssignmentEntries:
 
     def test_pattern_matching_reads_every_field_positionally(self) -> None:
         """Ten sub-patterns, in declaration order rather than slot order."""
-        match self._entry():
+        match self._entry(decision_level=3, cum_positive=Range.at_least(1)):
             case Assignment(
                 package,
                 accumulated_range,
@@ -839,7 +839,7 @@ class TestAssignmentEntries:
                 assert (package, accumulated_range, decision_level) == (
                     "foo",
                     Range.at_least(2),
-                    1,
+                    3,
                 )
                 assert (is_decision, trail_index, version, cause) == (
                     False,
@@ -849,6 +849,8 @@ class TestAssignmentEntries:
                 )
                 assert (positive, cum_positive, cum_negative) == (
                     True,
-                    Range.at_least(2),
+                    Range.at_least(1),
                     Range.full(),
                 )
+            case _:
+                pytest.fail("Assignment did not match positionally")

@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import logging
 import sys
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 
 import pytest
 
@@ -18,7 +18,6 @@ from nab.output import (
     Printer,
     ProgressReporter,
     Verbosity,
-    _isatty,
     begin,
     command_output,
     install_log_handler,
@@ -96,18 +95,45 @@ def test_verbosity_from_counts(verbose: int, quiet: int, expected: Verbosity) ->
 
 
 def test_isatty_present_true() -> None:
-    assert _isatty(_TTY(tty=True)) is True
+    assert env.stream_isatty(_TTY(tty=True)) is True
 
 
 def test_isatty_present_false() -> None:
-    assert _isatty(_TTY(tty=False)) is False
+    assert env.stream_isatty(_TTY(tty=False)) is False
 
 
 def test_isatty_absent() -> None:
     class NoTty:
         pass
 
-    assert _isatty(NoTty()) is False  # type: ignore[arg-type]
+    assert env.stream_isatty(NoTty()) is False
+
+
+@pytest.mark.parametrize(
+    ("args", "status"),
+    [
+        (("--help",), 0),
+        (("unknown-command",), 2),
+        (("cache", "dir", "--cache-dir", "."), 0),
+    ],
+)
+def test_cli_writes_to_a_half_closed_duplex_stream(
+    args: tuple[str, ...], status: int
+) -> None:
+    reference = io.StringIO()
+    with redirect_stdout(reference), redirect_stderr(reference):
+        assert run(args) == status
+    assert reference.getvalue()
+
+    reader, writer = io.BytesIO(), io.BytesIO()
+    with io.TextIOWrapper(
+        io.BufferedRWPair(reader, writer), encoding="utf-8", newline="\n"
+    ) as stream:
+        reader.close()
+        with redirect_stdout(stream), redirect_stderr(stream):
+            assert run(args) == status
+        stream.flush()
+        assert writer.getvalue().decode() == reference.getvalue()
 
 
 def test_should_color_always_beats_env() -> None:

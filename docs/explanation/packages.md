@@ -165,7 +165,8 @@ starting its fetcher thread. `nab-index` owns those checks and `IdleClosableTran
 an unused transport close without an event loop. Other transports keep the normal worker lifecycle.
 
 Use the coordinator's `request_listing`, `request_metadata` and artifact request methods to submit
-work. These methods register the waiting caller before the fetch starts.
+work. These methods register the waiting caller before the fetch starts. At shutdown, the index
+clients finish their cache writes and the coordinator closes their shared transport.
 
 Direct coordinator callers opt in with `start_on_demand=True`; explicit `start()` still waits for a
 ready worker.

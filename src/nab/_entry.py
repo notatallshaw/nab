@@ -6,6 +6,9 @@ __lazy_modules__ = ("gc",)
 
 import gc
 
+# Only the standalone entry point owns the interpreter's collector.
+process_owns_collector = False
+
 
 def _resume_collector() -> None:
     """Freeze what startup built, then turn the cyclic collector back on.
@@ -35,10 +38,13 @@ def console_entry() -> None:
 
     The collector is on again on the way out, whichever way the CLI ended.
     """
+    global process_owns_collector  # noqa: PLW0603 - scoped to the standalone command
     gc.disable()
+    process_owns_collector = True
     try:
         from .cli import console_entry as run_cli  # noqa: PLC0415
 
         run_cli(_resume_collector)
     finally:
+        process_owns_collector = False
         _resume_collector()

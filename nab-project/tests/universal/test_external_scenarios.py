@@ -2,25 +2,23 @@
 
 from __future__ import annotations
 
+import pytest
+
 from nab_index.client import WheelFile
 from nab_project.build_policy import enforce_build_policy_for_targets
 from nab_project.inputs import ResolveInputs
-from nab_project.lockfile import build_pylock
+from nab_project.lockfile import build_pylock, resolve_dependency_references
 from nab_project.resolve import build_lock_input, resolve_with_coordinator
-from nab_provider._vendor.packaging.pylock import Package, Pylock
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
-from nab_provider.provider import BuildPolicy
+from nab_provider.policy import BuildPolicy, ResolutionStrategy
 from nab_provider.tags import PlatformSpec
-from nab_provider.target import Matrix, ResolveTarget
+from nab_provider.target import Matrix
 from nab_test_support.coordinator import make_coordinator
 
 _PLATFORM_WHEEL_SHA256 = (
     "170f4c280ebc110a306ff320681729df2ce8545154e5c829c1e8b182cf2fff79"
 )
-
-_LockPin = tuple[str, str]
-_LockEdge = tuple[_LockPin, _LockPin]
 
 
 def _wheel(
@@ -50,47 +48,16 @@ def _metadata(package: str, version: str, *dependencies: str) -> str:
     )
 
 
-def _package_pin(package: Package) -> _LockPin:
-    """Return the package name and version used by graph assertions."""
-    assert package.version is not None
-    return str(package.name), str(package.version)
-
-
-def _reachable_lock_graph(
-    pylock: Pylock,
-    target: ResolveTarget,
-    *,
-    root: str,
-) -> tuple[frozenset[_LockPin], frozenset[_LockEdge]]:
-    """Return the pins and dependency edges reachable for one target."""
-    active_packages = [
-        package
-        for package in pylock.packages
-        if package.marker is None or package.marker.evaluate(target.marker_env)
-    ]
-    packages_by_name = {str(package.name): package for package in active_packages}
-    assert len(packages_by_name) == len(active_packages)
-
-    pins: set[_LockPin] = set()
-    edges: set[_LockEdge] = set()
-    pending = [root]
-    while pending:
-        package = packages_by_name[pending.pop()]
-        pin = _package_pin(package)
-        if pin in pins:
-            continue
-        pins.add(pin)
-
-        for dependency in package.dependencies or ():
-            dependency_name = str(dependency["name"])
-            dependency_pin = _package_pin(packages_by_name[dependency_name])
-            edges.add((pin, dependency_pin))
-            pending.append(dependency_name)
-
-    return frozenset(pins), frozenset(edges)
-
-
-def test_overlapping_root_markers_cover_each_python_partition() -> None:
+@pytest.mark.parametrize(
+    ("strategy", "expected"),
+    [
+        (ResolutionStrategy.HIGHEST, ("1.2.0", "1.2.0", "1.2.0")),
+        (ResolutionStrategy.LOWEST, ("1.0.0", "1.1.0", "1.2.0")),
+    ],
+)
+def test_overlapping_root_markers_cover_each_python_partition(
+    strategy: ResolutionStrategy, expected: tuple[str, ...]
+) -> None:
     """Exercise every root-marker partition with a finite Python witness.
 
     Python 3.12, 3.13, and 3.14 cover the three marker partitions. The package
@@ -116,7 +83,7 @@ def test_overlapping_root_markers_cover_each_python_partition() -> None:
         Requirement("a>=1.1.0; python_version >= '3.13'"),
         Requirement("a>=1.2.0; python_version >= '3.14'"),
     ]
-    inputs = ResolveInputs(requires_python=python)
+    inputs = ResolveInputs(requires_python=python, resolution=strategy)
 
     result = resolve_with_coordinator(
         coordinator,
@@ -126,34 +93,34 @@ def test_overlapping_root_markers_cover_each_python_partition() -> None:
     )
 
     assert result.success
-    assert {
-        target_result.target.label: target_result.pins
-        for target_result in result.target_results
-    } == {
-        "py312-linux_x86_64": {"a": Version("1.2.0")},
-        "py313-linux_x86_64": {"a": Version("1.2.0")},
-        "py314-linux_x86_64": {"a": Version("1.2.0")},
-    }
+    assert [item.target.label for item in result.target_results] == [
+        "py312-linux_x86_64",
+        "py313-linux_x86_64",
+        "py314-linux_x86_64",
+    ]
 
     pylock = build_pylock(build_lock_input(result, inputs=inputs))
     pylock.validate()
     assert len(pylock.environments) == len(targets) == 3
-    for target in targets:
+    assert len(pylock.packages) == len(set(expected))
+    if strategy is ResolutionStrategy.HIGHEST:
+        assert pylock.packages[0].marker is None
+
+    for item, version in zip(result.target_results, expected, strict=True):
+        target = item.target
+        assert item.pins == {"a": Version(version)}
         assert (
             sum(marker.evaluate(target.marker_env) for marker in pylock.environments)
             == 1
         )
-    assert [
-        (
-            str(package.name),
-            str(package.version),
-            str(package.requires_python),
-            package.marker,
+        ((package, _),) = pylock.select(
+            environment=target.marker_env, tags=target.tags.ordered
         )
-        for package in pylock.packages
-    ] == [
-        ("a", "1.2.0", ">=3.12", None),
-    ]
+        assert (package.name, str(package.version), str(package.requires_python)) == (
+            "a",
+            version,
+            ">=3.12",
+        )
 
 
 def test_transitive_prerelease_admission_stays_in_its_fork() -> None:
@@ -529,29 +496,21 @@ def test_platform_and_implementation_forks_keep_transitive_dependencies() -> Non
         frozenset({"pp312-macos_arm64"}),
     }
 
+    pins = [(str(package.name), str(package.version)) for package in pylock.packages]
+    references = resolve_dependency_references(pylock)
     assert {
-        target.label: _reachable_lock_graph(pylock, target, root="a")
-        for target in targets
+        (pins[parent], pins[child])
+        for parent, children in references.items()
+        for child in children
     } == {
-        "py312-linux_x86_64": (
-            frozenset({("a", "2.0.0")}),
-            frozenset(),
-        ),
-        "pp312-linux_x86_64": (
-            frozenset({("a", "2.0.0")}),
-            frozenset(),
-        ),
-        "py312-macos_arm64": (
-            frozenset({("a", "1.0.0"), ("b", "2.0.0")}),
-            frozenset({(("a", "1.0.0"), ("b", "2.0.0"))}),
-        ),
-        "pp312-macos_arm64": (
-            frozenset({("a", "1.0.0"), ("b", "1.0.0"), ("c", "1.0.0")}),
-            frozenset(
-                {
-                    (("a", "1.0.0"), ("b", "1.0.0")),
-                    (("b", "1.0.0"), ("c", "1.0.0")),
-                }
-            ),
-        ),
+        (("a", "1.0.0"), ("b", "1.0.0")),
+        (("a", "1.0.0"), ("b", "2.0.0")),
+        (("b", "1.0.0"), ("c", "1.0.0")),
     }
+
+    for item in result.target_results:
+        target = item.target
+        selected = pylock.select(
+            environment=target.marker_env, tags=target.tags.ordered
+        )
+        assert {package.name: package.version for package, _ in selected} == item.pins

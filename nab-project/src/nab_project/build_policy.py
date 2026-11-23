@@ -5,6 +5,7 @@ from __future__ import annotations
 __lazy_modules__ = (
     "nab_provider.errors",
     "nab_provider.policy",
+    "nab_provider.target",
     "nab_resolver.diagnostics",
 )
 
@@ -13,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from nab_provider.errors import ConfigError
 from nab_provider.policy import BuildPolicy
+from nab_provider.target import Matrix
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 if TYPE_CHECKING:
@@ -26,14 +28,9 @@ __all__ = ["enforce_build_policy_for_targets"]
 _logger = logging.getLogger(__name__)
 
 
-def _has_declared_platform(targets: Sequence[ResolveTarget]) -> bool:
-    """Whether any target declares a platform or implementation."""
-    return any(target.platform_spec is not None for target in targets)
-
-
 def enforce_build_policy_for_targets(
     *,
-    targets: Sequence[ResolveTarget],
+    targets: Sequence[ResolveTarget] | Matrix | None,
     build_policy: BuildPolicy,
     build_policy_set: bool,
     package_overrides: Sequence[PackageOverride],
@@ -54,9 +51,15 @@ def enforce_build_policy_for_targets(
       deliberate deviation from pip.  Set ``build-policy = "never"`` to
       forbid it.
 
-    The host target permits, so the default case builds freely.
+    Pass ``None`` for the host default. A matrix declares a platform for
+    every target, so its build policy can be checked before expansion.
     """
-    if _has_declared_platform(targets):
+    if targets is None:
+        return build_policy
+
+    if isinstance(targets, Matrix) or any(
+        target.platform_spec is not None for target in targets
+    ):
         universal_assertion = (
             assume_universal_deps
             or any(rule.assume_universal_deps is True for rule in package_overrides)

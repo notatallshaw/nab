@@ -825,6 +825,24 @@ def test_a_shared_store_serves_the_next_decision(
     assert partitions() == first
 
 
+def test_shared_decisions_follow_the_current_parser_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(engine, "get_int_max_str_digits", lambda: 1000)
+    marker = ms('python_full_version == "3.13.4"')
+    store = DecisionStore()
+    decisions = _decision_counter(monkeypatch)
+
+    assert not marker.is_empty(store=store)
+    assert not marker.is_empty(store=store)
+    assert decisions() == 1
+
+    monkeypatch.setattr(engine, "get_int_max_str_digits", lambda: 900)
+    assert not marker.is_empty(store=store)
+    assert not marker.is_empty(store=store)
+    assert decisions() == 2
+
+
 def test_a_shared_store_serves_the_next_decision_its_truths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

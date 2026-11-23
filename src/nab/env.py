@@ -40,6 +40,25 @@ def verbosity_name(environ: Mapping[str, str] | None = None) -> str | None:
     return current(environ).get(NAB_VERBOSITY)
 
 
+def stream_isatty(stream: object) -> bool:
+    """Treat a stream without a usable terminal probe as noninteractive."""
+    probe = getattr(stream, "isatty", None)
+    if probe is None:
+        return False
+    try:
+        return bool(probe())
+    except (OSError, ValueError):
+        return False
+
+
+def color_for_stream(
+    choice: str, stream: object, environ: Mapping[str, str] | None = None
+) -> bool:
+    """Decide colour for a stream, probing it only for an automatic choice."""
+    tty = choice not in {"always", "never"} and stream_isatty(stream)
+    return color_enabled(choice, isatty=tty, environ=environ)
+
+
 def color_enabled(
     choice: str,
     *,

@@ -76,6 +76,10 @@ if TYPE_CHECKING:
         WheelArtifact,
     )
 
+    _ArtifactKey = tuple[
+        str, str, tuple[tuple[str, str], ...], int | None, str | None, Path | None
+    ]
+
 
 logger = logging.getLogger(__name__)
 
@@ -197,13 +201,13 @@ class DependencyRequirementProvider(Protocol):
 
 
 class ArtifactMemo:
-    """Lock artifacts shared by one resolve, keyed by listing URL."""
+    """Lock artifacts shared by one resolve when their listing fields agree."""
 
     __slots__ = ("sdists", "wheels")
 
     def __init__(self) -> None:
-        self.wheels: dict[str, WheelArtifact] = {}
-        self.sdists: dict[str, SdistArtifact] = {}
+        self.wheels: dict[_ArtifactKey, WheelArtifact] = {}
+        self.sdists: dict[_ArtifactKey, SdistArtifact] = {}
 
 
 class MissingHashError(ValueError):
@@ -704,18 +708,28 @@ def _known_wheel_python_requirements(
 def _build_artifact(
     source: WheelFile | SdistFile,
     cls: type[_Artifact],
-    memo: dict[str, _Artifact],
+    memo: dict[_ArtifactKey, _Artifact],
 ) -> _Artifact:
-    """Build or reuse the artifact for ``source.url``."""
-    artifact = memo.get(source.url)
+    """Build or reuse an artifact from the fields recorded in the lock."""
+    # A content-addressed index can serve different wheel filenames at one URL.
+    key = (
+        source.filename,
+        source.url,
+        source.hashes,
+        source.size,
+        source.upload_time,
+        source.local_path,
+    )
+    artifact = memo.get(key)
     if artifact is None:
-        artifact = memo[source.url] = cls(
-            filename=source.filename,
-            url=strip_userinfo(source.url),
-            hashes=_filter_acceptable_hashes(source.hashes),
-            size=source.size,
-            upload_time=_parse_upload_time(source.upload_time),
-            local_path=source.local_path,
+        filename, url, hashes, size, upload_time, local_path = key
+        artifact = memo[key] = cls(
+            filename=filename,
+            url=strip_userinfo(url),
+            hashes=_filter_acceptable_hashes(hashes),
+            size=size,
+            upload_time=_parse_upload_time(upload_time),
+            local_path=local_path,
         )
     return artifact
 

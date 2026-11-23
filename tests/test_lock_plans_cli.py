@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import tarfile
 from contextlib import nullcontext
+from pathlib import Path
 
 import pytest
 
@@ -34,6 +36,30 @@ def named(registry: Registry) -> Registry:
 def command(value: Registry, *args: str) -> int:
     """Exercise parsing and execution without replacing the lock implementation."""
     return run(("--no-progress", "lock", str(value.project), *args))
+
+
+@pytest.mark.parametrize(
+    ("args", "source"),
+    [
+        ((), "plan 'dev': settings.requires-python"),
+        (("--project-requires-python", "<3"), "--project-requires-python"),
+        (
+            ("--setting", 'project.requires-python="<3"'),
+            "--setting project.requires-python",
+        ),
+    ],
+)
+def test_excluded_python_names_the_winning_plan_or_flag(
+    named: Registry,
+    capsys: pytest.CaptureFixture[str],
+    args: tuple[str, ...],
+    source: str,
+) -> None:
+    with named.project.open("a") as project:
+        project.write('[tool.nab.plans.dev.settings]\nrequires-python="<3"\n')
+
+    assert command(named, "--plan", "dev", *args) == 1
+    assert f"{source} = '<3' excludes the resolve target" in capsys.readouterr().err
 
 
 def test_plan_defaults_to_its_project_directory_and_checks_without_fetching(
@@ -96,6 +122,27 @@ def test_project_policy_and_cli_table_subflags_keep_their_precedence(
     doc = toml_io.load_path(named.project.with_name("pylock.dev.toml"))
     assert any('python_version == "3.13"' in env for env in doc["environments"])
     assert any('sys_platform == "linux"' in env for env in doc["environments"])
+
+
+@pytest.mark.parametrize(
+    ("setting", "location"),
+    [
+        ('matrix = {python="==3.11.4", platforms=["linux_x86_64"]}', "settings.matrix"),
+        ("packages = []", "settings.package-rules"),
+        ("package-rules = {}", "settings.packages"),
+    ],
+)
+def test_plan_settings_errors_name_the_setting_in_the_plan(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], setting: str, location: str
+) -> None:
+    project = tmp_path / "pyproject.toml"
+    project.write_text('[project]\nname="app"\nversion="1"\n')
+    (tmp_path / "nab.toml").write_text(f"[plans.My_Plan.settings]\n{setting}\n")
+
+    assert run(("lock", str(project), "--plan", "my-plan", "--offline")) == 1
+    error = capsys.readouterr().err
+    assert "plan 'my-plan'" in error
+    assert f"this plan's {location}" in error
 
 
 def test_local_source_groups_are_prepared_without_rebinding_relative_sources(
@@ -379,11 +426,19 @@ def test_configured_http_download_uses_the_selected_transport(
         async def aclose(self) -> None:
             calls.append("closed")
 
-    monkeypatch.setattr(
-        "nab._lock._make_resolve_transport", lambda backend: Transport()
-    )
-    assert _download_input("https://source.example/a.tar.gz", "urllib3") == b"archive"
-    assert calls == ["https://source.example/a.tar.gz", "closed"]
+    def transport(backend: str) -> Transport:
+        calls.append(backend)
+        return Transport()
+
+    monkeypatch.setattr("nab._lock._make_resolve_transport", transport)
+
+    async def fetch() -> None:
+        assert (
+            _download_input("https://source.example/a.tar.gz", "urllib3") == b"archive"
+        )
+
+    asyncio.run(fetch())
+    assert calls == ["urllib3", "https://source.example/a.tar.gz", "closed"]
 
 
 def test_batch_provenance_replays_each_individual_plan(

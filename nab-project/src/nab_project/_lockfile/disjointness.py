@@ -401,17 +401,15 @@ def _raise_collision(
         groups_var: group_selection,
     }
     matching = [
-        (pkg, ms)
+        pkg
         for pkg, ms in zip(entries, marker_sets, strict=True)
         if not ms.restrict(point).is_empty()
     ]
 
     extra_subset = sorted(extra_selection)
     group_subset = sorted(group_selection)
-    versions = sorted(str(p.version) if p.version else "" for p, _ in matching)
-    hint = _conflict_hint(
-        [ms for _, ms in matching], extra_subset, group_subset, declared_groups
-    )
+    versions = sorted(str(p.version) if p.version else "" for p in matching)
+    hint = _conflict_hint(extra_subset, group_subset, declared_groups)
     msg = (
         f"{name}: {len(matching)} entries fire under"
         f" env={label!r} extras={extra_subset!r}"
@@ -422,40 +420,20 @@ def _raise_collision(
 
 
 def _conflict_hint(
-    marker_sets: Sequence[MarkerSet],
     extra_subset: Sequence[str],
     group_subset: Sequence[str],
     declared_groups: Sequence[AbstractSet[tuple[str, str]]] = (),
 ) -> str:
-    """Return a one-line hint about declaring a conflict, when relevant.
-
-    Relevant means a membership variable actually drives the witness
-    point: a referenced extra or dependency group is active in the
-    colliding context, so declaring the pair mutually exclusive in
-    ``[tool.nab].conflicts`` could prune that point.  A purely
-    environment-driven collision (no membership variable referenced, or
-    the witness selects none of the referenced ones) gets no hint
-    because a conflict declaration would not help.
-
-    When ``declared_groups`` already covers the active members, the
-    hint instead suggests tightening the policy: an ``at-least-one``
-    declaration permits co-selection, so the validator still raises and
-    the user has to switch to an exclusive policy to prune the point.
-    """
-    extras_driven = _membership_drives_point(
-        marker_sets, MARKER_VARIABLE_FOR_KIND[KIND_EXTRA], extra_subset
-    )
-    groups_driven = _membership_drives_point(
-        marker_sets, MARKER_VARIABLE_FOR_KIND[KIND_GROUP], group_subset
-    )
-    if not (extras_driven or groups_driven):
+    """Suggest a conflict policy when it can exclude the reported selection."""
+    # The witness selects only names referenced by the colliding pair.
+    active = {(KIND_EXTRA, name) for name in extra_subset} | {
+        (KIND_GROUP, name) for name in group_subset
+    }
+    if len(active) < _MUTUALLY_EXCLUSIVE_LIMIT:
         return ""
 
-    active = {(KIND_EXTRA, canonicalize_name(n)) for n in extra_subset} | {
-        (KIND_GROUP, canonicalize_name(n)) for n in group_subset
-    }
     already_declared = any(
-        sum(1 for kind, name in declared if (kind, name) in active) >= 2  # noqa: PLR2004
+        len(declared & active) >= _MUTUALLY_EXCLUSIVE_LIMIT
         for declared in declared_groups
     )
     if already_declared:
@@ -468,25 +446,3 @@ def _conflict_hint(
         ". If these are intentionally mutually exclusive, declare them in"
         " [tool.nab].conflicts so the colliding context is pruned"
     )
-
-
-def _membership_drives_point(
-    marker_sets: Sequence[MarkerSet], variable: str, subset: Sequence[str]
-) -> bool:
-    """Return True when a referenced ``variable`` literal is active here.
-
-    A membership variable drives the witness only when the witness
-    ``subset`` is non-empty and intersects the literals the colliding
-    markers test for membership in ``variable`` (compared under
-    canonicalisation, matching the universe's axis restriction).
-    """
-    referenced = {
-        name
-        for marker_set in marker_sets
-        for var, name in marker_set.set_memberships()
-        if var == variable
-    }
-    if not referenced:
-        return False
-    active = {canonicalize_name(name) for name in subset}
-    return any(name in active for name in referenced)

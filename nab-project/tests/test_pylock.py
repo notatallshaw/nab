@@ -770,9 +770,8 @@ _LOCK_MARKERS = json.loads(
     (Path(__file__).parent / "data" / "ci_lock_markers.json").read_text()
 )
 
-# The declared environments span 5 platforms x 5 minors (3.10 split at 3.10.2).
-# 178 markers across the 7 universal locks shorten; the docs lock's 34 already
-# say the shortest thing they can and stay byte-identical.
+# The seven universal locks span five platforms and five Python minors,
+# with Python 3.10 split at 3.10.2. The docs lock has a single environment.
 _WIDE_MARKER_COUNT = 178
 _DOCS_MARKER_COUNT = 34
 _SUBSET_RAW_BYTES = 40183
@@ -807,10 +806,9 @@ def simplification_calls(monkeypatch: pytest.MonkeyPatch) -> Counter[str]:
 
 
 class TestEightLockRegression:
-    """The captured markers of the eight committed CI locks.
+    """The captured markers of eight historical CI locks.
 
-    Each raw marker finalises offline to the byte the lock now carries, and the
-    emission checks still pass on the simplified output.
+    Each raw marker must reproduce the expected output from the same lock.
     """
 
     def test_wide_locks_become_tractable_and_byte_exact(

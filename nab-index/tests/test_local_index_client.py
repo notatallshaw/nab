@@ -665,19 +665,20 @@ class TestFlatWheelhouse:
         assert len(result) == 1
 
     def test_skips_non_files(self, tmp_path: Path) -> None:
-        (tmp_path / "subdir").mkdir()
-        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        (tmp_path / "foo-2.0-py3-none-any.whl").mkdir()
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        _write_wheel(wheel, "foo", "1.0")
+
         client = LocalIndexClient(tmp_path.as_uri())
-        result = run(client.get_files("foo"))
-        assert len(result) == 1
+        assert [file.filename for file in run(client.get_files("foo"))] == [wheel.name]
 
     def test_unparseable_filename_skipped(self, tmp_path: Path) -> None:
-        (tmp_path / "not-a-wheel.whl").write_bytes(b"")
-        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        (tmp_path / "foo-invalid.whl").touch()
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        _write_wheel(wheel, "foo", "1.0")
+
         client = LocalIndexClient(tmp_path.as_uri())
-        result = run(client.get_files("foo"))
-        assert len(result) == 1
-        assert result[0].filename == "foo-1.0-py3-none-any.whl"
+        assert [file.filename for file in run(client.get_files("foo"))] == [wheel.name]
 
     def test_missing_root_returns_empty(self, tmp_path: Path) -> None:
         missing = tmp_path / "does-not-exist"
@@ -1035,6 +1036,22 @@ class TestPep503Directory:
         package_dir.mkdir()
         (package_dir / "index.html").write_text(body, encoding="utf-8")
         return package_dir
+
+    def test_refreshed_listing_replaces_previous_file_diagnostics(
+        self, tmp_path: Path
+    ) -> None:
+        directory = self._make_index(tmp_path, '<a href="foo-1.exe">installer</a>')
+        client = LocalIndexClient(tmp_path.as_uri())
+        assert run(client.get_files("Foo")) == []
+        assert client.served_unreadable_only("Foo")
+        assert client.served_no_usable_file("Foo")
+
+        (directory / "index.html").write_text('<a href="foo-2.zip">source</a>')
+        files = run(client.get_files("foo"))
+        assert [file.version for file in files] == ["2"]
+        assert not client.served_unreadable_only("Foo")
+        assert not client.served_no_usable_file("foo")
+        assert client.served_zip_sdists("Foo") == frozenset({"2"})
 
     @pytest.mark.parametrize(
         "prefix", ["", "https://files.example/"], ids=["local", "remote"]

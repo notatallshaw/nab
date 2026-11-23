@@ -84,11 +84,11 @@ def test_scan_directory_without_index_html_returns_empty(tmp_path: Path) -> None
     scan = _scan_pep503_directory(package_dir, "foo")
 
     assert scan.files == []
-    assert not scan.unreadable
-    assert not scan.unreachable
-    assert not scan.all_yanked
-    assert not scan.named_files
-    assert scan.zip_sdists == frozenset()
+    assert not scan.diagnostics.unreadable_only
+    assert not scan.diagnostics.unreachable_only
+    assert not scan.diagnostics.all_yanked
+    assert not scan.diagnostics.no_usable_file
+    assert scan.diagnostics.zip_sdists == frozenset()
 
 
 def _anchor(filename: str, *, yanked: bool = False) -> str:
@@ -130,7 +130,7 @@ def test_the_all_yanked_flag_counts_the_yanked_links(
 
     scan = _scan_pep503_directory(package_dir, "foo")
 
-    assert scan.all_yanked is expected
+    assert scan.diagnostics.all_yanked is expected
 
 
 def test_a_page_of_yanked_unreadable_links_reads_as_yanked(tmp_path: Path) -> None:
@@ -144,8 +144,8 @@ def test_a_page_of_yanked_unreadable_links_reads_as_yanked(tmp_path: Path) -> No
     scan = _scan_pep503_directory(package_dir, "foo")
 
     assert scan.files == []
-    assert not scan.unreadable
-    assert scan.all_yanked
+    assert not scan.diagnostics.unreadable_only
+    assert scan.diagnostics.all_yanked
 
 
 def test_a_page_of_installers_reports_unreadable(tmp_path: Path) -> None:
@@ -170,8 +170,8 @@ def test_a_page_of_unreachable_links_is_not_an_absent_package(
     scan = _scan_pep503_directory(package_dir, "foo")
 
     assert scan.files == []
-    assert scan.unreachable
-    assert not scan.unreadable
+    assert scan.diagnostics.unreachable_only
+    assert not scan.diagnostics.unreadable_only
 
     client = LocalIndexClient(tmp_path.as_uri())
     assert run(client.get_files("foo")) == []
@@ -194,9 +194,9 @@ def test_a_page_of_files_naming_another_project_is_not_absent(tmp_path: Path) ->
     scan = _scan_pep503_directory(package_dir, "cffi")
 
     assert scan.files == []
-    assert scan.named_files
-    assert not scan.unreadable
-    assert not scan.unreachable
+    assert scan.diagnostics.no_usable_file
+    assert not scan.diagnostics.unreadable_only
+    assert not scan.diagnostics.unreachable_only
 
     client = LocalIndexClient(tmp_path.as_uri())
     assert run(client.get_files("cffi")) == []
@@ -227,7 +227,7 @@ def test_an_href_marks_the_page_only_when_it_names_a_release(
     scan = _scan_pep503_directory(package_dir, "foo")
 
     assert scan.files == []
-    assert scan.unreachable is expected
+    assert scan.diagnostics.unreachable_only is expected
 
 
 def test_a_page_of_navigation_links_reads_as_an_empty_page(tmp_path: Path) -> None:
@@ -238,8 +238,8 @@ def test_a_page_of_navigation_links_reads_as_an_empty_page(tmp_path: Path) -> No
     scan = _scan_pep503_directory(package_dir, "foo")
 
     assert scan.files == []
-    assert not scan.unreachable
-    assert not scan.unreadable
+    assert not scan.diagnostics.unreachable_only
+    assert not scan.diagnostics.unreadable_only
 
 
 def test_get_sdist_archive_returns_file_bytes(tmp_path: Path) -> None:
@@ -528,5 +528,5 @@ def test_a_plain_listing_never_reaches_urljoin(
     monkeypatch.setattr(local_index, "urljoin", _refuse)
     scan = _scan_pep503_directory(package_dir, "foo")
 
-    assert not scan.unreadable
+    assert not scan.diagnostics.unreadable_only
     assert [file.url for file in scan.files] == [wheel.as_uri() for wheel in wheels]

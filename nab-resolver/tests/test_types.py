@@ -300,3 +300,5 @@ class TestRootRequirement:
                     Range.at_least(2),
                     "origin",
                 )
+            case _:
+                pytest.fail("RootRequirement did not match positionally")

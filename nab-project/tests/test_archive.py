@@ -15,6 +15,7 @@ import io
 import os
 import sys
 import tarfile
+import threading
 import traceback
 import zipfile
 import zlib
@@ -1064,6 +1065,47 @@ class TestWarmArchiveCache:
 
         with pytest.raises(SdistHashMismatchError):
             provider.fetch_versions("foo")
+
+    def test_completed_tree_published_during_download_is_reused(
+        self, tmp_path: Path
+    ) -> None:
+        data = _make_sdist("foo", "1.0.0", _PYPROJECT)
+        digest = hashlib.sha256(data).hexdigest()
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo.tar.gz#sha256={digest}"
+        )
+        cache = tmp_path / "arch"
+        provider = _provider([source], cache)
+
+        def finish_download(package: str, key: str, _url: str) -> threading.Event:
+            _warm_extracted_tree(cache, digest)
+            provider.coordinator.index.store_sdist_archive(package, key, data)
+            ready = threading.Event()
+            ready.set()
+            return ready
+
+        provider.coordinator.override("request_direct_archive", finish_download)
+        assert str(provider.fetch_versions("foo")[0][0]) == "1.0.0"
+        assert (cache / digest / ".nab-hashes").read_text() == f"sha256={digest}"
+
+    def test_added_hash_can_be_reused_without_the_archive(self, tmp_path: Path) -> None:
+        data = _make_sdist("foo", "1.0.0", _PYPROJECT)
+        digest = hashlib.sha256(data).hexdigest()
+        sha512 = hashlib.sha512(data).hexdigest()
+        source = ArchiveSource(
+            name="foo",
+            url=f"https://ex.com/foo.tar.gz#sha256={digest}&sha512={sha512}",
+        )
+        cache = tmp_path / "arch"
+        _warm_extracted_tree(cache, digest)
+
+        first = _provider([source], cache)
+        first.coordinator.index.store_sdist_archive("foo", digest, data)
+        assert str(first.fetch_versions("foo")[0][0]) == "1.0.0"
+
+        again = _provider([source], cache)
+        assert str(again.fetch_versions("foo")[0][0]) == "1.0.0"
+        assert not again.coordinator.calls_to("request_direct_archive")
 
     def test_tree_without_hash_record_is_not_served(self, tmp_path: Path) -> None:
         # A tree extracted before the record was written says nothing about

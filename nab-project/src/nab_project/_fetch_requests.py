@@ -2,27 +2,36 @@
 
 from __future__ import annotations
 
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from nab_provider.value import Record
+
+if TYPE_CHECKING:
+    from threading import Event
 
 
 class Listing(Record):
     """Read the available distributions for a package."""
 
-    __slots__ = __match_args__ = ("package",)
+    __match_args__ = ("package",)
+    __slots__ = (*__match_args__, "waiter")
     operation = "listing"
 
-    def __init__(self, package: str) -> None:
+    def __init__(self, package: str, *, waiter: Event | None = None) -> None:
+        self.waiter: Final = waiter
         self.package: Final = package
 
 
 class _FileRequest(Record):
     """Identify a distribution by its package, version and URL."""
 
-    __slots__ = __match_args__ = ("package", "version", "url")
+    __match_args__ = ("package", "version", "url")
+    __slots__ = (*__match_args__, "waiter")
 
-    def __init__(self, package: str, version: str, url: str) -> None:
+    def __init__(
+        self, package: str, version: str, url: str, *, waiter: Event | None = None
+    ) -> None:
+        self.waiter: Final = waiter
         self.package: Final = package
         self.version: Final = version
         self.url: Final = url
@@ -48,8 +57,10 @@ class SidecarMetadata(_FileRequest):
         version: str,
         url: str,
         metadata_hash: tuple[str, str] | None = None,
+        *,
+        waiter: Event | None = None,
     ) -> None:
-        super().__init__(package, version, url)
+        super().__init__(package, version, url, waiter=waiter)
         self.metadata_hash: Final = metadata_hash
 
 
@@ -65,8 +76,10 @@ class _IndexedDistribution(_FileRequest):
         version: str,
         url: str,
         hashes: tuple[tuple[str, str], ...] = (),
+        *,
+        waiter: Event | None = None,
     ) -> None:
-        super().__init__(package, version, url)
+        super().__init__(package, version, url, waiter=waiter)
         self.hashes: Final = hashes
 
 

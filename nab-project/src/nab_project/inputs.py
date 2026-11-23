@@ -5,7 +5,6 @@ Declared here rather than by the host because nab-project may not import ``nab``
 
 from __future__ import annotations
 
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from nab_provider.policy import (
@@ -16,6 +15,7 @@ from nab_provider.policy import (
     ResolutionStrategy,
 )
 from nab_provider.records import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexConfig
+from nab_provider.value import FACTORY, FactoryDefault, factory_value
 from nab_provider.vcs_admission import VcsConfig
 
 from .value import ValueType
@@ -33,7 +33,6 @@ __all__ = ["ResolveInputs"]
 
 
 _DEFAULT_INDEXES = (IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),)
-_NO_INDEX_OVERRIDES: Mapping[str, IndexOverride] = MappingProxyType({})
 _DEFAULT_VCS = VcsConfig()
 
 
@@ -112,7 +111,7 @@ class ResolveInputs(ValueType):
         default_groups: tuple[str, ...] = (),
         dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST,
         metadata_policy: MetadataPolicy = MetadataPolicy.MATCH_ARTIFACT,
-        index_overrides: Mapping[str, IndexOverride] = _NO_INDEX_OVERRIDES,
+        index_overrides: Mapping[str, IndexOverride] | FactoryDefault = FACTORY,
         indexes: tuple[IndexConfig, ...] = _DEFAULT_INDEXES,
         local_sources: tuple[LocalSource, ...] = (),
         package_overrides: tuple[PackageOverride, ...] = (),
@@ -138,7 +137,7 @@ class ResolveInputs(ValueType):
         self.default_groups = default_groups
         self.dist_policy = dist_policy
         self.metadata_policy = metadata_policy
-        self.index_overrides = index_overrides
+        self.index_overrides = factory_value(index_overrides, dict)
         self.indexes = indexes
         self.local_sources = local_sources
         self.package_overrides = package_overrides

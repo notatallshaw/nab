@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 
 from nab_resolver._compat import override
-from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
+from nab_resolver.errors import ResolutionError
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import BaseProvider, Resolver
 from nab_resolver.types import RangeProtocol
+
+from ..solver_fixtures import is_proven_conflict
 
 
 class _GraphProvider(BaseProvider[str, int]):
@@ -137,14 +139,6 @@ def reachable_packages(
         dependencies = graph.get(package, {}).get(version, {})
         queue.extend(dep for dep in dependencies if dep not in reachable)
     return reachable
-
-
-def is_proven_conflict(error: ResolutionError) -> bool:
-    """A solver fault can carry a diagnostic incompatibility without proving a conflict."""
-    return (
-        not isinstance(error, ResolutionTerminatedError)
-        and error.incompatibility is not None
-    )
 
 
 def resolve_or_prove_conflict(

@@ -43,6 +43,7 @@ from packaging.utils import canonicalize_name as _canonical
 from nab_provider.errors import IndexAccessError, UnsupportedWheelError
 from nab_provider.value import replace
 
+from ._listing import ListingDiagnostics, ListingReports, ListingResult
 from ._pep503 import hash_fragment, metadata_declaration, read_page
 from .client import (
     SdistFile,
@@ -175,27 +176,10 @@ def _is_dir(path: Path) -> bool:
     return mode is not None and stat.S_ISDIR(mode)
 
 
-class _ScanResult(NamedTuple):
-    """One local-index scan and its dropped-file evidence.
-
-    ``unreadable`` marks unsupported formats; ``unreachable`` marks a
-    wheel or tar sdist behind an unusable URL. ``all_yanked`` marks a
-    page whose file links are all yanked; ``named_files`` records an
-    unyanked release name. ``zip_sdists`` records zip-sdist versions.
-    """
-
-    files: list[WheelFile | SdistFile]
-    unreadable: bool
-    unreachable: bool
-    all_yanked: bool
-    named_files: bool
-    zip_sdists: frozenset[str]
-
-
 def _scan_pep503_directory(
     package_dir: Path,
     canonical: str,
-) -> _ScanResult:
+) -> ListingResult:
     """Parse ``<package>/index.html`` and return file records.
 
     ``package_dir`` has to be absolute, because the page's URI is the base
@@ -203,14 +187,7 @@ def _scan_pep503_directory(
     """
     index_html = package_dir / "index.html"
     if not _is_file(index_html):
-        return _ScanResult(
-            [],
-            unreadable=False,
-            unreachable=False,
-            all_yanked=False,
-            named_files=False,
-            zip_sdists=frozenset(),
-        )
+        return ListingResult([])
 
     try:
         text = index_html.read_text(encoding="utf-8")
@@ -275,14 +252,14 @@ def _scan_pep503_directory(
     # A navigation link is not a release, so both counts below read the
     # anchors that name one.
     named = len(anchors) - yanked - nameless
-    return _ScanResult(
-        files,
-        unreadable=unreadable,
-        unreachable=unreachable,
+    diagnostics = ListingDiagnostics(
+        unreadable_only=not files and unreadable,
+        unreachable_only=not files and unreachable,
         all_yanked=yanked > 0 and named == 0,
-        named_files=named > 0,
+        no_usable_file=not files and named > 0,
         zip_sdists=frozenset(zip_sdists),
     )
+    return ListingResult(files, diagnostics)
 
 
 def _append_record(
@@ -538,7 +515,7 @@ def _wheelhouse_project(filename: str) -> str | None:
 def _scan_flat_wheelhouse(
     root: Path,
     canonical: str,
-) -> _ScanResult:
+) -> ListingResult:
     """Find files for one canonical project name in a flat wheelhouse.
 
     Entries are sorted because the listing order breaks ties between dists at
@@ -578,14 +555,7 @@ def _scan_flat_wheelhouse(
             )
             files.append(replace(record, requires_python=requires_python))
 
-    return _ScanResult(
-        files,
-        unreadable=False,
-        unreachable=False,
-        all_yanked=False,
-        named_files=False,
-        zip_sdists=frozenset(zip_sdists),
-    )
+    return ListingResult(files, ListingDiagnostics(zip_sdists=frozenset(zip_sdists)))
 
 
 def _read_sdist_requires_python(sdist_path: Path) -> str | None:
@@ -771,7 +741,7 @@ def _dist_info_name(info_dir: str) -> str:
     return _canonical(stem.rsplit("-", 1)[0])
 
 
-class LocalIndexClient:
+class LocalIndexClient(ListingReports):
     """File-system-backed index client.
 
     Speaks the same surface as :class:`CachedAsyncSimpleClient` so the
@@ -788,13 +758,9 @@ class LocalIndexClient:
         Dropping the dot segments must not follow symlinks, so a page keeps the
         path it was reached by.
         """
+        super().__init__()
         root = parse_file_url(index_url)
         self._root = Path(os.path.abspath(root))  # noqa: PTH100
-        self._unreadable_only: set[str] = set()
-        self._unreachable_only: set[str] = set()
-        self._no_usable_file: set[str] = set()
-        self._all_yanked: set[str] = set()
-        self._zip_sdists: dict[str, frozenset[str]] = {}
 
     async def aclose(self) -> None:
         """No-op; nothing to release."""
@@ -821,50 +787,14 @@ class LocalIndexClient:
             if _is_file(package_dir / "index.html"):
                 scan = _scan_pep503_directory(package_dir, canonical)
             elif not _is_dir(self._root):
-                scan = _ScanResult(
-                    [],
-                    unreadable=False,
-                    unreachable=False,
-                    all_yanked=False,
-                    named_files=False,
-                    zip_sdists=frozenset(),
-                )
+                scan = ListingResult([])
             else:
                 scan = _scan_flat_wheelhouse(self._root, canonical)
         except OSError as exc:
             msg = f"cannot read local index {self._root}: {exc}"
             raise UnreadableLocalIndexError(msg) from exc
 
-        if not scan.files and scan.unreadable:
-            self._unreadable_only.add(package)
-        if not scan.files and scan.unreachable:
-            self._unreachable_only.add(package)
-        if scan.all_yanked:
-            self._all_yanked.add(package)
-        if not scan.files and scan.named_files:
-            self._no_usable_file.add(package)
-        self._zip_sdists[package] = scan.zip_sdists
-        return scan.files
-
-    def served_unreadable_only(self, package: str) -> bool:
-        """Whether a listing for ``package`` held only files nab cannot read."""
-        return package in self._unreadable_only
-
-    def served_unreachable_only(self, package: str) -> bool:
-        """Whether a listing for ``package`` held only links nab cannot reach."""
-        return package in self._unreachable_only
-
-    def served_no_usable_file(self, package: str) -> bool:
-        """Whether a listing for ``package`` named files and nab kept none."""
-        return package in self._no_usable_file
-
-    def served_all_yanked(self, package: str) -> bool:
-        """Whether a listing for ``package`` held file links and yanked every one."""
-        return package in self._all_yanked
-
-    def served_zip_sdists(self, package: str) -> frozenset[str]:
-        """Versions ``package`` was served as a ``.zip`` sdist."""
-        return self._zip_sdists.get(package, frozenset())
+        return self._publish_listing(canonical, scan)
 
     async def get_metadata_text(
         self,

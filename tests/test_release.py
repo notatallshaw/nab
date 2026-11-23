@@ -275,16 +275,37 @@ def test_plan_rejects_bad_next_dev() -> None:
         release._plan("0.0.3", "0.0.3.dev0", "0.1.0")
 
 
-def test_github_slug() -> None:
-    assert (
-        release._github_slug("https://github.com/notatallshaw/nab.git")
-        == "notatallshaw/nab"
+@pytest.mark.parametrize(
+    ("remote", "slug"),
+    [
+        ("https://github.com/owner/nab.git/", "owner/nab"),
+        ("git@github.com:owner/nab.git", "owner/nab"),
+        ("ssh://git@ssh.github.com:443/owner/nab.git", "owner/nab"),
+        ("https://gitlab.com/example/github.com-tools.git", None),
+        ("/srv/git/nab.git", None),
+    ],
+)
+def test_github_slug(remote: str, slug: str | None) -> None:
+    assert release._github_slug(remote) == slug
+
+
+def test_pr_link_uses_the_push_remote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(release, "REPO_ROOT", tmp_path)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    release._run("git", "init")
+    release._run(
+        "git", "remote", "add", "origin", "https://github.com/upstream/nab.git"
     )
-    assert (
-        release._github_slug("git@github.com:notatallshaw/nab.git")
-        == "notatallshaw/nab"
+    release._run(
+        "git", "remote", "set-url", "--push", "origin", "git@github.com:fork/nab.git"
     )
-    assert release._github_slug("https://gitlab.com/x/y.git") is None
+
+    assert (
+        release._pr_url("release/1") == "https://github.com/fork/nab/pull/new/release/1"
+    )
 
 
 def test_existing_remote_tag_leaves_the_release_branch_unpublished(

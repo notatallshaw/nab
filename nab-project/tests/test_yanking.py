@@ -81,6 +81,15 @@ def run_graph(
     return result.target_results, port
 
 
+def _requested_metadata(port: FakeFetchPort, package: str, version: str) -> bool:
+    """Check individual requests and every item submitted in a metadata batch."""
+    requests = port.calls_to("request_metadata")
+    for (items,) in port.calls_to("request_metadata_batch"):
+        assert isinstance(items, list)
+        requests.extend(items)
+    return any(call[:2] == (package, version) for call in requests)
+
+
 @pytest.mark.parametrize("parents", [("early", "late"), ("late", "early")])
 @pytest.mark.parametrize("withdrawn", [False, True])
 def test_withdrawn_side_dependency_keeps_prerelease_order(
@@ -239,6 +248,7 @@ def test_unused_constraint_does_not_start_a_yanked_cycle() -> None:
     )
     assert not results[0].success
     assert not port.calls_to("request_metadata")
+    assert not port.calls_to("request_metadata_batch")
 
 
 def test_inactive_marker_does_not_admit_a_yank() -> None:
@@ -407,12 +417,7 @@ def test_search_limit_does_not_authorize_fallback(
     )
     assert not results[0].success
     assert isinstance(results[0].error, ResolutionLimitError)
-    assert all(
-        "True.whl" not in str(call) for call in port.calls_to("request_metadata")
-    )
-    assert all(
-        "True.whl" not in str(call) for call in port.calls_to("request_metadata_batch")
-    )
+    assert not _requested_metadata(port, "dep", "2+z")
 
 
 @pytest.mark.parametrize(
@@ -492,9 +497,7 @@ def test_unknown_offline_listing_does_not_certify_fallback() -> None:
     )
     assert not result.success
     assert "missing offline" in str(result.target_results[0].error)
-    assert all(
-        "True.whl" not in str(call) for call in port.calls_to("request_metadata")
-    )
+    assert not _requested_metadata(port, "dep", "2")
 
 
 def test_deep_admission_uses_no_recursive_solver_stack() -> None:

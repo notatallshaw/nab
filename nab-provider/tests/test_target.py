@@ -254,7 +254,7 @@ class TestForHostPython:
         target = ResolveTarget.for_host_python(
             "3.10.5", env_source=_host_env, tags_source=_host_tags
         )
-        assert target.label == "py310-host"
+        assert target.label == "py310-patch3.10.5-host"
 
     def test_tags_keep_the_host_platforms(self) -> None:
         """The host's platform tags carry over, in the host's own order."""
@@ -310,6 +310,19 @@ class TestForHostPython:
         assert not target.is_minor_interval
         assert 'python_full_version == "3.13.0"' in declared_range_marker(target)
 
+    @pytest.mark.parametrize("python", ["3.14rc1", "3.14.dev1", "3.14+acme"])
+    def test_qualified_release_declares_one_interpreter(self, python: str) -> None:
+        target = ResolveTarget.for_host_python(
+            python, env_source=_host_env, tags_source=_host_tags
+        )
+        row = Marker(environment_declaration(target, ()))
+        later = ResolveTarget.for_host_python(
+            "3.14.1", env_source=_host_env, tags_source=_host_tags
+        )
+
+        assert row.evaluate(target.marker_env)
+        assert not row.evaluate(later.marker_env)
+
     def test_bare_minor_is_an_interval(self) -> None:
         """A bare ``3.13`` target is a micro interval off its ``.0`` floor."""
         target = ResolveTarget.for_host_python(
@@ -345,6 +358,15 @@ class TestForDeclared:
         }
         assert target.marker_env["sys_platform"] == "darwin"
         assert target.python_full_version == "3.12.0"
+
+    @pytest.mark.parametrize("patch", ["", "3.12.4"])
+    def test_invalid_patch_cannot_define_a_target(self, patch: str) -> None:
+        with pytest.raises(ValueError, match="python-patches"):
+            ResolveTarget.for_declared(
+                python_version="3.11",
+                spec=PlatformSpec("linux_x86_64"),
+                python_full_version=patch,
+            )
 
     def test_patch_release_overrides_the_default(self) -> None:
         target = ResolveTarget.for_declared(
@@ -509,6 +531,17 @@ class TestLabels:
         )
         assert target.label == "py311-linux_x86_64"
 
+    def test_distinct_patch_versions_do_not_share_target_keys(self) -> None:
+        spec = PlatformSpec("linux_x86_64")
+        patches = (None, "3.13.0", "3.13.4", "3.13.4+a.b", "3.13.4+ab")
+        targets = {
+            ResolveTarget.for_declared(
+                python_version="3.13", spec=spec, python_full_version=patch
+            )
+            for patch in patches
+        }
+        assert len(targets) == len(patches)
+
     def test_pypy_label_uses_pp_prefix(self) -> None:
         target = ResolveTarget.for_declared(
             python_version="3.11",
@@ -635,6 +668,18 @@ class TestMarkerStrings:
         # sorted by (kind, name): ("extra", "cpu") < ("group", "isort5")
         assert target.marker_string.endswith(
             'and "cpu" in extras and "isort5" in dependency_groups'
+        )
+
+    def test_explicit_patch_marker_excludes_other_patches(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.13",
+            python_full_version="3.13.4",
+            spec=PlatformSpec("linux_x86_64"),
+        )
+        marker = Marker(target.environment_marker_string)
+        assert marker.evaluate(target.marker_env)
+        assert not marker.evaluate(
+            {**target.marker_env, "python_full_version": "3.13.3"}
         )
 
     def test_environment_marker_string_omits_selection(self) -> None:
@@ -1112,11 +1157,7 @@ class TestEnvironmentDeclaration:
 
 
 class TestVersionEmission:
-    """``python_full_version`` is never declared by value.  A minor target is a
-    micro interval and a consulted marker splits it at its boundary, so each
-    slice carries its own ``python_full_version`` bounds; a whole target and an
-    unsplit minor emit no ``python_full_version`` clause at all.
-    """
+    """Compare the declared ranges of hosts, exact patches and minor intervals."""
 
     def _minor(self) -> ResolveTarget:
         return ResolveTarget.for_declared(
@@ -1128,6 +1169,37 @@ class TestVersionEmission:
             return {**_HOST_ENV, "python_full_version": full_version}
 
         return ResolveTarget.for_host(env_source=env_source, tags_source=_host_tags)
+
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            'python_full_version in "3.13.4+vendor"',
+            '"vendor" not in python_full_version',
+            'implementation_version not in "3.13.4+vendor"',
+            '"vendor" in implementation_version',
+            (
+                'python_full_version in "3.13.4+vendor" and sys_platform in "linux win32" '
+                'and python_full_version >= "3.12"'
+            ),
+        ],
+    )
+    def test_exact_build_preserves_string_membership(self, expression: str) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.13",
+            python_full_version="3.13.4+vendor",
+            spec=PlatformSpec("linux_x86_64"),
+        )
+        consulted = Marker(expression)
+        row = Marker(environment_declaration(target, [consulted]))
+        resolved = consulted.evaluate(target.marker_env)
+
+        for version in ("3.13.4+vendor", "3.13.4+VENDOR", "03.13.4+vendor"):
+            env = {
+                **target.marker_env,
+                "python_full_version": version,
+                "implementation_version": version,
+            }
+            assert row.evaluate(env) == (consulted.evaluate(env) == resolved)
 
     def test_an_unsplit_minor_emits_a_plain_row(self) -> None:
         """A minor no marker split reverts to a plain ``python_version`` row."""

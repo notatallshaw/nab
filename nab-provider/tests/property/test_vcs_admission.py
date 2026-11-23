@@ -34,15 +34,15 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nab_index.vcs import VcsRequest
 from nab_provider.vcs_admission import (
     UnsupportedVcsError,
     VcsConfig,
     VcsPolicy,
     admit_vcs_url,
 )
+from nab_provider.vcs_request import VcsRequest
 
-from .strategies import PROPERTY_SETTINGS
+from .settings import PROPERTY_SETTINGS
 
 pytestmark = pytest.mark.property
 

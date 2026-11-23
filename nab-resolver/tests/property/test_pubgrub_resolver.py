@@ -28,12 +28,12 @@ from nab_resolver.errors import ResolutionError, ResolutionLimitError
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver, ResolverObserver
 
+from ..solver_fixtures import is_proven_conflict
 from .providers import (
     FuzzProvider,
     OldestFirstProvider,
     PromotingFuzzProvider,
     brute_force_has_solution,
-    is_proven_conflict,
     reachable_packages,
     resolve_or_prove_conflict,
     verify_solution,

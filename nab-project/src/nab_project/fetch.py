@@ -39,6 +39,7 @@ __lazy_modules__ = (
 import asyncio
 import logging
 import threading
+from functools import partial
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
@@ -49,7 +50,7 @@ from nab_index.cached_client import (
     CachedAsyncSimpleClient,
     ParsedCacheStats,
     SdistArchiveHold,
-    read_fresh_parsed_listing,
+    read_fresh_listing,
 )
 from nab_index.lazy_wheel import RangeCapabilityMemo
 from nab_index.local_index import LocalIndexClient, is_file_url, parse_file_url
@@ -61,6 +62,7 @@ from nab_index.transport import (
     raise_unless_ok,
 )
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider.errors import IndexAccessError
 from nab_provider.fetch_port import PrefetchSettings
 from nab_provider.metadata import static_project_from_table
 from nab_provider.policy import BuildPolicy
@@ -89,11 +91,11 @@ from ._sources import materialize_source
 from .toml_io import loads_if_valid
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from typing_extensions import Self
 
-    from nab_index.parsed_listing import ParsedListing
+    from nab_index.cached_client import ListingResult
     from nab_provider.overrides import IndexOverride, PackageOverride
 
 __all__ = [
@@ -108,11 +110,10 @@ __all__ = [
 ]
 
 
-# Maximum time the main thread waits for the fetcher thread to drain
-# its queue and exit on :meth:`FetchCoordinator.shutdown`.
 # How many fetches a resolve opens at once when its caller names no bound.
 DEFAULT_MAX_CONCURRENCY = 50
 
+# Maximum time shutdown waits for accepted requests and transport cleanup.
 _COORDINATOR_JOIN_TIMEOUT_SECONDS = 10
 
 # A warm listing whose parsed blob is smaller than this is declined to the
@@ -469,6 +470,8 @@ class FetchCoordinator:
 
         self._start_lock = threading.Lock()
         self._submission_lock = threading.Lock()
+        # Requests are unhashable; retain the objects until their tasks finish.
+        self._outstanding: dict[int, fetch_requests.FetchRequest] = {}
         self._stopping = False
         self._thread: threading.Thread | None = None
         self._idle_transport: IdleClosableTransport | None = None
@@ -496,7 +499,7 @@ class FetchCoordinator:
             and isinstance(transport, IdleClosableTransport)
         ):
             self._idle_transport = transport
-            self._warm_sync_stats = WarmSyncStats()
+            self._begin_run()
             self._parsed_cache_stats = ParsedCacheStats()
         else:
             self.start()
@@ -523,20 +526,32 @@ class FetchCoordinator:
         return self._warm_sync_stats
 
     def start(self) -> None:
-        """Start the fetcher thread (idempotent)."""
+        """Start the fetcher, refusing a restart while its previous worker drains."""
         with self._start_lock:
-            if self._started:
+            if self._started and not self._stopping:
                 return
+            if self._thread is not None and self._thread.is_alive():
+                msg = "Fetcher thread is still shutting down"
+                raise RuntimeError(msg)
 
             # On-demand startup retains cache hits already counted in this run.
             if self._idle_transport is None:
-                self._warm_sync_stats = WarmSyncStats()
+                self._begin_run()
             self._start_worker()
+
+    def _begin_run(self) -> None:
+        """Start fresh counters and leave any previous worker failure behind."""
+        self._warm_sync_stats = WarmSyncStats()
+        self._crashed = False
+        self._crash_error = None
 
     def _start_worker(self) -> None:
         """Start and await one worker while the caller holds the startup lock."""
         self._started = True
         with self._submission_lock:
+            # A previous bounded shutdown may have left a finished worker installed.
+            self._loop = None
+            self._async_q = None
             self._stopping = False
         self._queue_ready = threading.Event()
         self._thread = threading.Thread(
@@ -556,7 +571,7 @@ class FetchCoordinator:
         self._queue_ready.wait()
 
     def shutdown(self) -> None:
-        """Signal the fetcher thread to exit and join it."""
+        """Signal shutdown and wait up to ten seconds for accepted work to finish."""
         with self._start_lock:
             idle = self._idle_transport
             self._idle_transport = None
@@ -575,8 +590,8 @@ class FetchCoordinator:
         thread.join(timeout=_COORDINATOR_JOIN_TIMEOUT_SECONDS)
 
         with self._start_lock:
-            # Another caller may have replaced the worker while the join waited.
-            if self._thread is thread:
+            # A timed-out worker still owns its queue, loop and transport.
+            if self._thread is thread and not thread.is_alive():
                 self._thread = None
                 self._started = False
                 # A later start must wait for its own worker.
@@ -599,19 +614,36 @@ class FetchCoordinator:
                 self._refuse(item)
                 raise
 
-        # An accepted listing can schedule its sidecar while shutdown is draining it.
-        queue = self._async_q
-        if queue is not None and threading.current_thread() is self._thread:
-            queue.put_nowait(item)
-            return
-
+        # Keep posting and waiter registration together: the worker can fail
+        # before the event loop even runs its queued put_nowait callback.
         with self._submission_lock:
-            queue = self._async_q
-            if queue is not None and self._schedule(queue.put_nowait, item):
-                if item is None:
-                    self._stopping = True
+            failure = self._crash_error if self._crashed else None
+            submitted = (item is None or failure is None) and self._enqueue(item)
+            if item is None:
+                self._stopping = True
                 return
-        self._refuse(item)
+
+            requests = item if isinstance(item, list) else (item,)
+            if submitted:
+                for request in requests:
+                    self._outstanding[id(request)] = request
+                return
+
+        if failure is None:
+            self._refuse(item)
+        else:
+            self._fail_unfinished(requests, failure)
+
+    def _enqueue(self, item: _QueueItem) -> bool:
+        """Post to the current queue while holding the submission lock."""
+        queue = self._async_q
+        if queue is None:
+            return False
+        if threading.current_thread() is self._thread:
+            # An accepted listing can enqueue a sidecar during shutdown.
+            queue.put_nowait(item)
+            return True
+        return self._schedule(queue.put_nowait, item)
 
     def _post_to_loop(self, callback: Callable[..., object], *args: object) -> bool:
         """Post a listing tail, or let the caller run it inline after shutdown."""
@@ -629,42 +661,49 @@ class FetchCoordinator:
             return False  # A crashed worker may already have closed its loop.
         return True
 
-    def _refuse(self, item: _QueueItem) -> None:
+    def _refuse(
+        self, item: fetch_requests.FetchRequest | list[fetch_requests.FetchRequest]
+    ) -> None:
         """Record a failure for each request in ``item``, unblocking waiters."""
-        # None is the shutdown sentinel; it has no waiters.
-        if item is None:
-            return
-
         batch = item if isinstance(item, list) else [item]
         for req in batch:
-            error = RuntimeError("Fetcher loop is not running, request refused")
-            if isinstance(req, fetch_requests.Listing):
-                self.index.store_listing_error(req.package, error)
-            elif isinstance(req, fetch_requests.SidecarMetadata):
-                self.index.store_metadata_error(
-                    req.package, req.version, error, req.url
-                )
-            elif isinstance(req, fetch_requests.RangeMetadata):
-                # A dead loop is a rung miss: unblock the waiter and let it fall
-                # through to the sdist rung, not a candidate-dropping error.
+            if isinstance(req, fetch_requests.RangeMetadata):
+                # A refused range read leaves the sdist fallback available.
                 self.index.store_range_absent(req.package, req.version, req.url)
-            elif isinstance(req, fetch_requests.SdistMetadata):
-                self.index.store_sdist_metadata_error(
-                    req.package, sdist_artifact_key(req.version, req.url), error
-                )
             else:
-                self.index.store_sdist_archive_error(
-                    req.package,
-                    sdist_artifact_key(req.version, req.url)
-                    if isinstance(req, fetch_requests.SdistArchive)
-                    else req.version,
-                    error,
+                self._publish_error(
+                    req, RuntimeError("Fetcher loop is not running, request refused")
                 )
 
     def _record_crash(self, error: BaseException) -> None:
-        """Record the failure that killed the fetcher thread."""
-        self._crash_error = error
-        self._crashed = True
+        """Stop accepting work and release callers whose result never arrived."""
+        with self._submission_lock:
+            self._crash_error = error
+            self._crashed = True
+            outstanding = self._outstanding
+            self._outstanding = {}
+
+        self._fail_unfinished(outstanding.values(), error)
+
+    def _fail_unfinished(
+        self,
+        pending: Iterable[fetch_requests.FetchRequest],
+        cause: BaseException,
+    ) -> None:
+        for request in pending:
+            if request.waiter is None or not request.waiter.is_set():
+                self._publish_error(
+                    request, IndexAccessError(f"Fetcher thread crashed: {cause}")
+                )
+
+    def _publish_error(
+        self, request: fetch_requests.FetchRequest, error: Exception
+    ) -> None:
+        """Store a hard failure before waking the request's own waiter."""
+        if isinstance(request, fetch_requests.Listing):
+            self.index.store_listing_error(request.package, error)
+        else:
+            self._record_versioned_failure(request, error, offline=False)
 
     def _check_alive(self) -> None:
         if not self._crashed:
@@ -672,10 +711,10 @@ class FetchCoordinator:
         msg = f"Fetcher thread crashed: {self._crash_error}"
         raise RuntimeError(msg)
 
-    def _try_listing_sync(self, package: str) -> ParsedListing | None:
+    def _try_listing_sync(self, package: str) -> ListingResult | None:
         """Read a fresh parsed listing on the caller's thread, or ``None``.
 
-        ``read_fresh_parsed_listing`` never raises, so the caller's pending is
+        ``read_fresh_listing`` never raises, so the caller's pending is
         never stranded. On a decline the policy is re-read to attribute a reason
         counter rather than threading it out of the pure helper.
         """
@@ -683,7 +722,7 @@ class FetchCoordinator:
         if not self._sync_listing_enabled:
             stats.declined_ineligible += 1
             return None
-        parsed = read_fresh_parsed_listing(self._cache, package, offline=self._offline)
+        parsed = read_fresh_listing(self._cache, package, offline=self._offline)
         if parsed is not None:
             return parsed
         policy = self._cache.get_simple_policy(package)
@@ -751,7 +790,8 @@ class FetchCoordinator:
                     self.index.store_listing(
                         package,
                         records,
-                        zip_sdists=parsed.zip_sdists,
+                        zip_sdists=parsed.diagnostics.zip_sdists,
+                        all_yanked=parsed.diagnostics.all_yanked,
                         has_yanked_files=bool(
                             getattr(records, "has_yanked_files", False)
                         ),
@@ -764,7 +804,7 @@ class FetchCoordinator:
                 self._warm_sync_stats.declined_small_blob += 1
             self._warm_sync_stats.listing_declines += 1
 
-        self._submit(fetch_requests.Listing(package=package))
+        self._submit(fetch_requests.Listing(package=package, waiter=event))
         return event
 
     def _try_metadata_sync(self, package: str, version: str, url: str) -> bool:
@@ -802,6 +842,7 @@ class FetchCoordinator:
                     version=version,
                     url=url,
                     metadata_hash=metadata_hash,
+                    waiter=event,
                 )
             )
 
@@ -835,6 +876,7 @@ class FetchCoordinator:
                     version=version,
                     url=wheel_url,
                     hashes=wheel_hashes,
+                    waiter=event,
                 )
             )
         return event
@@ -863,6 +905,7 @@ class FetchCoordinator:
                     version=version,
                     url=url,
                     hashes=sdist_hashes,
+                    waiter=event,
                 )
             )
         return event
@@ -892,6 +935,7 @@ class FetchCoordinator:
                     version=version,
                     url=url,
                     hashes=sdist_hashes,
+                    waiter=event,
                 )
             )
         return event
@@ -918,6 +962,7 @@ class FetchCoordinator:
                     package=package,
                     version=version,
                     url=url,
+                    waiter=event,
                 )
             )
         return event
@@ -986,6 +1031,7 @@ class FetchCoordinator:
                         version=version,
                         url=url,
                         metadata_hash=metadata_hash,
+                        waiter=event,
                     )
                 )
 
@@ -1067,10 +1113,22 @@ class FetchCoordinator:
             min_fresh_seconds=self._index_cache_floors.get(cfg.name),
             parsed_stats=self._parsed_cache_stats,
             sdist_archive_hold=self._sdist_archive_hold,
+            owns_transport=False,
         )
 
     async def _async_fetcher(self) -> None:
-        """Own one fetch run's queue and clients; normal shutdown drains tasks."""
+        """Release the worker's resources when serving ends or startup fails."""
+        try:
+            await self._serve_requests()
+        finally:
+            if self._sdist_archive_hold is not None:
+                self._sdist_archive_hold.clear()
+
+            # Direct downloads can use the transport even with a local index.
+            await self._transport.aclose()
+
+    async def _serve_requests(self) -> None:
+        """Build the index client and drain requests accepted by this worker."""
         # Fresh per-run memo, owned on this single loop thread, injected into
         # every client _build_client constructs below.
         self._range_memo = RangeCapabilityMemo()
@@ -1121,14 +1179,6 @@ class FetchCoordinator:
         finally:
             await client.aclose()
 
-            # A file:// index client owns no transport, but a direct archive
-            # fetch can still have opened one.  aclose is idempotent.
-            await self._transport.aclose()
-
-            # Nothing can take from the hold once the loop is gone.
-            if self._sdist_archive_hold is not None:
-                self._sdist_archive_hold.clear()
-
     def _dispatch(
         self,
         item: fetch_requests.FetchRequest | list[fetch_requests.FetchRequest],
@@ -1139,9 +1189,44 @@ class FetchCoordinator:
         """Create async tasks for a single request or a batch."""
         batch = item if isinstance(item, list) else (item,)
         for request in batch:
-            task = asyncio.create_task(self._handle(client, request, sem))
+            handler = self._handle(client, request, sem)
+            try:
+                task = asyncio.create_task(handler)
+            except BaseException as exc:
+                handler.close()
+                if not isinstance(exc, Exception):
+                    raise
+                self._record_fetch_failure(client, request, exc)
+                with self._submission_lock:
+                    self._outstanding.pop(id(request), None)
+                continue
             tasks.add(task)
-            task.add_done_callback(tasks.discard)
+            task.add_done_callback(partial(self._finish_fetch, tasks, request))
+
+    def _finish_fetch(
+        self,
+        tasks: set[asyncio.Task[None]],
+        request: fetch_requests.FetchRequest,
+        task: asyncio.Task[None],
+    ) -> None:
+        """Retire the request and publish any failure that escaped its handler."""
+        tasks.discard(task)
+        with self._submission_lock:
+            self._outstanding.pop(id(request), None)
+        if request.waiter is not None and request.waiter.is_set():
+            return
+        if task.cancelled():
+            error = IndexAccessError(
+                f"{request.operation} fetch for {request.package} was cancelled"
+            )
+            self._publish_error(request, error)
+        elif (failure := task.exception()) is not None:
+            self._publish_error(
+                request,
+                IndexAccessError(
+                    f"{request.operation} fetch for {request.package} failed: {failure}"
+                ),
+            )
 
     async def _handle(
         self,

@@ -144,7 +144,7 @@ def plan_settings_layer(
     """Parse a lock plan's project settings above files and below CLI overrides."""
     values = {}
     label = f"plan {name!r}"
-    with declaring_dir(directory), key_prefix(f"tool.nab.plans.{name}.settings"):
+    with declaring_dir(directory), key_prefix(None):
         for key, value in settings.items():
             spec = BY_KEY.get(key)
             if (
@@ -731,7 +731,7 @@ def _apply_mode_default(effective: dict[str, EffectiveValue]) -> None:
 
     value = (
         ResolveMode.UNIVERSAL
-        if len(matrix_from_config(matrix).expand()) > 1
+        if matrix_from_config(matrix).target_count() > 1
         else ResolveMode.SPECIFIC
     )
     origin = Origin(SourceKind.DEFAULT, "inferred from matrix")

@@ -42,11 +42,14 @@ from nab_provider.target import ResolveTarget
 from nab_provider.testing import make_coordinator, make_sdist, make_wheel, pkg_override
 from nab_provider.value import field_names
 
+from .provider_fixtures import short_reason
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from nab_provider._vendor.packaging.ranges import VersionRange
     from nab_provider.provider import DistFile
+
 
 CUTOFF = datetime(2026, 5, 1, tzinfo=timezone.utc)
 EARLY_CUTOFF = datetime(2015, 1, 1, tzinfo=timezone.utc)
@@ -60,12 +63,6 @@ WITH_CUTOFF: dict[str, object] = {"uploaded_prior_to": CUTOFF}
 _LINUX312 = ResolveTarget.for_declared(
     python_version="3.12", spec=PlatformSpec("linux_x86_64")
 )
-
-
-def short_reason(provider: Provider, package: str) -> str | None:
-    """Return the one line ``package``'s diagnostic prints at default verbosity."""
-    diagnostic = provider.get_no_versions_reason(package)
-    return None if diagnostic is None else diagnostic.short
 
 
 def wheel(
@@ -1244,10 +1241,22 @@ class TestTheTryLine:
             ("pypi", '"pypi"'),
             ("corp mirror", '"corp mirror"'),
             ("my.index", '"my.index"'),
-            ('corp "the" mirror', "'corp \"the\" mirror'"),
+            ('corp "the" mirror', r'"corp \"the\" mirror"'),
             ('it\'s "ours"', '"it\'s \\"ours\\""'),
+            (r"team\build", r'"team\\build"'),
+            ("team\nmirror", r'"team\nmirror"'),
+            ("mirror\x7f📦", '"mirror\\u007f📦"'),
         ],
-        ids=["bare", "spaced", "dotted", "quoted", "both-quotes"],
+        ids=[
+            "bare",
+            "spaced",
+            "dotted",
+            "quoted",
+            "both-quotes",
+            "backslash",
+            "newline",
+            "unicode",
+        ],
     )
     def test_a_per_index_cutoff_quotes_whatever_the_index_is_called(
         self, index_name: str, key: str
@@ -1504,6 +1513,49 @@ class TestTheLadderSdistLine:
 
 class TestTheInRangeLead:
     """Which filters dropped the release the requirement asked for."""
+
+    @pytest.mark.parametrize(
+        ("spec", "short"),
+        [
+            (">=3", "no version matches the requirement"),
+            ("==2", "no wheel in range matches this platform or Python"),
+        ],
+    )
+    def test_empty_listing_omits_out_of_range_policy_repairs(
+        self, spec: str, short: str
+    ) -> None:
+        files = [sdist("1"), wheel("2", tag="cp312-cp312-win_amd64")]
+        diagnostic = diagnostic_for(
+            files, spec=spec, target=_LINUX312, dist_policy=DistPolicy.WHEEL_ONLY
+        )
+
+        assert diagnostic.short == short
+        assert not diagnostic.suggestions
+
+    def test_constraint_scopes_the_listing_report_for_a_broad_failure(self) -> None:
+        constraint = SpecifierSet("==2").to_range()
+        provider = build(
+            [sdist("1"), wheel("2", tag="cp312-cp312-win_amd64")],
+            target=_LINUX312,
+            dist_policy=DistPolicy.WHEEL_ONLY,
+            constraints={"pkg": constraint},
+        )
+        assert provider.choose_version("pkg", constraint) is None
+        diagnostic = provider.get_no_versions_reason("pkg", SpecifierSet("").to_range())
+
+        assert diagnostic is not None
+        assert diagnostic.short == "no wheel in range matches this platform or Python"
+        assert not diagnostic.suggestions
+
+    def test_literal_range_explains_only_the_matching_version_text(self) -> None:
+        diagnostic = diagnostic_for(
+            [sdist("1"), wheel("1.0.0", tag="cp312-cp312-win_amd64")],
+            spec="===1.0.0",
+            target=_LINUX312,
+            dist_policy=DistPolicy.WHEEL_ONLY,
+        )
+        assert diagnostic.short == "no wheel in range matches this platform or Python"
+        assert not diagnostic.suggestions
 
     def test_two_filters_read_as_a_pair(self) -> None:
         reason = reason_for(

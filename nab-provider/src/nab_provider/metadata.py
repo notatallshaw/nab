@@ -2,9 +2,7 @@
 
 Extracts only the fields needed for dependency resolution from PEP
 566/643 METADATA files (RFC 822 format).  Lighter than
-:class:`packaging.metadata.Metadata` (no validation pass) and reuses
-:class:`packaging.requirements.Requirement` parsing through an
-LRU cache so repeated dep strings parse once.
+:class:`packaging.metadata.Metadata` (no general validation pass).
 """
 
 from __future__ import annotations
@@ -12,6 +10,7 @@ from __future__ import annotations
 __lazy_modules__ = (
     "contextlib",
     "logging",
+    "nab_provider._vendor.packaging.requirements",
     "nab_provider._vendor.packaging.specifiers",
     "nab_provider._vendor.packaging.version",
     "nab_provider.pep508",
@@ -23,6 +22,7 @@ from contextlib import suppress
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
+from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.specifiers import SpecifierSet
 from ._vendor.packaging.version import InvalidVersion, Version
 from .pep508 import parse_requirement
@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from ._vendor.packaging.markers import Marker
-    from ._vendor.packaging.requirements import Requirement
 
 __all__ = [
     "DEPENDENCY_FIELDS",
@@ -164,37 +163,27 @@ def _intern_marker(marker: Marker) -> Marker:
 
 
 @lru_cache(maxsize=16384)
-def _parse_requirement_cached(req_str: str) -> Requirement:
-    """Cache ``parse_requirement(req_str)`` across wheel metadata.
-
-    The same dep strings (``numpy>=1.26``, ``pydantic<3``, etc.) recur
-    across many wheels in a dependency graph.  ``Requirement`` exposes
-    only read operations, so sharing parsed objects is safe.
-
-    Raises ``ValueError`` when the string does not parse or a clause
-    version will not convert.
-    """
-    req = parse_requirement(req_str)
+def _requirement_template(text: str) -> tuple[Requirement, str]:
+    """Parse recurring wheel dependencies once and keep the template private."""
+    req = parse_requirement(text)
     validate_specifier_versions(req.specifier)
     if req.marker is not None:
         req.marker = _intern_marker(req.marker)
+    return req, str(req.specifier)
+
+
+def _read_requirement(text: str) -> Requirement:
+    """Return a dependency whose extras and specifier clauses belong to this read."""
+    template, specifiers = _requirement_template(text)
+
+    # The parsed marker is read-only. Extras and specifier clauses are mutable.
+    req = Requirement.__new__(Requirement)
+    req.name = template.name
+    req.url = template.url
+    req.marker = template.marker
+    req.extras = template.extras.copy()
+    req.specifier = SpecifierSet(specifiers)
     return req
-
-
-@lru_cache(maxsize=4096)
-def _parse_requires_python_cached(value: str) -> SpecifierSet:
-    """Cache ``Requires-Python`` parsing across wheel metadata.
-
-    The same string recurs across a project's wheels the way dep strings do.
-    ``SpecifierSet.prereleases`` is settable, but nab never assigns to it and
-    passes ``prereleases`` per call instead, so sharing the object is safe.
-
-    Raises ``ValueError`` when the string does not parse or a clause
-    version will not convert.
-    """
-    specifier_set = SpecifierSet(value)
-    validate_specifier_versions(specifier_set)
-    return specifier_set
 
 
 @lru_cache(maxsize=65536)
@@ -414,7 +403,8 @@ def parse_metadata(data: str | bytes) -> WheelMetadata:
     requires_python = None
     if requires_python_str:
         try:
-            requires_python = _parse_requires_python_cached(requires_python_str)
+            requires_python = SpecifierSet(requires_python_str)
+            validate_specifier_versions(requires_python)
         except ValueError as exc:
             # A malformed Requires-Python is invalid metadata; raise rather
             # than silently drop the field.
@@ -424,9 +414,7 @@ def parse_metadata(data: str | bytes) -> WheelMetadata:
             )
             raise ValueError(err) from exc
 
-    requires_dist = [
-        _parse_requirement_cached(r) for r in fields.get("requires-dist", ())
-    ]
+    requires_dist = [_read_requirement(r) for r in fields.get("requires-dist", ())]
 
     provides_extra = [e.strip() for e in fields.get("provides-extra", ())]
 

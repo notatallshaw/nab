@@ -16,13 +16,19 @@ from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
 from nab_provider.testing import pkg_override
 
-DECLARED = Matrix(python="==3.12", platforms=(PlatformSpec("linux_x86_64"),)).expand()
+MATRIX = Matrix(python="==3.12", platforms=(PlatformSpec("linux_x86_64"),))
+DECLARED = MATRIX.expand()
 
 
-def test_the_host_target_keeps_the_declared_policy() -> None:
+@pytest.mark.parametrize(
+    "targets", [None, [ResolveTarget.for_host()]], ids=["implicit", "explicit"]
+)
+def test_the_host_target_keeps_the_declared_policy(
+    targets: list[ResolveTarget] | None,
+) -> None:
     assert (
         enforce_build_policy_for_targets(
-            targets=[ResolveTarget.for_host()],
+            targets=targets,
             build_policy=BuildPolicy.BUILD_LOCAL,
             build_policy_set=True,
             package_overrides=(),
@@ -48,11 +54,14 @@ def test_a_host_python_retarget_warns_and_permits(
     assert "a build would run on the host interpreter" in caplog.text
 
 
-def test_a_declared_target_forces_never_when_nothing_asks_to_build() -> None:
+@pytest.mark.parametrize("targets", [MATRIX, DECLARED], ids=["matrix", "expanded"])
+def test_a_declared_target_forces_never_when_nothing_asks_to_build(
+    targets: Matrix | list[ResolveTarget],
+) -> None:
     """An unset global defaults to ``never`` rather than failing the project."""
     assert (
         enforce_build_policy_for_targets(
-            targets=DECLARED,
+            targets=targets,
             build_policy=BuildPolicy.BUILD_LOCAL,
             build_policy_set=False,
             package_overrides=(pkg_override("demo", build_policy=BuildPolicy.NEVER),),

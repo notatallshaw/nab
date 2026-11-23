@@ -105,8 +105,22 @@ from ..policy_migrations import DIST_POLICY_REPLACEMENTS
 if TYPE_CHECKING:
     import enum
     from collections.abc import Iterator, Mapping, Sequence
+    from typing import TypedDict
 
     from nab_provider._vendor.packaging.requirements import Requirement
+
+    class _OverridePolicy(TypedDict, total=False):
+        """Constructor arguments shared by package and index overrides."""
+
+        dist_policy: DistPolicy
+        dist_trust_unverified_deps: bool
+        metadata_policy: MetadataPolicy
+        assume_universal_deps: bool
+        assume_consistent_metadata: bool
+        allow_zip_sdists: bool
+        build_policy: BuildPolicy
+        uploaded_prior_to: datetime
+        uploaded_prior_to_disabled: bool
 
 
 __all__ = [
@@ -943,12 +957,22 @@ _PACKAGE_POLICY_FIELDS = (
 )
 
 
+def _package_table_hints(prefix: str | None) -> tuple[str, str]:
+    """Name both override forms where the user declared them."""
+    if prefix is None:
+        return (
+            "this plan's settings.packages table",
+            "this plan's settings.package-rules array",
+        )
+    return f"[{prefix}packages.<name>]", f"[[{prefix}package-rules]]"
+
+
 def parse_packages_sugar(
     value: object,
     where: str,
     *,
     anchor: datetime,
-    key_prefix: str = "tool.nab.",
+    key_prefix: str | None = "tool.nab.",
 ) -> list[PackageOverride]:
     """Parse name-keyed ``packages`` tables into per-package overrides.
 
@@ -958,12 +982,13 @@ def parse_packages_sugar(
     sugar form has no inner selector key.
     """
     if isinstance(value, list):
+        packages, rules = _package_table_hints(key_prefix)
         report = DiagnosticMessage(
-            (f"{where} is the name-keyed table form ([{key_prefix}packages.<name>])"),
+            f"{where} is the name-keyed table form ({packages})",
             suggestions=(
                 Suggestion(
                     "for one body across several requirements use "
-                    f"[[{key_prefix}package-rules]] with match = [...]"
+                    f"{rules} with match = [...]"
                 ),
             ),
         )
@@ -1008,7 +1033,7 @@ def parse_package_rules(
     where: str,
     *,
     anchor: datetime,
-    key_prefix: str = "tool.nab.",
+    key_prefix: str | None = "tool.nab.",
 ) -> list[PackageOverride]:
     """Parse ``package-rules`` arrays of tables into per-package overrides.
 
@@ -1018,12 +1043,13 @@ def parse_package_rules(
     index).
     """
     if not isinstance(value, list):
+        packages, rules = _package_table_hints(key_prefix)
         report = DiagnosticMessage(
-            (f"{where} must be an array of tables ([[{key_prefix}package-rules]])"),
+            f"{where} must be an array of tables ({rules})",
             suggestions=(
                 Suggestion(
                     "for per-package policy keyed by name use "
-                    f"[{key_prefix}packages.<name>].  Got {type(value).__name__}"
+                    f"{packages}.  Got {type(value).__name__}"
                 ),
             ),
         )
@@ -1073,56 +1099,7 @@ def _build_package_overrides(
     name_keyed: bool = False,
 ) -> list[PackageOverride]:
     """Turn a validated selector and body into one override per requirement."""
-    dist_policy, dist_trust = _parse_override_dist(body.get("dist-policy"), where)
-    metadata_policy = (
-        parse_metadata_policy(body["metadata-policy"], f"{where}.metadata-policy")
-        if "metadata-policy" in body
-        else None
-    )
-    assume_universal_deps = (
-        _parse_bool(
-            f"{where}.assume-universal-deps",
-            body["assume-universal-deps"],
-            default=False,
-        )
-        if "assume-universal-deps" in body
-        else None
-    )
-    assume_consistent_metadata = (
-        _parse_bool(
-            f"{where}.assume-consistent-metadata",
-            body["assume-consistent-metadata"],
-            default=False,
-        )
-        if "assume-consistent-metadata" in body
-        else None
-    )
-    allow_zip_sdists = (
-        _parse_bool(
-            f"{where}.allow-zip-sdists", body["allow-zip-sdists"], default=False
-        )
-        if "allow-zip-sdists" in body
-        else None
-    )
-
-    build_policy = (
-        parse_enum(
-            body["build-policy"],
-            f"{where}.build-policy",
-            BuildPolicy,
-            BuildPolicy.NEVER,
-        )
-        if "build-policy" in body
-        else None
-    )
-
-    uploaded_prior_to, uploaded_disabled = _parse_override_uploaded_prior_to(
-        body.get("uploaded-prior-to"),
-        where,
-        anchor=anchor,
-        present="uploaded-prior-to" in body,
-    )
-
+    policy = _parse_override_policy(body, where, anchor=anchor)
     route = _parse_override_index(body, where)
     dependencies = _parse_override_dependencies(body.get("dependencies"), where)
     requires_python = _parse_override_requires_python(
@@ -1130,22 +1107,10 @@ def _build_package_overrides(
     )
     provides_extra = _parse_override_provides_extra(body.get("provides-extra"), where)
 
-    has_body = (
-        dist_policy is not None
-        or metadata_policy is not None
-        or dist_trust is not None
-        or assume_universal_deps is not None
-        or assume_consistent_metadata is not None
-        or allow_zip_sdists is not None
-        or build_policy is not None
-        or uploaded_prior_to is not None
-        or uploaded_disabled
-        or route is not None
-        or dependencies is not None
-        or requires_python is not None
-        or provides_extra is not None
-    )
-    if not has_body:
+    if not policy and all(
+        value is None
+        for value in (route, dependencies, requires_python, provides_extra)
+    ):
         msg = (
             f"{where} sets no policy; an entry must set at least one of"
             f" {sorted(_PACKAGE_OVERRIDE_BODY_KEYS)!r}"
@@ -1168,21 +1133,13 @@ def _build_package_overrides(
             requirement=requirement,
             name=canonicalize_name(requirement.name),
             version_range=requirement.specifier.to_range(),
-            dist_policy=dist_policy,
-            metadata_policy=metadata_policy,
-            dist_trust_unverified_deps=dist_trust,
-            assume_universal_deps=assume_universal_deps,
-            assume_consistent_metadata=assume_consistent_metadata,
-            allow_zip_sdists=allow_zip_sdists,
-            build_policy=build_policy,
-            uploaded_prior_to=uploaded_prior_to,
-            uploaded_prior_to_disabled=uploaded_disabled,
             index=route,
             dependencies=dependencies,
             requires_python=requires_python,
             provides_extra=provides_extra,
             name_keyed=name_keyed,
             source_label=where,
+            **policy,
         )
         for requirement in requirements
     ]
@@ -1320,90 +1277,70 @@ def _parse_index_override_body(
         )
         raise SourceConfigError(msg)
 
-    dist_policy, dist_trust = _parse_override_dist(body.get("dist-policy"), where)
-    metadata_policy = (
-        parse_metadata_policy(body["metadata-policy"], f"{where}.metadata-policy")
-        if "metadata-policy" in body
-        else None
-    )
-    assume_universal_deps = (
-        _parse_bool(
-            f"{where}.assume-universal-deps",
-            body["assume-universal-deps"],
-            default=False,
-        )
-        if "assume-universal-deps" in body
-        else None
-    )
-    assume_consistent_metadata = (
-        _parse_bool(
-            f"{where}.assume-consistent-metadata",
-            body["assume-consistent-metadata"],
-            default=False,
-        )
-        if "assume-consistent-metadata" in body
-        else None
-    )
-    allow_zip_sdists = (
-        _parse_bool(
-            f"{where}.allow-zip-sdists", body["allow-zip-sdists"], default=False
-        )
-        if "allow-zip-sdists" in body
-        else None
-    )
-
-    build_policy = (
-        parse_enum(
-            body["build-policy"],
-            f"{where}.build-policy",
-            BuildPolicy,
-            BuildPolicy.NEVER,
-        )
-        if "build-policy" in body
-        else None
-    )
-
-    uploaded_prior_to, uploaded_disabled = _parse_override_uploaded_prior_to(
-        body.get("uploaded-prior-to"),
-        where,
-        anchor=anchor,
-        present="uploaded-prior-to" in body,
-    )
+    policy = _parse_override_policy(body, where, anchor=anchor)
     assume_fresh_seconds = _parse_index_assume_fresh(
         body.get("assume-fresh-seconds"), where
     )
 
-    has_body = (
-        dist_policy is not None
-        or metadata_policy is not None
-        or dist_trust is not None
-        or assume_universal_deps is not None
-        or assume_consistent_metadata is not None
-        or allow_zip_sdists is not None
-        or build_policy is not None
-        or uploaded_prior_to is not None
-        or uploaded_disabled
-        or assume_fresh_seconds is not None
-    )
-    if not has_body:
+    if not policy and assume_fresh_seconds is None:
         msg = (
             f"{where} sets no policy; an entry must set at least one of"
             f" {sorted(_INDEX_OVERRIDE_KEYS)!r}"
         )
         raise SourceConfigError(msg)
 
-    return IndexOverride(
-        dist_policy=dist_policy,
-        metadata_policy=metadata_policy,
-        dist_trust_unverified_deps=dist_trust,
-        assume_universal_deps=assume_universal_deps,
-        assume_consistent_metadata=assume_consistent_metadata,
-        allow_zip_sdists=allow_zip_sdists,
-        build_policy=build_policy,
-        uploaded_prior_to=uploaded_prior_to,
-        uploaded_prior_to_disabled=uploaded_disabled,
-        assume_fresh_seconds=assume_fresh_seconds,
-    )
+    return IndexOverride(assume_fresh_seconds=assume_fresh_seconds, **policy)
+
+
+def _parse_override_policy(
+    body: Mapping[str, object], where: str, *, anchor: datetime
+) -> _OverridePolicy:
+    """Read the shared policy fields, retaining explicit false values."""
+    policy: _OverridePolicy = {}
+    dist, trust = _parse_override_dist(body.get("dist-policy"), where)
+    if dist is not None:
+        policy["dist_policy"] = dist
+    if trust is not None:
+        policy["dist_trust_unverified_deps"] = trust
+    if "metadata-policy" in body:
+        policy["metadata_policy"] = parse_metadata_policy(
+            body["metadata-policy"], f"{where}.metadata-policy"
+        )
+
+    if "assume-universal-deps" in body:
+        policy["assume_universal_deps"] = _parse_bool(
+            f"{where}.assume-universal-deps",
+            body["assume-universal-deps"],
+            default=False,
+        )
+    if "assume-consistent-metadata" in body:
+        policy["assume_consistent_metadata"] = _parse_bool(
+            f"{where}.assume-consistent-metadata",
+            body["assume-consistent-metadata"],
+            default=False,
+        )
+    if "allow-zip-sdists" in body:
+        policy["allow_zip_sdists"] = _parse_bool(
+            f"{where}.allow-zip-sdists", body["allow-zip-sdists"], default=False
+        )
+
+    if "build-policy" in body:
+        policy["build_policy"] = parse_enum(
+            body["build-policy"],
+            f"{where}.build-policy",
+            BuildPolicy,
+            BuildPolicy.NEVER,
+        )
+
+    if "uploaded-prior-to" in body:
+        cutoff = body["uploaded-prior-to"]
+        if cutoff is False:
+            policy["uploaded_prior_to_disabled"] = True
+        else:
+            policy["uploaded_prior_to"] = _parse_override_cutoff(
+                cutoff, where, anchor=anchor
+            )
+    return policy
 
 
 def _parse_match(value: object, where: str) -> tuple[Requirement, ...]:
@@ -1458,14 +1395,8 @@ def _parse_override_dist(
     return (policy, trust)
 
 
-def _parse_override_uploaded_prior_to(
-    value: object, where: str, *, anchor: datetime, present: bool
-) -> tuple[datetime | None, bool]:
-    """Parse the ``uploaded-prior-to`` body: ``false`` disables, else a cutoff."""
-    if not present:
-        return (None, False)
-    if value is False:
-        return (None, True)
+def _parse_override_cutoff(value: object, where: str, *, anchor: datetime) -> datetime:
+    """Read an enabled cutoff, naming the disable option on a boolean mistake."""
     if value is True:
         report = DiagnosticMessage(
             (f"{where}.uploaded-prior-to: ``true`` is not a valid value"),
@@ -1477,8 +1408,7 @@ def _parse_override_uploaded_prior_to(
             ),
         )
         raise SourceConfigError(report)
-    cutoff = parse_uploaded_prior_to(value, f"{where}.uploaded-prior-to", anchor=anchor)
-    return (cutoff, False)
+    return parse_uploaded_prior_to(value, f"{where}.uploaded-prior-to", anchor=anchor)
 
 
 def _parse_index_assume_fresh(value: object, where: str) -> int | None:
@@ -1569,16 +1499,10 @@ def _parse_override_provides_extra(value: object, where: str) -> tuple[str, ...]
         )
         raise SourceConfigError(msg)
 
-    out: list[str] = []
-    for i, item in enumerate(value):
-        if not isinstance(item, str):
-            msg = (
-                f"{where}.provides-extra[{i}] must be a string, got"
-                f" {type(item).__name__}"
-            )
-            raise SourceConfigError(msg)
-        out.append(canonicalize_name(item))
-    return tuple(out)
+    return tuple(
+        _normalized_name(item, f"{where}.provides-extra[{i}]", "extra")
+        for i, item in enumerate(value)
+    )
 
 
 def _parse_override_index(entry: dict[str, Any], where: str) -> str | None:
@@ -1641,8 +1565,8 @@ def parse_vcs(value: object, where: str) -> VcsConfig:
     allowed_repos = parse_string_list(
         value.get("allowed-repos", []), f"{where}.allowed-repos"
     )
-    for repo in allowed_repos:
-        _validate_allowed_repo(repo)
+    for i, repo in enumerate(allowed_repos):
+        _validate_allowed_repo(repo, f"{where}.allowed-repos[{i}]")
     require_pin_raw = value.get("require-pin", True)
     if not isinstance(require_pin_raw, bool):
         msg = (
@@ -1658,7 +1582,7 @@ def parse_vcs(value: object, where: str) -> VcsConfig:
     )
 
 
-def _validate_allowed_repo(repo: str) -> None:
+def _validate_allowed_repo(repo: str, where: str) -> None:
     """Reject an ``allowed-repos`` entry whose authority does not parse.
 
     :func:`urlsplit` raises ValueError on an authority it cannot parse,
@@ -1666,9 +1590,9 @@ def _validate_allowed_repo(repo: str) -> None:
     """
     try:
         urlsplit(repo)
-    except ValueError as exc:
-        msg = f"vcs.allowed-repos entry {repo!r} does not parse: {exc}"
-        raise SourceConfigError(msg) from exc
+    except ValueError:
+        msg = f"{where} does not parse as a repository URL"
+        raise SourceConfigError(msg) from None
 
 
 def _validate_source_name(where: str, index: int, name: str) -> None:
@@ -1827,18 +1751,6 @@ def _parse_python_patches(value: object, where: str) -> dict[str, str] | None:
     for k, v in value.items():
         if not isinstance(k, str) or not isinstance(v, str):
             msg = f"{label} entries must be string -> string, got {k!r}: {v!r}"
-            raise SourceConfigError(msg)
-        try:
-            validate_python_version(k, variable="python_version")
-            validate_python_version(v)
-            minor = Version(k)
-            full = Version(v)
-        except ValueError as exc:
-            msg = f"{label} expects version strings, got {k!r}: {v!r}: {exc}"
-            raise SourceConfigError(msg) from exc
-
-        if full.release[:2] != minor.release[:2]:
-            msg = f"{label} value {v!r} is not a patch release of {k!r}"
             raise SourceConfigError(msg)
         out[k] = v
     return out
@@ -1999,15 +1911,17 @@ def _parse_conflict_member(item: object, where: str) -> ConflictMember:
 _MINOR_RELEASE_PARTS = 2
 
 
-def _patches_spelling(where: str, table: str) -> str:
+def _python_patches_location(where: str, table: str | None) -> str:
     """Return the source label for python-patches."""
     if where.endswith("*"):
         return f"{where[:-1]}python-patches"
+    if table is None:
+        return "this plan's settings.matrix table under the python-patches key"
     return f"[{table}.python-patches]"
 
 
 def _validate_matrix_python(
-    spec: str, where: str, table: str, *, key: str = "python"
+    spec: str, where: str, table: str | None, *, key: str = "python"
 ) -> None:
     """Reject a python axis finer than major.minor.
 
@@ -2038,7 +1952,7 @@ def _validate_matrix_python(
             msg = (
                 f"{where}.{key} axis is a language (minor) version only; "
                 f"{clause} is finer than major.minor. Put patch versions in "
-                f"{_patches_spelling(where, table)}."
+                f"{_python_patches_location(where, table)}."
             )
             raise SourceConfigError(msg)
 
@@ -2217,11 +2131,12 @@ _MATRIX_KEYS = frozenset(
 
 
 def parse_matrix(
-    value: object, where: str, *, table: str = "tool.nab.matrix"
+    value: object, where: str, *, table: str | None = "tool.nab.matrix"
 ) -> MatrixConfig:
     """Parse a matrix table.
 
-    ``table`` supplies the header used in sub-table errors.
+    ``table`` supplies the header used in sub-table errors. Plan settings
+    pass ``None`` because either project file can declare the plan.
     """
     if not isinstance(value, dict):
         msg = f"{where} must be a table, got {type(value).__name__}"
@@ -2280,7 +2195,7 @@ def _parse_matrix_platform_axis(value: object, where: str) -> tuple[PlatformSpec
 
 
 def _parse_matrix_overrides(
-    value: object, where: str, table: str
+    value: object, where: str, table: str | None
 ) -> dict[str, ImplementationOverride] | None:
     """Read the implementation category from the matrix override container."""
     if value is None:
@@ -2297,7 +2212,7 @@ def _parse_matrix_overrides(
 
 
 def _parse_implementation_overrides(
-    value: object, where: str, table: str
+    value: object, where: str, table: str | None
 ) -> dict[str, ImplementationOverride] | None:
     """Read keyed implementation bodies using the shared matrix axis parsers."""
     if value is None:
@@ -2325,7 +2240,11 @@ def _parse_implementation_overrides(
 
 
 def _parse_implementation_body(
-    body: Mapping[str, object], label: str, where: str, table: str, implementation: str
+    body: Mapping[str, object],
+    label: str,
+    where: str,
+    table: str | None,
+    implementation: str,
 ) -> ImplementationOverride:
     """Parse the axes one implementation replaces; omitted axes remain unset."""
     unknown = sorted(set(body) - {"python", "platforms", "free-threaded"})
@@ -2363,7 +2282,7 @@ def _parse_implementation_body(
 
 
 def _parse_matrix_include(
-    value: object, where: str, table: str
+    value: object, where: str, table: str | None
 ) -> tuple[MatrixInclude, ...]:
     """Parse independently expanded target groups with optional inherited axes."""
     if value is None:
@@ -2386,7 +2305,7 @@ def _parse_matrix_include(
 
 
 def _parse_matrix_include_body(
-    body: Mapping[str, object], where: str, table: str, index: int
+    body: Mapping[str, object], where: str, table: str | None, index: int
 ) -> MatrixInclude:
     """Read only the axes the entry explicitly replaces."""
     label = f"{where}.include[{index}]"
@@ -2455,10 +2374,10 @@ def _parse_matrix_free_threaded(
 
 
 def _validate_matrix_axes(config: MatrixConfig, where: str) -> None:
-    """Expand the matrix eagerly to catch bad axes at parse time."""
+    """Validate the matrix axes before returning the parsed configuration."""
     matrix = matrix_from_config(config)
     try:
-        matrix.expand()
+        matrix.target_count()
     except ValueError as exc:
         msg = f"{where} is invalid: {exc}"
         raise SourceConfigError(msg) from exc

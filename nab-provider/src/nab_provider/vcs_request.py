@@ -12,7 +12,7 @@ __lazy_modules__ = ("nab_provider.subdir",)
 import re
 from typing import TYPE_CHECKING
 
-from .subdir import subdirectory_escapes
+from .subdir import decode_subdirectory
 from .value import SlottedValue
 
 if TYPE_CHECKING:
@@ -89,9 +89,13 @@ class VcsRequest(SlottedValue):
             key, _, value = fragment_part.partition("=")
             if key == "subdirectory":
                 subdirectory = value
-        if subdirectory_escapes(subdirectory):
+
+        try:
+            subdirectory = decode_subdirectory(subdirectory)
+        except ValueError as exc:
             msg = f"unsafe VCS subdirectory {subdirectory!r} in {url!r}"
-            raise VcsCloneError(msg)
+            raise VcsCloneError(msg) from exc
+
         return cls(scheme="git", repo_url=repo, ref=ref, subdirectory=subdirectory)
 
 

@@ -180,7 +180,7 @@ def test_dynamic_sdist_hint_revises_an_overlapping_legacy_assertion() -> None:
         provider.get_dependencies("pkg", _VERSION)
 
     assert "revise the scoped assume-universal-deps entries" in str(caught.value)
-    assert "and assume-universal-deps = true" not in str(caught.value)
+    assert "assume-universal-deps = true" not in str(caught.value)
 
     repaired = Provider(
         port,

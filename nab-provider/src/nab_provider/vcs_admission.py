@@ -120,6 +120,7 @@ def known_vcs_schemes() -> frozenset[str]:
 
 
 _VCS_INSECURE_SCHEMES: frozenset[str] = frozenset({"git+git", "git+http"})
+_MALFORMED_VCS_URL = "refusing malformed VCS URL: the URL does not parse."
 
 
 def split_vcs_scheme(url: str) -> tuple[str | None, str]:
@@ -270,11 +271,21 @@ def has_full_commit_sha(url: str) -> bool:
     return bool(FULL_GIT_SHA_RE.match(ref))
 
 
-def _malformed_vcs_error(url: str) -> UnsupportedVcsError:
-    """Refusal for a URL whose authority ``urlsplit`` cannot parse."""
-    return UnsupportedVcsError(
-        f"refusing malformed VCS URL\n    {url}\n    reason: the URL does not parse."
-    )
+def _display_url(url: str) -> str:
+    """Show the repository location without userinfo, query or fragment."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "<malformed URL>"
+
+    if not parts.netloc:
+        if parts.path and parts.scheme not in {"file", "git+file"}:
+            return "<URL without a host>"
+        # Preserve the empty authority in git+file:///path and scheme-only prefixes.
+        return url.partition("?")[0].partition("#")[0]
+
+    host = parts.netloc.rpartition("@")[2]
+    return parts._replace(netloc=host, query="", fragment="").geturl()
 
 
 def admit_vcs_url(url: str, config: VcsConfig) -> str:
@@ -289,7 +300,7 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
         report = DiagnosticMessage(
             (
                 "refusing direct-URL requirement (not a recognized VCS scheme)\n    "
-                f"{url}"
+                f"{_display_url(url)}"
             ),
             suggestions=(
                 Suggestion(
@@ -307,8 +318,8 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
     if config.policy is VcsPolicy.BLOCK:
         report = DiagnosticMessage(
             (
-                f"refusing VCS requirement\n    {url}\n    reason: vcs.policy is "
-                '"block" (default).'
+                f"refusing VCS requirement\n    {_display_url(url)}\n"
+                '    reason: vcs.policy is "block" (default).'
             ),
             suggestions=(
                 Suggestion(
@@ -323,7 +334,7 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
         allowed_str = ", ".join(sorted(config.allowed_schemes)) or "<empty>"
         msg = (
             "refusing VCS scheme\n"
-            f"    {url}\n"
+            f"    {_display_url(url)}\n"
             f'    reason: scheme "{scheme}" not in vcs.allowed-schemes='
             f"{{{allowed_str}}}."
         )
@@ -337,7 +348,7 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
     try:
         repo_path = _repo_path(inner_url)
     except ValueError:
-        raise _malformed_vcs_error(url) from None
+        raise UnsupportedVcsError(_MALFORMED_VCS_URL) from None
 
     # Without a repo path there is nothing to clone, and an appended pin's
     # "@" lands in the netloc instead of the path, where urlsplit reads
@@ -346,8 +357,8 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
     if not repo_path.strip("/"):
         report = DiagnosticMessage(
             (
-                f"refusing VCS URL that names no repository\n    {url}\n    reason: "
-                "the URL has no repository path."
+                f"refusing VCS URL that names no repository\n    {_display_url(url)}\n"
+                "    reason: the URL has no repository path."
             ),
             suggestions=(
                 Suggestion(
@@ -368,16 +379,19 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
             for prefix in config.allowed_repos
         )
     except ValueError:
-        raise _malformed_vcs_error(url) from None
+        raise UnsupportedVcsError(_MALFORMED_VCS_URL) from None
 
     # An empty allowed-repos denies every repo (deny-all), matching
     # allowed-schemes: under policy = "allow" the user must list at least
     # one repo prefix.
     if not repo_admitted:
-        allowed_str = ", ".join(sorted(config.allowed_repos)) or "<empty>"
+        allowed_str = (
+            ", ".join(sorted(_display_url(repo) for repo in config.allowed_repos))
+            or "<empty>"
+        )
         msg = (
             "refusing VCS repo\n"
-            f"    {url}\n"
+            f"    {_display_url(url)}\n"
             "    reason: repo URL prefix not in vcs.allowed-repos.\n"
             f"    allowed prefixes: {allowed_str}"
         )
@@ -386,8 +400,9 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
     if config.require_pin and not has_full_commit_sha(url):
         report = DiagnosticMessage(
             (
-                f"refusing unpinned VCS ref\n    {url}\n    reason: vcs.require-pin is "
-                "true and no 40-char commit hash present."
+                f"refusing unpinned VCS ref\n    {_display_url(url)}\n"
+                "    reason: vcs.require-pin is true and no 40-char commit hash "
+                "present."
             ),
             suggestions=(
                 Suggestion(
