@@ -224,41 +224,32 @@ class TestDeterministicOutput:
         assert first == second
 
 
-def _multi_wheel(name: str, version: str) -> tuple[WheelArtifact, ...]:
-    """Build several wheels for one pin, each with several hashes.
-
-    The wheels are returned in a deliberately non-sorted filename order
-    so a caller can prove the emitter sorts them rather than echoing
-    insertion order.
-    """
+def _multi_wheel(
+    name: str, version: str, *, reverse: bool
+) -> tuple[WheelArtifact, ...]:
+    """Build the same wheels and hash tables in either order."""
     norm = name.replace("-", "_")
 
     def _wheel_with_hashes(tag: str, primary: str) -> WheelArtifact:
+        hashes = (
+            ("sha512", primary * 128),
+            ("sha256", primary * 64),
+            ("sha384", primary * 96),
+        )
         return WheelArtifact(
             filename=f"{norm}-{version}-{tag}.whl",
             url=f"https://example.com/{norm}-{version}-{tag}.whl",
-            hashes=(
-                ("sha512", primary * 128),
-                ("sha256", primary * 64),
-                ("sha384", primary * 96),
-            ),
+            hashes=hashes[::-1] if reverse else hashes,
             size=1024,
         )
 
-    return (
+    wheels = (
         _wheel_with_hashes("cp312-cp312-win_amd64", "f"),
         _wheel_with_hashes("cp310-cp310-manylinux_2_17_x86_64", "a"),
         _wheel_with_hashes("cp311-cp311-macosx_11_0_arm64", "c"),
     )
 
-
-def _reorder(seq: Sequence[object], shift: int) -> list[object]:
-    """Rotate ``seq`` by ``shift`` to get a different but complete order."""
-    items = list(seq)
-    if not items:
-        return items
-    shift %= len(items)
-    return items[shift:] + items[:shift]
+    return wheels[::-1] if reverse else wheels
 
 
 def _per_target_input(
@@ -266,26 +257,19 @@ def _per_target_input(
     names: Sequence[str],
     pythons: Sequence[str],
     versions_by_python: Mapping[str, str],
-    wheel_shift: int,
+    reverse_artifacts: bool,
 ) -> LockInput:
-    """Assemble a per-target ``LockInput`` over the given orderings.
-
-    ``pythons`` fixes the target order, the ``targets`` dict is built in
-    that order, and each pin's wheels are rotated by ``wheel_shift`` so
-    two calls with different orderings exercise the insertion-order paths
-    the emitter must neutralise.
-    """
+    """Build target and pin maps in the supplied order."""
     targets: dict[str, TargetLock] = {}
     for python in pythons:
         version = versions_by_python[python]
         per_name: dict[str, PinShape] = {}
         for name in names:
-            wheels = tuple(_reorder(_multi_wheel(name, version), wheel_shift))
             per_name[name] = IndexPin(
                 name=name,
                 version=version,
                 index="pypi",
-                wheels=wheels,  # type: ignore[arg-type]
+                wheels=_multi_wheel(name, version, reverse=reverse_artifacts),
             )
         target = _target(python)
         targets[target.label] = TargetLock(target=target, pins=per_name)
@@ -322,7 +306,7 @@ class TestQuoteShuffledInputInvariant:
                 names=names,
                 pythons=pythons,
                 versions_by_python=versions_by_python,
-                wheel_shift=0,
+                reverse_artifacts=False,
             )
         )
         shuffled = write_lock(
@@ -330,7 +314,7 @@ class TestQuoteShuffledInputInvariant:
                 names=list(reversed(names)),
                 pythons=list(reversed(pythons)),
                 versions_by_python=versions_by_python,
-                wheel_shift=1,
+                reverse_artifacts=True,
             )
         )
         assert shuffled == canonical
