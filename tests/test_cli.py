@@ -4300,7 +4300,7 @@ class TestLockCommandUniversal:
 
         err = capsys.readouterr().err
         assert f"Wrote {py311} (2 packages, tuple py311-linux_x86_64)" in err
-        assert f"Wrote {py312} (1 packages, tuple py312-linux_x86_64)" in err
+        assert f"Wrote {py312} (1 package, tuple py312-linux_x86_64)" in err
 
     def test_template_with_platform_id(self, tmp_path: Path) -> None:
         """``{platform_id}`` is also a valid template variable."""
@@ -4482,7 +4482,7 @@ class TestLockCommandUniversal:
 
         err = capsys.readouterr().err
         assert f"Wrote {cpu} (2 packages, tuple py311-linux_x86_64-extra-cpu)" in err
-        assert f"Wrote {gpu} (1 packages, tuple py311-linux_x86_64-extra-gpu)" in err
+        assert f"Wrote {gpu} (1 package, tuple py311-linux_x86_64-extra-gpu)" in err
 
     def test_forked_collision_points_at_selection(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -4940,7 +4940,7 @@ class TestNoEmitWorkspace:
             return_value=self._alpha_and_foo_result(),
         ):
             lock(pyproject, output=out, no_emit_workspace=True)
-        assert "(1 packages)" in capsys.readouterr().err
+        assert "(1 package)" in capsys.readouterr().err
 
     def test_specific_requirements_drops_workspace_pin(self, tmp_path: Path) -> None:
         """Requirements format also honours --no-emit-workspace."""
@@ -5077,7 +5077,7 @@ class TestRelockDiffSummary:
         out = tmp_path / "pylock.toml"
         _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=out)
         err = capsys.readouterr().err
-        assert err.strip().endswith("(1 packages)")
+        assert err.strip().endswith("(1 package)")
 
     def test_relock_reports_added_upgraded_removed(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -5111,7 +5111,7 @@ class TestRelockDiffSummary:
         _emit(_stub_lock_input({"foo": V("2.0")}), format="pylock", output=out)
         capsys.readouterr()
         _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=out)
-        assert capsys.readouterr().err.strip().endswith("(1 packages: 1 downgraded)")
+        assert capsys.readouterr().err.strip().endswith("(1 package: 1 downgraded)")
 
     def test_relock_unchanged_prints_plain_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -5120,7 +5120,7 @@ class TestRelockDiffSummary:
         out = tmp_path / "pylock.toml"
         for _ in range(2):
             _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=out)
-        assert capsys.readouterr().err.strip().endswith("(1 packages)")
+        assert capsys.readouterr().err.strip().endswith("(1 package)")
 
     def test_relock_unchanged_with_local_pin_prints_plain_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -5158,7 +5158,7 @@ class TestRelockDiffSummary:
         )
         for _ in range(2):
             _emit(lock_input, format="pylock", output=out)
-        assert capsys.readouterr().err.strip().endswith("(1 packages)")
+        assert capsys.readouterr().err.strip().endswith("(1 package)")
 
     def test_unparseable_prior_falls_back_to_plain_line(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -5166,7 +5166,7 @@ class TestRelockDiffSummary:
         out = tmp_path / "pylock.toml"
         out.write_text("this is not valid toml === {[\n")
         _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=out)
-        assert capsys.readouterr().err.strip().endswith("(1 packages)")
+        assert capsys.readouterr().err.strip().endswith("(1 package)")
 
     def test_stdout_emits_no_diff(self, capsys: pytest.CaptureFixture[str]) -> None:
         _emit(_stub_lock_input({"foo": V("1.0")}), format="pylock", output=Path("-"))
@@ -5183,7 +5183,7 @@ class TestRelockDiffSummary:
             _emit(
                 _stub_lock_input({"foo": V("1.0")}), format="requirements", output=out
             )
-        assert capsys.readouterr().err.strip().endswith("(1 packages)")
+        assert capsys.readouterr().err.strip().endswith("(1 package)")
 
 
 class TestPylockOutputNameValidation:

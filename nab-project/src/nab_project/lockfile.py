@@ -119,6 +119,7 @@ __all__ = [
     "check_locked",
     "collect_dependency_requirements",
     "drop_workspace_pins",
+    "format_package_count",
     "is_valid_pylock_path",
     "package_metadata_override_records",
     "read_lockfile_anchor",
@@ -852,6 +853,11 @@ def drop_workspace_pins(lock_input: LockInput, exclude: frozenset[str]) -> LockI
     return replace(lock_input, targets=targets)
 
 
+def format_package_count(count: int) -> str:
+    """Format the number of packages written to one output file."""
+    return "1 package" if count == 1 else f"{count} packages"
+
+
 def summarize_lock(lock_input: LockInput, prior: Mapping[str, Version] | None) -> str:
     """Summarise what was written: a package diff, or the tuple count.
 
@@ -877,7 +883,7 @@ def summarize_lock(lock_input: LockInput, prior: Mapping[str, Version] | None) -
         for name, pin in pins.items()
         if isinstance(pin, (IndexPin, ArchivePin))
     }
-    return f"{len(pins)} packages{_diff_summary(prior, versioned)}"
+    return f"{format_package_count(len(pins))}{_diff_summary(prior, versioned)}"
 
 
 def _diff_summary(

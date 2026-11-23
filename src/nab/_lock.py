@@ -82,6 +82,7 @@ from nab_project.lockfile import (
     TargetLock,
     check_locked,
     drop_workspace_pins,
+    format_package_count,
     is_valid_pylock_path,
     package_metadata_override_records,
     read_lockfile_anchor,
@@ -1578,7 +1579,7 @@ def _emit_requirements(
         _, count = _render_requirements_or_exit(
             lock_input, with_hashes, output_path=target
         )
-        printer().done(f"Wrote {target} ({count} packages)")
+        printer().done(f"Wrote {target} ({format_package_count(count)})")
         return
 
     _check_output_template(target, template)
@@ -1731,9 +1732,8 @@ def _write_requirements_files(rendered: list[_RenderedFile]) -> None:
             tmp, item = staged[0]
             tmp.replace(item.path)
             staged.popleft()
-            printer().done(
-                f"Wrote {item.path} ({item.pin_count} packages, tuple {item.label})"
-            )
+            packages = format_package_count(item.pin_count)
+            printer().done(f"Wrote {item.path} ({packages}, tuple {item.label})")
     except BaseException:
         for tmp, _ in staged:
             _discard(tmp)
