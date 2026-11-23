@@ -1778,6 +1778,32 @@ class TestFetchCoordinator:
 
         assert transport.closes == 1
 
+    def test_task_scheduling_failure_completes_its_request_and_continues(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        first = (tmp_path / "a-1-py3-none-any.whl.metadata").as_uri()
+        sidecar = tmp_path / "b-1-py3-none-any.whl.metadata"
+        sidecar.write_text("metadata")
+        second = sidecar.as_uri()
+        create_task = asyncio.create_task
+
+        def refuse_once(_handler: object) -> NoReturn:
+            monkeypatch.setattr(asyncio, "create_task", create_task)
+            raise RuntimeError("scheduler busy")
+
+        with _coord(indexes=[IndexConfig("local", tmp_path.as_uri())]) as coord:
+            monkeypatch.setattr(asyncio, "create_task", refuse_once)
+            a, b = coord.request_metadata_batch(
+                [("a", "1", first, None), ("b", "1", second, None)]
+            )
+
+            assert a[2].wait(5)
+            error = coord.index.get_metadata_error("a", "1", first)
+            assert isinstance(error, RuntimeError)
+            assert str(error) == "scheduler busy"
+            assert b[2].wait(5)
+            assert coord.index.get_metadata("b", "1", second) == "metadata"
+
     @respx.mock
     def test_cancelled_metadata_wakes_its_waiter_and_finishes_the_batch(self) -> None:
         cancelled = "https://files.example.com/a.whl.metadata"

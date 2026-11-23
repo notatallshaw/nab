@@ -1159,7 +1159,13 @@ class FetchCoordinator:
         """Create async tasks for a single request or a batch."""
         batch = item if isinstance(item, list) else (item,)
         for request in batch:
-            task = asyncio.create_task(self._handle(client, request, sem))
+            handler = self._handle(client, request, sem)
+            try:
+                task = asyncio.create_task(handler)
+            except Exception as exc:  # noqa: BLE001 - the caller is waiting for this request
+                handler.close()
+                self._record_fetch_failure(client, request, exc)
+                continue
             tasks.add(task)
             task.add_done_callback(partial(self._finish_fetch, tasks, client, request))
 
