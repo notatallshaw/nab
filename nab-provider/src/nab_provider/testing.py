@@ -13,12 +13,12 @@ request and :meth:`FakeFetchPort.calls_to` to inspect its calls.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "packaging.utils",
     "nab_provider.errors",
     "nab_provider.overrides",
     "nab_provider.pep508",
     "nab_provider.records",
     "nab_provider.store",
+    "packaging.utils",
 )
 
 import threading

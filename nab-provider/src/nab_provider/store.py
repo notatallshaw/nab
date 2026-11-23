@@ -7,8 +7,8 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "hashlib",
-    "packaging.utils",
     "nab_provider.metadata",
+    "packaging.utils",
 )
 
 import threading

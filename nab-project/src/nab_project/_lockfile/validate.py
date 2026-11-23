@@ -34,14 +34,14 @@ from __future__ import annotations
 __lazy_modules__ = (
     "nab_project",
     "nab_project.toml_writer",
-    "packaging.markers",
-    "packaging.pylock",
-    "packaging.specifiers",
-    "packaging.utils",
     "nab_provider.marker_holds",
     "nab_provider.metadata",
     "nab_provider.pep508",
     "nab_provider.target",
+    "packaging.markers",
+    "packaging.pylock",
+    "packaging.specifiers",
+    "packaging.utils",
     "tomli",
 )
 

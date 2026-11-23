@@ -22,10 +22,10 @@ from __future__ import annotations
 __lazy_modules__ = (
     "json",
     "nab_provider._provider",
-    "packaging.version",
     "nab_provider.errors",
     "nab_provider.policy",
     "nab_provider.records",
+    "packaging.version",
     "re",
 )
 

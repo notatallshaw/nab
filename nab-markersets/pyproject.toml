@@ -22,7 +22,6 @@ classifiers = [
     "Typing :: Typed",
 ]
 
-
 [project.urls]
 Homepage = "https://github.com/notatallshaw/nab"
 Documentation = "https://nab.readthedocs.io/"

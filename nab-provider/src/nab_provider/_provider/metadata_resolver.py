@@ -9,8 +9,6 @@ each ``Requires-Dist`` entry into base deps vs per-extra deps.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "packaging.specifiers",
-    "packaging.utils",
     "nab_provider.environment",
     "nab_provider.errors",
     "nab_provider.extra_keys",
@@ -23,6 +21,8 @@ __lazy_modules__ = (
     "nab_provider.value",
     "nab_provider.vcs_admission",
     "nab_resolver.diagnostics",
+    "packaging.specifiers",
+    "packaging.utils",
     "urllib.parse",
 )
 

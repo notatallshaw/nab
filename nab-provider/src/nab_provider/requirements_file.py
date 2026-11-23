@@ -5,13 +5,13 @@ from __future__ import annotations
 __lazy_modules__ = (
     "collections",
     "collections.abc",
-    "packaging.errors",
-    "packaging.markers",
-    "packaging.utils",
     "nab_provider.marker_holds",
     "nab_provider.pep508",
     "nab_provider.project_requirements",
     "nab_provider.resolver_inputs",
+    "packaging.errors",
+    "packaging.markers",
+    "packaging.utils",
 )
 
 from collections import deque

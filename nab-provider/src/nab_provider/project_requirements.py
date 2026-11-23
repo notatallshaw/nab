@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "packaging.specifiers",
-    "packaging.utils",
     "nab_provider.metadata",
     "nab_provider.pep508",
+    "packaging.specifiers",
+    "packaging.utils",
 )
 
 from typing import TYPE_CHECKING

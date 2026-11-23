@@ -31,7 +31,6 @@ repos:
       - id: flake8
         name: Check lazy import declarations
         files: ^(?:nab-[^/]+/)?src/
-
         additional_dependencies: [flake8-lazy==0.11.0]
         # Nab names relative imports absolutely and selects lazy dependencies per module.
         args: [--isolated, "--select=LZY201,LZY203,LZY204,LZY205,LZY3,LZY401"]
@@ -40,8 +39,7 @@ repos:
     rev: ef3265d70a75c507b4c110d855cdfab6ce90d4bf  # frozen: v1.52.0
     hooks:
       - id: typos
-        # Benchmarks, CI lockfiles, captured lock data are
-        # full of real PyPI names typos misreads.
+        # Benchmarks and lock data contain real PyPI names typos misreads.
         exclude: ^(pylock\.dev\.toml$|nab-project/benchmarks/|nab-project/tests/data/|\.github/requirements/)
         args: []
 

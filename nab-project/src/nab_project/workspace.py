@@ -22,9 +22,9 @@ from __future__ import annotations
 __lazy_modules__ = (
     "nab_project",
     "nab_project.paths",
-    "packaging.utils",
     "nab_provider.policy",
     "nab_resolver.diagnostics",
+    "packaging.utils",
     "tomli",
 )
 

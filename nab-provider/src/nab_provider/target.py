@@ -22,13 +22,13 @@ from __future__ import annotations
 __lazy_modules__ = (
     "nab_markersets.markersets",
     "nab_markersets.python_versions",
-    "packaging.ranges",
-    "packaging.specifiers",
-    "packaging.version",
     "nab_provider.conflict_kind",
     "nab_provider.environment",
     "nab_provider.marker_holds",
     "nab_provider.tags",
+    "packaging.ranges",
+    "packaging.specifiers",
+    "packaging.version",
 )
 
 from bisect import bisect_right

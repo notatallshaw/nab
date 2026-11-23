@@ -23,10 +23,10 @@ from __future__ import annotations
 __lazy_modules__ = (
     "collections",
     "nab_provider._provider.listing_diagnosis",
-    "packaging.ranges",
-    "packaging.utils",
     "nab_provider.errors",
     "nab_resolver.types",
+    "packaging.ranges",
+    "packaging.utils",
 )
 
 from collections import defaultdict

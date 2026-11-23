@@ -10,8 +10,6 @@ from __future__ import annotations
 __lazy_modules__ = (
     "functools",
     "nab_provider._provider.metadata_resolver",
-    "packaging.specifiers",
-    "packaging.version",
     "nab_provider.errors",
     "nab_provider.iso8601",
     "nab_provider.metadata",
@@ -19,6 +17,8 @@ __lazy_modules__ = (
     "nab_provider.records",
     "nab_provider.tags",
     "nab_provider.vcs_admission",
+    "packaging.specifiers",
+    "packaging.version",
 )
 
 from functools import partial

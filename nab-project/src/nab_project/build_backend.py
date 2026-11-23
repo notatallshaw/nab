@@ -14,11 +14,11 @@ __lazy_modules__ = (
     "nab_project",
     "nab_project._build.errors",
     "nab_project.paths",
-    "packaging.utils",
-    "packaging.version",
     "nab_provider.metadata",
     "nab_provider.project_requirements",
     "nab_resolver.diagnostics",
+    "packaging.utils",
+    "packaging.version",
     "tomli",
 )
 

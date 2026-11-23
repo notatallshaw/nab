@@ -10,12 +10,12 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "collections",
-    "packaging.utils",
     "nab_provider.errors",
     "nab_provider.extra_keys",
     "nab_provider.vcs_admission",
     "nab_resolver.errors",
     "nab_resolver.types",
+    "packaging.utils",
 )
 
 import logging

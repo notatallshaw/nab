@@ -17,10 +17,10 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "nab_provider._provider.metadata_resolver",
-    "packaging.specifiers",
-    "packaging.utils",
     "nab_provider.errors",
     "nab_provider.store",
+    "packaging.specifiers",
+    "packaging.utils",
 )
 
 from typing import TYPE_CHECKING

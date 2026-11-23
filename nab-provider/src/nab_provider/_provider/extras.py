@@ -12,11 +12,11 @@ __lazy_modules__ = (
     "nab_provider._provider.listing_diagnosis",
     "nab_provider._provider.lookahead",
     "nab_provider._provider.metadata_resolver",
-    "packaging.ranges",
-    "packaging.utils",
     "nab_provider.errors",
     "nab_provider.extra_keys",
     "nab_provider.policy",
+    "packaging.ranges",
+    "packaging.utils",
 )
 
 import logging

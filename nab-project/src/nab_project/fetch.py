@@ -22,7 +22,6 @@ __lazy_modules__ = (
     "nab_project._build_remote",
     "nab_project._sources",
     "nab_project.toml_io",
-    "packaging.utils",
     "nab_provider.fetch_port",
     "nab_provider.metadata",
     "nab_provider.policy",
@@ -31,6 +30,7 @@ __lazy_modules__ = (
     "nab_provider.serialization",
     "nab_provider.store",
     "nab_resolver.diagnostics",
+    "packaging.utils",
     "threading",
     "urllib.parse",
 )

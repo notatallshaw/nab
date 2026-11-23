@@ -10,12 +10,12 @@ from ``[project].version`` or took from the build backend.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "packaging.utils",
     "nab_provider.archive",
     "nab_provider.errors",
     "nab_provider.records",
     "nab_provider.vcs_admission",
     "nab_resolver.diagnostics",
+    "packaging.utils",
 )
 
 from typing import TYPE_CHECKING

@@ -10,10 +10,10 @@ from __future__ import annotations
 __lazy_modules__ = (
     "contextlib",
     "logging",
+    "nab_provider.pep508",
     "packaging.requirements",
     "packaging.specifiers",
     "packaging.version",
-    "nab_provider.pep508",
 )
 
 import logging

@@ -12,9 +12,6 @@ __lazy_modules__ = (
     "collections",
     "itertools",
     "nab_provider._provider.candidate_views",
-    "packaging.markers",
-    "packaging.specifiers",
-    "packaging.utils",
     "nab_provider.conflict_kind",
     "nab_provider.declarations",
     "nab_provider.environment",
@@ -26,6 +23,9 @@ __lazy_modules__ = (
     "nab_provider.records",
     "nab_provider.vcs_admission",
     "nab_resolver.diagnostics",
+    "packaging.markers",
+    "packaging.specifiers",
+    "packaging.utils",
 )
 
 import bisect

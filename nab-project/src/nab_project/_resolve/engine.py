@@ -16,7 +16,6 @@ __lazy_modules__ = (
     "itertools",
     "nab_index.cache",
     "nab_project.lockfile",
-    "packaging.utils",
     "nab_provider.errors",
     "nab_provider.policy",
     "nab_provider.provider",
@@ -26,6 +25,7 @@ __lazy_modules__ = (
     "nab_provider.yanked_resolution",
     "nab_resolver.errors",
     "nab_resolver.types",
+    "packaging.utils",
     "time",
 )
 

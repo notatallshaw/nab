@@ -11,9 +11,9 @@ __lazy_modules__ = (
     "nab_markersets.conversions",
     "nab_markersets.errors",
     "nab_markersets.markersets",
-    "packaging.markers",
     "nab_provider.conflict_kind",
     "nab_provider.environment",
+    "packaging.markers",
 )
 
 from contextlib import contextmanager

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "nab_provider._provider.listing_diagnosis",
-    "packaging.utils",
     "nab_provider.diagnostics",
     "nab_provider.extra_keys",
     "nab_provider.ranges",
@@ -12,6 +11,7 @@ __lazy_modules__ = (
     "nab_resolver.errors",
     "nab_resolver.ranges",
     "nab_resolver.types",
+    "packaging.utils",
 )
 
 from typing import TYPE_CHECKING, Final

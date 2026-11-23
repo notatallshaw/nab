@@ -25,8 +25,8 @@ __lazy_modules__ = (
     "itertools",
     "nab_markersets.errors",
     "nab_markersets.markersets",
-    "packaging.utils",
     "nab_provider.conflict_kind",
+    "packaging.utils",
 )
 
 import itertools

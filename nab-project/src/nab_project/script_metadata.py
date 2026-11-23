@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "packaging.specifiers",
     "nab_provider.metadata",
     "nab_provider.project_requirements",
+    "packaging.specifiers",
     "tokenize",
     "tomli",
 )
