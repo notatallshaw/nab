@@ -7103,7 +7103,30 @@ class TestMain:
             )
         assert result.success
 
+    @pytest.fixture
+    def standalone_collector(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Exercise the collector policy used by the process entry point."""
+        monkeypatch.setattr("nab._entry.process_owns_collector", True)
+
+    @pytest.mark.parametrize("enabled", [True, False])
     @pytest.mark.usefixtures("restored_gc_state")
+    def test_embedded_lock_preserves_collector_policy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, enabled: bool
+    ) -> None:
+        path = _make_pyproject(tmp_path, '[project]\nname="example"\nversion="1"\n')
+        if enabled:
+            gc.enable()
+        else:
+            gc.disable()
+
+        def unexpected_freeze() -> None:
+            pytest.fail("an embedded lock froze the host's objects")
+
+        monkeypatch.setattr(gc, "freeze", unexpected_freeze, raising=False)
+        assert run(("lock", str(path), "--no-cache", "--offline", "--output", "-")) == 0
+        assert gc.isenabled() is enabled
+
+    @pytest.mark.usefixtures("restored_gc_state", "standalone_collector")
     def test_resolve_pauses_the_collector(self, tmp_path: Path) -> None:
         """The cyclic collector is off while the resolver runs, back on after."""
         pyproject = _make_pyproject(tmp_path)
@@ -7131,7 +7154,7 @@ class TestMain:
         sysconfig.get_config_var("Py_GIL_DISABLED") == 1,
         reason="requires generational garbage collection",
     )
-    @pytest.mark.usefixtures("restored_gc_state")
+    @pytest.mark.usefixtures("restored_gc_state", "standalone_collector")
     def test_resolve_promotes_what_it_allocated(self, tmp_path: Path) -> None:
         """Objects the resolve allocated end in generation 2, not generation 0."""
         pyproject = _make_pyproject(tmp_path)
@@ -7168,7 +7191,7 @@ class TestMain:
         assert not any(obj is graph for obj in gc.get_objects(generation=0))
         assert any(obj is graph for obj in gc.get_objects(generation=2))
 
-    @pytest.mark.usefixtures("restored_gc_state")
+    @pytest.mark.usefixtures("restored_gc_state", "standalone_collector")
     def test_resolve_without_gc_freeze_still_reenables_the_collector(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -7199,7 +7222,7 @@ class TestMain:
             )
         assert gc.isenabled()
 
-    @pytest.mark.usefixtures("restored_gc_state")
+    @pytest.mark.usefixtures("restored_gc_state", "standalone_collector")
     def test_resolve_reenables_the_collector_on_failure(self, tmp_path: Path) -> None:
         """A resolve that exits on an error still leaves the collector enabled."""
         pyproject = _make_pyproject(tmp_path)

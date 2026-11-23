@@ -76,6 +76,7 @@ from nab_provider.target import (
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 from nab_resolver.errors import ResolutionError
 
+from . import _entry
 from ._run import require_pyproject_file
 from .config.model import (
     ConfigError,
@@ -293,23 +294,16 @@ def _check_targets_or_exit(config: NabProjectConfig) -> None:
 
 @contextmanager
 def _collector_paused() -> Generator[None, None, None]:
-    """Disable the cyclic collector for the duration of the resolve.
+    """Pause collection during a standalone resolve and promote its allocations."""
+    if not _entry.process_owns_collector:
+        yield
+        return
 
-    Exit enables the collector and unfreezes rather than restoring what it
-    found, so every caller of :func:`_resolve` is left in that state and not
-    the one it came in with.
-
-    Everything the resolve allocated is in generation 0 by then, so the
-    collections that follow the enable walk the whole resolve graph. Freezing
-    empties every generation into the permanent one and unfreezing returns the
-    permanent generation to generation 2, which takes the graph out of
-    generation 0 and leaves those collections less to walk. PyPy has no
-    ``gc.freeze``.
-    """
     gc.disable()
     try:
         yield
     finally:
+        # Move the resolve graph out of generation zero before collection resumes.
         if hasattr(gc, "freeze"):
             gc.freeze()
             gc.unfreeze()
