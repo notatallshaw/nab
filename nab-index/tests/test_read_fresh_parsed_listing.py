@@ -11,6 +11,7 @@ to ``get_files`` so a future edit to either cannot drift them.
 from __future__ import annotations
 
 import json
+import time
 from asyncio import run as _run
 from collections.abc import Mapping
 from pathlib import Path
@@ -116,7 +117,7 @@ def _warm_bound(
 ) -> tuple[list, str]:
     """Warm a package's body, policy, and a parsed blob bound to that body."""
     policy = CachePolicy(
-        fetched_at=2_000_000_000 if fresh else 0,
+        fetched_at=int(time.time()) if fresh else 0,
         max_age=99999 if fresh else 0,
         etag="e",
         page_url=_INDEX_NORM + "pkg/",
@@ -198,7 +199,7 @@ class TestReadFreshParsedListing:
         cache.put_simple(
             "pkg",
             _LISTING_BYTES,
-            CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None),
+            CachePolicy(fetched_at=int(time.time()), max_age=99999, etag=None),
         )
         assert cache.get_simple_parsed("pkg") is None
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
@@ -272,7 +273,7 @@ class TestIdenticalByConstruction:
         cache.put_simple(
             "pkg",
             _LISTING_BYTES,
-            CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None),
+            CachePolicy(fetched_at=int(time.time()), max_age=99999, etag=None),
         )
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
         client = CachedAsyncSimpleClient(_FakeTransport([]), cache, _INDEX)

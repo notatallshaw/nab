@@ -1282,7 +1282,7 @@ class TestGetFiles:
             "pkg",
             LISTING_BYTES,
             CachePolicy(
-                fetched_at=2_000_000_000,
+                fetched_at=int(time.time()),
                 max_age=99999,
                 etag="x",
             ),
@@ -2564,7 +2564,7 @@ class TestRedirectedProjectPage:
         cache.put_simple(
             "pkg",
             self._RELATIVE_LISTING,
-            CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None),
+            _fresh_policy(),
         )
 
         (wheel,) = self._run(_FakeTransport(), cache)
@@ -4644,7 +4644,7 @@ def _get_files_and_zip_sdists(
 
 
 def _fresh_policy() -> CachePolicy:
-    return CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None)
+    return CachePolicy(fetched_at=int(time.time()), max_age=99999, etag=None)
 
 
 def _stale_policy() -> CachePolicy:
@@ -4939,7 +4939,7 @@ class TestNegativeCaching:
         cache.put_simple(
             "pkg",
             LISTING_BYTES,
-            CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag="x"),
+            CachePolicy(fetched_at=int(time.time()), max_age=99999, etag="x"),
         )
         cache.put_negative("pkg", _fresh_policy())
         transport = _FakeTransport()
@@ -4970,14 +4970,11 @@ class TestCorruptCachedListing:
     _NON_UTF8 = b'\xff\xfe{"files": []}'
     _WRONG_SHAPE = b'{"files": 123}'
 
-    def _fresh(self) -> CachePolicy:
-        return CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None)
-
     def test_truncated_cached_body_self_heals_online(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_simple("pkg", self._TRUNCATED, self._fresh())
+        cache.put_simple("pkg", self._TRUNCATED, _fresh_policy())
         transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
 
         with caplog.at_level(logging.WARNING, logger="nab_index.cached_client"):
@@ -4998,7 +4995,7 @@ class TestCorruptCachedListing:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_simple("pkg", self._NON_UTF8, self._fresh())
+        cache.put_simple("pkg", self._NON_UTF8, _fresh_policy())
         transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
 
         with caplog.at_level(logging.WARNING, logger="nab_index.cached_client"):
@@ -5018,7 +5015,7 @@ class TestCorruptCachedListing:
         over_nested_json: bytes,
     ) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_simple("pkg", over_nested_json, self._fresh())
+        cache.put_simple("pkg", over_nested_json, _fresh_policy())
         transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
 
         with caplog.at_level(logging.WARNING, logger="nab_index.cached_client"):
@@ -5037,7 +5034,7 @@ class TestCorruptCachedListing:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_simple("pkg", self._TRUNCATED, self._fresh())
+        cache.put_simple("pkg", self._TRUNCATED, _fresh_policy())
         transport = _FakeTransport()
 
         with (
@@ -5053,7 +5050,7 @@ class TestCorruptCachedListing:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_simple("pkg", self._TRUNCATED, self._fresh())
+        cache.put_simple("pkg", self._TRUNCATED, _fresh_policy())
         cache.put_negative("pkg", _fresh_policy())
         transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
 
@@ -5072,7 +5069,7 @@ class TestCorruptCachedListing:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_simple("pkg", self._TRUNCATED, self._fresh())
+        cache.put_simple("pkg", self._TRUNCATED, _fresh_policy())
         cache.put_negative("pkg", _fresh_policy())
         transport = _FakeTransport()
 
@@ -5089,7 +5086,7 @@ class TestCorruptCachedListing:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_simple("pkg", self._WRONG_SHAPE, self._fresh())
+        cache.put_simple("pkg", self._WRONG_SHAPE, _fresh_policy())
         transport = _FakeTransport()
 
         with (
@@ -5252,6 +5249,19 @@ def _debug_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
 
 class TestAssumeFreshFloor:
     """A read-time floor extends freshness without shortening it or writing disk."""
+
+    @pytest.mark.parametrize("floor", [None, 600])
+    def test_clock_before_cached_404_refetches_the_listing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, floor: int | None
+    ) -> None:
+        monkeypatch.setattr(time, "time", lambda: 1000.0)
+        cache = _make_cache(tmp_path)
+        cache.put_negative("pkg", CachePolicy(fetched_at=1200, max_age=0, etag=None))
+        transport = _FakeTransport([_FakeResponse(LISTING_BYTES)])
+
+        files = _run_get_files_floor(transport, cache, "pkg", min_fresh_seconds=floor)
+
+        assert [file.filename for file in files] == ["pkg-1.0-py3-none-any.whl"]
 
     def test_stale_positive_within_floor_serves_cached_no_transport(
         self,

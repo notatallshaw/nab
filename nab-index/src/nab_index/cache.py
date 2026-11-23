@@ -245,7 +245,8 @@ class CachePolicy(HashableRecord):
     def is_fresh(self, now: int | None = None) -> bool:
         """Return True if the entry is still within its freshness window."""
         current = int(time.time()) if now is None else now
-        return current - self.fetched_at < self.max_age
+        # A clock adjustment can put a persisted fetch time in the future.
+        return 0 <= current - self.fetched_at < self.max_age
 
 
 def _entry_mode(path: Path, on_error: Callable[[OSError], None] | None) -> int | None:

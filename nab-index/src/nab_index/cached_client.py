@@ -545,7 +545,7 @@ class CachedAsyncSimpleClient(ListingReports):
         if self._min_fresh_seconds is None:
             return False
         age = int(time.time()) - policy.fetched_at
-        if age >= self._min_fresh_seconds:
+        if not 0 <= age < self._min_fresh_seconds:
             return False
         logger.debug(
             "assume-fresh-seconds=%d: %s for %r from %s kept fresh at age %ds "

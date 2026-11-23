@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import threading
+import time
 from asyncio import run as _run
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -725,7 +726,7 @@ def _warm_bound(
 ) -> tuple[list, str]:
     """Warm a package's body, policy, and a parsed blob bound to that body."""
     policy = CachePolicy(
-        fetched_at=2_000_000_000 if fresh else 0,
+        fetched_at=int(time.time()) if fresh else 0,
         max_age=99999 if fresh else 0,
         etag="e",
         page_url=_PAGE_URL,
@@ -789,7 +790,7 @@ class TestReadPathRebuild:
         digest = cache.put_simple(
             "pkg",
             _LISTING_BYTES,
-            CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None),
+            CachePolicy(fetched_at=int(time.time()), max_age=99999, etag=None),
         )
         assert cache.get_simple_parsed("pkg") is None
         transport = _FakeTransport([])
@@ -950,13 +951,13 @@ class TestReadPathRebuild:
         digest = cache.put_simple(
             "pkg",
             _LISTING_BYTES,
-            CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None),
+            CachePolicy(fetched_at=int(time.time()), max_age=99999, etag=None),
         )
         # Simulate an entry written before body_digest existed: strip the digest.
         cache.refresh_simple_policy(
             "pkg",
             CachePolicy(
-                fetched_at=2_000_000_000, max_age=99999, etag=None, body_digest=None
+                fetched_at=int(time.time()), max_age=99999, etag=None, body_digest=None
             ),
         )
         transport = _FakeTransport([])
@@ -1014,7 +1015,7 @@ class TestReadPathCorruptBody:
         cache.put_simple(
             "pkg",
             b"<html>not json",
-            CachePolicy(fetched_at=2_000_000_000, max_age=1, etag=None),
+            CachePolicy(fetched_at=int(time.time()), max_age=99999, etag=None),
         )
         transport = _FakeTransport(
             [_FakeResponse(_LISTING_BYTES, headers={"etag": "v1"})]
@@ -1306,7 +1307,7 @@ class TestParsedCacheStats:
         cache.put_simple(
             "pkg",
             _LISTING_BYTES,
-            CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None),
+            CachePolicy(fetched_at=int(time.time()), max_age=99999, etag=None),
         )
         stats = ParsedCacheStats()
         client = CachedAsyncSimpleClient(
@@ -1435,7 +1436,7 @@ class LegacyListingCache(NullCache):
     """A seeded legacy backend that learns body binding from the client."""
 
     def __init__(self) -> None:
-        self.policy = CachePolicy(2_000_000_000, 99999, None)
+        self.policy = CachePolicy(int(time.time()), 99999, None)
         self.blob: bytes | None = None
 
     def get_simple_policy(self, package: str) -> CachePolicy:
