@@ -4384,6 +4384,32 @@ class TestLockCommandUniversal:
         assert "{platform_id}" in err
         assert not (tmp_path / "constraints-3.11.txt").exists()
 
+    def test_platform_directories_leading_to_one_file_are_refused(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        project = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = []\n[tool.nab]\nmode = "universal"\n'
+            '[tool.nab.matrix]\npython = "==3.12"\n'
+            'platforms = ["linux_x86_64", "windows_amd64"]\n',
+        )
+        for directory in ("linux_x86_64", "windows_amd64"):
+            (tmp_path / directory).mkdir()
+        destination = tmp_path / "requirements.txt"
+        destination.write_text("previous pins\n", encoding="utf-8")
+        template = tmp_path / "{platform_id}" / ".." / destination.name
+
+        with pytest.raises(SystemExit, match="1"):
+            lock(
+                project,
+                offline=True,
+                format="requirements-without-hashes",
+                output=template,
+            )
+
+        assert destination.read_text(encoding="utf-8") == "previous pins\n"
+        assert "put {platform_id} in the filename" in capsys.readouterr().err
+
     def test_template_unknown_placeholder_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

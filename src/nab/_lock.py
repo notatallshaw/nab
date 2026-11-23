@@ -93,7 +93,7 @@ from nab_project.lockfile import (
     write_requirements_with_hashes,
     write_requirements_without_hashes,
 )
-from nab_project.paths import PathState, path_state
+from nab_project.paths import PathState, path_state, realpath
 from nab_project.pyproject_files import (
     build_system_requires,
     project_dependencies,
@@ -1559,8 +1559,8 @@ def _emit_requirements(
     A plain path with several targets errors clearly: there is no
     one-file shape that pip can install from across all of them.
 
-    The templated shape is all-or-nothing: every tuple is rendered and
-    staged before any file is moved into place.
+    Check that the template gives each target a distinct destination, then
+    render and stage every file before replacing the first destination.
     """
     with_hashes = format == "requirements"
     multi_target = len(lock_input.targets) > 1
@@ -1652,32 +1652,28 @@ def _refuse_collision(
     another pair sharing a path, so offering it would only move the error.
     """
     targets = [lock.target for lock in lock_input.targets.values()]
-    missing = [
-        name for name in _separating_vars(targets) if f"{{{name}}}" not in template
-    ]
+    separating = _separating_vars(targets)
+    missing = [name for name in separating if f"{{{name}}}" not in template]
 
     head = (
         f"tuples {first.target.label!r} and {second.target.label!r}"
-        f" both map to {path!r};"
+        f" both map to {path!r}"
     )
-    if not missing:
-        printer().error(
-            DiagnosticMessage(
-                f"{head} no --output template variable tells them apart",
-                suggestions=(Suggestion("emit pylock output instead"),),
-            )
+    if not separating:
+        message = f"{head}; no --output template variable tells them apart"
+        advice = "emit pylock output instead"
+    elif missing:
+        placeholders = _and_list([f"{{{name}}}" for name in missing])
+        message = (
+            f"{head}; --output {output} is missing a template variable to disambiguate"
         )
-        raise SystemExit(1)
-    placeholders = _and_list([f"{{{name}}}" for name in missing])
-    printer().error(
-        DiagnosticMessage(
-            (
-                f"{head} --output {output} is missing a template variable to "
-                "disambiguate"
-            ),
-            suggestions=(Suggestion(f"add {placeholders} to the path."),),
-        )
-    )
+        advice = f"add {placeholders} to the path."
+    else:
+        placeholders = _and_list([f"{{{name}}}" for name in separating])
+        message = head
+        advice = f"put {placeholders} in the filename."
+
+    printer().error(DiagnosticMessage(message, suggestions=(Suggestion(advice),)))
     raise SystemExit(1)
 
 
@@ -1685,21 +1681,23 @@ def _substituted_paths(
     lock_input: LockInput, output: Path, template: str
 ) -> dict[str, Path]:
     """Render the per-target output paths, refusing a template that collides."""
-    by_path: dict[str, TargetLock] = {}
+    by_path: dict[Path, TargetLock] = {}
     paths: dict[str, Path] = {}
     for label, lock in lock_input.targets.items():
-        substituted = template.format(**_template_values(lock.target))
-        if substituted in by_path:
+        path = Path(template.format(**_template_values(lock.target)))
+        # The writer replaces a directory entry, so resolve only its parent.
+        destination = realpath(path.parent) / path.name
+        if destination in by_path:
             _refuse_collision(
                 lock_input,
-                by_path[substituted],
+                by_path[destination],
                 lock,
                 output=output,
                 template=template,
-                path=substituted,
+                path=str(destination),
             )
-        by_path[substituted] = lock
-        paths[label] = Path(substituted)
+        by_path[destination] = lock
+        paths[label] = path
     return paths
 
 
