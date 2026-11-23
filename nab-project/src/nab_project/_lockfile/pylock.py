@@ -31,6 +31,7 @@ __lazy_modules__ = (
     "nab_provider._vendor.packaging.version",
     "nab_provider.conflict_kind",
     "nab_provider.marker_holds",
+    "nab_provider.tags",
     "os",
     "pathlib",
 )
@@ -39,7 +40,7 @@ import os
 import re
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
-from functools import lru_cache, reduce
+from functools import cached_property, lru_cache, reduce
 from itertools import product
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
@@ -67,6 +68,7 @@ from nab_provider._vendor.packaging.utils import canonicalize_name, is_normalize
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_provider.conflict_kind import KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 from nab_provider.marker_holds import intractable_as_error
+from nab_provider.tags import TagSet, wheel_tag_set
 from nab_provider.value import FACTORY, FactoryDefault, Record, factory_value, replace
 
 from .. import toml_writer
@@ -82,6 +84,7 @@ if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
     from typing import Protocol, TypedDict, TypeVar
 
+    from nab_provider._vendor.packaging.tags import Tag
     from nab_provider._vendor.packaging.utils import NormalizedName
     from nab_provider.target import ResolveTarget
 
@@ -806,6 +809,15 @@ def _prepare_pylock(
     return root_fields, package_records
 
 
+def _installation_context(target: ResolveTarget) -> tuple[object, ...]:
+    """Return the environment and selection a package-row marker can distinguish."""
+    return (
+        tuple(sorted(target.marker_env.items())),
+        target.micro_clauses,
+        target.selection,
+    )
+
+
 def _check_build_variants(targets: Mapping[str, TargetLock]) -> None:
     """Reject build-specific selections that PEP 508 cannot distinguish."""
     by_context: dict[tuple[object, ...], TargetLock] = {}
@@ -814,11 +826,7 @@ def _check_build_variants(targets: Mapping[str, TargetLock]) -> None:
         spec = target.platform_spec
         if spec is None:
             continue
-        key = (
-            tuple(sorted(target.marker_env.items())),
-            target.micro_clauses,
-            target.selection,
-        )
+        key = _installation_context(target)
         previous = by_context.get(key)
         if previous is not None and previous.target.platform_spec != spec:
             changed = set(previous.pins) ^ set(lock.pins)
@@ -1336,8 +1344,9 @@ def _build_packages(
         targets, env_signatures, env_fork_counts, lock_input.env_base_names
     )
 
+    wheel_targets = _WheelTargets(targets)
     pin_groups = {
-        canonical_name: _group_pins(per_target)
+        canonical_name: _group_pins(per_target, wheel_targets)
         for canonical_name, per_target in by_name.items()
     }
 
@@ -1431,35 +1440,181 @@ def _group_by_name(
     return out
 
 
+class _WheelTargets:
+    """Cache the targets accepting each wheel tag group during one lock emission."""
+
+    def __init__(self, targets: Mapping[str, TargetLock]) -> None:
+        self.targets = targets
+        self._eligible: dict[frozenset[Tag], int] = {}
+
+    @cached_property
+    def positions(self) -> dict[str, int]:
+        """Assign a target position only when wheel inventories differ."""
+        return {label: i for i, label in enumerate(self.targets)}
+
+    def eligible(self, filename: str) -> int:
+        """Return the targets where the installer's tags could accept the wheel."""
+        group = wheel_tag_set(filename) or frozenset()
+        mask = self._eligible.get(group)
+        if mask is None:
+            mask = 0
+            for i, lock in enumerate(self.targets.values()):
+                target = lock.target
+                # The installer need not use a provider's custom filename filter.
+                if (
+                    not target.tags_faithful
+                    or type(target.tags) is not TagSet
+                    or target.tags.accepts_tags(group)
+                ):
+                    mask |= 1 << i
+            self._eligible[group] = mask
+        return mask
+
+
 def _group_pins(
-    per_target: dict[str, PinShape],
+    per_target: dict[str, PinShape], wheel_targets: _WheelTargets
 ) -> list[_PinGroup]:
     """Return one pin and its sorted target labels for each lock row."""
     from ..lockfile import IndexPin
 
-    sdists: defaultdict[tuple[object, ...], set[SdistArtifact]] = defaultdict(set)
-    for pin in per_target.values():
-        if isinstance(pin, IndexPin) and pin.sdist is not None:
-            sdists[_pin_discriminator(pin)].add(pin.sdist)
-
     labels_by_key: defaultdict[tuple[object, ...], list[str]] = defaultdict(list)
-    index_pins: defaultdict[tuple[object, ...], list[IndexPin]] = defaultdict(list)
+    index_pins: defaultdict[tuple[object, ...], dict[str, IndexPin]] = defaultdict(dict)
     for label in sorted(per_target):
         pin = per_target[label]
         key = _pin_discriminator(pin)
         if isinstance(pin, IndexPin):
-            # PEP 751 allows one sdist per row. Split when archives disagree.
-            if len(sdists.get(key, ())) > 1:
-                key = (*key, pin.sdist)
-            index_pins[key].append(pin)
+            index_pins[key][label] = pin
         labels_by_key[key].append(label)
 
     groups = []
     for key, labels in labels_by_key.items():
         pins = index_pins.get(key)
-        pin = _merge_index_pins(pins) if pins is not None else per_target[labels[0]]
-        groups.append((pin, labels))
+        if pins is None:
+            groups.append((per_target[labels[0]], labels))
+        else:
+            groups.extend(_group_index_artifacts(pins, wheel_targets))
     return groups
+
+
+def _group_index_artifacts(
+    pins: Mapping[str, IndexPin], wheel_targets: _WheelTargets
+) -> list[_PinGroup]:
+    """Keep one source archive per row while preserving the target wheel sets."""
+    source = next((pin.sdist for pin in pins.values() if pin.sdist is not None), None)
+    if all(
+        pin.sdist is None or pin.sdist is source or pin.sdist == source
+        for pin in pins.values()
+    ):
+        return _group_index_wheels(pins, wheel_targets)
+
+    by_sdist: defaultdict[SdistArtifact | None, dict[str, IndexPin]] = defaultdict(dict)
+    for label, pin in pins.items():
+        by_sdist[pin.sdist][label] = pin
+    return [
+        group
+        for subset in by_sdist.values()
+        for group in _group_index_wheels(subset, wheel_targets)
+    ]
+
+
+def _group_index_wheels(
+    pins: Mapping[str, IndexPin], wheel_targets: _WheelTargets
+) -> list[_PinGroup]:
+    """Merge wheel inventories only when a shared row preserves their admission."""
+    first = next(iter(pins.values())).wheels
+    if all(pin.wheels == first for pin in pins.values()):
+        wheels = {wheel.filename: wheel for wheel in reversed(first)}
+        return [(_merge_index_pins(pins.values(), wheels.values()), list(pins))]
+
+    wheels = {}
+    offered: dict[str, int] = {}
+    target_mask = 0
+    conflicts: set[str] = set()
+    for label, pin in pins.items():
+        bit = 1 << wheel_targets.positions[label]
+        target_mask |= bit
+        for wheel in pin.wheels:
+            filename = wheel.filename
+            offered[filename] = offered.get(filename, 0) | bit
+            previous = wheels.setdefault(filename, wheel)
+            if previous is not wheel and previous != wheel:
+                conflicts.add(filename)
+
+    # A compatible wheel missing from a target must stay out of its lock row.
+    for filename, present in offered.items():
+        missing = target_mask & ~present
+        if missing and missing & wheel_targets.eligible(filename):
+            conflicts.add(filename)
+
+    if not conflicts:
+        return [(_merge_index_pins(pins.values(), wheels.values()), list(pins))]
+
+    # Keep the first location when one target lists a filename more than once.
+    inventories = {
+        label: {wheel.filename: wheel for wheel in reversed(pin.wheels)}
+        for label, pin in pins.items()
+    }
+    groups = _wheel_choice_groups(sorted(conflicts), inventories, wheel_targets)
+    result: list[_PinGroup] = []
+    for labels in groups:
+        files = {
+            name: wheel
+            for label in reversed(labels)
+            for name, wheel in inventories[label].items()
+        }
+        pin = _merge_index_pins((pins[label] for label in labels), files.values())
+        result.append((pin, labels))
+    return result
+
+
+def _wheel_choice_groups(
+    conflicts: Sequence[str],
+    inventories: Mapping[str, dict[str, WheelArtifact]],
+    wheel_targets: _WheelTargets,
+) -> list[list[str]]:
+    """Keep builds with identical installation markers together for tag selection."""
+    contexts: defaultdict[tuple[object, ...], list[str]] = defaultdict(list)
+    for label in inventories:
+        target = wheel_targets.targets[label].target
+        contexts[_installation_context(target)].append(label)
+
+    groups: list[tuple[dict[str, WheelArtifact | None], list[str]]] = []
+    for members in contexts.values():
+        choices = _context_wheels(conflicts, members, inventories, wheel_targets)
+        for existing, labels in groups:
+            if all(
+                existing.get(name, wheel) == wheel for name, wheel in choices.items()
+            ):
+                existing.update(choices)
+                labels.extend(members)
+                break
+        else:
+            groups.append((choices, members))
+    return [sorted(labels) for _, labels in groups]
+
+
+def _context_wheels(
+    conflicts: Sequence[str],
+    members: Sequence[str],
+    inventories: Mapping[str, dict[str, WheelArtifact]],
+    wheel_targets: _WheelTargets,
+) -> dict[str, WheelArtifact | None]:
+    """Record the files or exclusions needed by the builds of one marker context."""
+    choices: dict[str, WheelArtifact | None] = {}
+    for label in members:
+        bit = 1 << wheel_targets.positions[label]
+        for name in conflicts:
+            wheel = inventories[label].get(name)
+            if wheel is None and not (wheel_targets.eligible(name) & bit):
+                continue
+            previous = choices.setdefault(name, wheel)
+            if previous != wheel:
+                msg = (
+                    f"targets {', '.join(members)} have the same installation markers"
+                    f" but disagree on {name}. Lock these builds separately."
+                )
+                raise LockValidationError(msg)
+    return choices
 
 
 def _pin_discriminator(pin: PinShape) -> tuple[object, ...]:
@@ -1494,17 +1649,17 @@ def _pin_discriminator(pin: PinShape) -> tuple[object, ...]:
     raise TypeError(msg)
 
 
-def _merge_index_pins(pins: Sequence[IndexPin]) -> IndexPin:
-    """Union artifacts and keep Requires-Python only when all targets agree."""
+def _merge_index_pins(
+    pins: Iterable[IndexPin], wheels: Iterable[WheelArtifact]
+) -> IndexPin:
+    """Build the index row and keep Requires-Python only when its targets agree."""
     from ..lockfile import IndexPin
 
-    head = pins[0]
-    seen_wheels: dict[str, WheelArtifact] = {}
+    remaining = iter(pins)
+    head = next(remaining)
     sdist = head.sdist
     requires_python = head.requires_python
-    for pin in pins:
-        for wheel in pin.wheels:
-            seen_wheels.setdefault(wheel.filename, wheel)
+    for pin in remaining:
         if sdist is None:
             sdist = pin.sdist
         if pin.requires_python != requires_python:
@@ -1515,7 +1670,7 @@ def _merge_index_pins(pins: Sequence[IndexPin]) -> IndexPin:
         version=head.version,
         index=head.index,
         sdist=sdist,
-        wheels=tuple(sorted(seen_wheels.values(), key=_wheel_sort_key)),
+        wheels=tuple(sorted(wheels, key=_wheel_sort_key)),
         requires_python=requires_python,
     )
 
