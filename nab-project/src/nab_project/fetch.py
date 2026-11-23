@@ -1070,7 +1070,18 @@ class FetchCoordinator:
         )
 
     async def _async_fetcher(self) -> None:
-        """Own one fetch run's queue and clients; normal shutdown drains tasks."""
+        """Release the worker's resources when serving ends or startup fails."""
+        try:
+            await self._serve_requests()
+        finally:
+            if self._sdist_archive_hold is not None:
+                self._sdist_archive_hold.clear()
+
+            # Direct downloads can use the transport even with a local index.
+            await self._transport.aclose()
+
+    async def _serve_requests(self) -> None:
+        """Build the index client and drain requests accepted by this worker."""
         # Fresh per-run memo, owned on this single loop thread, injected into
         # every client _build_client constructs below.
         self._range_memo = RangeCapabilityMemo()
@@ -1120,14 +1131,6 @@ class FetchCoordinator:
                     self._dispatch(item, client, sem, tasks)
         finally:
             await client.aclose()
-
-            # A file:// index client owns no transport, but a direct archive
-            # fetch can still have opened one.  aclose is idempotent.
-            await self._transport.aclose()
-
-            # Nothing can take from the hold once the loop is gone.
-            if self._sdist_archive_hold is not None:
-                self._sdist_archive_hold.clear()
 
     def _dispatch(
         self,

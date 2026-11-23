@@ -830,7 +830,11 @@ class TestFetchCoordinator:
 
     def test_shutdown_completes_after_startup_crash(self) -> None:
         """shutdown() returns when the fetcher crashed at startup."""
-        coord = _coord(index_routes=[IndexRoute(name="foo", index="missing")])
+        transport = HttpxAsyncTransport(http2=False)
+        coord = FetchCoordinator(
+            transport, index_routes=[IndexRoute(name="foo", index="missing")]
+        )
+
         coord.start()
         assert coord._thread is not None
         coord._thread.join(timeout=5)
@@ -841,6 +845,7 @@ class TestFetchCoordinator:
         assert not coord._started
         assert coord._loop is None
         assert coord._async_q is None
+        assert transport._client.is_closed
 
     def test_startup_crash_surfaces_from_with_block(self) -> None:
         """The with form raises the crash error, not a teardown error."""
