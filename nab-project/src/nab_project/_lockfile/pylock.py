@@ -562,16 +562,13 @@ def render_lock(lock_input: LockInput, *, lock_dir: Path | None = None) -> str:
         document = dict(pylock.to_dict())
 
     try:
-        Pylock.from_dict(document)
+        tool = Pylock.from_dict(document).tool
     except PylockValidationError as e:
         raise LockValidationError(str(e)) from e
 
     if lock_input.validation_inputs is not None:
-        nab = (
-            lock_input.provenance.to_block()
-            if lock_input.provenance is not None
-            else {}
-        )
+        # Extend the serialized block without modifying the caller's provenance.
+        nab = dict(tool["nab"]) if tool is not None else {}
         nab["validation"] = make_validation_record(
             document, lock_input.validation_inputs
         )
