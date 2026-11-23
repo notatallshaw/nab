@@ -24,8 +24,10 @@ class TestVcsRequestParse:
         assert req.ref == ""
 
     def test_subdirectory_fragment(self) -> None:
-        req = VcsRequest.parse("git+https://github.com/x/y.git@v1#subdirectory=pkg/sub")
-        assert req.subdirectory == "pkg/sub"
+        req = VcsRequest.parse(
+            "git+https://github.com/x/y.git@v1#subdirectory=src/a%20b+c%26d%2520"
+        )
+        assert req.subdirectory == "src/a b+c&d%20"
         assert req.ref == "v1"
 
     def test_egg_fragment_ignored(self) -> None:
@@ -130,3 +132,9 @@ def test_repository_and_ref(url: str, repo: str, ref: str) -> None:
     request = VcsRequest.parse("git+" + url)
     assert request.repo_url == repo
     assert request.ref == ref
+
+
+@pytest.mark.parametrize("fragment", ["not%fftext", "nul%00byte"])
+def test_invalid_subdirectory_name(fragment: str) -> None:
+    with pytest.raises(VcsCloneError, match="subdirectory"):
+        VcsRequest.parse(f"git+https://ex.com/demo.git#subdirectory={fragment}")
