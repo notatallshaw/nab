@@ -1,17 +1,4 @@
-"""Marker-evaluation semantics the resolver depends on.
-
-The PubGrub provider conditions marker dependencies on
-``nab_provider._vendor.packaging.markers.Marker.evaluate``. The vendored
-snapshot tracks packaging PR #1182 (unreleased), so these tests pin the
-boolean results for realistic markers and the deliberate string-key
-operator semantics, so a future re-vendor cannot silently change which
-dependencies a resolve includes.
-
-Audited differentially against released packaging 24.2/25.0/26.2: every
-realistic marker evaluates identically across all three (and nab matches
-26.2 exactly); the only divergences are pathological forms no real
-package writes. See kb 2026-06-04-marker-eval-operator-audited-clean.
-"""
+"""Check dependency and lock marker comparisons with vendored packaging."""
 
 from __future__ import annotations
 
@@ -138,8 +125,8 @@ class TestCompound:
         assert _ev(text, LINUX_CP311) is expected
 
 
-class TestStringKeyOrderingSemantics:
-    """Deliberate packaging 26.x behavior for ordering on string keys.
+class TestStringKeyComparisons:
+    """String comparisons also apply when a literal looks like a version.
 
     ``<`` and ``>`` are always False and ``<=``/``>=`` reduce to equality
     for non-version markers. Older packaging compared lexicographically
@@ -156,28 +143,13 @@ class TestStringKeyOrderingSemantics:
             ('sys_platform >= "linux"', True),
             ('sys_platform <= "windows"', False),
             ('implementation_name < "darwin"', False),
+            ('sys_platform == "0"', False),
+            ('os_name >= "3.8"', False),
+            ('platform_machine != "1.0"', True),
         ],
     )
-    def test_string_ordering(self, text: str, expected: bool) -> None:
+    def test_string_comparison(self, text: str, expected: bool) -> None:
         assert _ev(text, LINUX_CP311) is expected
-
-
-class TestStringKeyVersionLikeRhsIsRobust:
-    """A version-like rhs on a string key returns a bool, never raises.
-
-    Older packaging raised InvalidVersion here; nab returns false.
-    """
-
-    @pytest.mark.parametrize(
-        "text",
-        [
-            'sys_platform == "0"',
-            'os_name >= "3.8"',
-            'platform_machine != "1.0"',
-        ],
-    )
-    def test_no_raise(self, text: str) -> None:
-        assert isinstance(_ev(text, LINUX_CP311), bool)
 
 
 class TestExtraNormalization:
