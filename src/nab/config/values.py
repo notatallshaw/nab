@@ -105,8 +105,22 @@ from ..policy_migrations import DIST_POLICY_REPLACEMENTS
 if TYPE_CHECKING:
     import enum
     from collections.abc import Iterator, Mapping, Sequence
+    from typing import TypedDict
 
     from nab_provider._vendor.packaging.requirements import Requirement
+
+    class _OverridePolicy(TypedDict, total=False):
+        """Constructor arguments shared by package and index overrides."""
+
+        dist_policy: DistPolicy
+        dist_trust_unverified_deps: bool
+        metadata_policy: MetadataPolicy
+        assume_universal_deps: bool
+        assume_consistent_metadata: bool
+        allow_zip_sdists: bool
+        build_policy: BuildPolicy
+        uploaded_prior_to: datetime
+        uploaded_prior_to_disabled: bool
 
 
 __all__ = [
@@ -1085,56 +1099,7 @@ def _build_package_overrides(
     name_keyed: bool = False,
 ) -> list[PackageOverride]:
     """Turn a validated selector and body into one override per requirement."""
-    dist_policy, dist_trust = _parse_override_dist(body.get("dist-policy"), where)
-    metadata_policy = (
-        parse_metadata_policy(body["metadata-policy"], f"{where}.metadata-policy")
-        if "metadata-policy" in body
-        else None
-    )
-    assume_universal_deps = (
-        _parse_bool(
-            f"{where}.assume-universal-deps",
-            body["assume-universal-deps"],
-            default=False,
-        )
-        if "assume-universal-deps" in body
-        else None
-    )
-    assume_consistent_metadata = (
-        _parse_bool(
-            f"{where}.assume-consistent-metadata",
-            body["assume-consistent-metadata"],
-            default=False,
-        )
-        if "assume-consistent-metadata" in body
-        else None
-    )
-    allow_zip_sdists = (
-        _parse_bool(
-            f"{where}.allow-zip-sdists", body["allow-zip-sdists"], default=False
-        )
-        if "allow-zip-sdists" in body
-        else None
-    )
-
-    build_policy = (
-        parse_enum(
-            body["build-policy"],
-            f"{where}.build-policy",
-            BuildPolicy,
-            BuildPolicy.NEVER,
-        )
-        if "build-policy" in body
-        else None
-    )
-
-    uploaded_prior_to, uploaded_disabled = _parse_override_uploaded_prior_to(
-        body.get("uploaded-prior-to"),
-        where,
-        anchor=anchor,
-        present="uploaded-prior-to" in body,
-    )
-
+    policy = _parse_override_policy(body, where, anchor=anchor)
     route = _parse_override_index(body, where)
     dependencies = _parse_override_dependencies(body.get("dependencies"), where)
     requires_python = _parse_override_requires_python(
@@ -1142,22 +1107,10 @@ def _build_package_overrides(
     )
     provides_extra = _parse_override_provides_extra(body.get("provides-extra"), where)
 
-    has_body = (
-        dist_policy is not None
-        or metadata_policy is not None
-        or dist_trust is not None
-        or assume_universal_deps is not None
-        or assume_consistent_metadata is not None
-        or allow_zip_sdists is not None
-        or build_policy is not None
-        or uploaded_prior_to is not None
-        or uploaded_disabled
-        or route is not None
-        or dependencies is not None
-        or requires_python is not None
-        or provides_extra is not None
-    )
-    if not has_body:
+    if not policy and all(
+        value is None
+        for value in (route, dependencies, requires_python, provides_extra)
+    ):
         msg = (
             f"{where} sets no policy; an entry must set at least one of"
             f" {sorted(_PACKAGE_OVERRIDE_BODY_KEYS)!r}"
@@ -1180,21 +1133,13 @@ def _build_package_overrides(
             requirement=requirement,
             name=canonicalize_name(requirement.name),
             version_range=requirement.specifier.to_range(),
-            dist_policy=dist_policy,
-            metadata_policy=metadata_policy,
-            dist_trust_unverified_deps=dist_trust,
-            assume_universal_deps=assume_universal_deps,
-            assume_consistent_metadata=assume_consistent_metadata,
-            allow_zip_sdists=allow_zip_sdists,
-            build_policy=build_policy,
-            uploaded_prior_to=uploaded_prior_to,
-            uploaded_prior_to_disabled=uploaded_disabled,
             index=route,
             dependencies=dependencies,
             requires_python=requires_python,
             provides_extra=provides_extra,
             name_keyed=name_keyed,
             source_label=where,
+            **policy,
         )
         for requirement in requirements
     ]
@@ -1332,90 +1277,70 @@ def _parse_index_override_body(
         )
         raise SourceConfigError(msg)
 
-    dist_policy, dist_trust = _parse_override_dist(body.get("dist-policy"), where)
-    metadata_policy = (
-        parse_metadata_policy(body["metadata-policy"], f"{where}.metadata-policy")
-        if "metadata-policy" in body
-        else None
-    )
-    assume_universal_deps = (
-        _parse_bool(
-            f"{where}.assume-universal-deps",
-            body["assume-universal-deps"],
-            default=False,
-        )
-        if "assume-universal-deps" in body
-        else None
-    )
-    assume_consistent_metadata = (
-        _parse_bool(
-            f"{where}.assume-consistent-metadata",
-            body["assume-consistent-metadata"],
-            default=False,
-        )
-        if "assume-consistent-metadata" in body
-        else None
-    )
-    allow_zip_sdists = (
-        _parse_bool(
-            f"{where}.allow-zip-sdists", body["allow-zip-sdists"], default=False
-        )
-        if "allow-zip-sdists" in body
-        else None
-    )
-
-    build_policy = (
-        parse_enum(
-            body["build-policy"],
-            f"{where}.build-policy",
-            BuildPolicy,
-            BuildPolicy.NEVER,
-        )
-        if "build-policy" in body
-        else None
-    )
-
-    uploaded_prior_to, uploaded_disabled = _parse_override_uploaded_prior_to(
-        body.get("uploaded-prior-to"),
-        where,
-        anchor=anchor,
-        present="uploaded-prior-to" in body,
-    )
+    policy = _parse_override_policy(body, where, anchor=anchor)
     assume_fresh_seconds = _parse_index_assume_fresh(
         body.get("assume-fresh-seconds"), where
     )
 
-    has_body = (
-        dist_policy is not None
-        or metadata_policy is not None
-        or dist_trust is not None
-        or assume_universal_deps is not None
-        or assume_consistent_metadata is not None
-        or allow_zip_sdists is not None
-        or build_policy is not None
-        or uploaded_prior_to is not None
-        or uploaded_disabled
-        or assume_fresh_seconds is not None
-    )
-    if not has_body:
+    if not policy and assume_fresh_seconds is None:
         msg = (
             f"{where} sets no policy; an entry must set at least one of"
             f" {sorted(_INDEX_OVERRIDE_KEYS)!r}"
         )
         raise SourceConfigError(msg)
 
-    return IndexOverride(
-        dist_policy=dist_policy,
-        metadata_policy=metadata_policy,
-        dist_trust_unverified_deps=dist_trust,
-        assume_universal_deps=assume_universal_deps,
-        assume_consistent_metadata=assume_consistent_metadata,
-        allow_zip_sdists=allow_zip_sdists,
-        build_policy=build_policy,
-        uploaded_prior_to=uploaded_prior_to,
-        uploaded_prior_to_disabled=uploaded_disabled,
-        assume_fresh_seconds=assume_fresh_seconds,
-    )
+    return IndexOverride(assume_fresh_seconds=assume_fresh_seconds, **policy)
+
+
+def _parse_override_policy(
+    body: Mapping[str, object], where: str, *, anchor: datetime
+) -> _OverridePolicy:
+    """Read the shared policy fields, retaining explicit false values."""
+    policy: _OverridePolicy = {}
+    dist, trust = _parse_override_dist(body.get("dist-policy"), where)
+    if dist is not None:
+        policy["dist_policy"] = dist
+    if trust is not None:
+        policy["dist_trust_unverified_deps"] = trust
+    if "metadata-policy" in body:
+        policy["metadata_policy"] = parse_metadata_policy(
+            body["metadata-policy"], f"{where}.metadata-policy"
+        )
+
+    if "assume-universal-deps" in body:
+        policy["assume_universal_deps"] = _parse_bool(
+            f"{where}.assume-universal-deps",
+            body["assume-universal-deps"],
+            default=False,
+        )
+    if "assume-consistent-metadata" in body:
+        policy["assume_consistent_metadata"] = _parse_bool(
+            f"{where}.assume-consistent-metadata",
+            body["assume-consistent-metadata"],
+            default=False,
+        )
+    if "allow-zip-sdists" in body:
+        policy["allow_zip_sdists"] = _parse_bool(
+            f"{where}.allow-zip-sdists", body["allow-zip-sdists"], default=False
+        )
+
+    if "build-policy" in body:
+        policy["build_policy"] = parse_enum(
+            body["build-policy"],
+            f"{where}.build-policy",
+            BuildPolicy,
+            BuildPolicy.NEVER,
+        )
+
+    if "uploaded-prior-to" in body:
+        cutoff = body["uploaded-prior-to"]
+        if cutoff is False:
+            policy["uploaded_prior_to_disabled"] = True
+        else:
+            policy["uploaded_prior_to"] = _parse_override_cutoff(
+                cutoff, where, anchor=anchor
+            )
+    return policy
 
 
 def _parse_match(value: object, where: str) -> tuple[Requirement, ...]:
@@ -1470,14 +1395,8 @@ def _parse_override_dist(
     return (policy, trust)
 
 
-def _parse_override_uploaded_prior_to(
-    value: object, where: str, *, anchor: datetime, present: bool
-) -> tuple[datetime | None, bool]:
-    """Parse the ``uploaded-prior-to`` body: ``false`` disables, else a cutoff."""
-    if not present:
-        return (None, False)
-    if value is False:
-        return (None, True)
+def _parse_override_cutoff(value: object, where: str, *, anchor: datetime) -> datetime:
+    """Read an enabled cutoff, naming the disable option on a boolean mistake."""
     if value is True:
         report = DiagnosticMessage(
             (f"{where}.uploaded-prior-to: ``true`` is not a valid value"),
@@ -1489,8 +1408,7 @@ def _parse_override_uploaded_prior_to(
             ),
         )
         raise SourceConfigError(report)
-    cutoff = parse_uploaded_prior_to(value, f"{where}.uploaded-prior-to", anchor=anchor)
-    return (cutoff, False)
+    return parse_uploaded_prior_to(value, f"{where}.uploaded-prior-to", anchor=anchor)
 
 
 def _parse_index_assume_fresh(value: object, where: str) -> int | None:
