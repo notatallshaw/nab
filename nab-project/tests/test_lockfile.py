@@ -17,6 +17,7 @@ from typing import Any, ClassVar
 import pytest
 
 from nab_markersets._compat import get_int_max_str_digits
+from nab_provider.environment import marker_environment
 from nab_provider.policy import MetadataPolicy
 from nab_provider.value import replace
 
@@ -1468,11 +1469,16 @@ class TestConflictForkBaseDepDivergentClosure:
             base_names=frozenset({"foo"}),
         )
         pylock = build_pylock(lock_input)
-        markers = [
-            str(p.marker) for p in pylock.packages if str(p.name) == "telemetrylib"
-        ]
-        assert len(markers) == 2
-        assert all("in extras" in marker for marker in markers)
+
+        environment = marker_environment(self._LINUX.marker_env)
+        for extras, expected in [((), []), (("cpu",), ["1.0"]), (("gpu",), ["2.0"])]:
+            selected = pylock.select(environment=environment, extras=extras)
+            versions = [
+                str(package.version)
+                for package, _ in selected
+                if package.name == "telemetrylib"
+            ]
+            assert versions == expected
 
     def test_base_edge_only_some_forks_carry_stays_member_gated(self) -> None:
         # Only the cpu fork pins cudalib, a base dep of foo. The absent edge in
