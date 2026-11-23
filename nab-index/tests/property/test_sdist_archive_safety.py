@@ -16,10 +16,11 @@ import contextlib
 import io
 import tarfile
 import tempfile
+import zipfile
 from pathlib import Path
 
 import pytest
-from hypothesis import given
+from hypothesis import example, given
 from hypothesis import strategies as st
 
 from nab_index.client import _extract_sdist_files, extract_sdist_archive
@@ -113,10 +114,14 @@ def test_extract_sdist_files_single_root_rule(
 
 
 @given(blob=st.binary(max_size=200))
+@example(blob=make_targz([("pkg-1/PKG-INFO", b"Name: pkg\n")]))
 @PROPERTY_SETTINGS
-def test_extract_sdist_files_never_raises_on_garbage(blob: bytes) -> None:
-    """Arbitrary bytes yield ``(None, None)``, never an exception."""
-    assert _extract_sdist_files(blob) == (None, None)
+def test_only_archives_can_yield_metadata(blob: bytes) -> None:
+    pkg_info, pyproject = _extract_sdist_files(blob)
+    if pkg_info is not None or pyproject is not None:
+        assert tarfile.is_tarfile(io.BytesIO(blob)) or zipfile.is_zipfile(
+            io.BytesIO(blob)
+        )
 
 
 _PKG_INFO = "Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\n"
