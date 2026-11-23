@@ -23,9 +23,9 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from nab_index.client import _extract_sdist_files, extract_sdist_archive
-from nab_index.local_index import parse_file_url
+from nab_index.file_urls import parse_file_url
 
-from .strategies import PROPERTY_SETTINGS
+from .settings import PROPERTY_SETTINGS
 
 pytestmark = pytest.mark.property
 
@@ -226,5 +226,5 @@ path_segments = st.from_regex(r"[A-Za-z0-9 _.é京-]{1,12}", fullmatch=True).fil
 @PROPERTY_SETTINGS
 def test_parse_file_url_roundtrips_as_uri(segments: list[str]) -> None:
     """``parse_file_url`` inverts ``Path.as_uri`` for odd but legal paths."""
-    path = Path("/", *segments)
+    path = Path.cwd().joinpath(*segments)
     assert parse_file_url(path.as_uri()) == path
