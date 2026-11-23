@@ -580,6 +580,29 @@ def test_satisfiable_and_reproducible_falls_through_up_to_date(
     assert out.read_bytes() == before
 
 
+@pytest.mark.parametrize("replacement", [None, b"broken = [", b"\xff"])
+def test_lock_becomes_unreadable_during_reproduction(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], replacement: bytes | None
+) -> None:
+    project = _write_pyproject(tmp_path, '[project]\ndependencies = ["foo"]\n')
+    output = tmp_path / "pylock.toml"
+    result = _result({"foo": "1.0"})
+    _write_lock(project, output, result)
+    capsys.readouterr()
+
+    def edit_committed_lock(*_args: object, **_kwargs: object) -> ResolveResult:
+        if replacement is None:
+            output.unlink()
+        else:
+            output.write_bytes(replacement)
+        return result
+
+    with patch("nab._resolve.resolve_for_targets", side_effect=edit_committed_lock):
+        _lock_cli(str(project), "--output", str(output), "--reproduce", status=1)
+
+    assert f"--reproduce: cannot read lockfile {output}" in capsys.readouterr().err
+
+
 def test_a_reordered_selection_falls_through_up_to_date(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -1391,7 +1391,12 @@ def _check_reproduction(lock_input: LockInput, *, run: _LockRun) -> None:
     """Compare a fresh resolve with the committed lock, ignoring provenance."""
     target = _check_target_path(run)
     new_text = _render_or_exit(lambda: render_lock(lock_input, lock_dir=target.parent))
-    committed = _packages_only(target.read_text(encoding="utf-8"))
+    try:
+        committed = _packages_only(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
+        printer().error(f"--reproduce: cannot read lockfile {target}: {exc}")
+        raise SystemExit(1) from None
+
     if _packages_only(new_text) == committed:
         printer().done(f"Lockfile {target} is up to date.")
         return
