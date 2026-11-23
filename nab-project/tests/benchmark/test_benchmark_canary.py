@@ -798,7 +798,11 @@ def test_canary_main_preserves_v2_lowest_identity_and_effective_settings(
     monkeypatch.setattr(module, "RESULTS_DIR", tmp_path)
     source = {"commit": "source-sha", "dirty": False, "diff_hash": None}
     monkeypatch.setattr(module, "get_git_source_state", lambda: source)
-    scenario = {"python_version": "3.11", "requirements": ["demo"]}
+    scenario = {
+        "python_version": "3.11",
+        "requirements": ["demo"],
+        "resolution": "highest",
+    }
     settings = {"resolution": "lowest", "target": "test-host"}
     run = {
         "success": True,
