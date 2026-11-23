@@ -30,7 +30,6 @@ __lazy_modules__ = (
 
 import logging
 from datetime import datetime, timezone
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 import tomli
@@ -83,6 +82,7 @@ from nab_provider.target import (
     names_a_micro,
     python_axis_environment,
 )
+from nab_provider.value import FACTORY, FactoryDefault, factory_value
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
@@ -140,7 +140,6 @@ _PROJECT_REQUIRES_PYTHON = "[project] requires-python"
 
 
 _DEFAULT_INDEXES = (IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),)
-_NO_INDEX_OVERRIDES: Mapping[str, IndexOverride] = MappingProxyType({})
 _DEFAULT_VCS = VcsConfig()
 
 
@@ -292,7 +291,7 @@ class NabProjectConfig(ValueType):
         workspace: WorkspaceConfig | None = None,
         conflicts: tuple[ConflictSet, ...] = (),
         package_overrides: tuple[PackageOverride, ...] = (),
-        index_overrides: Mapping[str, IndexOverride] = _NO_INDEX_OVERRIDES,
+        index_overrides: Mapping[str, IndexOverride] | FactoryDefault = FACTORY,
         workspace_member_names: frozenset[str] = frozenset(),
     ) -> None:
         """Record the settings, each defaulting to what a bare project gets."""
@@ -325,7 +324,7 @@ class NabProjectConfig(ValueType):
         self.workspace = workspace
         self.conflicts = conflicts
         self.package_overrides = package_overrides
-        self.index_overrides = index_overrides
+        self.index_overrides = factory_value(index_overrides, dict)
         self.workspace_member_names = workspace_member_names
 
     def replace(self, **changes: object) -> NabProjectConfig:
