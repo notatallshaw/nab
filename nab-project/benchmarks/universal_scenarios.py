@@ -52,7 +52,7 @@ from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_project.build_policy import enforce_build_policy_for_targets
 from nab_project.fetch import FetchCoordinator
 from nab_project.inputs import ResolveInputs
-from nab_project.lockfile import render_lock
+from nab_project.lockfile import build_pylock, render_lock
 from nab_project.resolve import (
     ResolveResult,
     build_lock_input,
@@ -68,11 +68,13 @@ from nab_provider.provider import ResolutionStrategy
 from nab_provider.ranges import VersionRange
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix
+from nab_provider.value import replace
 from nab_resolver.errors import ResolutionTerminatedError
 
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+    from nab_project.lockfile import LockInput
     from nab_project.resolve import TargetResult
 
 BENCHMARKS_DIR = Path(__file__).parent
@@ -134,40 +136,68 @@ def _scenario_wall_timeout() -> Generator[None, None, None]:
 
 
 def check_lock_consistency(result: ResolveResult) -> tuple[bool, list[str]]:
-    """Check that an installer can select each target's pins from the emitted lock."""
+    """Check each target's resolved pins and selected artifacts in the emitted lock."""
     lock_input = build_lock_input(result)
     try:
         pylock = Pylock.from_dict(tomllib.loads(render_lock(lock_input)))
     except Exception as exc:
         return False, [f"lock emission raised {type(exc).__name__}: {exc}"[:200]]
 
-    problems: list[str] = []
-    for tr in result.target_results:
-        expected = {canonicalize_name(n): str(v) for n, v in tr.pins.items()}
-        try:
-            selected = {
-                str(pkg.name): str(pkg.version) if pkg.version is not None else None
-                for pkg, _artifact in pylock.select(
-                    environment=dict(tr.target.marker_env), tags=tr.target.tags.ordered
-                )
-            }
-        except PylockSelectError as exc:
-            problems.append(f"{tr.target.label}: {exc}")
-            continue
-
-        if selected != expected:
-            missing = sorted(expected.keys() - selected.keys())
-            extra = sorted(selected.keys() - expected.keys())
-            mismatch = sorted(
-                k
-                for k in expected.keys() & selected.keys()
-                if expected[k] != selected[k]
-            )
-            problems.append(
-                f"{tr.target.label}: missing={missing} extra={extra} "
-                f"mismatch={mismatch}"
-            )
+    problems = [
+        f"{tr.target.label}: {problem}"
+        for tr in result.target_results
+        if (problem := _target_lock_disagreement(pylock, lock_input, tr)) is not None
+    ]
     return not problems, problems
+
+
+def _target_lock_disagreement(
+    pylock: Pylock, lock_input: LockInput, tr: TargetResult
+) -> str | None:
+    """Compare installed versions and files with this target's resolved lock."""
+    if tr.lock is None:
+        return "no target lock to compare"
+    environment = dict(tr.target.marker_env)
+    tags = tr.target.tags.ordered
+    try:
+        packages = list(pylock.select(environment=environment, tags=tags))
+    except PylockSelectError as exc:
+        return str(exc)
+
+    expected = {canonicalize_name(n): str(v) for n, v in tr.pins.items()}
+    selected = {
+        str(pkg.name): str(pkg.version) if pkg.version is not None else None
+        for pkg, _ in packages
+    }
+    if selected != expected:
+        missing = sorted(expected.keys() - selected.keys())
+        extra = sorted(selected.keys() - expected.keys())
+        mismatch = sorted(
+            k for k in expected.keys() & selected.keys() if expected[k] != selected[k]
+        )
+        return f"missing={missing} extra={extra} mismatch={mismatch}"
+
+    # A combined row can retain the right version while adding another target's wheel.
+    single = replace(lock_input, targets={tr.target.label: tr.lock}, environments=[])
+    try:
+        reference = build_pylock(single)
+        reference.validate()
+        expected_files = {
+            str(pkg.name): artifact
+            for pkg, artifact in reference.select(environment=environment, tags=tags)
+        }
+    except Exception as exc:
+        return f"single-target lock raised {type(exc).__name__}: {exc}"
+
+    selected_files = {str(pkg.name): artifact for pkg, artifact in packages}
+    changed = sorted(
+        name
+        for name in selected_files.keys() | expected_files.keys()
+        if selected_files.get(name) != expected_files.get(name)
+    )
+    if changed:
+        return f"installer artifact differs for {', '.join(changed)}"
+    return None
 
 
 def _validate_scenario_names(names: list[str]) -> None:
