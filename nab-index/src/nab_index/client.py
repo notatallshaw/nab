@@ -744,23 +744,16 @@ def _parse_file_entry(
         else None
     )
 
-    # ``requires-python`` has only a few dozen distinct values across
-    # all of PyPI (``>=3.7``, ``>=3.8`` etc.) but appears once per
-    # wheel.  Interning collapses the duplicates into one shared
-    # string per distinct specifier.
-    requires_python_raw = file_info.get("requires-python")
-    # PEP 691 mandates a string; a non-conformant index serving a number
-    # would otherwise crash SpecifierSet downstream. Treat it as absent.
+    # Ignore non-string fields before they reach the specifier or date parser.
+    # Intern Python specifiers because the same few strings recur on many files.
+    raw_requires_python = file_info.get("requires-python")
     requires_python = (
-        sys.intern(requires_python_raw)
-        if isinstance(requires_python_raw, str)
+        sys.intern(raw_requires_python)
+        if isinstance(raw_requires_python, str)
         else None
     )
-    # A non-conformant index may serve a non-string ``upload-time``
-    # (a JSON number or bool); drop it so the downstream datetime
-    # parse never crashes.
-    upload_time_raw = file_info.get("upload-time")
-    upload_time = upload_time_raw if isinstance(upload_time_raw, str) else None
+    raw_upload_time = file_info.get("upload-time")
+    upload_time = raw_upload_time if isinstance(raw_upload_time, str) else None
 
     raw_hashes = file_info.get("hashes")
 
@@ -769,6 +762,7 @@ def _parse_file_entry(
         parsed_name, version = wheel_parsed
         if parsed_name != expected:
             return None
+
         # PEP 714: ``core-metadata`` wins when present, so ``false`` there
         # means no sidecar even if a stale legacy entry lingers.  Its value is
         # ``true`` or the digest table, and both promise ``<file>.metadata``.
@@ -777,6 +771,7 @@ def _parse_file_entry(
             if "core-metadata" in file_info
             else file_info.get(_LEGACY_METADATA_KEY)
         )
+
         # Leave deferred integrity slots unwritten instead of clearing defaults.
         return rehydrated_wheel(
             filename=filename,
@@ -796,6 +791,7 @@ def _parse_file_entry(
     parsed_name, version = sdist_parsed
     if parsed_name != expected:
         return None
+
     sdist = SdistFile(
         filename=filename,
         url=file_url,

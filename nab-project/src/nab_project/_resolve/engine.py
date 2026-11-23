@@ -1199,6 +1199,7 @@ def _resolve_one_target(
         root_extras,
         preferences,
     )
+
     # A refused trial must not leave provider state in the fallback solver.
     attempt = _TargetAttempt(provider_factory, settings.progress)
     provider, resolver = attempt.provider, attempt.resolver
@@ -1222,11 +1223,11 @@ def _resolve_one_target(
         )
         provider, resolver = attempt.provider, attempt.resolver
         prior_stats = attempt.prior_stats
-        raw = attempt.pins
+        resolved_versions = attempt.pins
 
         try:
-            if raw is None:
-                raw = resolver.resolve(
+            if resolved_versions is None:
+                resolved_versions = resolver.resolve(
                     root_requirements, constraints=resolver_constraints
                 )
         except (YankAdmissionRequiredError, ResolutionError, MissingExtraError) as exc:
@@ -1241,7 +1242,7 @@ def _resolve_one_target(
                 and not provider.has_withdrawn_alternative()
             ):
                 raise
-            raw, provider = _resolve_yanked_target(
+            resolved_versions, provider = _resolve_yanked_target(
                 provider,
                 provider_factory,
                 root_requirements,
@@ -1253,7 +1254,12 @@ def _resolve_one_target(
             )
             artifacts = ArtifactMemo()
 
-        pins = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
+        # Extra proxies influence resolution but do not become lockfile pins.
+        pins = {
+            package: version
+            for package, version in resolved_versions.items()
+            if split_extra(package)[1] is None
+        }
         _raise_for_source_python(provider, target, pins)
     except ResolutionError as exc:
         _augment_resolution_error(exc, provider)
@@ -1278,14 +1284,15 @@ def _resolve_one_target(
         target,
         pins,
         indexes=settings.coordinator.indexes,
-        resolved_keys=raw,
+        resolved_keys=resolved_versions,
         base_roots=base_roots,
         selector_roots=selector_roots,
         artifacts=artifacts,
     )
+
     if settings.include_dependency_requirements:
         declarations = collect_dependency_requirements(
-            provider, pins, raw, target_lock.dependencies
+            provider, pins, resolved_versions, target_lock.dependencies
         )
         target_lock = replace(
             target_lock,
@@ -1295,7 +1302,7 @@ def _resolve_one_target(
     if provider.yank_admissions:
         _warn_selected_yanks(provider, target_lock)
 
-    settings.preferred_names.update(raw)
+    settings.preferred_names.update(resolved_versions)
     stats = _target_stats(resolver, provider, prior_stats)
     _logger.info(
         "resolved %d packages for %s in %.2fs (%d distributions seen, %d fetched)",
