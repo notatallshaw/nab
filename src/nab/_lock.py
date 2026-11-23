@@ -57,7 +57,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
 
 import tomli
 
-from nab_index.atomic import create_staging_file
+from nab_index.atomic import create_staging_file, default_file_mode
 from nab_project import toml_io
 from nab_project.input_source import (
     InputChangedError,
@@ -1768,9 +1768,7 @@ def _destination_mode(output: Path) -> int:
     try:
         return stat.S_IMODE(output.stat().st_mode)
     except FileNotFoundError:
-        umask = os.umask(0)
-        os.umask(umask)
-        return 0o666 & ~umask
+        return default_file_mode()
 
 
 def _discard(staged: Path) -> None:
