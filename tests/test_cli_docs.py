@@ -12,6 +12,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import pytest
+import tomli
 
 from nab._cli import spec as cli_spec
 from nab._cli.definition.options import ALL
@@ -19,7 +20,9 @@ from nab._cli.parse import parse
 from nab._lock import lock
 from nab._resolve import _make_transport
 from nab.cli import run
+from nab.config.model import NabProjectConfig, read_pyproject_config
 from nab.output import ColorChoice, Printer, ProgressReporter, Verbosity
+from nab_project.conflicts import ConflictPolicy, ConflictSet
 from nab_project.lockfile import (
     ArchivePin,
     IndexPin,
@@ -32,8 +35,11 @@ from nab_project.lockfile import (
     write_requirements_with_hashes,
     write_requirements_without_hashes,
 )
+from nab_provider.serialization import SimpleSerialization
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
+from nab_provider.value import field_names, replace
+from nab_provider.vcs_admission import VcsConfig, VcsPolicy, admit_vcs_url
 
 from ._markdown import fenced_blocks
 
@@ -161,6 +167,84 @@ def _painted_progress_lines(fetched: int, pinned: int) -> set[str]:
 
     msg = f"the spinner does not cycle within {_MAX_SPINNER_FRAMES} repaints"
     raise AssertionError(msg)
+
+
+def _toml_examples(page: Path, prefix: str = "") -> list[str]:
+    """Read matching TOML fences in page order."""
+    examples = [
+        block
+        for language, block in fenced_blocks(_page(page))
+        if language == "toml" and block.lstrip().startswith(prefix)
+    ]
+    assert examples, page
+    return examples
+
+
+def _read_config_example(directory: Path, text: str) -> NabProjectConfig:
+    path = _write(directory / "pyproject.toml", text)
+    return read_pyproject_config(path, discover_workspace=False)
+
+
+class TestConfigExamples:
+    """Read the documented examples as project configuration."""
+
+    def _conflicts(self, tmp_path: Path) -> list[tuple[ConflictSet, ...]]:
+        return [
+            _read_config_example(tmp_path / str(index), block).conflicts
+            for index, block in enumerate(_toml_examples(_CONFLICTS_DOC, "[tool.nab]"))
+        ]
+
+    def test_every_example_declares_a_conflict(self, tmp_path: Path) -> None:
+        for conflicts in self._conflicts(tmp_path):
+            assert conflicts
+
+    def test_examples_show_every_policy(self, tmp_path: Path) -> None:
+        policies = {
+            conflict.policy
+            for conflicts in self._conflicts(tmp_path)
+            for conflict in conflicts
+        }
+        assert policies == set(ConflictPolicy)
+
+    def _resolution(self, tmp_path: Path) -> tuple[str, NabProjectConfig]:
+        page = _DOCS / "reference" / "resolution-settings.md"
+        example = _toml_examples(page, "[tool.nab]")[0]
+        # Read the example for a Python version admitted by its requires-python.
+        config = _read_config_example(
+            tmp_path, example + '\n[tool.nab.environment]\npython = "3.13"\n'
+        )
+        return example, config
+
+    def test_top_level_doc_example_is_a_valid_specifier(self, tmp_path: Path) -> None:
+        example, config = self._resolution(tmp_path)
+        assert (
+            config.requires_python
+            == tomli.loads(example)["tool"]["nab"]["requires-python"]
+        )
+
+    def test_top_level_doc_example_carries_an_offset(self, tmp_path: Path) -> None:
+        _, config = self._resolution(tmp_path)
+        assert config.uploaded_prior_to is not None
+        assert config.uploaded_prior_to.utcoffset() is not None
+
+    def test_reference_example_parses(self, tmp_path: Path) -> None:
+        example = _toml_examples(_DOCS / "reference" / "indexes.md")[0]
+        config = _read_config_example(tmp_path, example)
+        policies = {index.name: index.serialization for index in config.indexes}
+        assert policies["pypi"] is SimpleSerialization.NEGOTIATE
+        assert policies["internal"] is SimpleSerialization.HTML
+
+    def test_example_shows_every_key(self) -> None:
+        example = _toml_examples(_DOCS / "reference" / "dependency-sources.md")[0]
+        keys = set(tomli.loads(example)["tool"]["nab"]["vcs"])
+        assert keys == {name.replace("_", "-") for name in field_names(VcsConfig)}
+
+    def test_allowlists_admit_the_repo_they_name(self, tmp_path: Path) -> None:
+        example = _toml_examples(_DOCS / "reference" / "dependency-sources.md")[0]
+        config = _read_config_example(tmp_path, example)
+        opened = replace(config.vcs, policy=VcsPolicy.ALLOW)
+        pinned = f"git+https://github.com/me/x@{'a' * 40}"
+        assert admit_vcs_url(pinned, opened) == "git+https"
 
 
 class TestOptionDocumentationLinks:

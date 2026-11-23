@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
-import tomli
 
 from nab.config.ladder import (
     OPTIONS,
@@ -88,8 +87,6 @@ from nab_provider.target import (
     host_environment,
 )
 from nab_provider.testing import pkg_override
-from nab_provider.value import field_names, replace
-from nab_provider.vcs_admission import admit_vcs_url
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
@@ -141,46 +138,6 @@ def write(tmp_path: Path, body: str) -> Path:
     # must not pick up the platform default (cp1252 on Windows).
     p.write_text(body, encoding="utf-8")
     return p
-
-
-DOCS_REFERENCE = Path(__file__).resolve().parents[1] / "docs" / "reference"
-
-DOCS_CONFLICTS = (
-    Path(__file__).resolve().parents[1] / "docs" / "explanation" / "conflicts.md"
-)
-
-
-def conflicts_doc_examples() -> list[str]:
-    """Return every ``[tool.nab]`` fenced TOML block in the conflicts page."""
-    text = DOCS_CONFLICTS.read_text(encoding="utf-8")
-    blocks = [
-        block
-        for block in re.findall(r"```toml\n(.*?)```", text, re.DOTALL)
-        if block.lstrip().startswith("[tool.nab]")
-    ]
-
-    if not blocks:
-        raise AssertionError("no [tool.nab] example block in conflicts.md")
-    return blocks
-
-
-def first_tool_nab_example() -> str:
-    """Return the first ``[tool.nab]`` fenced TOML block in the config reference."""
-    text = (DOCS_REFERENCE / "resolution-settings.md").read_text(encoding="utf-8")
-    for block in re.findall(r"```toml\n(.*?)```", text, re.DOTALL):
-        if block.lstrip().startswith("[tool.nab]"):
-            return block
-    raise AssertionError("no [tool.nab] example block in resolution-settings.md")
-
-
-def section_doc_example(page: str) -> str:
-    """Return the first runnable TOML example on a reference page."""
-    text = (DOCS_REFERENCE / page).read_text(encoding="utf-8")
-    blocks = re.findall(r"```toml\n(.*?)```", text, re.DOTALL)
-    if not blocks:
-        msg = f"no TOML example in {page}"
-        raise AssertionError(msg)
-    return blocks[0]
 
 
 class TestCliOverridesFold:
@@ -1032,34 +989,6 @@ class TestConflicts:
         assert config.default_groups == ("a", "b")
 
 
-class TestConflictsDocExamples:
-    """The conflicts page teaches the syntax, so nab must accept its examples."""
-
-    def _parse_examples(
-        self, tmp_path: Path
-    ) -> list[tuple[str, tuple[ConflictSet, ...]]]:
-        parsed: list[tuple[str, tuple[ConflictSet, ...]]] = []
-        for i, block in enumerate(conflicts_doc_examples()):
-            project = tmp_path / f"example{i}"
-            project.mkdir()
-            path = write(project, block)
-            config = read_pyproject_config(path, discover_workspace=False)
-            parsed.append((block, config.conflicts))
-        return parsed
-
-    def test_every_example_declares_a_conflict(self, tmp_path: Path) -> None:
-        for block, conflicts in self._parse_examples(tmp_path):
-            assert conflicts, block
-
-    def test_examples_show_every_policy(self, tmp_path: Path) -> None:
-        policies = {
-            conflict_set.policy
-            for _, conflicts in self._parse_examples(tmp_path)
-            for conflict_set in conflicts
-        }
-        assert policies == set(ConflictPolicy)
-
-
 def _extras_set(policy: ConflictPolicy, *names: str) -> ConflictSet:
     """Build an extras-only ConflictSet for tests."""
     return ConflictSet(
@@ -1777,22 +1706,6 @@ class TestRequiresPython:
         with pytest.raises(ConfigError, match="requires-python must be a string"):
             read_pyproject_config(path)
 
-    def test_top_level_doc_example_is_a_valid_specifier(self, tmp_path: Path) -> None:
-        """The config reference's top-level example must parse as a valid specifier."""
-        block = first_tool_nab_example()
-        match = re.search(r'^requires-python = "([^"]*)"', block, re.MULTILINE)
-        assert match is not None, "top-level example dropped requires-python"
-        value = match.group(1)
-
-        # The declaration is checked against the resolve target, so pin one
-        # the example admits rather than the Python the tests happen to run.
-        path = write(
-            tmp_path,
-            f'[tool.nab]\nrequires-python = "{value}"\n'
-            '[tool.nab.environment]\npython = "3.13"\n',
-        )
-        assert read_pyproject_config(path).requires_python == value
-
 
 class TestUploadedPriorTo:
     def test_iso_string_with_z(self, tmp_path: Path) -> None:
@@ -1924,17 +1837,6 @@ class TestUploadedPriorTo:
             ),
         ):
             read_pyproject_config(path)
-
-    def test_top_level_doc_example_carries_an_offset(self, tmp_path: Path) -> None:
-        """The reference's own example has to be a value the parser accepts."""
-        block = first_tool_nab_example()
-        match = re.search(r"^uploaded-prior-to = (.*)$", block, re.MULTILINE)
-        assert match is not None, "top-level example dropped uploaded-prior-to"
-
-        path = write(tmp_path, f"[tool.nab]\nuploaded-prior-to = {match.group(1)}\n")
-        dt = read_pyproject_config(path).uploaded_prior_to
-        assert dt is not None
-        assert dt.utcoffset() is not None
 
 
 class TestPolicies:
@@ -3388,13 +3290,6 @@ class TestIndexSerialization:
         assert hash(positional) == hash(keyword)
         assert positional.serialization is SimpleSerialization.NEGOTIATE
 
-    def test_reference_example_parses(self, tmp_path: Path) -> None:
-        path = write(tmp_path, section_doc_example("indexes.md"))
-        pins = {i.name: i.serialization for i in read_pyproject_config(path).indexes}
-
-        assert pins["pypi"] is SimpleSerialization.NEGOTIATE
-        assert pins["internal"] is SimpleSerialization.HTML
-
 
 class TestVcs:
     def test_full_round_trip(self, tmp_path: Path) -> None:
@@ -3467,25 +3362,6 @@ class TestVcs:
         )
         vcs = read_pyproject_config(path).vcs
         assert vcs.allowed_repos == ("https://[2001:db8::1]:7999/org/repo",)
-
-
-class TestVcsDocExample:
-    """The config reference's ``[tool.nab.vcs]`` example is a working allowlist."""
-
-    def test_example_shows_every_key(self) -> None:
-        """The example names each key ``[tool.nab.vcs]`` accepts."""
-        example = tomli.loads(section_doc_example("dependency-sources.md"))
-        shown = set(example["tool"]["nab"]["vcs"])
-
-        assert shown == {name.replace("_", "-") for name in field_names(VcsConfig)}
-
-    def test_allowlists_admit_the_repo_they_name(self, tmp_path: Path) -> None:
-        """Opened to ``allow``, the example admits a pinned URL to its own repo."""
-        path = write(tmp_path, section_doc_example("dependency-sources.md"))
-        opened = replace(read_pyproject_config(path).vcs, policy=VcsPolicy.ALLOW)
-        pinned = f"git+https://github.com/me/x@{'a' * 40}"
-
-        assert admit_vcs_url(pinned, opened) == "git+https"
 
 
 class TestLocalSources:
