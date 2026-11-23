@@ -39,6 +39,7 @@ __lazy_modules__ = (
 import asyncio
 import logging
 import threading
+from functools import partial
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
@@ -61,6 +62,7 @@ from nab_index.transport import (
     raise_unless_ok,
 )
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider.errors import IndexAccessError
 from nab_provider.fetch_port import PrefetchSettings
 from nab_provider.metadata import static_project_from_table
 from nab_provider.policy import BuildPolicy
@@ -1159,7 +1161,22 @@ class FetchCoordinator:
         for request in batch:
             task = asyncio.create_task(self._handle(client, request, sem))
             tasks.add(task)
-            task.add_done_callback(tasks.discard)
+            task.add_done_callback(partial(self._finish_fetch, tasks, client, request))
+
+    def _finish_fetch(
+        self,
+        tasks: set[asyncio.Task[None]],
+        client: CachedAsyncSimpleClient | LocalIndexClient | MultiIndexClient,
+        request: fetch_requests.FetchRequest,
+        task: asyncio.Task[None],
+    ) -> None:
+        """Publish cancellation even if the task never entered its request handler."""
+        tasks.discard(task)
+        if task.cancelled():
+            error = IndexAccessError(
+                f"{request.operation} fetch for {request.package} was cancelled"
+            )
+            self._record_fetch_failure(client, request, error)
 
     async def _handle(
         self,

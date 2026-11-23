@@ -52,6 +52,7 @@ from nab_project.fetch import (
 )
 from nab_project.inputs import ResolveInputs
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.errors import IndexAccessError
 from nab_provider.metadata import WheelMetadata
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import (
@@ -1776,6 +1777,27 @@ class TestFetchCoordinator:
             pass
 
         assert transport.closes == 1
+
+    @respx.mock
+    def test_cancelled_metadata_wakes_its_waiter_and_finishes_the_batch(self) -> None:
+        cancelled = "https://files.example.com/a.whl.metadata"
+        available = "https://files.example.com/b.whl.metadata"
+
+        async def cancel(_request: httpx.Request) -> NoReturn:
+            raise asyncio.CancelledError
+
+        respx.get(cancelled).mock(side_effect=cancel)
+        respx.get(available).mock(return_value=httpx.Response(200, text="metadata"))
+        with _coord() as coord:
+            first, second = coord.request_metadata_batch(
+                [("a", "1", cancelled, None), ("b", "1", available, None)]
+            )
+            assert first[2].wait(5)
+            assert second[2].wait(5)
+            assert isinstance(
+                coord.index.get_metadata_error("a", "1", cancelled), IndexAccessError
+            )
+            assert coord.index.get_metadata("b", "1", available) == "metadata"
 
     @respx.mock
     def test_request_metadata_batch_deduplicates(self) -> None:
