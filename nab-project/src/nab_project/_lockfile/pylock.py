@@ -43,7 +43,7 @@ from datetime import datetime, timezone
 from functools import cached_property, lru_cache, reduce
 from itertools import product
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from nab_index.atomic import atomic_write_text
 from nab_markersets.conversions import PreparedMarkerSets
@@ -69,7 +69,7 @@ from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_provider.conflict_kind import KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 from nab_provider.marker_holds import intractable_as_error
 from nab_provider.tags import TagSet, wheel_tag_set
-from nab_provider.value import FACTORY, FactoryDefault, Record, factory_value, replace
+from nab_provider.value import Record, replace
 
 from .. import toml_writer
 from ..conflicts import conflict_exclusion_groups, conflict_member_groups
@@ -246,7 +246,7 @@ class _ForkAxes(Record):
     when the factoring has no table to read (:func:`_emission_scope`).
     """
 
-    __slots__ = __match_args__ = (
+    __match_args__ = (
         "exclusion_groups",
         "forks",
         "targets",
@@ -254,28 +254,9 @@ class _ForkAxes(Record):
         "markers",
         "gates",
         "env_rows",
-        "environment_markers",
+        "target_environments",
     )
-
-    __record_compare_fields__: ClassVar[tuple[str, ...] | None] = (
-        "exclusion_groups",
-        "forks",
-        "targets",
-        "env_signatures",
-        "markers",
-        "gates",
-        "env_rows",
-    )
-
-    __record_repr_fields__: ClassVar[tuple[str, ...] | None] = (
-        "exclusion_groups",
-        "forks",
-        "targets",
-        "env_signatures",
-        "markers",
-        "gates",
-        "env_rows",
-    )
+    __slots__ = (*__match_args__, "environment_markers")
 
     exclusion_groups: tuple[AbstractSet[tuple[str, str]], ...]
     forks: Mapping[_ForkKey, str]
@@ -285,6 +266,7 @@ class _ForkAxes(Record):
     gates: Mapping[tuple[str, str], _Members]
     env_rows: tuple[Mapping[str, str], ...] | None
     environment_markers: dict[tuple[str, ...], Marker]
+    target_environments: Mapping[str, str] | None
 
     def __init__(
         self,
@@ -295,7 +277,7 @@ class _ForkAxes(Record):
         markers: Mapping[str, str],
         gates: Mapping[tuple[str, str], _Members],
         env_rows: tuple[Mapping[str, str], ...] | None,
-        environment_markers: dict[tuple[str, ...], Marker] | FactoryDefault = FACTORY,
+        target_environments: Mapping[str, str] | None = None,
     ) -> None:
         self.exclusion_groups = exclusion_groups
         self.forks = forks
@@ -304,7 +286,8 @@ class _ForkAxes(Record):
         self.markers = markers
         self.gates = gates
         self.env_rows = env_rows
-        self.environment_markers = factory_value(environment_markers, dict)
+        self.target_environments = target_environments
+        self.environment_markers = {}
 
     def environment_marker(self, labels: Sequence[str]) -> Marker:
         """Reuse a validated environment marker within this emission."""
@@ -312,9 +295,13 @@ class _ForkAxes(Record):
         try:
             return self.environment_markers[key]
         except KeyError:
-            texts = [
-                self.targets[label].target.environment_marker_string for label in labels
-            ]
+            if self.target_environments is None:
+                texts = [
+                    self.targets[label].target.environment_marker_string
+                    for label in labels
+                ]
+            else:
+                texts = [self.target_environments[label] for label in labels]
             marker = _env_disjunction(texts, self.env_rows)
             self.environment_markers[key] = marker
             return marker
@@ -1368,6 +1355,7 @@ def _build_packages(
             for name, gate in lock.package_gates.items()
         },
         env_rows=env_rows,
+        target_environments=lock_input.target_environments,
     )
 
     projections = _fork_projections(axes, pin_groups, env_fork_counts, base_names)

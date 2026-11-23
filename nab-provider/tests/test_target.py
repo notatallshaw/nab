@@ -254,7 +254,7 @@ class TestForHostPython:
         target = ResolveTarget.for_host_python(
             "3.10.5", env_source=_host_env, tags_source=_host_tags
         )
-        assert target.label == "py310-host"
+        assert target.label == "py310-patch3.10.5-host"
 
     def test_tags_keep_the_host_platforms(self) -> None:
         """The host's platform tags carry over, in the host's own order."""
@@ -531,6 +531,17 @@ class TestLabels:
         )
         assert target.label == "py311-linux_x86_64"
 
+    def test_distinct_patch_versions_do_not_share_target_keys(self) -> None:
+        spec = PlatformSpec("linux_x86_64")
+        patches = (None, "3.13.0", "3.13.4", "3.13.4+a.b", "3.13.4+ab")
+        targets = {
+            ResolveTarget.for_declared(
+                python_version="3.13", spec=spec, python_full_version=patch
+            )
+            for patch in patches
+        }
+        assert len(targets) == len(patches)
+
     def test_pypy_label_uses_pp_prefix(self) -> None:
         target = ResolveTarget.for_declared(
             python_version="3.11",
@@ -657,6 +668,18 @@ class TestMarkerStrings:
         # sorted by (kind, name): ("extra", "cpu") < ("group", "isort5")
         assert target.marker_string.endswith(
             'and "cpu" in extras and "isort5" in dependency_groups'
+        )
+
+    def test_explicit_patch_marker_excludes_other_patches(self) -> None:
+        target = ResolveTarget.for_declared(
+            python_version="3.13",
+            python_full_version="3.13.4",
+            spec=PlatformSpec("linux_x86_64"),
+        )
+        marker = Marker(target.environment_marker_string)
+        assert marker.evaluate(target.marker_env)
+        assert not marker.evaluate(
+            {**target.marker_env, "python_full_version": "3.13.3"}
         )
 
     def test_environment_marker_string_omits_selection(self) -> None:
@@ -1134,11 +1157,7 @@ class TestEnvironmentDeclaration:
 
 
 class TestVersionEmission:
-    """``python_full_version`` is never declared by value.  A minor target is a
-    micro interval and a consulted marker splits it at its boundary, so each
-    slice carries its own ``python_full_version`` bounds; a whole target and an
-    unsplit minor emit no ``python_full_version`` clause at all.
-    """
+    """Compare the declared ranges of hosts, exact patches and minor intervals."""
 
     def _minor(self) -> ResolveTarget:
         return ResolveTarget.for_declared(

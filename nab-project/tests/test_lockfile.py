@@ -7243,7 +7243,6 @@ class TestConflictSetCrossGating:
                     for (name, label), condition in axes.gates.items()
                 },
             },
-            environment_markers={},
         )
         memo = memo_type(expanded, 4_096)
         varying, fixed = axes.exclusion_groups

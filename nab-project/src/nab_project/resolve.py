@@ -496,10 +496,12 @@ def build_lock_input(
         declaring.append(tr.target)
         consulted[env_signature(tr.target)] |= tr.consulted
 
+    declarations = _declared_environments(declaring, consulted)
     return LockInput(
         targets=targets,
         env_base_names=dict(result.env_base_names),
-        environments=_declared_environments(declaring, consulted),
+        target_environments=declarations,
+        environments=[Marker(text) for text in dict.fromkeys(declarations.values())],
         requires_python=inputs.requires_python,
         created_by=created_by,
         extras=tuple(extras),
@@ -514,8 +516,8 @@ def build_lock_input(
 def _declared_environments(
     declaring: Sequence[ResolveTarget],
     consulted: Mapping[EnvSignature, set[Marker]],
-) -> list[Marker]:
-    """Build the lock's PEP 751 ``environments``, one per environment.
+) -> dict[str, str]:
+    """Collect the PEP 751 environment declaration for each target label.
 
     Every dependency whose marker was False on a target was dropped there,
     so an installer answering one of those markers differently needs a
@@ -556,12 +558,10 @@ def _declared_environments(
             )
             break
 
-    # An exact target and a patch interval can have the same marker values.
-    declarations = dict.fromkeys(
-        environment_declaration(target, consulted[env_signature(target)])
+    return {
+        target.label: environment_declaration(target, consulted[env_signature(target)])
         for target in declaring
-    )
-    return [Marker(text) for text in declarations]
+    }
 
 
 class _ProjectTables(Record):

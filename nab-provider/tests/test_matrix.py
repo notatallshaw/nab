@@ -928,8 +928,8 @@ class TestMatrixIncludes:
             "py312-linux_x86_64",
             "py313-linux_x86_64",
             "py314-linux_x86_64",
-            "py315-linux_x86_64",
-            "py315-linux_x86_64-ft",
+            "py315-patch3.15.1-linux_x86_64",
+            "py315-patch3.15.1-linux_x86_64-ft",
         ]
         if python_order == "desc":
             expected = [
@@ -943,10 +943,14 @@ class TestMatrixIncludes:
         assert [target.label for target in targets] == expected
 
         ordinary = next(
-            target for target in targets if target.label == "py315-linux_x86_64"
+            target
+            for target in targets
+            if target.label == "py315-patch3.15.1-linux_x86_64"
         )
         threaded = next(
-            target for target in targets if target.label == "py315-linux_x86_64-ft"
+            target
+            for target in targets
+            if target.label == "py315-patch3.15.1-linux_x86_64-ft"
         )
         assert ordinary.marker_env == threaded.marker_env
         assert ordinary.python_full_version == threaded.python_full_version == "3.15.1"

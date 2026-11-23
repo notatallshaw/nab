@@ -124,6 +124,8 @@ python-order = "desc"
 python-patches = { "3.11" = "3.11.4" }
 ```
 
+A target pinned to Python 3.11.4 on Linux x86-64 has the label `py311-patch3.11.4-linux_x86_64`.
+
 Successful pins become preferences for later targets. Order and patch pins apply to all entries.
 Within a minor, base targets precede includes in declaration order. Groups retain platform and
 implementation order; overrides retain shared platform-ID order before adding new IDs. Without a

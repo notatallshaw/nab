@@ -709,7 +709,8 @@ class LockInput(Record):
 
     ``environments`` is the lockfile-level set of permitted
     environments (PEP 751 ``environments``): what each target declared
-    of the environment it resolved for.
+    of the environment it resolved for. ``target_environments`` records the
+    declaration used for each label when emitting per-package markers.
 
     ``validation_inputs`` carries normalized declarations for producer-side checks.
 
@@ -732,9 +733,11 @@ class LockInput(Record):
         "base_group",
         "build_group",
         "validation_inputs",
+        "target_environments",
     )
 
     targets: Mapping[str, TargetLock]
+    target_environments: Mapping[str, str] | None = None
     env_base_names: Mapping[tuple[tuple[str, str], ...], frozenset[str]]
     environments: list[Marker]
     requires_python: str | None
@@ -773,6 +776,7 @@ class LockInput(Record):
         base_group: str | None = None,
         build_group: str | None = None,
         validation_inputs: Mapping[str, Any] | None = None,
+        target_environments: Mapping[str, str] | None = None,
     ) -> None:
         """Collect the resolved targets and lockfile metadata."""
         self.targets = factory_value(targets, dict)
@@ -788,6 +792,7 @@ class LockInput(Record):
         self.base_group = base_group
         self.build_group = build_group
         self.validation_inputs = validation_inputs
+        self.target_environments = target_environments
 
     @property
     def active_groups(self) -> tuple[str, ...]:

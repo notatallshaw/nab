@@ -34,6 +34,7 @@ __lazy_modules__ = (
 from bisect import bisect_right
 from functools import lru_cache
 from typing import TYPE_CHECKING, ClassVar, Final, NamedTuple
+from urllib.parse import quote
 
 from nab_markersets.markersets import variable_names
 from nab_markersets.python_versions import validate_python_version
@@ -1168,11 +1169,9 @@ class ResolveTarget(HashableRecord):
 
         Combines ``python_version``, ``sys_platform`` and
         ``platform_machine``, plus ``implementation_name`` when
-        :attr:`declares_implementation`, then every clause in
-        :attr:`micro_clauses`, which bound a slice of a split minor.  It
-        carries no conflict-fork ``selection``, so it selects this
-        target's platform/Python point, not which extras or groups are
-        active.
+        :attr:`declares_implementation`. An exact target adds its Python patch,
+        and a split minor adds its :attr:`micro_clauses`. Fork selections
+        add their extra and group clauses in :attr:`marker_string`.
         """
         env = self.marker_env
         marker = (
@@ -1182,7 +1181,12 @@ class ResolveTarget(HashableRecord):
         )
         if self.declares_implementation:
             marker += f' and implementation_name == "{self.implementation}"'
-        for clause in self.micro_clauses:
+        bounds = (
+            _patch_bounds(self, exclude_local_builds=False)
+            if self.concrete_micro
+            else self.micro_clauses
+        )
+        for clause in bounds:
             marker += f" and {clause}"
         return marker
 
@@ -1326,13 +1330,18 @@ class ResolveTarget(HashableRecord):
         """
         env = host_environment(env_source)
         apply_python_axis_overlay(env, python_axis_environment(python))
+        concrete = names_a_micro(Version(python))
+        label = _python_label(
+            env["python_version"],
+            env["implementation_name"],
+            env["python_full_version"] if concrete else None,
+        )
         return cls(
-            label=_python_label(env["python_version"], env["implementation_name"])
-            + f"-{_HOST_PLATFORM_LABEL}",
+            label=f"{label}-{_HOST_PLATFORM_LABEL}",
             marker_env=env,
             tags=TagSet.for_host_python(python, tags_source=tags_source),
             host_faithful=False,
-            concrete_micro=names_a_micro(Version(python)),
+            concrete_micro=concrete,
         )
 
     @classmethod
@@ -1353,8 +1362,9 @@ class ResolveTarget(HashableRecord):
         pins the target to one concrete deployment micro and resolves it whole,
         the manual single-point alternative to splitting.
         """
+        label = _python_label(python_version, implementation, python_full_version)
         return cls(
-            label=_python_label(python_version, implementation) + f"-{spec.label}",
+            label=f"{label}-{spec.label}",
             marker_env=declared_environment(
                 python_version, spec, implementation, python_full_version
             ),
@@ -1855,10 +1865,15 @@ def _pythons_in_range(spec: str) -> Iterable[str]:
             yield minor
 
 
-def _python_label(python_version: str, implementation: str) -> str:
-    """Render the interpreter half of a label, e.g. ``py311`` or ``pp311``."""
+def _python_label(
+    python_version: str, implementation: str, full_version: str | None
+) -> str:
+    """Include the explicit patch when naming a single interpreter build."""
     prefix = _IMPLEMENTATION_PREFIX.get(implementation, _DEFAULT_IMPLEMENTATION_PREFIX)
-    return prefix + python_version.replace(".", "")
+    minor = prefix + python_version.replace(".", "")
+    if full_version is None:
+        return minor
+    return f"{minor}-patch{quote(full_version, safe='+')}"
 
 
 def _selection_slug(selection: tuple[tuple[str, str], ...]) -> str:

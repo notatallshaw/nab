@@ -2194,6 +2194,32 @@ class TestBuildLockInput:
         versions = {lock.pins["pkg"].version for lock in merged.targets.values()}
         assert versions == {"1.0", "2.0"}
 
+    @pytest.mark.parametrize("second", ["3.13.4", "3.13.0+vendor"])
+    def test_lock_keeps_each_explicit_python_patch(self, second: str) -> None:
+        targets = [
+            ResolveTarget.for_declared(
+                python_version="3.13",
+                python_full_version=patch,
+                spec=PlatformSpec("linux_x86_64"),
+            )
+            for patch in ("3.13.0", second)
+        ]
+        releases = [_make_wheel(v, package="pkg") for v in ("1", "2")]
+        port = make_coordinator(listings={"pkg": releases}, auto_metadata=True)
+        roots = _reqs(
+            f'pkg==1; python_full_version != "{second}"',
+            f'pkg==2; python_full_version == "{second}"',
+        )
+        result = resolve_with_coordinator(port, targets, roots, inputs=_no_build())
+        assert result.success
+
+        lock = build_pylock(build_lock_input(result))
+        for target, version in zip(targets, ("1", "2"), strict=True):
+            ((package, _),) = lock.select(
+                environment=dict(target.marker_env), tags=target.tags.ordered
+            )
+            assert str(package.version) == version
+
     def test_a_marker_consulted_on_every_target_is_read_once(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
