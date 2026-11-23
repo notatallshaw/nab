@@ -42,11 +42,14 @@ from nab_provider.target import ResolveTarget
 from nab_provider.testing import make_coordinator, make_sdist, make_wheel, pkg_override
 from nab_provider.value import field_names
 
+from .provider_fixtures import short_reason
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from nab_provider._vendor.packaging.ranges import VersionRange
     from nab_provider.provider import DistFile
+
 
 CUTOFF = datetime(2026, 5, 1, tzinfo=timezone.utc)
 EARLY_CUTOFF = datetime(2015, 1, 1, tzinfo=timezone.utc)
@@ -60,12 +63,6 @@ WITH_CUTOFF: dict[str, object] = {"uploaded_prior_to": CUTOFF}
 _LINUX312 = ResolveTarget.for_declared(
     python_version="3.12", spec=PlatformSpec("linux_x86_64")
 )
-
-
-def short_reason(provider: Provider, package: str) -> str | None:
-    """Return the one line ``package``'s diagnostic prints at default verbosity."""
-    diagnostic = provider.get_no_versions_reason(package)
-    return None if diagnostic is None else diagnostic.short
 
 
 def wheel(

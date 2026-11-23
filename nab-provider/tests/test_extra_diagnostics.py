@@ -16,7 +16,7 @@ from nab_provider.provider import Provider
 from nab_provider.testing import make_coordinator, make_metadata, make_sdist, make_wheel
 from nab_resolver.resolver import Resolver
 
-from .extra_fixtures import PYTHON_312, SECURITY_EXTRA_METADATA
+from .provider_fixtures import PYTHON_312, SECURITY_EXTRA_METADATA
 
 
 class TestExtrasInvalidMetadata:

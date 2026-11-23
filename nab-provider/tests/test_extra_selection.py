@@ -18,7 +18,7 @@ from nab_provider.testing import (
 )
 from nab_resolver.resolver import Resolver
 
-from .extra_fixtures import PYTHON_312, SECURITY_EXTRA_METADATA
+from .provider_fixtures import PYTHON_312, SECURITY_EXTRA_METADATA
 
 METADATA_WITHOUT_EXTRAS = (
     "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\nRequires-Dist: bar>=1.0\n"
