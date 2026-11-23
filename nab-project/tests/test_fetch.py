@@ -64,6 +64,7 @@ from nab_provider.provider import Provider
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.store import metadata_pending_key, sdist_artifact_key
 from nab_provider.testing import make_wheel, pkg_override
+from nab_provider.yanking import mark_yanked
 
 
 @pytest.fixture
@@ -3445,6 +3446,23 @@ class TestWarmSyncListingPath:
             assert coord.index.get_listing("pkg") == files
             assert _listing_submits(calls) == []
             assert coord.warm_sync_stats.listing_hits == 1
+
+    def test_warm_hit_stores_the_all_yanked_report(self, tmp_path: Path) -> None:
+        cache = OnDiskCache(tmp_path, _PYPI)
+        file = mark_yanked(_sync_sdist("1.0"), reason="withdrawn")
+        body = json.dumps(
+            {
+                "files": [
+                    {"filename": file.filename, "url": file.url, "yanked": "withdrawn"}
+                ]
+            }
+        ).encode()
+        _warm_parsed(cache, "pkg", [file], body=body)
+
+        with _coord(cache_dir=tmp_path) as coord:
+            assert coord.request_listing("pkg").is_set()
+            assert coord.warm_sync_stats.listing_hits == 1
+            assert coord.index.is_all_yanked_listing("pkg")
 
     def test_warm_hit_stores_the_releases_the_parse_dropped(
         self, tmp_path: Path

@@ -783,6 +783,28 @@ class TestReadPathParsedHit:
         assert cache.get_simple_parsed("pkg") == before
 
 
+@pytest.mark.parametrize("live_file", [None, "pkg-2.0-py3-none-any.whl", "pkg-2.exe"])
+def test_raw_and_parsed_hits_report_withdrawals_from_the_whole_page(
+    tmp_path: Path, live_file: str | None
+) -> None:
+    cache = _cache(tmp_path)
+    wheel = "pkg-1.0-py3-none-any.whl"
+    entries = [{"filename": wheel, "url": wheel, "yanked": True}]
+    if live_file is not None:
+        entries.append({"filename": live_file, "url": live_file})
+    cache.put_simple("pkg", json.dumps({"files": entries}).encode(), _FRESH)
+    stats = ParsedCacheStats()
+    client = CachedAsyncSimpleClient(
+        _FakeTransport([]), cache, _INDEX, offline=True, parsed_stats=stats
+    )
+
+    for _ in range(2):
+        files = _run(client.get_files("pkg"))
+        assert files[0].yanked
+        assert client.served_all_yanked("pkg") is (live_file is None)
+    assert stats.hit == 1
+
+
 class TestReadPathRebuild:
     def test_cold_parsed_miss_reparses_and_rebuilds(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)

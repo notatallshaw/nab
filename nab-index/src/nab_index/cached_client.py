@@ -77,10 +77,11 @@ from .lazy_wheel import (
     read_wheel_metadata_over_range,
 )
 from .parsed_listing import (
-    corruption_reason as _parsed_corruption,
+    ParsedListing,
+    decode_listing,
 )
 from .parsed_listing import (
-    decode as _decode_parsed,
+    corruption_reason as _parsed_corruption,
 )
 from .parsed_listing import (
     encode as _encode_parsed,
@@ -93,13 +94,14 @@ if TYPE_CHECKING:
     from packaging.utils import NormalizedName
     from typing_extensions import Self
 
-    from .parsed_listing import ParsedListing
     from .transport import AsyncHttpTransport, HttpResponse
 
 __all__ = [
     "CachedAsyncSimpleClient",
+    "ListingResult",
     "ParsedCacheStats",
     "SdistArchiveHold",
+    "read_fresh_listing",
     "read_fresh_parsed_listing",
 ]
 
@@ -288,12 +290,22 @@ def _freshness_lifetime(response: HttpResponse) -> int:
 def read_fresh_parsed_listing(
     cache: CacheBackend, package: str, *, offline: bool
 ) -> ParsedListing | None:
+    """Return the cached file records and ZIP versions, when available."""
+    result = read_fresh_listing(cache, package, offline=offline)
+    if result is None:
+        return None
+    return ParsedListing(result.files, result.diagnostics.zip_sdists)
+
+
+def read_fresh_listing(
+    cache: CacheBackend, package: str, *, offline: bool
+) -> ListingResult | None:
     """Read a fresh (or offline) parsed listing for ``package``, or ``None``.
 
     The write-free subset of :meth:`CachedAsyncSimpleClient.get_files`' fresh-hit
     branch: same policy, same ``is_fresh() or offline`` test, same blob, same
-    :func:`parsed_listing.decode`, so on a hit it returns the records
-    ``get_files`` would, plus the releases it served as a ``.zip`` sdist. Every
+    :func:`parsed_listing.decode_listing`. A hit returns the same records, ZIP
+    releases and withdrawal report as an asynchronous lookup. Every
     other case (no policy, stale-online, no blob, a non-binding digest, a
     corrupt blob, a blob holding no records) declines to ``None`` and, unlike
     ``get_files``, never reads the raw body, revalidates, rebuilds, writes, or
@@ -312,7 +324,7 @@ def read_fresh_parsed_listing(
     blob = cache.get_simple_parsed(package)
     if blob is None:
         return None
-    parsed = _decode_parsed(blob, policy)
+    parsed = decode_listing(blob, policy)
     if parsed is None or not parsed.files:
         return None
     return parsed
@@ -575,7 +587,7 @@ class CachedAsyncSimpleClient(ListingReports):
         package" and the "nothing nab reads" report. Only the raw body answers
         that, and an empty listing is small enough to reparse.
 
-        A served blob also restores the releases served as a ``.zip`` sdist.
+        A served blob also restores the ZIP releases and withdrawal report.
 
         This is the one place that reads the blob, so it records the outcome: a
         served blob counts a ``hit``, an absent one a ``miss``, and a
@@ -585,12 +597,10 @@ class CachedAsyncSimpleClient(ListingReports):
         if blob is None:
             self._parsed_stats.miss += 1
             return None
-        parsed = _decode_parsed(blob, policy)
+        parsed = decode_listing(blob, policy)
         if parsed is not None and parsed.files:
             self._parsed_stats.hit += 1
-            return ListingResult(
-                parsed.files, ListingDiagnostics(zip_sdists=parsed.zip_sdists)
-            )
+            return parsed
         self._parsed_stats.rebuild += 1
         if parsed is not None:
             return None
@@ -620,7 +630,7 @@ class CachedAsyncSimpleClient(ListingReports):
         none, so writing one would rebuild and rewrite it on every later read
         without ever serving it.
 
-        The blob also carries the ZIP sdist versions reported by the page.
+        The blob also carries the ZIP releases and withdrawal report from the page.
 
         A refused write is dropped: the blob only accelerates a read the raw
         body already answers. Only the first refusal warns.
@@ -629,7 +639,11 @@ class CachedAsyncSimpleClient(ListingReports):
             return
 
         blob = _encode_parsed(
-            listing.files, digest, listing.diagnostics.zip_sdists, page_url=page_url
+            listing.files,
+            digest,
+            listing.diagnostics.zip_sdists,
+            page_url=page_url,
+            all_yanked=listing.diagnostics.all_yanked,
         )
         try:
             self._cache.put_simple_parsed(package, blob)
@@ -726,7 +740,11 @@ class CachedAsyncSimpleClient(ListingReports):
         files = _parse_files(data, self._index_url, package, page_url=page_url)
         zip_sdists = zip_sdist_versions(data, package)
         if files:
-            return ListingResult(files, ListingDiagnostics(zip_sdists=zip_sdists))
+            # An ordinary retained file rules out a fully withdrawn page.
+            all_yanked = bool(files[0].yanked) and holds_only_yanked(data)
+            return ListingResult(
+                files, ListingDiagnostics(all_yanked=all_yanked, zip_sdists=zip_sdists)
+            )
 
         diagnostics = ListingDiagnostics(
             unreadable_only=holds_unreadable_format(data),

@@ -49,7 +49,7 @@ from nab_index.cached_client import (
     CachedAsyncSimpleClient,
     ParsedCacheStats,
     SdistArchiveHold,
-    read_fresh_parsed_listing,
+    read_fresh_listing,
 )
 from nab_index.lazy_wheel import RangeCapabilityMemo
 from nab_index.local_index import LocalIndexClient, is_file_url, parse_file_url
@@ -93,7 +93,7 @@ if TYPE_CHECKING:
 
     from typing_extensions import Self
 
-    from nab_index.parsed_listing import ParsedListing
+    from nab_index.cached_client import ListingResult
     from nab_provider.overrides import IndexOverride, PackageOverride
 
 __all__ = [
@@ -672,10 +672,10 @@ class FetchCoordinator:
         msg = f"Fetcher thread crashed: {self._crash_error}"
         raise RuntimeError(msg)
 
-    def _try_listing_sync(self, package: str) -> ParsedListing | None:
+    def _try_listing_sync(self, package: str) -> ListingResult | None:
         """Read a fresh parsed listing on the caller's thread, or ``None``.
 
-        ``read_fresh_parsed_listing`` never raises, so the caller's pending is
+        ``read_fresh_listing`` never raises, so the caller's pending is
         never stranded. On a decline the policy is re-read to attribute a reason
         counter rather than threading it out of the pure helper.
         """
@@ -683,7 +683,7 @@ class FetchCoordinator:
         if not self._sync_listing_enabled:
             stats.declined_ineligible += 1
             return None
-        parsed = read_fresh_parsed_listing(self._cache, package, offline=self._offline)
+        parsed = read_fresh_listing(self._cache, package, offline=self._offline)
         if parsed is not None:
             return parsed
         policy = self._cache.get_simple_policy(package)
@@ -751,7 +751,8 @@ class FetchCoordinator:
                     self.index.store_listing(
                         package,
                         records,
-                        zip_sdists=parsed.zip_sdists,
+                        zip_sdists=parsed.diagnostics.zip_sdists,
+                        all_yanked=parsed.diagnostics.all_yanked,
                         has_yanked_files=bool(
                             getattr(records, "has_yanked_files", False)
                         ),
