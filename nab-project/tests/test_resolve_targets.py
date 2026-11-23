@@ -3032,6 +3032,25 @@ class TestSharedListingFilter:
         assert first_pin.version == "2.0"
         assert second_pin.wheels[0] is first_pin.wheels[0]
 
+    def test_wheel_aliases_remain_installable_on_each_target(self) -> None:
+        targets = self._targets("==3.11")
+        wheels = [
+            self._wheel("1.0", tag="py3-none-linux_x86_64"),
+            self._wheel("1.0", tag="py3-none-win_amd64"),
+        ]
+        assert wheels[0].url == wheels[1].url
+        result = resolve_with_coordinator(
+            self._coordinator(wheels), targets, _reqs("pkg"), inputs=_no_build()
+        )
+        result.raise_for_failure()
+        lock = build_pylock(build_lock_input(result))
+
+        for target, wheel in zip(targets, wheels, strict=True):
+            ((_, artifact),) = lock.select(
+                environment=target.marker_env, tags=target.tags.ordered
+            )
+            assert artifact.name == wheel.filename
+
     def test_shared_filter_runs_before_the_wheel_tag_pass(self) -> None:
         """Only the pre-tag list is shared: a linux-only wheel stays off Windows."""
         wheels = [
