@@ -2037,26 +2037,37 @@ class TestLauncherKind:
         assert kind == "posix"
 
 
-class TestNabBuildEnvOutsideContext:
-    """Accessors and ``install`` raise when used outside ``with`` scope."""
+@pytest.mark.parametrize("state", ["new", "closed", "failed"])
+def test_build_env_rejects_use_outside_its_scope(state: str) -> None:
+    requires = ["missing-build-helper"] if state == "failed" else []
+    env = NabBuildEnv(requires, config=ResolveInputs(), offline=True)
+    if state == "closed":
+        with env:
+            assert Path(env.python_executable).is_file()
+    elif state == "failed":
+        with pytest.raises(BuildEnvError, match="unavailable in offline mode"), env:
+            pass
 
-    def _env(self) -> NabBuildEnv:
-        return NabBuildEnv(requires=[], config=ResolveInputs())
+    with pytest.raises(BuildEnvError, match="outside its context-manager"):
+        _ = env.python_executable
+    with pytest.raises(BuildEnvError, match="outside its context-manager"):
+        env.make_extra_environ()
+    with pytest.raises(BuildEnvError, match="outside its context-manager"):
+        env.install([])
 
-    def test_python_executable_outside_context(self) -> None:
-        env = self._env()
-        with pytest.raises(BuildEnvError, match="outside its context-manager"):
-            _ = env.python_executable
 
-    def test_make_extra_environ_outside_context(self) -> None:
-        env = self._env()
-        with pytest.raises(BuildEnvError, match="outside its context-manager"):
-            env.make_extra_environ()
+def test_nested_build_env_entry_preserves_the_outer_interpreter() -> None:
+    env = NabBuildEnv([], config=ResolveInputs())
+    with env:
+        outer = Path(env.python_executable)
+        with pytest.raises(BuildEnvError, match="already active"), env:
+            pass
+        assert Path(env.python_executable) == outer
+        assert outer.is_file()
 
-    def test_install_outside_context(self) -> None:
-        env = self._env()
-        with pytest.raises(BuildEnvError, match="outside its context-manager"):
-            env.install(["foo"])
+    assert not outer.exists()
+    with env:
+        assert Path(env.python_executable).is_file()
 
 
 class TestNabBuildEnvInstall:

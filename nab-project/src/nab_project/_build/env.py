@@ -405,13 +405,16 @@ class NabBuildEnv:
 
     def __enter__(self) -> Self:
         """Build the venv, run the inner resolve, install build requirements."""
+        if self._tmpdir is not None:
+            msg = "NabBuildEnv is already active"
+            raise BuildEnvError(msg)
+
         self._tmpdir = _build_tempdir("nab-build-env-")
         try:
             with _as_build_env_error("could not populate the build env"):
                 self._provision(Path(self._tmpdir.name))
         except BaseException:
-            self._tmpdir.cleanup()
-            self._tmpdir = None
+            self._cleanup()
             raise
         return self
 
@@ -487,6 +490,15 @@ class NabBuildEnv:
 
     def __exit__(self, *args: object) -> None:
         """Clean up the temp tree that holds the venv and downloaded wheels."""
+        self._cleanup()
+
+    def _cleanup(self) -> None:
+        """Retire the paths and file records belonging to this environment."""
+        self._venv_path = None
+        self._python_executable = None
+        self._scripts_dir = None
+        self._installed_files.clear()
+
         if self._tmpdir is not None:
             self._tmpdir.cleanup()
             self._tmpdir = None
