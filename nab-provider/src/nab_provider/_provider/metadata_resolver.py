@@ -454,13 +454,10 @@ def _record_range_outcome(
         provider.stats.wheel_metadata_range_missing += 1
 
 
-def dists_at_version(
+def release_start(
     versions: Sequence[tuple[Version, DistFile]], version: Version
-) -> list[DistFile]:
-    """Return distributions at ``version`` in listing order.
-
-    The newest-first listing keeps each version's distributions adjacent.
-    """
+) -> int:
+    """Find the insertion point for a release in a newest-first listing."""
     low, high = 0, len(versions)
     while low < high:
         mid = (low + high) // 2
@@ -469,7 +466,17 @@ def dists_at_version(
             low = mid + 1
         else:
             high = mid
+    return low
 
+
+def dists_at_version(
+    versions: Sequence[tuple[Version, DistFile]], version: Version
+) -> list[DistFile]:
+    """Return distributions at ``version`` in listing order.
+
+    The newest-first listing keeps each version's distributions adjacent.
+    """
+    low = release_start(versions, version)
     stop = low
     while stop < len(versions) and versions[stop][0] == version:
         stop += 1

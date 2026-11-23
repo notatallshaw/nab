@@ -33,6 +33,7 @@ from nab_provider.testing import (
     make_wheel,
 )
 from nab_provider.yanking import append_yanked_file
+from nab_resolver.errors import ResolutionTerminatedError
 
 
 def wheel_package(
@@ -155,6 +156,27 @@ def test_old_artifact_priority_cannot_change_the_package_version() -> None:
     }
 
     assert LockPreferences(lock).versions_for(consumer) == expected
+
+
+def test_prior_lock_cannot_satisfy_a_literal_pin_with_an_unlisted_label() -> None:
+    preferences = LockPreferences(prior(wheel_package(version="1.0")))
+    port = make_coordinator(
+        [make_wheel("1", package="a")], package="a", auto_metadata=True
+    )
+
+    result = resolve_with_coordinator(
+        port,
+        [target()],
+        [Requirement("a===1.0")],
+        inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+        lock_preferences=preferences,
+    )
+
+    (failure,) = result.target_results
+    assert failure.lock is None
+    assert failure.error is not None
+    assert not isinstance(failure.error, ResolutionTerminatedError)
+    assert failure.error.incompatibility is not None
 
 
 def test_old_pypy_wheel_supplies_the_open_abi_family() -> None:

@@ -2069,40 +2069,40 @@ class Provider:
             if base_range is not None:
                 admit_range = version_range & base_range
 
-        if not self._admits_preference(
+        listed = self._listed_preference(
             normalized, version_list, admit_range, preferred
-        ):
+        )
+        if listed is None:
             return None
 
         usable = (
-            _extras.version_provides_extra(self, base, extra, preferred)
+            _extras.version_provides_extra(self, base, extra, listed)
             if extra is not None
-            else self._look_ahead_ok(normalized, preferred, check_decisions=True)
+            else self._look_ahead_ok(normalized, listed, check_decisions=True)
         )
-        return preferred if usable else None
+        return listed if usable else None
 
-    def _admits_preference(
+    def _listed_preference(
         self,
         normalized: str,
         version_list: list[tuple[Version, DistFile]],
         admit_range: VersionRange,
         preferred: Version,
-    ) -> bool:
-        """Report whether ``preferred`` is one of the listing's in-range versions.
-
-        A final release is answered by ``contains`` on the range plus a lookup
-        in the listing's picked-dist view.  A pre-release needs the ``filter``
-        walk instead: ``contains`` reads only the configured pre-release policy,
-        while ``filter`` also applies the PEP 440 buffering and the range's
-        opt-in region.
-        """
+    ) -> Version | None:
+        """Find the current release matching the preference and the requested range."""
         if preferred.is_prerelease:
-            all_versions = self.versions_only(normalized, version_list)
-            in_range = admit_range.filter(all_versions)
-            return preferred in in_range
-        return preferred in admit_range and preferred in self._wheel_by_version(
-            normalized, version_list
-        )
+            # The complete listing determines whether a fallback prerelease is admitted.
+            versions = self.versions_only(normalized, version_list)
+            admitted = admit_range.filter(versions)
+            return next((listed for listed in admitted if listed == preferred), None)
+
+        start = _metadata_resolver.release_start(version_list, preferred)
+        if start < len(version_list):
+            # Equal versions can have different text under a literal requirement.
+            listed = version_list[start][0]
+            if listed == preferred and listed in admit_range:
+                return listed
+        return None
 
     def has_satisfying_version(
         self, package: str, version_range: RangeProtocol[Version]
