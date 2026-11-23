@@ -1565,8 +1565,8 @@ def parse_vcs(value: object, where: str) -> VcsConfig:
     allowed_repos = parse_string_list(
         value.get("allowed-repos", []), f"{where}.allowed-repos"
     )
-    for repo in allowed_repos:
-        _validate_allowed_repo(repo)
+    for i, repo in enumerate(allowed_repos):
+        _validate_allowed_repo(repo, f"{where}.allowed-repos[{i}]")
     require_pin_raw = value.get("require-pin", True)
     if not isinstance(require_pin_raw, bool):
         msg = (
@@ -1582,7 +1582,7 @@ def parse_vcs(value: object, where: str) -> VcsConfig:
     )
 
 
-def _validate_allowed_repo(repo: str) -> None:
+def _validate_allowed_repo(repo: str, where: str) -> None:
     """Reject an ``allowed-repos`` entry whose authority does not parse.
 
     :func:`urlsplit` raises ValueError on an authority it cannot parse,
@@ -1590,9 +1590,9 @@ def _validate_allowed_repo(repo: str) -> None:
     """
     try:
         urlsplit(repo)
-    except ValueError as exc:
-        msg = f"vcs.allowed-repos entry {repo!r} does not parse: {exc}"
-        raise SourceConfigError(msg) from exc
+    except ValueError:
+        msg = f"{where} does not parse as a repository URL"
+        raise SourceConfigError(msg) from None
 
 
 def _validate_source_name(where: str, index: int, name: str) -> None:

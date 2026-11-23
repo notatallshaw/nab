@@ -3456,8 +3456,7 @@ class TestVcs:
         )
         with pytest.raises(
             ConfigError,
-            match=r"vcs\.allowed-repos entry"
-            r" 'https://\[2001:db8::1:7999/org/repo' does not parse",
+            match=r"vcs\.allowed-repos\[1\] does not parse as a repository URL",
         ):
             read_pyproject_config(path)
 
