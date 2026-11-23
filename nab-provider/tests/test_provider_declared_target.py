@@ -15,7 +15,7 @@ import random
 import threading
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -1683,7 +1683,7 @@ def _both_installable(
     files: Sequence[WheelFile | SdistFile],
     *,
     linux_metadata: str = _LINUX_WHEEL_METADATA,
-) -> Provider:
+) -> tuple[Provider, FakeFetchPort]:
     """A linux provider over a version published as a pure and a linux wheel."""
     coordinator = make_coordinator(
         files,
@@ -1693,7 +1693,7 @@ def _both_installable(
             _sidecar(_LINUX_WHEEL): linux_metadata,
         },
     )
-    return Provider(coordinator, _LINUX_TARGET)
+    return Provider(coordinator, _LINUX_TARGET), coordinator
 
 
 class TestTwoInstallableSiblingWheels:
@@ -1705,11 +1705,11 @@ class TestTwoInstallableSiblingWheels:
     """
 
     def test_the_pure_wheel_listed_first_does_not_supply_the_deps(self) -> None:
-        provider = _both_installable([_PURE_WHEEL, _LINUX_WHEEL])
+        provider, _ = _both_installable([_PURE_WHEEL, _LINUX_WHEEL])
         assert set(provider.get_dependencies("pkg", Version("1.0"))) == {"linuxdep"}
 
     def test_the_listing_order_does_not_change_the_deps(self) -> None:
-        provider = _both_installable([_LINUX_WHEEL, _PURE_WHEEL])
+        provider, _ = _both_installable([_LINUX_WHEEL, _PURE_WHEEL])
         assert set(provider.get_dependencies("pkg", Version("1.0"))) == {"linuxdep"}
 
     def test_the_batch_prefetch_caches_the_same_wheels_deps(self) -> None:
@@ -1718,7 +1718,7 @@ class TestTwoInstallableSiblingWheels:
         Caching the pure wheel's deps for the version would leave
         ``get_dependencies`` answering from that cache.
         """
-        provider = _both_installable([_PURE_WHEEL, _LINUX_WHEEL])
+        provider, _ = _both_installable([_PURE_WHEEL, _LINUX_WHEEL])
         version_list = provider.fetch_versions("pkg")
         mapping = provider._wheel_by_version("pkg", version_list)
 
@@ -1730,7 +1730,7 @@ class TestTwoInstallableSiblingWheels:
 
     def test_an_extra_only_the_installed_wheel_declares_is_provided(self) -> None:
         """Sibling wheels can differ in ``Provides-Extra`` too."""
-        provider = _both_installable(
+        provider, _ = _both_installable(
             [_PURE_WHEEL, _LINUX_WHEEL], linux_metadata=_LINUX_WHEEL_EXTRA_METADATA
         )
         assert set(provider.get_dependencies("pkg[speed]", Version("1.0"))) == {
@@ -1744,10 +1744,9 @@ class TestTwoInstallableSiblingWheels:
         A prefetch keyed on the pure wheel would cost a round trip nothing
         reads and still leave the read blocking on a fetch.
         """
-        provider = _both_installable([_PURE_WHEEL, _LINUX_WHEEL])
+        provider, port = _both_installable([_PURE_WHEEL, _LINUX_WHEEL])
         provider.fetch_versions("pkg")
 
-        port = cast("FakeFetchPort", provider.coordinator)
         warmed = [url for _pkg, _ver, url, _hash in port.calls_to("request_metadata")]
         assert warmed == [_sidecar(_LINUX_WHEEL)]
 

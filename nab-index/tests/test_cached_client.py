@@ -25,6 +25,7 @@ import nab_index.cache as cache_mod
 import nab_index.cached_client as cached_client_mod
 from nab_index._pep503 import json_listing
 from nab_index.cache import (
+    CacheBackend,
     CachePolicy,
     NullCache,
     OfflineError,
@@ -57,7 +58,7 @@ from nab_index.lazy_wheel import (
     RangeOutcome,
 )
 from nab_index.parsed_listing import encode as encode_parsed
-from nab_index.transport import HttpError
+from nab_index.transport import AsyncHttpTransport, HttpError
 from nab_markersets._compat import get_int_max_str_digits
 from nab_provider.metadata import parse_metadata
 from nab_provider.serialization import SimpleSerialization
@@ -1259,14 +1260,7 @@ class TestGetFiles:
             ]
         )
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
-        files = asyncio.run(go())
+        files = _run_get_files(transport, cache, "pkg")
         assert len(files) == 1
         # Cache populated.
         cached = cache.get_simple("pkg")
@@ -1291,14 +1285,7 @@ class TestGetFiles:
         )
         transport = _FakeTransport()
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
-        files = asyncio.run(go())
+        files = _run_get_files(transport, cache, "pkg")
         assert len(files) == 1
         assert transport.calls == []
 
@@ -1321,14 +1308,7 @@ class TestGetFiles:
             ]
         )
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
-        files = asyncio.run(go())
+        files = _run_get_files(transport, cache, "pkg")
         assert len(files) == 1
         # If-None-Match was sent.
         sent_headers = transport.calls[0][1]
@@ -1352,14 +1332,7 @@ class TestGetFiles:
             [_FakeResponse(b"", status=304, headers={"etag": "v1"})]
         )
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
-        asyncio.run(go())
+        _run_get_files(transport, cache, "pkg")
         cached = cache.get_simple("pkg")
         assert cached is not None
         _, new_policy = cached
@@ -1382,14 +1355,7 @@ class TestGetFiles:
             ]
         )
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
-        asyncio.run(go())
+        _run_get_files(transport, cache, "pkg")
         cached = cache.get_simple("pkg")
         assert cached is not None
         _, new_policy = cached
@@ -1428,14 +1394,7 @@ class TestGetFiles:
             [_FakeResponse(b"", status=304, headers={"etag": "new"})]
         )
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
-        asyncio.run(go())
+        _run_get_files(transport, cache, "pkg")
         cached = cache.get_simple("pkg")
         assert cached is not None
         _, policy = cached
@@ -1591,14 +1550,7 @@ class TestGetFiles:
             responses.insert(0, _FakeResponse(b"", status=304))
         transport = _FakeTransport(responses)
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
-        assert asyncio.run(go())
+        assert _run_get_files(transport, cache, "pkg")
         assert len(transport.calls) == (2 if unsolicited else 1)
         assert all(
             "If-None-Match" not in (fields or {}) for _, fields in transport.calls
@@ -1707,14 +1659,7 @@ class TestGetFiles:
             ]
         )
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
-        files = asyncio.run(go())
+        files = _run_get_files(transport, cache, "pkg")
         assert len(files) == 1
         cached = cache.get_simple("pkg")
         assert cached is not None
@@ -1733,14 +1678,7 @@ class TestGetFiles:
         )
         transport = _FakeTransport()  # would raise on any call
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache, offline=True)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
-        files = asyncio.run(go())
+        files = _run_get_files(transport, cache, "pkg", offline=True)
         assert len(files) == 1
         assert transport.calls == []
 
@@ -1748,15 +1686,8 @@ class TestGetFiles:
         cache = _make_cache(tmp_path)
         transport = _FakeTransport()
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache, offline=True)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
         with pytest.raises(OfflineError, match="pkg"):
-            asyncio.run(go())
+            _run_get_files(transport, cache, "pkg", offline=True)
 
     def test_revalidate_5xx_raises(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
@@ -1767,28 +1698,14 @@ class TestGetFiles:
         )
         transport = _FakeTransport([_FakeResponse(b"", status=500)])
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
         with pytest.raises(HttpError, match="500"):
-            asyncio.run(go())
+            _run_get_files(transport, cache, "pkg")
 
     def test_cold_cache_404_returns_empty(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
         transport = _FakeTransport([_FakeResponse(b"not found", status=404)])
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("absent")
-            finally:
-                await client.aclose()
-
-        assert asyncio.run(go()) == []
+        assert _run_get_files(transport, cache, "absent") == []
         # A 404 writes a negative sentinel, never a positive entry.
         assert cache.get_simple("absent") is None
         assert cache.get_negative("absent") is not None
@@ -1802,14 +1719,7 @@ class TestGetFiles:
         )
         transport = _FakeTransport([_FakeResponse(b"gone", status=404)])
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
-        assert asyncio.run(go()) == []
+        assert _run_get_files(transport, cache, "pkg") == []
 
     def test_legacy_filename_with_build_tag_is_dropped(self, tmp_path: Path) -> None:
         """Legacy sdists like ``cffi-1.0.2-2.tar.gz`` parse to a different
@@ -1841,14 +1751,7 @@ class TestGetFiles:
             ]
         )
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("cffi")
-            finally:
-                await client.aclose()
-
-        files = asyncio.run(go())
+        files = _run_get_files(transport, cache, "cffi")
         assert [f.version for f in files] == ["2.0.0"]
 
     def test_canonical_name_request_matches_listing(self, tmp_path: Path) -> None:
@@ -1896,14 +1799,7 @@ class TestGetFiles:
         cache = OnDiskCache(root, "https://pypi.org/simple/")
         transport = _FakeTransport([_FakeResponse(LISTING_BYTES)])
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
-        files = asyncio.run(go())
+        files = _run_get_files(transport, cache, "pkg")
         assert len(files) == 1
 
     def test_unwritable_parsed_bucket_still_serves_a_warm_listing(
@@ -2426,14 +2322,7 @@ class TestRedirectedProjectPage:
     ).encode()
 
     def _run(self, transport: _FakeTransport, cache: OnDiskCache) -> list:
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
-        return asyncio.run(go())
+        return _run_get_files(transport, cache, "pkg")
 
     def test_cold_fetch_resolves_against_the_redirect_target(
         self, tmp_path: Path
@@ -2589,15 +2478,8 @@ class TestNonJsonListingBody:
         cache = _make_cache(tmp_path)
         transport = _FakeTransport([_FakeResponse(self._HTML_BODY, status=200)])
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("foo")
-            finally:
-                await client.aclose()
-
         with pytest.raises(MalformedSimpleResponseError, match="malformed Simple-API"):
-            asyncio.run(go())
+            _run_get_files(transport, cache, "foo")
         assert cache.get_simple("foo") is None
 
     def test_cold_over_nested_body_raises_clean_and_skips_cache(
@@ -2653,15 +2535,8 @@ class TestNonJsonListingBody:
         )
         transport = _FakeTransport([_FakeResponse(self._HTML_BODY, status=200)])
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
         with pytest.raises(MalformedSimpleResponseError, match="malformed Simple-API"):
-            asyncio.run(go())
+            _run_get_files(transport, cache, "pkg")
         cached = cache.get_simple("pkg")
         assert cached is not None
         body, _ = cached
@@ -2683,17 +2558,10 @@ class TestNonUtf8ListingBody:
         cache = _make_cache(tmp_path)
         transport = _FakeTransport([_FakeResponse(self._LATIN1_BODY, status=200)])
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("foo")
-            finally:
-                await client.aclose()
-
         with pytest.raises(
             MalformedSimpleResponseError, match="malformed Simple-API"
         ) as caught:
-            asyncio.run(go())
+            _run_get_files(transport, cache, "foo")
         assert isinstance(caught.value, HttpError)
         assert cache.get_simple("foo") is None
 
@@ -2708,17 +2576,10 @@ class TestNonUtf8ListingBody:
         )
         transport = _FakeTransport([_FakeResponse(self._LATIN1_BODY, status=200)])
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
         with pytest.raises(
             MalformedSimpleResponseError, match="malformed Simple-API"
         ) as caught:
-            asyncio.run(go())
+            _run_get_files(transport, cache, "pkg")
         assert isinstance(caught.value, HttpError)
         cached = cache.get_simple("pkg")
         assert cached is not None
@@ -3687,15 +3548,8 @@ class TestNonOkStatusIsNotContent:
         cache = _make_cache(tmp_path)
         transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=300)])
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
         with pytest.raises(HttpError, match="300"):
-            asyncio.run(go())
+            _run_get_files(transport, cache, "pkg")
         assert cache.get_simple("pkg") is None
 
     def test_revalidated_listing_300_raises_and_keeps_the_stored_body(
@@ -3709,15 +3563,8 @@ class TestNonOkStatusIsNotContent:
         )
         transport = _FakeTransport([_FakeResponse(b"", status=300)])
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
         with pytest.raises(HttpError, match="300"):
-            asyncio.run(go())
+            _run_get_files(transport, cache, "pkg")
         cached = cache.get_simple("pkg")
         assert cached is not None
         assert cached[0] == LISTING_BYTES
@@ -4591,44 +4438,42 @@ class TestGetRangeMetadata:
 
 
 def _run_get_files(
-    transport: object, cache: object, package: str, *, offline: bool = False
-) -> list:
-    async def go() -> list:
-        client = CachedAsyncSimpleClient(transport, cache, offline=offline)  # type: ignore[arg-type]
-        try:
+    transport: AsyncHttpTransport,
+    cache: CacheBackend,
+    package: str,
+    *,
+    offline: bool = False,
+) -> list[WheelFile | SdistFile]:
+    async def go() -> list[WheelFile | SdistFile]:
+        async with CachedAsyncSimpleClient(transport, cache, offline=offline) as client:
             return await client.get_files(package)
-        finally:
-            await client.aclose()
 
     return asyncio.run(go())
 
 
 def _get_files_and_report(
-    transport: object, cache: object, package: str
-) -> tuple[list, bool]:
+    transport: AsyncHttpTransport, cache: CacheBackend, package: str
+) -> tuple[list[WheelFile | SdistFile], bool]:
     """Return ``get_files``' records and the client's unreadable-only report.
 
     The report is per-client state, so it is read while the client the call ran
     on is still in scope.
     """
 
-    async def go() -> tuple[list, bool]:
-        client = CachedAsyncSimpleClient(transport, cache)  # type: ignore[arg-type]
-        try:
+    async def go() -> tuple[list[WheelFile | SdistFile], bool]:
+        async with CachedAsyncSimpleClient(transport, cache) as client:
             files = await client.get_files(package)
-        finally:
-            await client.aclose()
         return files, client.served_unreadable_only(package)
 
     return asyncio.run(go())
 
 
 def _get_files_and_zip_sdists(
-    transport: object,
-    cache: object,
+    transport: AsyncHttpTransport,
+    cache: CacheBackend,
     package: str,
     parsed_stats: ParsedCacheStats | None = None,
-) -> tuple[list, frozenset[str]]:
+) -> tuple[list[WheelFile | SdistFile], frozenset[str]]:
     """Return ``get_files``' records and the releases served as a ``.zip`` sdist.
 
     Both are per-client state, so they are read while the client the call ran
@@ -4636,16 +4481,13 @@ def _get_files_and_zip_sdists(
     read was served from the parsed blob.
     """
 
-    async def go() -> tuple[list, frozenset[str]]:
-        client = CachedAsyncSimpleClient(
-            transport,  # type: ignore[arg-type]
-            cache,  # type: ignore[arg-type]
+    async def go() -> tuple[list[WheelFile | SdistFile], frozenset[str]]:
+        async with CachedAsyncSimpleClient(
+            transport,
+            cache,
             parsed_stats=parsed_stats,
-        )
-        try:
+        ) as client:
             files = await client.get_files(package)
-        finally:
-            await client.aclose()
         return files, client.served_zip_sdists(package)
 
     return asyncio.run(go())
@@ -5225,24 +5067,21 @@ class TestOversizedListingInt:
 
 
 def _run_get_files_floor(
-    transport: object,
-    cache: object,
+    transport: AsyncHttpTransport,
+    cache: CacheBackend,
     package: str,
     *,
     min_fresh_seconds: int | None = None,
     offline: bool = False,
-) -> list:
-    async def go() -> list:
-        client = CachedAsyncSimpleClient(
-            transport,  # type: ignore[arg-type]
-            cache,  # type: ignore[arg-type]
+) -> list[WheelFile | SdistFile]:
+    async def go() -> list[WheelFile | SdistFile]:
+        async with CachedAsyncSimpleClient(
+            transport,
+            cache,
             offline=offline,
             min_fresh_seconds=min_fresh_seconds,
-        )
-        try:
+        ) as client:
             return await client.get_files(package)
-        finally:
-            await client.aclose()
 
     return asyncio.run(go())
 
@@ -5508,14 +5347,7 @@ class TestRepeatedCacheControlLines:
 
         transport = _FakeTransport([response])
 
-        async def go() -> list:
-            client = CachedAsyncSimpleClient(transport, cache)
-            try:
-                return await client.get_files("pkg")
-            finally:
-                await client.aclose()
-
-        assert len(asyncio.run(go())) == 1
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
 
         cached = cache.get_simple("pkg")
         assert cached is not None

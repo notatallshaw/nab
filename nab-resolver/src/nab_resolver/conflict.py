@@ -368,7 +368,7 @@ def _prior_cause(
 
     result: list[Term[PackageType, VersionType]] = []
 
-    # Shared package: union, dropping if the result is a tautology.
+    # Resolving the shared package drops it when the union covers every version.
     incompat_shared = incompat_terms.pop(shared_package, None)
     cause_shared = cause_terms.pop(shared_package, None)
     if incompat_shared is not None and cause_shared is not None:
@@ -384,6 +384,7 @@ def _prior_cause(
     for package, term in incompat_terms.items():
         other = cause_terms.pop(package, None)
         result.append(term if other is None else term.intersect(other))
+
     result.extend(cause_terms.values())
     return result
 
@@ -413,6 +414,7 @@ def find_most_recent_satisfier(
 
         if latest is None or satisfier.trail_index > latest[0].trail_index:
             if latest is not None:
+                # The displaced satisfier now counts toward the backjump bound.
                 previous_level = max(previous_level, latest[0].decision_level)
             latest = satisfier, term
         else:

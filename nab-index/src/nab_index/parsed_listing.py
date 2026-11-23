@@ -179,9 +179,11 @@ def decode_listing(blob: bytes, policy: CachePolicy) -> ListingResult | None:
         loaded = decode_json(blob)
     except ValueError:
         return None
-    if not (isinstance(loaded, list) and len(loaded) == _TOP_LEN):
+
+    if not isinstance(loaded, list) or len(loaded) != _TOP_LEN:
         return None
     raw_header, rows = loaded
+
     try:
         header = _current_header(raw_header)
     except _InvalidRecordError:
@@ -193,8 +195,8 @@ def decode_listing(blob: bytes, policy: CachePolicy) -> ListingResult | None:
         or header[_H_PAGE_URL] != policy.page_url
     ):
         return None
-    # A blob whose header matches this build but whose rows or ``.zip`` cell
-    # are the wrong shape must rebuild, not crash the resolve.
+
+    # Bad records cause a cache miss even when the header matches.
     try:
         diagnostics = ListingDiagnostics(
             all_yanked=header[_H_ALL_YANKED] is True,
@@ -218,9 +220,11 @@ def corruption_reason(blob: bytes) -> str | None:
         loaded = decode_json(blob)
     except ValueError as exc:
         return str(exc)
-    if not (isinstance(loaded, list) and len(loaded) == _TOP_LEN):
+
+    if not isinstance(loaded, list) or len(loaded) != _TOP_LEN:
         return "unexpected top-level shape"
     raw_header, rows = loaded
+
     try:
         header = _current_header(raw_header)
         if header is None:
@@ -228,6 +232,7 @@ def corruption_reason(blob: bytes) -> str | None:
         _decode_zip_sdists(header[_H_ZIP_SDISTS])
     except _InvalidRecordError:
         return "unexpected header shape"
+
     try:
         _restore_yanks(_decode_rows(rows), header[_H_YANKS])
     except (ValueError, TypeError):

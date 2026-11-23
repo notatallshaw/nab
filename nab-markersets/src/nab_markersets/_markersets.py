@@ -1687,12 +1687,16 @@ def _decide_empty(node: Formula, max_cells: int, store: Memo) -> _Decision:
     """Decide emptiness, returning the verdict with the work charged for it."""
     space = _cell_space(node, max_cells, store)
     size = prod(len(partition) for partition in space.partitions)
+
+    # A quick witness can avoid building masks for a large product.
     if size >= _WITNESS_PROBE_MIN_PRODUCT_CELLS and _has_early_witness(node, space):
         return _Decision(empty=False, units=space.units)
+
     if size < _MASK_CACHE_MIN_CELLS:
         truth, full = _compile_cell_truth_masks(space, size)
     else:
         truth, full = _cell_truth_masks(space, size, store=store)
+
     return _Decision(not _eval_mask(node, truth, full), space.units)
 
 

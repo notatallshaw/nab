@@ -117,12 +117,14 @@ def _workspace_mapping(
         ):
             msg = "each workspace must name install, test and coverage lists"
             raise ValueError(msg)
+
         packages, paths, coverage = inputs
         workspaces[name] = (
             _string_list(packages),
             _string_list(paths),
             _string_list(coverage),
         )
+
     return workspaces
 
 
@@ -156,6 +158,7 @@ def select_workspaces(
             if owners:
                 selected.update(owners)
                 continue
+
         if package in members:
             selected.update(
                 workspace
@@ -177,7 +180,8 @@ def select_workspaces(
             )
         else:
             return list(workspaces)
-    # An empty comparison must not turn a nox invocation into an accidental full run.
+
+    # Keep nox declaration order and run all workspaces for an empty selection.
     return [workspace for workspace in workspaces if workspace in selected] or list(
         workspaces
     )
@@ -210,7 +214,7 @@ def selection_outputs(
     }
 
 
-def auxiliary_outputs(paths: list[str] | None) -> dict[str, str]:
+def _auxiliary_outputs(paths: list[str] | None) -> dict[str, str]:
     """Select auxiliary jobs only when every changed path is understood."""
     jobs = {"benchmarks", "dists", "standalone"}
     selected: set[str] = set()
@@ -255,7 +259,7 @@ def job_outputs(
     paths: list[str] | None,
 ) -> dict[str, str]:
     """Permit only the skips justified by the same job-selection outputs."""
-    auxiliary = auxiliary_outputs(paths)
+    auxiliary = _auxiliary_outputs(paths)
     outputs = {**selection_outputs(selected, workspaces), **auxiliary}
     quick = bool(paths) and all(
         _documentation(path) or _benchmark(path) for path in paths or []

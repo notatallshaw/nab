@@ -34,7 +34,7 @@ def _build_system(path: Path) -> dict[str, object]:
     return {key: table.get(key) for key in BUILD_KEYS}
 
 
-def check_build_systems(root: Path) -> None:
+def _check_build_systems(root: Path) -> None:
     """Refuse mismatched build inputs before either lock can be rewritten."""
     paths = [root / "pyproject.toml", *sorted(root.glob("nab-*/pyproject.toml"))]
     expected = _build_system(paths[0])
@@ -115,7 +115,7 @@ def check_shared_pins(root: Path) -> None:
 def main(args: Sequence[str], root: Path = ROOT) -> int:
     """Refresh both locks with this interpreter and the forwarded Nab options."""
     try:
-        check_build_systems(root)
+        _check_build_systems(root)
         for selection, output in (
             (("--all-groups",), DEV_LOCK),
             (("--build-requirements",), BUILD_LOCK),

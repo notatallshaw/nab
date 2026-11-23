@@ -2447,25 +2447,39 @@ def _collapsed_env_marker(
     """
     if rows is None or len(texts) <= 1:
         return None
-    named = _pinned_points(texts)
-    if named is None:
+    pinned = _pinned_points(texts)
+    if pinned is None:
         return None
-    variables, selected = named
+
+    variables, selected_points = pinned
     if any(name not in row for row in rows for name in variables):
         return None
 
-    points = {tuple(row[name] for name in variables) for row in rows}
+    declared_points = {tuple(row[name] for name in variables) for row in rows}
     axes = range(len(variables))
-    chosen = [{point[axis] for point in selected} for axis in axes]
+    selected_values = [{point[axis] for point in selected_points} for axis in axes]
 
-    if {p for p in points if all(p[axis] in chosen[axis] for axis in axes)} != selected:
+    # Factoring must select exactly the same points among the declared rows.
+    matching_points = {
+        point
+        for point in declared_points
+        if all(point[axis] in selected_values[axis] for axis in axes)
+    }
+    if matching_points != selected_points:
         return None
 
-    kept = [axis for axis in axes if chosen[axis] != {p[axis] for p in points}]
-    if not kept:
+    constrained_axes = [
+        axis
+        for axis in axes
+        if selected_values[axis] != {point[axis] for point in declared_points}
+    ]
+    if not constrained_axes:
         # Every row is named, so one variable's values already spell all of them.
-        return _product_marker([(variables[0], chosen[0])])
-    return _product_marker([(variables[axis], chosen[axis]) for axis in kept])
+        return _product_marker([(variables[0], selected_values[0])])
+
+    return _product_marker(
+        [(variables[axis], selected_values[axis]) for axis in constrained_axes]
+    )
 
 
 def _product_marker(factors: Sequence[tuple[str, AbstractSet[str]]]) -> str:

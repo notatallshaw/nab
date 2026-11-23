@@ -317,13 +317,13 @@ async def _run_downloads(
 
     On failure, cancel unfinished entries and close the client before re-raising.
     """
-    sem = asyncio.Semaphore(max_concurrency)
+    concurrency_limit = asyncio.Semaphore(max_concurrency)
     client = AsyncSimpleClient(transport)
     written: list[Path] = []
     skipped: list[Path] = []
 
-    async def _one(entry: DownloadEntry) -> None:
-        async with sem:
+    async def _download_entry(entry: DownloadEntry) -> None:
+        async with concurrency_limit:
             # The filename comes from the index or an archive URL; reject
             # anything but a plain basename so a crafted name cannot escape
             # output_dir on write.
@@ -333,11 +333,13 @@ async def _run_downloads(
                     f" unsafe artefact filename: {entry.filename!r}"
                 )
                 raise DownloadError(msg)
+
             target = output_dir / entry.filename
             if _already_present(target, entry.hash_algo, entry.digest):
                 skipped.append(target)
                 logger.info("skip %s (%s matches)", entry.filename, entry.hash_algo)
                 return
+
             data = await _fetch_bytes(entry, client, offline=offline)
             actual = hashlib.new(entry.hash_algo, data).hexdigest()
             if actual != entry.digest:
@@ -347,21 +349,24 @@ async def _run_downloads(
                     f"  expected: {entry.digest}\n  actual:   {actual}"
                 )
                 raise DownloadError(msg)
+
             atomic_write(target, data)
             written.append(target)
             logger.info("wrote %s", target)
 
-    tasks = [asyncio.create_task(_one(a)) for a in artefacts]
+    tasks = [asyncio.create_task(_download_entry(entry)) for entry in artefacts]
     try:
         await asyncio.gather(*tasks)
     except BaseException:
-        for t in tasks:
-            if not t.done():
-                t.cancel()
+        # Let cancelled downloads unwind before their shared client closes.
+        for task in tasks:
+            if not task.done():
+                task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
     finally:
         await client.aclose()
+
     return DownloadResult(written=tuple(written), skipped=tuple(skipped))
 
 
