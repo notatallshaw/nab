@@ -3229,6 +3229,51 @@ class TestMicroBoundaryNarrowing:
         # Three minors resolved once each, plus 3.10's two slices: no full re-run.
         assert len(labels) == 5
 
+    @pytest.mark.parametrize("available", [False, True], ids=["missing", "available"])
+    def test_exact_build_survives_another_builds_patch_split(
+        self, *, available: bool
+    ) -> None:
+        minor = ResolveTarget.for_declared(
+            python_version="3.13", spec=PlatformSpec("linux_x86_64")
+        )
+        exact = ResolveTarget.for_declared(
+            python_version="3.13",
+            python_full_version="3.13.0",
+            spec=PlatformSpec("linux_x86_64", free_threaded=True),
+        )
+        tag = "py3-none-any" if available else "cp313-cp313-manylinux_2_17_x86_64"
+        wheel = make_wheel("1", package="foo", tag=tag, hashes=(("sha256", "a" * 64),))
+        port = make_coordinator(
+            listings={"foo": [wheel], "mid": [_make_wheel("2", package="mid")]},
+            metadata_by_version={
+                "1": self._meta("foo", "1"),
+                "2": self._meta("mid", "2"),
+            },
+        )
+        roots = _reqs("foo", 'mid; python_full_version >= "3.13.4"')
+        result = resolve_with_coordinator(
+            port, [minor, exact], roots, base_requirements=roots, inputs=_no_build()
+        )
+
+        assert result.success is available
+        assert exact in result.targets
+        for rows in (result.target_results, result.base_results):
+            (exact_result,) = [row for row in rows if row.target == exact]
+            assert exact_result.success is available
+
+        if available:
+            # The exact build and the first slice both resolve at 3.13.0.
+            lock = build_pylock(build_lock_input(result))
+            later = ResolveTarget.for_declared(
+                python_version="3.13",
+                python_full_version="3.13.2",
+                spec=PlatformSpec("linux_x86_64"),
+            )
+            selected = lock.select(
+                environment=dict(later.marker_env), tags=later.tags.ordered
+            )
+            assert [package.name for package, _ in selected] == ["foo"]
+
     def test_a_host_target_is_not_split(self) -> None:
         """A host target names a real micro, so no ``.0`` is synthesized and a
         full-version marker never splits it."""

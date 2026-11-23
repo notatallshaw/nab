@@ -485,7 +485,7 @@ def build_lock_input(
     """
     inputs = ResolveInputs() if inputs is None else inputs
     targets: dict[str, TargetLock] = {}
-    consulted: dict[EnvSignature, set[Marker]] = {}
+    consulted: defaultdict[EnvSignature, set[Marker]] = defaultdict(set)
     declaring: list[ResolveTarget] = []
     for tr in result.target_results:
         if tr.lock is None:
@@ -493,13 +493,8 @@ def build_lock_input(
 
         targets[tr.target.label] = tr.lock
 
-        # Conflict forks repeat an environment under different selections,
-        # so it is declared once, from everything every fork read.
-        signature = env_signature(tr.target)
-        if signature not in consulted:
-            consulted[signature] = set()
-            declaring.append(tr.target)
-        consulted[signature] |= tr.consulted
+        declaring.append(tr.target)
+        consulted[env_signature(tr.target)] |= tr.consulted
 
     return LockInput(
         targets=targets,
@@ -561,10 +556,12 @@ def _declared_environments(
             )
             break
 
-    return [
-        Marker(environment_declaration(target, consulted[env_signature(target)]))
+    # An exact target and a patch interval can have the same marker values.
+    declarations = dict.fromkeys(
+        environment_declaration(target, consulted[env_signature(target)])
         for target in declaring
-    ]
+    )
+    return [Marker(text) for text in declarations]
 
 
 class _ProjectTables(Record):
