@@ -112,6 +112,7 @@ FILTER_KEYS: dict[Cause, str] = {
     # rather than a key.  It appears only where it shares a line with one.
     DropCause.WHEEL_TAGS: "wheel tags",
     DropCause.INVALID_VERSION: "unparseable versions",
+    DropCause.YANKED: "yanked files",
 }
 
 UPLOAD_TIME_CAUSES = frozenset(
@@ -542,16 +543,15 @@ def _shared_base_pass(
 ) -> BaseListingDiagnosis:
     """Run the base pass through the memo the listing filter's own base pass uses.
 
-    The rungs before the tag pass read the listing, the policy config and
-    the target Python and nothing else, which is the key
-    :meth:`~nab_provider.provider.ListingFilterCache.filtered` already
-    shares the filter's base pass under.  A matrix whose tuples differ only
-    by platform therefore walks each listing once per Python rather than
-    once per failing tuple.  The result is held by every target that shares
-    the memo, so callers must not mutate it.
+    Targets with the same Python and policy can share the walk before the
+    tag check. Withdrawal admissions belong to an individual provider.
+    Callers must preserve a shared result for the other targets.
     """
     cache = provider.listing_filter_cache
-    if cache is None:
+    # Providers sharing the listing can have different yanked-file admissions.
+    if cache is None or (
+        not provider.defer_yanked and any(file.yanked for file in files)
+    ):
         return _base_pass(provider, normalized, files, policy)
 
     return cache.diagnosed(
@@ -580,6 +580,14 @@ def _base_pass(
         version = _listing.parsed_version(dist.version)
         if version is None:
             dropped.append(DroppedFile(dist, None, DropCause.INVALID_VERSION))
+            continue
+
+        if (
+            dist.yanked
+            and not provider.defer_yanked
+            and (normalized, version) not in provider.yank_admissions
+        ):
+            dropped.append(DroppedFile(dist, version, DropCause.YANKED))
             continue
 
         if policy.overridden:
@@ -721,12 +729,14 @@ _SHORT_EMPTY: dict[Cause, str] = {
     DropCause.REQUIRES_PYTHON: "no file supports Python {py}",
     DropCause.WHEEL_TAGS: "no wheel matches this platform or Python",
     DropCause.INVALID_VERSION: "every file carries a version PEP 440 cannot parse",
+    DropCause.YANKED: "every available file is yanked",
 }
 
 # The line for a requirement whose matching releases were the ones refused,
 # where saying so is not the generic "<subject> excluded every version in
 # range": a line naming the target has to carry the range somewhere else.
 _SHORT_IN_RANGE: dict[Cause, str] = {
+    DropCause.YANKED: "every available file in range is yanked",
     DropCause.ZIP_SDIST: "legacy ZIP sdists in range require allow-zip-sdists = true",
     DropCause.REQUIRES_PYTHON: "no version in range supports Python {py}",
     DropCause.WHEEL_TAGS: "no wheel in range matches this platform or Python",
@@ -748,7 +758,7 @@ def empty_listing_diagnostic(
     dropped = [
         record
         for record in diagnosis.dropped
-        if record.cause != DropCause.ZIP_SDIST
+        if record.cause not in (DropCause.ZIP_SDIST, DropCause.YANKED)
         or version_range is None
         or (record.version is not None and record.version in version_range)
     ]
@@ -937,6 +947,7 @@ def _join_names(names: Sequence[str]) -> str:
 # ``[singular|plural]`` picks the form it takes; ``{v}`` is the version the
 # clause quotes and ``{detail}`` the one value that cause carries.
 _CLAUSE_TEMPLATES: dict[Cause | None, str] = {
+    DropCause.YANKED: "{n} [file was|files were] yanked ([|newest: ]{v})",
     DropCause.ZIP_SDIST: (
         "allow-zip-sdists = false excluded {n} legacy ZIP [sdist|sdists]"
         " ([|newest: ]{v})"

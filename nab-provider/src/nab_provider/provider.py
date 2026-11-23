@@ -2958,10 +2958,8 @@ class Provider:
 
         The reversed ``versions_only`` view of the post-filter listing, so
         pre-release, dev, post, and local versions all fence widening.
-        Yanked files are dropped at nab-index parse time and can never be
-        selected; if that ever moves into a provider-level filter, this
-        universe must be sourced below it, or widened ranges would span
-        selectable yanked versions.
+        A withdrawn version retained for admission also bounds the gap
+        around its neighbors.
         """
         cached = self._ascending_versions_cache.get(normalized)
         if cached is None:
