@@ -557,6 +557,14 @@ class TestLinuxArmv7l:
 class TestTagsForTarget:
     """``TagSet.for_spec`` produces the full PEP 425 tag set."""
 
+    def test_unknown_implementation_cannot_select_cpython_wheels(self) -> None:
+        with pytest.raises(ValueError, match="unsupported interpreter 'graalpy'"):
+            TagSet.for_spec(
+                python_version="3.11",
+                spec=PlatformSpec("linux_x86_64"),
+                implementation="graalpy",
+            )
+
     def test_python_315_emits_cp315_tags(self) -> None:
         """A 3.15 target builds cp315 interpreter tags."""
         spec = PlatformSpec("linux_x86_64")
