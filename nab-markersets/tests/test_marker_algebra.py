@@ -300,6 +300,23 @@ def test_membership_padded_twin_on_a_version_or_string_axis() -> None:
     ).evaluate(env)
 
 
+def test_version_equality_can_hold_outside_raw_membership_literals() -> None:
+    text = (
+        'python_full_version == "3.13.4+vendor" and '
+        'python_full_version not in "3.13.4+vendor 03.13.4+vendor"'
+    )
+    marker = ms(text)
+    env = {"python_full_version": "3.13.4+Vendor"}
+    assert Marker(text).evaluate(env)
+    assert marker.evaluate(env)
+    assert not marker.is_empty()
+    assert marker.simplify(within=MarkerSet.full()).evaluate(env)
+
+    witness = marker.witness()
+    assert witness is not None
+    assert Marker(text).evaluate(witness)
+
+
 def test_m1_string_ordering_non_negation() -> None:
     less = ms('sys_platform < "linux"')
     greater_equal = ms('sys_platform >= "linux"')

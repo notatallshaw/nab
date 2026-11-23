@@ -1106,14 +1106,46 @@ def _version_pool(
     return result
 
 
-def _membership_candidates(atom: Atom, memo: Memo) -> list[str]:
-    subs = _substrings(atom.literal)
-    if atom.derive_mm:
-        # A1 tests a full version's major.minor; only version substrings are realisable.
-        return [
-            s for s in subs if _pooled_version(s.removesuffix(".*"), memo) is not None
-        ]
-    return subs
+def _membership_candidates(
+    atoms: Sequence[Atom], max_cells: int, memo: Memo
+) -> tuple[list[str], set[str]]:
+    """Enumerate bounded substrings and collect the raw members on version axes."""
+    points: list[str] = []
+    version_members: set[str] = set()
+    spent = 0
+    for atom in atoms:
+        if atom.kind != AXIS_VALUE or atom.op not in _MEMBERSHIP:
+            continue
+        spent += _substring_cost(atom.literal)
+        if spent > max_cells:
+            msg = f"substring enumeration exceeds max_cells={max_cells}"
+            raise IntractableMarkerSet(msg)
+
+        subs = _substrings(atom.literal)
+        if atom.derive_mm:
+            # A derived major.minor is always a version.
+            subs = [
+                s
+                for s in subs
+                if _pooled_version(s.removesuffix(".*"), memo) is not None
+            ]
+        elif is_version_dispatch(atom.variable):
+            version_members.update(subs)
+        points.extend(subs)
+    return points, version_members
+
+
+def _nonmember_versions(members: set[str], memo: Memo) -> Iterator[str]:
+    """Represent each parseable member outside every raw membership literal."""
+    for text in sorted(members):
+        version = _pooled_version(text, memo)
+        if version is None:
+            continue
+        # Leading zeroes preserve the version and the number of release components.
+        alias = str(version)
+        while alias in members:
+            alias = f"0{alias}"
+        yield alias
 
 
 def _dedupe_candidates(
@@ -1246,16 +1278,8 @@ def _value_candidates(
         candidates.append(_other_representative(literals))
     candidates.extend(literals)
 
-    # Cap substring enumeration across the whole axis, not per literal.
-    spent = 0
-    for atom in atoms:
-        if atom.kind == AXIS_VALUE and atom.op in _MEMBERSHIP:
-            spent += _substring_cost(atom.literal)
-            if spent > max_cells:
-                msg = f"substring enumeration exceeds max_cells={max_cells}"
-                raise IntractableMarkerSet(msg)
-            candidates.extend(_membership_candidates(atom, memo))
-
+    substrings, version_members = _membership_candidates(atoms, max_cells, memo)
+    candidates.extend(substrings)
     candidates.extend(_contains_candidates(atoms, literals, max_cells))
 
     if is_version_dispatch(variable):
@@ -1271,6 +1295,8 @@ def _value_candidates(
                 memo=memo,
             )
         )
+    if version_members:
+        candidates.extend(_nonmember_versions(version_members, memo))
     return _dedupe_candidates(
         candidates,
         variable=variable,
