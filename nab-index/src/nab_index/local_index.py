@@ -43,6 +43,7 @@ from packaging.utils import canonicalize_name as _canonical
 from nab_provider.errors import IndexAccessError, UnsupportedWheelError
 from nab_provider.value import replace
 
+from ._listing import ListingDiagnostics, ListingReports, ListingResult
 from ._pep503 import hash_fragment, metadata_declaration, read_page
 from .client import (
     SdistFile,
@@ -175,28 +176,10 @@ def _is_dir(path: Path) -> bool:
     return mode is not None and stat.S_ISDIR(mode)
 
 
-class _ListingDiagnostics(NamedTuple):
-    """File availability reported by one completed filesystem scan."""
-
-    unreadable_only: bool = False
-    unreachable_only: bool = False
-    all_yanked: bool = False
-    no_usable_file: bool = False
-    zip_sdists: frozenset[str] = frozenset()
-
-
-_EMPTY_DIAGNOSTICS = _ListingDiagnostics()
-
-
-class _ScanResult(NamedTuple):
-    files: list[WheelFile | SdistFile]
-    diagnostics: _ListingDiagnostics
-
-
 def _scan_pep503_directory(
     package_dir: Path,
     canonical: str,
-) -> _ScanResult:
+) -> ListingResult:
     """Parse ``<package>/index.html`` and return file records.
 
     ``package_dir`` has to be absolute, because the page's URI is the base
@@ -204,7 +187,7 @@ def _scan_pep503_directory(
     """
     index_html = package_dir / "index.html"
     if not _is_file(index_html):
-        return _ScanResult([], _EMPTY_DIAGNOSTICS)
+        return ListingResult([])
 
     try:
         text = index_html.read_text(encoding="utf-8")
@@ -269,14 +252,14 @@ def _scan_pep503_directory(
     # A navigation link is not a release, so both counts below read the
     # anchors that name one.
     named = len(anchors) - yanked - nameless
-    diagnostics = _ListingDiagnostics(
+    diagnostics = ListingDiagnostics(
         unreadable_only=not files and unreadable,
         unreachable_only=not files and unreachable,
         all_yanked=yanked > 0 and named == 0,
         no_usable_file=not files and named > 0,
         zip_sdists=frozenset(zip_sdists),
     )
-    return _ScanResult(files, diagnostics)
+    return ListingResult(files, diagnostics)
 
 
 def _append_record(
@@ -532,7 +515,7 @@ def _wheelhouse_project(filename: str) -> str | None:
 def _scan_flat_wheelhouse(
     root: Path,
     canonical: str,
-) -> _ScanResult:
+) -> ListingResult:
     """Find files for one canonical project name in a flat wheelhouse.
 
     Entries are sorted because the listing order breaks ties between dists at
@@ -572,7 +555,7 @@ def _scan_flat_wheelhouse(
             )
             files.append(replace(record, requires_python=requires_python))
 
-    return _ScanResult(files, _ListingDiagnostics(zip_sdists=frozenset(zip_sdists)))
+    return ListingResult(files, ListingDiagnostics(zip_sdists=frozenset(zip_sdists)))
 
 
 def _read_sdist_requires_python(sdist_path: Path) -> str | None:
@@ -758,7 +741,7 @@ def _dist_info_name(info_dir: str) -> str:
     return _canonical(stem.rsplit("-", 1)[0])
 
 
-class LocalIndexClient:
+class LocalIndexClient(ListingReports):
     """File-system-backed index client.
 
     Speaks the same surface as :class:`CachedAsyncSimpleClient` so the
@@ -775,9 +758,9 @@ class LocalIndexClient:
         Dropping the dot segments must not follow symlinks, so a page keeps the
         path it was reached by.
         """
+        super().__init__()
         root = parse_file_url(index_url)
         self._root = Path(os.path.abspath(root))  # noqa: PTH100
-        self._diagnostics: dict[NormalizedName, _ListingDiagnostics] = {}
 
     async def aclose(self) -> None:
         """No-op; nothing to release."""
@@ -804,39 +787,14 @@ class LocalIndexClient:
             if _is_file(package_dir / "index.html"):
                 scan = _scan_pep503_directory(package_dir, canonical)
             elif not _is_dir(self._root):
-                scan = _ScanResult([], _EMPTY_DIAGNOSTICS)
+                scan = ListingResult([])
             else:
                 scan = _scan_flat_wheelhouse(self._root, canonical)
         except OSError as exc:
             msg = f"cannot read local index {self._root}: {exc}"
             raise UnreadableLocalIndexError(msg) from exc
 
-        self._diagnostics[canonical] = scan.diagnostics
-        return scan.files
-
-    def _last_scan(self, package: str) -> _ListingDiagnostics:
-        """Return the latest report for this package's index directory."""
-        return self._diagnostics.get(_canonical(package), _EMPTY_DIAGNOSTICS)
-
-    def served_unreadable_only(self, package: str) -> bool:
-        """Whether the last listing for ``package`` held only files nab cannot read."""
-        return self._last_scan(package).unreadable_only
-
-    def served_unreachable_only(self, package: str) -> bool:
-        """Whether the last listing for ``package`` held only links nab cannot reach."""
-        return self._last_scan(package).unreachable_only
-
-    def served_no_usable_file(self, package: str) -> bool:
-        """Whether the last listing for ``package`` named files and nab kept none."""
-        return self._last_scan(package).no_usable_file
-
-    def served_all_yanked(self, package: str) -> bool:
-        """Whether the last listing had files and every one was yanked."""
-        return self._last_scan(package).all_yanked
-
-    def served_zip_sdists(self, package: str) -> frozenset[str]:
-        """Versions ``package`` was served as a ``.zip`` sdist."""
-        return self._last_scan(package).zip_sdists
+        return self._publish_listing(canonical, scan)
 
     async def get_metadata_text(
         self,

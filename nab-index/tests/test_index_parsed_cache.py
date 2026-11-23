@@ -26,6 +26,7 @@ import pytest
 import urllib3
 
 import nab_index.cache as cache_module
+from nab_index._listing import ListingResult
 from nab_index.cache import (
     CACHE_VERSION_SIMPLE,
     CACHE_VERSION_SIMPLE_PARSED,
@@ -156,10 +157,14 @@ def test_failed_writers_do_not_wait_for_another_writers_warning(
     digest = hashlib.sha256(_LISTING_BYTES).hexdigest()
 
     with ThreadPoolExecutor(max_workers=2) as workers:
-        first = workers.submit(client._store_parsed, "pkg", digest, _PARSED)
+        first = workers.submit(
+            client._store_parsed, "pkg", digest, ListingResult(_PARSED)
+        )
         try:
             assert entered.wait(timeout=5)
-            second = workers.submit(client._store_parsed, "pkg", digest, _PARSED)
+            second = workers.submit(
+                client._store_parsed, "pkg", digest, ListingResult(_PARSED)
+            )
             second.result(timeout=5)
             assert len(reported) == 1
         finally:
@@ -178,22 +183,24 @@ def test_cancelled_listing_write_finishes_before_close(
 
     def blocked_replace(source: Path, destination: Path) -> None:
         assert threading.get_ident() != loop_thread
-        started.set()
-        assert released.wait(timeout=5)
+        if not started.is_set():
+            started.set()
+            assert released.wait(timeout=5)
         real_replace(source, destination)
 
     monkeypatch.setattr(os, "replace", blocked_replace)
     cache = _cache(tmp_path)
-    client = CachedAsyncSimpleClient(
-        _FakeTransport([_FakeResponse(_LISTING_BYTES)]), cache, _INDEX
-    )
+    zip_page = b'{"files":[{"filename":"pkg-2.zip","url":"pkg-2.zip"}]}'
+    transport = _FakeTransport([_FakeResponse(_LISTING_BYTES), _FakeResponse(zip_page)])
+    client = CachedAsyncSimpleClient(transport, cache, _INDEX)
 
     async def exercise() -> None:
         request = asyncio.create_task(client.get_files("pkg"))
         try:
             assert await asyncio.to_thread(started.wait, 2)
-            # A later listing can replace this report while the disk write waits.
-            client._zip_sdists["pkg"] = frozenset({"2.0"})
+            # Complete another lookup while the first page is still being written.
+            await client.get_files("pkg")
+            assert client.served_zip_sdists("pkg") == frozenset({"2"})
             request.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await request
@@ -207,6 +214,7 @@ def test_cancelled_listing_write_finishes_before_close(
         await closing
 
     _run(exercise())
+    assert client.served_zip_sdists("pkg") == frozenset({"2"})
 
     stored = cache.get_simple("pkg")
     assert stored is not None

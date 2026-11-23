@@ -43,6 +43,7 @@ from nab_provider.store import sdist_artifact_key
 from nab_provider.value import Record, replace
 
 from ._json_decode import decode_json
+from ._listing import ListingDiagnostics, ListingReports, ListingResult
 from ._simple_media import simple_accept_header
 from .cache import (
     CacheBackend,
@@ -379,7 +380,7 @@ class _VersionSidecars:
         self.texts: dict[tuple[str, str], str] = {}
 
 
-class CachedAsyncSimpleClient:
+class CachedAsyncSimpleClient(ListingReports):
     """Async PyPI Simple API client with on-disk caching.
 
     Distinct from :class:`AsyncSimpleClient`: the interface mirrors what
@@ -423,16 +424,12 @@ class CachedAsyncSimpleClient:
         holds nothing, which is what a resolve that never builds a remote sdist
         wants.
         """
+        super().__init__()
         self._transport = transport
         self._cache = cache
         self._index_url = index_url.rstrip("/") + "/"
         self._offline = offline
         self._serialization = serialization
-        self._unreadable_only: set[str] = set()
-        self._unreachable_only: set[str] = set()
-        self._no_usable_file: set[str] = set()
-        self._all_yanked: set[str] = set()
-        self._zip_sdists: dict[str, frozenset[str]] = {}
         self._range_memo = (
             range_memo if range_memo is not None else RangeCapabilityMemo()
         )
@@ -487,6 +484,11 @@ class CachedAsyncSimpleClient:
         :class:`OfflineError` offline. A cold offline cache also raises that
         error.
         """
+        listing = await self._read_listing(package)
+        return self._publish_listing(canonicalize_name(package), listing)
+
+    async def _read_listing(self, package: str) -> ListingResult:
+        """Read the records and their diagnostics from the same response."""
         policy = self._cache.get_simple_policy(package)
         corrupt_positive = False
         if policy is not None:
@@ -507,9 +509,9 @@ class CachedAsyncSimpleClient:
                 body, policy = cached
                 data = self._decode_cached_listing(body, package)
                 if data is not None:
-                    files = self._parse_body(data, package, page_url=policy.page_url)
-                    self._rebuild_parsed(package, body, policy, files)
-                    return files
+                    listing = self._parse_body(data, package, page_url=policy.page_url)
+                    self._rebuild_parsed(package, body, policy, listing)
+                    return listing
                 corrupt_positive = True
 
         if not corrupt_positive:
@@ -519,7 +521,7 @@ class CachedAsyncSimpleClient:
                 or self._offline
                 or self._floor_keeps_fresh(negative, package, "absent-name sentinel")
             ):
-                return []
+                return ListingResult([])
 
         if self._offline:
             msg = f"No cached listing for {package} (offline mode)"
@@ -549,9 +551,7 @@ class CachedAsyncSimpleClient:
         )
         return True
 
-    def _parsed_hit(
-        self, package: str, policy: CachePolicy
-    ) -> list[WheelFile | SdistFile] | None:
+    def _parsed_hit(self, package: str, policy: CachePolicy) -> ListingResult | None:
         """Rehydrate the parsed blob for ``package``, or ``None`` on any miss.
 
         Returns the records only when a present blob decodes to at least one
@@ -579,9 +579,10 @@ class CachedAsyncSimpleClient:
             return None
         parsed = _decode_parsed(blob, policy)
         if parsed is not None and parsed.files:
-            self._zip_sdists[package] = parsed.zip_sdists
             self._parsed_stats.hit += 1
-            return parsed.files
+            return ListingResult(
+                parsed.files, ListingDiagnostics(zip_sdists=parsed.zip_sdists)
+            )
         self._parsed_stats.rebuild += 1
         if parsed is not None:
             return None
@@ -599,12 +600,11 @@ class CachedAsyncSimpleClient:
         self,
         package: str,
         digest: str | None,
-        files: list[WheelFile | SdistFile],
+        listing: ListingResult,
         *,
-        zip_sdists: frozenset[str] | None = None,
         page_url: str | None = None,
     ) -> None:
-        """Write the parsed blob for ``files``, when there is one worth writing.
+        """Write the parsed blob for this listing, when there is one worth writing.
 
         ``digest`` is ``None`` when the body write did not land, so no blob ever
         claims to describe a body the store does not hold. A listing with no
@@ -612,18 +612,17 @@ class CachedAsyncSimpleClient:
         none, so writing one would rebuild and rewrite it on every later read
         without ever serving it.
 
-        The blob also carries the releases served as a ``.zip`` sdist,
-        since no record survives to name them.
+        The blob also carries the ZIP sdist versions reported by the page.
 
         A refused write is dropped: the blob only accelerates a read the raw
         body already answers. Only the first refusal warns.
         """
-        if digest is None or not files:
+        if digest is None or not listing.files:
             return
 
-        if zip_sdists is None:
-            zip_sdists = self._zip_sdists.get(package, frozenset())
-        blob = _encode_parsed(files, digest, zip_sdists, page_url=page_url)
+        blob = _encode_parsed(
+            listing.files, digest, listing.diagnostics.zip_sdists, page_url=page_url
+        )
         try:
             self._cache.put_simple_parsed(package, blob)
         except OSError as exc:
@@ -642,9 +641,9 @@ class CachedAsyncSimpleClient:
         package: str,
         body: bytes,
         policy: CachePolicy,
-        files: list[WheelFile | SdistFile],
+        listing: ListingResult,
     ) -> None:
-        """Write a parsed blob for ``files`` bound to the on-disk ``body``.
+        """Write a parsed blob for the listing bound to the on-disk ``body``.
 
         An older policy carries no ``body_digest``; the blob would never bind,
         so the digest is computed here and stamped into the refreshed policy so
@@ -652,7 +651,7 @@ class CachedAsyncSimpleClient:
         sparing the body a rehash.
         """
         # Nothing to store, so skip the rehash and the policy write too.
-        if not files:
+        if not listing.files:
             return
 
         digest = policy.body_digest
@@ -661,7 +660,7 @@ class CachedAsyncSimpleClient:
             self._cache.refresh_simple_policy(
                 package, replace(policy, body_digest=digest)
             )
-        self._store_parsed(package, digest, files, page_url=policy.page_url)
+        self._store_parsed(package, digest, listing, page_url=policy.page_url)
 
     def _negative_policy(self, response: HttpResponse) -> CachePolicy:
         """Freshness policy for a name-level 404, clamped to the 600s cap."""
@@ -691,9 +690,7 @@ class CachedAsyncSimpleClient:
             return None
         return decoded
 
-    def _parse_listing(
-        self, body: bytes, package: str, page_url: str
-    ) -> list[WheelFile | SdistFile]:
+    def _parse_listing(self, body: bytes, package: str, page_url: str) -> ListingResult:
         """Parse a Simple-API listing body served from ``page_url``.
 
         A body that will not decode raises the same
@@ -712,58 +709,31 @@ class CachedAsyncSimpleClient:
 
     def _parse_body(
         self, data: object, package: str, *, page_url: str | None = None
-    ) -> list[WheelFile | SdistFile]:
+    ) -> ListingResult:
         """Parse a decoded listing body, recording what nab could not read in it.
 
         ``page_url`` is the URL the body was served from, which its relative
         entries resolve against.
         """
         files = _parse_files(data, self._index_url, package, page_url=page_url)
-        if not files:
-            self._mark_empty_listing(data, package, page_url)
+        zip_sdists = zip_sdist_versions(data, package)
+        if files:
+            return ListingResult(files, ListingDiagnostics(zip_sdists=zip_sdists))
 
-        self._zip_sdists[package] = zip_sdist_versions(data, package)
-        return files
-
-    def _mark_empty_listing(
-        self, data: object, package: str, page_url: str | None
-    ) -> None:
-        """Record what a body that parsed to no files still said about ``package``.
-
-        One page can meet more than one of these, so each is marked on its own.
-        """
-        if holds_unreadable_format(data):
-            self._unreadable_only.add(package)
-        if holds_unreachable_link(data, self._index_url, package, page_url=page_url):
-            self._unreachable_only.add(package)
-        if holds_only_yanked(data):
-            self._all_yanked.add(package)
-        if holds_named_files(data):
-            self._no_usable_file.add(package)
-
-    def served_unreadable_only(self, package: str) -> bool:
-        """Whether a listing for ``package`` held only files nab cannot read."""
-        return package in self._unreadable_only
-
-    def served_unreachable_only(self, package: str) -> bool:
-        """Whether a listing for ``package`` held only links nab cannot reach."""
-        return package in self._unreachable_only
-
-    def served_no_usable_file(self, package: str) -> bool:
-        """Whether a listing for ``package`` named files and nab kept none."""
-        return package in self._no_usable_file
-
-    def served_all_yanked(self, package: str) -> bool:
-        """Whether a listing for ``package`` held files and yanked every one."""
-        return package in self._all_yanked
-
-    def served_zip_sdists(self, package: str) -> frozenset[str]:
-        """Versions ``package`` was served as a ``.zip`` sdist."""
-        return self._zip_sdists.get(package, frozenset())
+        diagnostics = ListingDiagnostics(
+            unreadable_only=holds_unreadable_format(data),
+            unreachable_only=holds_unreachable_link(
+                data, self._index_url, package, page_url=page_url
+            ),
+            all_yanked=holds_only_yanked(data),
+            no_usable_file=holds_named_files(data),
+            zip_sdists=zip_sdists,
+        )
+        return ListingResult(files, diagnostics)
 
     def _unmodified_records(
         self, package: str, policy: CachePolicy
-    ) -> list[WheelFile | SdistFile] | None:
+    ) -> ListingResult | None:
         """Return the records a 304 confirms, or ``None`` when nothing holds them.
 
         The blob answers a 304 the same way it answers a fresh read, so the raw
@@ -785,7 +755,7 @@ class CachedAsyncSimpleClient:
 
     async def _revalidate_simple(
         self, package: str, policy: CachePolicy
-    ) -> list[WheelFile | SdistFile]:
+    ) -> ListingResult:
         """Revalidate a stale cached listing and return the records to serve.
 
         A 304 is answered from the parsed blob, falling back to the cached body
@@ -832,13 +802,13 @@ class CachedAsyncSimpleClient:
 
         if response.status_code == _HTTP_NOT_FOUND:
             self._cache.put_negative(package, self._negative_policy(response))
-            return []
+            return ListingResult([])
         raise_unless_ok(response, url)
         new_body = _listing_body(
             response, self._index_url, package, self._serialization
         )
 
-        unchanged: list[WheelFile | SdistFile] | None = None
+        unchanged: ListingResult | None = None
         if (
             policy.body_digest is not None
             and hashlib.sha256(new_body).hexdigest() == policy.body_digest
@@ -851,7 +821,7 @@ class CachedAsyncSimpleClient:
                 )
 
         # Parse before caching so a bad body never poisons the cache.
-        files = (
+        listing = (
             self._parse_listing(new_body, package, response.url)
             if unchanged is None
             else unchanged
@@ -869,9 +839,9 @@ class CachedAsyncSimpleClient:
             )
         else:
             digest = self._cache.put_simple(package, new_body, new_policy)
-            self._store_parsed(package, digest, files, page_url=new_policy.page_url)
+            self._store_parsed(package, digest, listing, page_url=new_policy.page_url)
 
-        return files
+        return listing
 
     async def _refresh_simple_policy(self, package: str, policy: CachePolicy) -> None:
         """Persist a revalidation policy with at most four background writes."""
@@ -904,18 +874,18 @@ class CachedAsyncSimpleClient:
         if not task.cancelled():
             task.exception()
 
-    async def _fetch_simple(self, package: str) -> list[WheelFile | SdistFile]:
+    async def _fetch_simple(self, package: str) -> ListingResult:
         url = f"{self._index_url}{canonicalize_name(package)}/"
         accept = simple_accept_header(self._serialization)
         response = await self._transport.get(url, headers={"Accept": accept})
         if response.status_code == _HTTP_NOT_FOUND:
             self._cache.put_negative(package, self._negative_policy(response))
-            return []
+            return ListingResult([])
         raise_unless_ok(response, url)
         body = _listing_body(response, self._index_url, package, self._serialization)
 
         # Parse before caching so a bad body never poisons the cache.
-        files = self._parse_listing(body, package, response.url)
+        listing = self._parse_listing(body, package, response.url)
 
         policy = CachePolicy(
             fetched_at=_freshness_start(response),
@@ -923,37 +893,19 @@ class CachedAsyncSimpleClient:
             etag=_header(response, "etag"),
             page_url=response.url,
         )
-        await self._persist_listing(package, body, policy, files)
-        return files
-
-    async def _persist_listing(
-        self,
-        package: str,
-        body: bytes,
-        policy: CachePolicy,
-        files: list[WheelFile | SdistFile],
-    ) -> None:
-        """Persist disk listings without blocking unrelated network completions."""
-        # A later response may replace this report while the worker is running.
-        zip_sdists = self._zip_sdists.get(package, frozenset())
-
-        await self._write_cache(
-            self._store_listing, package, body, policy, files, zip_sdists
-        )
+        await self._write_cache(self._store_listing, package, body, policy, listing)
+        return listing
 
     def _store_listing(
         self,
         package: str,
         body: bytes,
         policy: CachePolicy,
-        files: list[WheelFile | SdistFile],
-        zip_sdists: frozenset[str],
+        listing: ListingResult,
     ) -> None:
         """Store the body before its parsed records and negative-entry removal."""
         digest = self._cache.put_simple(package, body, policy)
-        self._store_parsed(
-            package, digest, files, zip_sdists=zip_sdists, page_url=policy.page_url
-        )
+        self._store_parsed(package, digest, listing, page_url=policy.page_url)
         self._cache.drop_negative(package)
 
     async def get_metadata_text(

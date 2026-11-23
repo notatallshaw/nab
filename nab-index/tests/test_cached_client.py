@@ -221,6 +221,34 @@ def _make_cache(tmp_path: Path) -> OnDiskCache:
     return OnDiskCache(tmp_path, "https://pypi.org/simple/")
 
 
+def test_file_diagnostics_follow_each_response() -> None:
+    installer = b'{"files":[{"filename":"pkg-1.exe","url":"pkg-1.exe"}]}'
+    transport = _FakeTransport(
+        [
+            _FakeResponse(installer),
+            _FakeResponse(ZIP_ONLY_BYTES),
+            _FakeResponse(b"", status=404),
+        ]
+    )
+    client = CachedAsyncSimpleClient(transport, NullCache())
+
+    async def read() -> None:
+        assert await client.get_files("pkg") == []
+        assert client.served_unreadable_only("pkg")
+        assert client.served_no_usable_file("pkg")
+
+        (archive,) = await client.get_files("pkg")
+        assert archive.filename == "pkg-1.0.zip"
+        assert not client.served_unreadable_only("pkg")
+        assert not client.served_no_usable_file("pkg")
+        assert client.served_zip_sdists("pkg") == frozenset({"1.0"})
+
+        assert await client.get_files("pkg") == []
+        assert not client.served_zip_sdists("pkg")
+
+    asyncio.run(read())
+
+
 class _MemoryPolicyCache(OnDiskCache):
     """Cache that returns policies from memory, skipping the sidecar codec."""
 
