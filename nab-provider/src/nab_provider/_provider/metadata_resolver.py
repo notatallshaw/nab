@@ -1142,7 +1142,13 @@ def _requirement_gating(provider: Provider, req: Requirement) -> Gating:
     if marker is None:
         return "base"
     marker_id = id(marker)
-    if _marker_matches_base(provider, marker, marker_id):
+    applies_to_base = provider.marker_base_cache.get(marker_id)
+    if applies_to_base is None:
+        # Record each marker once for the lock's environments declaration.
+        provider.consulted_markers.add(marker)
+        applies_to_base = evaluate_prepared(marker, provider.prepared_environment)
+        provider.marker_base_cache[marker_id] = applies_to_base
+    if applies_to_base:
         return "base"
     if "extra" not in str(marker):
         return "excluded"
@@ -1172,21 +1178,6 @@ def classify_requirement(
         provider, marker, id(marker), provided_extras
     )
     return matched_extras or None
-
-
-def _marker_matches_base(provider: Provider, marker: Marker, marker_id: int) -> bool:
-    """Evaluate ``marker`` against the env without ``extra`` set, cached.
-
-    Every dependency marker the resolve reads passes through here, so this
-    is where it is recorded for the lock's ``environments`` declaration.
-    Recording on the cache miss keeps each distinct marker once.
-    """
-    result = provider.marker_base_cache.get(marker_id)
-    if result is None:
-        provider.consulted_markers.add(marker)
-        result = evaluate_prepared(marker, provider.prepared_environment)
-        provider.marker_base_cache[marker_id] = result
-    return result
 
 
 def _marker_matched_extras(
