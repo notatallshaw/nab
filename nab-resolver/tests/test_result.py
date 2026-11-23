@@ -114,6 +114,8 @@ class TestPublicSolution:
         match Solution(pins={"a": 1}, edges=(("a", "b"),), roots=("a",)):
             case Solution(pins, edges, roots):
                 assert (pins, edges, roots) == ({"a": 1}, (("a", "b"),), ("a",))
+            case _:
+                pytest.fail("Solution did not match positionally")
 
 
 class TestRoots:

@@ -3495,7 +3495,7 @@ class TestResolverStats:
         stats.package_conflict_counts["a"] += 1
         assert other.package_conflict_counts == {}
 
-    def test_counters_can_be_supplied(self) -> None:
+    def test_pattern_matching_reads_the_supplied_counters_positionally(self) -> None:
         stats: ResolverStats[str] = ResolverStats(
             1,
             2,
@@ -3514,6 +3514,13 @@ class TestResolverStats:
         assert (stats.targeted_backtracks, stats.incompatibilities_learned) == (7, 8)
         assert stats.package_conflict_counts == {"a": 1}
         assert stats.package_culprit_counts == {"b": 2}
+
+        match stats:
+            case ResolverStats(1, 2, 3, 4, 5, 6, 7, 8, conflicts, culprits):
+                assert conflicts == {"a": 1}
+                assert culprits == {"b": 2}
+            case _:
+                pytest.fail("ResolverStats did not match positionally")
 
     def test_equality_covers_every_counter_and_declines_other_types(self) -> None:
         """Vary one counter at a time, so none can drop out of __eq__."""
@@ -3550,28 +3557,6 @@ class TestResolverStats:
 
         with pytest.raises(AttributeError):
             _ = stats.__dict__
-
-    def test_pattern_matching_reads_every_counter_positionally(self) -> None:
-        """Ten sub-patterns, in declaration order rather than slot order."""
-        stats: ResolverStats[str] = ResolverStats(rounds=2, conflicts=5)
-
-        match stats:
-            case ResolverStats(
-                rounds,
-                decisions,
-                conflicts,
-                derivations,
-                backjumps,
-                restarts,
-                targeted_backtracks,
-                learned,
-                conflict_counts,
-                culprit_counts,
-            ):
-                assert (rounds, decisions, conflicts) == (2, 0, 5)
-                assert (derivations, backjumps, restarts) == (0, 0, 0)
-                assert (targeted_backtracks, learned) == (0, 0)
-                assert (conflict_counts, culprit_counts) == ({}, {})
 
     def test_repr_names_the_class_and_every_counter(self) -> None:
         assert repr(ResolverStats(rounds=2)) == (
