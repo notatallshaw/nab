@@ -397,9 +397,8 @@ class TestReadCacheEntryParsed:
             / "pypi"
             / "foo.parsed"
         )
-        path.parent.mkdir(parents=True)
-        path.write_bytes(b"\xff\xfe not json")
-        assert cache.read_cache_entry(path) is not None
+        cache.put_simple_parsed("foo", b"{}")
+        assert cache.read_cache_entry(path) == "unexpected top-level shape"
 
 
 class TestNullCacheParsed:
@@ -946,14 +945,16 @@ class TestReadPathRebuild:
         _, policy = result
         assert _decoded(cache.get_simple_parsed("pkg"), policy) == files
 
-    def test_pre_c1_policy_without_digest_self_heals(self, tmp_path: Path) -> None:
+    def test_policy_refresh_keeps_the_body_digest_for_a_parsed_rebuild(
+        self, tmp_path: Path
+    ) -> None:
         cache = _cache(tmp_path)
         digest = cache.put_simple(
             "pkg",
             _LISTING_BYTES,
-            CachePolicy(fetched_at=int(time.time()), max_age=99999, etag=None),
+            CachePolicy(fetched_at=0, max_age=0, etag=None),
         )
-        # Simulate an entry written before body_digest existed: strip the digest.
+        # Refresh the stale entry without supplying a new body digest.
         cache.refresh_simple_policy(
             "pkg",
             CachePolicy(
@@ -966,7 +967,7 @@ class TestReadPathRebuild:
         got = _run(client.get_files("pkg"))
 
         assert got == _PARSED
-        # The rebuild stamped the digest into the policy and bound a blob to it.
+        # The rebuilt blob uses the digest of the original body.
         got_policy = cache.get_simple_policy("pkg")
         assert got_policy is not None
         assert got_policy.body_digest == digest

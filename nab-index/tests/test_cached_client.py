@@ -25,7 +25,6 @@ import nab_index.cache as cache_mod
 import nab_index.cached_client as cached_client_mod
 from nab_index._pep503 import json_listing
 from nab_index.cache import (
-    CACHE_VERSION_SIMPLE_PARSED,
     CachePolicy,
     NullCache,
     OfflineError,
@@ -674,10 +673,13 @@ class TestZipSdistListing:
         old_files = _parse_files(LISTING, "https://pypi.org/simple/", "pkg")
         header, rows = json.loads(encode_parsed(old_files, digest, frozenset({"1.0"})))
         header[0] = 6
-        bucket_version = "v0" if legacy_bucket else CACHE_VERSION_SIMPLE_PARSED
-        old_path = tmp_path / f"simple-parsed-{bucket_version}" / "pypi" / "pkg.parsed"
-        old_path.parent.mkdir(parents=True, exist_ok=True)
-        old_path.write_bytes(json.dumps([header, rows]).encode())
+        old_blob = json.dumps([header, rows]).encode()
+        if legacy_bucket:
+            old_path = tmp_path / "simple-parsed-v0" / "pypi" / "pkg.parsed"
+            old_path.parent.mkdir(parents=True)
+            old_path.write_bytes(old_blob)
+        else:
+            cache.put_simple_parsed("pkg", old_blob)
         transport = _FakeTransport()
 
         async def go() -> list[WheelFile | SdistFile]:

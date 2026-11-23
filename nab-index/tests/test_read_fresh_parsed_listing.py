@@ -18,7 +18,12 @@ from pathlib import Path
 
 import pytest
 
-from nab_index.cache import CACHE_VERSION_SIMPLE, CachePolicy, OnDiskCache
+from nab_index.cache import (
+    CACHE_VERSION_SIMPLE,
+    CachePolicy,
+    OnDiskCache,
+    _atomic_write_record,
+)
 from nab_index.cached_client import (
     CachedAsyncSimpleClient,
     read_fresh_parsed_listing,
@@ -176,7 +181,7 @@ class TestReadFreshParsedListing:
     def test_corrupt_policy_returns_none(self, tmp_path: Path, raw: bytes) -> None:
         cache = _cache(tmp_path)
         _warm_bound(cache)
-        tmp_path.joinpath(*_POLICY_PATH_PARTS).write_bytes(raw)
+        _atomic_write_record(tmp_path.joinpath(*_POLICY_PATH_PARTS), raw)
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
 
     def test_over_nested_policy_returns_none(
@@ -186,7 +191,7 @@ class TestReadFreshParsedListing:
     ) -> None:
         cache = _cache(tmp_path)
         _warm_bound(cache)
-        tmp_path.joinpath(*_POLICY_PATH_PARTS).write_bytes(over_nested_json)
+        _atomic_write_record(tmp_path.joinpath(*_POLICY_PATH_PARTS), over_nested_json)
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
 
     def test_stale_online_returns_none(self, tmp_path: Path) -> None:
