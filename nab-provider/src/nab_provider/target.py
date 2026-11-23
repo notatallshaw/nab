@@ -1332,7 +1332,7 @@ class ResolveTarget(HashableRecord):
             marker_env=env,
             tags=TagSet.for_host_python(python, tags_source=tags_source),
             host_faithful=False,
-            concrete_micro=len(Version(python).release) >= _PYTHON_FULL_VERSION_PARTS,
+            concrete_micro=names_a_micro(Version(python)),
         )
 
     @classmethod

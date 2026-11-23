@@ -310,6 +310,19 @@ class TestForHostPython:
         assert not target.is_minor_interval
         assert 'python_full_version == "3.13.0"' in declared_range_marker(target)
 
+    @pytest.mark.parametrize("python", ["3.14rc1", "3.14.dev1", "3.14+acme"])
+    def test_qualified_release_declares_one_interpreter(self, python: str) -> None:
+        target = ResolveTarget.for_host_python(
+            python, env_source=_host_env, tags_source=_host_tags
+        )
+        row = Marker(environment_declaration(target, ()))
+        later = ResolveTarget.for_host_python(
+            "3.14.1", env_source=_host_env, tags_source=_host_tags
+        )
+
+        assert row.evaluate(target.marker_env)
+        assert not row.evaluate(later.marker_env)
+
     def test_bare_minor_is_an_interval(self) -> None:
         """A bare ``3.13`` target is a micro interval off its ``.0`` floor."""
         target = ResolveTarget.for_host_python(
