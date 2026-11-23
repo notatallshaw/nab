@@ -118,6 +118,7 @@ if TYPE_CHECKING:
     from nab_project.prepared_input import PreparedProjectInput
     from nab_provider.overrides import IndexOverride, PackageOverride
     from nab_provider.tags import PlatformSpec
+    from nab_provider.target import Matrix
 
     from .ladder import Layer
 
@@ -516,7 +517,12 @@ def _config_from_effective(
             _matrix_environment_message(matrix_value, _environment_source(effective))
         )
 
-    targets = _plan_targets(matrix, environment)
+    targets: Matrix | tuple[ResolveTarget, ...] | None = None
+    if matrix is not None:
+        targets = matrix_from_config(matrix)
+    elif environment is not None:
+        targets = _plan_targets(None, environment)
+
     build_policy = enforce_build_policy_for_targets(
         targets=targets,
         assume_universal_deps=effective["assume-universal-deps"].value,
