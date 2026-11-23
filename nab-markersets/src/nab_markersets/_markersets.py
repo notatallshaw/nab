@@ -816,6 +816,7 @@ class Memo:
     """
 
     __slots__ = (
+        "_int_limit",
         "decisions",
         "gap_remaining",
         "gaps",
@@ -845,6 +846,14 @@ class Memo:
         self.row_work: _RowWork | None = None
         self.truths: dict[tuple[Atom, str], bool] = {}
         self.versions: dict[str, Version | None] = {}
+        self._int_limit = get_int_max_str_digits()
+
+    def for_current_parser(self) -> Memo:
+        """Refresh this store if the integer parsing limit has changed."""
+        if self._int_limit != get_int_max_str_digits():
+            # The caller keeps the same store and any subclass state.
+            Memo.__init__(self)
+        return self
 
 
 def _truth(atom: Atom, point: object, memo: Memo) -> bool:
@@ -1829,6 +1838,7 @@ def is_empty(node: Formula, max_cells: int, store: Memo | None = None) -> bool:
         one_off.mask_remaining = 0
         return _decide_empty(node, max_cells, one_off).empty
 
+    store.for_current_parser()
     key = (node.key(), max_cells)
     decided = store.decisions.get(key)
     if decided is None:
@@ -1848,7 +1858,7 @@ def witness(
     result is never wrong; ``None`` is weaker than empty, because the search
     reads the same cells the decisions do.
     """
-    memo = Memo() if store is None else store
+    memo = Memo() if store is None else store.for_current_parser()
     for cell in _enumerate_cells(node, _cell_space(node, max_cells, memo)):
         env = _materialize(cell)
         try:
@@ -2388,7 +2398,7 @@ def universe_is_empty(
     universe: Formula, max_cells: int, store: Memo | None = None
 ) -> bool:
     """Whether a universe admits no environment: every top-level disjunct is empty."""
-    shared = Memo() if store is None else store
+    shared = Memo() if store is None else store.for_current_parser()
     return all(
         is_empty(disjunct, max_cells, shared)
         for disjunct in _universe_disjuncts(universe)
@@ -2405,7 +2415,7 @@ def equivalent_within_rows(
     max_work: int | None = None,
 ) -> bool:
     """Compare original trees per row, sharing an existing work budget if present."""
-    shared = Memo() if store is None else store
+    shared = Memo() if store is None else store.for_current_parser()
     previous_work = _work_meter.remaining
     if previous_work is None:
         _work_meter.remaining = max_work
@@ -3252,7 +3262,7 @@ def simplify_within(
     ``max_cells`` bounds each decision and the direct truth-table payload.
     ``max_work`` covers the direct attempt and greedy fallback together.
     """
-    shared = Memo() if store is None else store
+    shared = Memo() if store is None else store.for_current_parser()
     previous_work = _work_meter.remaining
     _work_meter.remaining = max_work
     try:
