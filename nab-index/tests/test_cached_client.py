@@ -35,9 +35,9 @@ from nab_index.cached_client import (
     CachedAsyncSimpleClient,
     ParsedCacheStats,
     SdistArchiveHold,
+    _cache_control_lifetime,
     _freshness_lifetime,
     _header,
-    _max_age_directive,
     _parse_age,
 )
 from nab_index.client import (
@@ -974,36 +974,53 @@ class TestFragmentedUrlSidecarFetch:
         assert transport.paths == [wheel_path + ".metadata"]
 
 
-class TestMaxAgeDirective:
+class TestCacheControlLifetime:
     def test_none_when_field_absent(self) -> None:
-        assert _max_age_directive(None) is None
+        assert _cache_control_lifetime(None) is None
 
     def test_none_when_directive_absent(self) -> None:
-        assert _max_age_directive("public") is None
+        assert _cache_control_lifetime("public") is None
 
     def test_extracts_value(self) -> None:
-        assert _max_age_directive("max-age=900, public") == 900
+        assert _cache_control_lifetime("max-age=900, public") == 900
 
     def test_extracts_value_with_spaces(self) -> None:
-        assert _max_age_directive("public, max-age = 1200") == 1200
+        assert _cache_control_lifetime("public, max-age = 1200") == 1200
 
     def test_leading_zeros_ignored(self) -> None:
-        assert _max_age_directive("max-age=00000000900") == 900
+        assert _cache_control_lifetime("max-age=00000000900") == 900
 
     def test_above_ceiling_clamped(self) -> None:
-        assert _max_age_directive("max-age=9999999999") == 2**31
+        assert _cache_control_lifetime("max-age=9999999999") == 2**31
 
     def test_digit_run_too_long_to_convert_clamped(self) -> None:
-        assert _max_age_directive("max-age=" + "9" * 9000) == 2**31
+        assert _cache_control_lifetime("max-age=" + "9" * 9000) == 2**31
 
     def test_directive_name_is_case_insensitive(self) -> None:
-        assert _max_age_directive("Max-Age=0") == 0
+        assert _cache_control_lifetime("Max-Age=0") == 0
 
     def test_uppercase_directive_among_others(self) -> None:
-        assert _max_age_directive("public, MAX-AGE = 30, must-revalidate") == 30
+        assert _cache_control_lifetime("public, MAX-AGE = 30, must-revalidate") == 30
 
     def test_quoted_value_extracted(self) -> None:
-        assert _max_age_directive('max-age="300"') == 300
+        assert _cache_control_lifetime('max-age="300"') == 300
+
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            ("mirror-max-age=3600, max-age=0", 0),
+            ('private="Age, max-age=3600", max-age=0', 0),
+            ('private="Age, no-cache, Size", max-age=60', 60),
+            (r'note="quoted \"value, no-cache, end", max-age=60', 60),
+            ('max-age=60, no-cache="Age, Size"', 0),
+            ("max-age=60, max-age=120", 60),
+            ("max-age=60s", 0),
+        ],
+    )
+    def test_only_complete_directives_set_freshness(
+        self, field: str, expected: int
+    ) -> None:
+        assert _cache_control_lifetime(field) == expected
 
 
 class TestFreshnessLifetime:

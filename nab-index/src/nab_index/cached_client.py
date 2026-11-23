@@ -141,9 +141,6 @@ class ParsedCacheStats(Record):
 
 _DEFAULT_MAX_AGE = 600
 _HTTP_NOT_MODIFIED = 304
-# RFC 9111 5.2: directive names are case-insensitive and the argument may be quoted.
-_MAX_AGE_RE = re.compile(r'max-age\s*=\s*"?(\d+)', re.IGNORECASE)
-_NO_REUSE_RE = re.compile(r"(?:\A|,)\s*no-(?:cache|store)\s*(?:[,=]|\Z)", re.IGNORECASE)
 _AGE_RE = re.compile(r"\A\s*(\d+)\s*\Z")
 _SECONDS_CEILING = 2**31
 _SECONDS_CEILING_DIGITS = len(str(_SECONDS_CEILING))
@@ -164,25 +161,36 @@ def _parse_seconds(digits: str) -> int:
     return min(int(trimmed or "0"), _SECONDS_CEILING)
 
 
-def _max_age_directive(cache_control: str | None) -> int | None:
-    """Return the ``max-age`` a Cache-Control field carries, or ``None``."""
+def _cache_control_lifetime(cache_control: str | None) -> int | None:
+    """Return the explicit freshness lifetime, including required revalidation."""
     if cache_control is None:
         return None
-    match = _MAX_AGE_RE.search(cache_control)
-    if match is None:
-        return None
-    return _parse_seconds(match.group(1))
 
+    if '"' in cache_control:
+        # Only quoted fields need urllib.request to distinguish commas inside a value.
+        from urllib.request import parse_http_list  # noqa: PLC0415
 
-def _requires_revalidation(cache_control: str | None) -> bool:
-    """Whether Cache-Control bars reusing a stored response unvalidated.
+        directives = parse_http_list(cache_control)
+    else:
+        directives = cache_control.split(",")
 
-    ``no-cache`` (RFC 9111 5.2.2.4) says so directly. ``no-store`` (5.2.2.5)
-    bars storing the response at all; nab stores it anyway and revalidates on
-    every read instead. A ``no-cache`` qualified with field names reads as the
-    bare directive.
-    """
-    return cache_control is not None and _NO_REUSE_RE.search(cache_control) is not None
+    max_age = None
+    for directive in directives:
+        name, _, value = directive.partition("=")
+        name = name.strip().lower()
+        if name in {"no-cache", "no-store"}:
+            return 0
+        if name != "max-age" or max_age is not None:
+            continue
+
+        value = value.strip()
+        if value.startswith('"') and value.endswith('"'):
+            value = value[1:-1]
+        if not (value.isascii() and value.isdecimal()):
+            return 0
+        max_age = _parse_seconds(value)
+
+    return max_age
 
 
 def _parse_age(age: str | None) -> int:
@@ -267,13 +275,9 @@ def _freshness_lifetime(response: HttpResponse) -> int:
     for a response stating no expiry at all, and a response barred from
     unvalidated reuse gets no window whatever else it states.
     """
-    cache_control = _header(response, "cache-control")
-    if _requires_revalidation(cache_control):
-        return 0
-
-    max_age = _max_age_directive(cache_control)
-    if max_age is not None:
-        return max_age
+    lifetime = _cache_control_lifetime(_header(response, "cache-control"))
+    if lifetime is not None:
+        return lifetime
 
     expires = _header(response, "expires")
     if expires is None:
