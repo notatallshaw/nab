@@ -11,8 +11,6 @@ versions at error-render time.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-
 import pytest
 
 from nab_resolver._compat import override
@@ -29,78 +27,10 @@ from nab_resolver.types import (
     Term,
 )
 
-
-class _BaseProvider:
-    """In-memory provider mirroring test_resolver's DictProvider."""
-
-    def __init__(self, packages: dict[str, dict[int, dict[str, Range]]]) -> None:
-        self._packages = packages
-
-    def _get_versions(self, package: str) -> list[int]:
-        if package not in self._packages:
-            return []
-        return sorted(self._packages[package].keys(), reverse=True)
-
-    def choose_version(
-        self, package: str, version_range: RangeProtocol[int]
-    ) -> int | None:
-        for version in self._get_versions(package):
-            if version in version_range:
-                return version
-        return None
-
-    def has_satisfying_version(
-        self, package: str, version_range: RangeProtocol[int]
-    ) -> bool:
-        return any(v in version_range for v in self._get_versions(package))
-
-    def get_dependencies(self, package: str, version: int) -> dict[str, Range]:
-        return self._packages.get(package, {}).get(version, {})
-
-    def begin_decision_scan(self) -> None:
-        """No-op: nothing in this stub moves under a scan."""
-
-    def prioritize(
-        self,
-        package: str,
-        version_range: RangeProtocol[int],
-        conflict_counts: Mapping[str, int],
-        culprit_counts: Mapping[str, int] | None = None,
-    ) -> object:
-        versions = self._get_versions(package)
-        return sum(1 for v in versions if v in version_range)
-
-    def is_ready(self, package: str) -> bool:
-        """All packages decidable immediately in tests."""
-        return True
-
-    def receive_partial_solution_hint(
-        self,
-        positive_ranges: Mapping[str, RangeProtocol[int]],
-        decisions: Mapping[str, int],
-    ) -> None:
-        """No-op: test provider does not use partial solution state."""
-
-    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
-        """No queued clauses for this in-memory provider."""
-        return []
-
-    def consume_force_backtrack_targets(self) -> list[str]:
-        """No force-backtrack signal from this provider."""
-        return []
-
-    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
-        """No widening: dependency clauses keep the exact decided version."""
-        return None
-
-    def narrow_for_display(
-        self, package: str, constraint: RangeProtocol[int]
-    ) -> RangeProtocol[int]:
-        """Identity: constraints render as stored."""
-        return constraint
+from .solver_fixtures import DictProvider
 
 
-class _RecordingWidenProvider(_BaseProvider):
+class _RecordingWidenProvider(DictProvider):
     """Records every ``widen_decision`` call and declines to widen."""
 
     def __init__(self, packages: dict[str, dict[int, dict[str, Range]]]) -> None:
@@ -113,7 +43,7 @@ class _RecordingWidenProvider(_BaseProvider):
         return None
 
 
-class _WideningProvider(_BaseProvider):
+class _WideningProvider(DictProvider):
     """Widens a decided version to the open gap between its listed neighbors."""
 
     @override
@@ -148,7 +78,7 @@ class _SnappingProvider(_WideningProvider):
         return Range.between(inside[0], inside[-1] + 1)
 
 
-class _SpanWideningProvider(_BaseProvider):
+class _SpanWideningProvider(DictProvider):
     """Widens a decided version across adjacent versions with equal deps."""
 
     @override
@@ -172,7 +102,7 @@ class _SpanWideningProvider(_BaseProvider):
         return widened
 
 
-class _NarrowingProvider(_BaseProvider):
+class _NarrowingProvider(DictProvider):
     """Narrows displayed constraints for one package to a fixed range."""
 
     def __init__(
@@ -203,7 +133,7 @@ class TestWidenDecisionNoneIsToday:
         """Deep-backtracking graph: same result and same decision count as
         the exact-singleton resolver produces (captured before the hook
         existed: result {root: 1, a: 1, c: 2}, 9 decisions)."""
-        provider = _BaseProvider(
+        provider = DictProvider(
             {
                 "root": {1: {"a": Range.full(), "c": Range.full()}},
                 "a": {2: {"b": Range.at_least(2)}, 1: {}},
@@ -265,7 +195,7 @@ class TestWideningMergesDependencyClauses:
             "b": {1: {}},
         }
         with pytest.raises(ResolutionError):
-            Resolver(_BaseProvider(packages)).resolve({"root": Range.singleton(1)})
+            Resolver(DictProvider(packages)).resolve({"root": Range.singleton(1)})
         with pytest.raises(ResolutionError):
             Resolver(_WideningProvider(packages)).resolve({"root": Range.singleton(1)})
 
@@ -312,7 +242,7 @@ class TestSpanWideningContract:
             },
             "b": {1: {}},
         }
-        base = Resolver(_BaseProvider(packages)).resolve({"root": Range.singleton(1)})
+        base = Resolver(DictProvider(packages)).resolve({"root": Range.singleton(1)})
         span_resolver = Resolver(_SpanWideningProvider(packages))
         span = span_resolver.resolve({"root": Range.singleton(1)})
         assert span == base == {"root": 1, "a": 1, "b": 1}
@@ -465,7 +395,7 @@ class TestFormatErrorNarrow:
     def test_identity_narrow_keeps_message_byte_identical(self) -> None:
         """A provider with the identity ``narrow_for_display`` renders the
         exact message the resolver produced before the hook existed."""
-        provider = _BaseProvider({"root": {1: {"foo": Range.full()}}})
+        provider = DictProvider({"root": {1: {"foo": Range.full()}}})
         resolver = Resolver(provider)
         with pytest.raises(ResolutionError) as exc_info:
             resolver.resolve({"root": Range.singleton(1)})

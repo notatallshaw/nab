@@ -21,7 +21,7 @@ from nab_resolver.types import (
     Term,
 )
 
-from .test_resolver import DictProvider
+from .solver_fixtures import DictProvider
 
 Packages = dict[str, dict[int, dict[str, Range]]]
 

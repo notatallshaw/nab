@@ -59,75 +59,7 @@ from nab_resolver.types import (
     Term,
 )
 
-
-class DictProvider:
-    """In-memory provider for testing. Packages are strings, versions are ints."""
-
-    def __init__(self, packages: dict[str, dict[int, dict[str, Range]]]) -> None:
-        self._packages = packages
-
-    def _get_versions(self, package: str) -> list[int]:
-        if package not in self._packages:
-            return []
-        return sorted(self._packages[package].keys(), reverse=True)
-
-    def choose_version(
-        self, package: str, version_range: RangeProtocol[int]
-    ) -> int | None:
-        for version in self._get_versions(package):
-            if version in version_range:
-                return version
-        return None
-
-    def has_satisfying_version(
-        self, package: str, version_range: RangeProtocol[int]
-    ) -> bool:
-        return any(v in version_range for v in self._get_versions(package))
-
-    def get_dependencies(self, package: str, version: int) -> dict[str, Range]:
-        return self._packages.get(package, {}).get(version, {})
-
-    def begin_decision_scan(self) -> None:
-        """No-op: nothing in this stub moves under a scan."""
-
-    def prioritize(
-        self,
-        package: str,
-        version_range: RangeProtocol[int],
-        conflict_counts: Mapping[str, int],
-        culprit_counts: Mapping[str, int] | None = None,
-    ) -> object:
-        versions = self._get_versions(package)
-        return sum(1 for v in versions if v in version_range)
-
-    def is_ready(self, package: str) -> bool:
-        """All packages decidable immediately in tests."""
-        return True
-
-    def receive_partial_solution_hint(
-        self,
-        positive_ranges: Mapping[str, RangeProtocol[int]],
-        decisions: Mapping[str, int],
-    ) -> None:
-        """No-op: test provider does not use partial solution state."""
-
-    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
-        """No queued clauses for this in-memory provider."""
-        return []
-
-    def consume_force_backtrack_targets(self) -> list[str]:
-        """No force-backtrack signal from this provider."""
-        return []
-
-    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
-        """No widening: dependency clauses keep the exact decided version."""
-        return None
-
-    def narrow_for_display(
-        self, package: str, constraint: RangeProtocol[int]
-    ) -> RangeProtocol[int]:
-        """Identity: constraints render as stored."""
-        return constraint
+from .solver_fixtures import DictProvider
 
 
 class PromotingProvider(DictProvider):
