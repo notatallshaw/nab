@@ -38,6 +38,30 @@ def command(value: Registry, *args: str) -> int:
     return run(("--no-progress", "lock", str(value.project), *args))
 
 
+@pytest.mark.parametrize(
+    ("args", "source"),
+    [
+        ((), "plan 'dev': settings.requires-python"),
+        (("--project-requires-python", "<3"), "--project-requires-python"),
+        (
+            ("--setting", 'project.requires-python="<3"'),
+            "--setting project.requires-python",
+        ),
+    ],
+)
+def test_excluded_python_names_the_winning_plan_or_flag(
+    named: Registry,
+    capsys: pytest.CaptureFixture[str],
+    args: tuple[str, ...],
+    source: str,
+) -> None:
+    with named.project.open("a") as project:
+        project.write('[tool.nab.plans.dev.settings]\nrequires-python="<3"\n')
+
+    assert command(named, "--plan", "dev", *args) == 1
+    assert f"{source} = '<3' excludes the resolve target" in capsys.readouterr().err
+
+
 def test_plan_defaults_to_its_project_directory_and_checks_without_fetching(
     named: Registry,
 ) -> None:

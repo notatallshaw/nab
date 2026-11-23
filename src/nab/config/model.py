@@ -432,7 +432,7 @@ def read_pyproject_config(
     )
     if input_format is InputFormat.SCRIPT:
         config = _script_python_bounds(
-            config, path, project_requires_python, effective["requires-python"]
+            config, path, project_requires_python, effective["requires-python"].value
         )
     elif discover_workspace:
         config = _apply_workspace_discovery(
@@ -445,7 +445,7 @@ def _script_python_bounds(
     config: NabProjectConfig,
     path: Path,
     script_requires_python: str | None,
-    tool_requires_python: EffectiveValue,
+    tool_requires_python: str | None,
 ) -> NabProjectConfig:
     """Combine script/tool Python bounds while retaining their diagnostic origins."""
     if script_requires_python is None:
@@ -454,14 +454,8 @@ def _script_python_bounds(
     declarations: tuple[tuple[str, str], ...] = (
         (script_requires_python, f"{path}: PEP 723 requires-python"),
     )
-    if tool_requires_python.value is not None:
-        origin = tool_requires_python.origin
-        if origin.kind is SourceKind.CLI:
-            tool_source = "--project-requires-python"
-        else:
-            key = project_key_path("requires-python", origin.kind)
-            tool_source = f"{origin.label}: {key}"
-        declarations += ((tool_requires_python.value, tool_source),)
+    if tool_requires_python is not None:
+        declarations += ((tool_requires_python, config.requires_python_source),)
 
     combined = str(SpecifierSet(",".join(value for value, _source in declarations)))
     return config.replace(
@@ -534,9 +528,12 @@ def _config_from_effective(
         index_overrides=index_overrides,
     )
 
-    requires_python = effective["requires-python"].value
+    python_bound = effective["requires-python"]
+    requires_python = python_bound.value
     requires_python_source = _TOOL_NAB_REQUIRES_PYTHON
-    if requires_python is None and project_requires_python is not None:
+    if requires_python is not None:
+        requires_python_source = _requires_python_source(python_bound)
+    elif project_requires_python is not None:
         requires_python = project_requires_python
         requires_python_source = _PROJECT_REQUIRES_PYTHON
 
@@ -588,6 +585,24 @@ def _config_from_effective(
         conflicts=conflicts,
         package_overrides=package_overrides,
         index_overrides=index_overrides,
+    )
+
+
+def _requires_python_source(bound: EffectiveValue) -> str:
+    """Name each declaration that would have to change to widen the bound."""
+    origin = bound.origin
+    if origin.kind is SourceKind.CLI:
+        if isinstance(bound.cli_table, CliSetting):
+            return "--setting project.requires-python"
+        return "--project-requires-python"
+    if origin.kind is SourceKind.LOCK_PLAN:
+        return f"{origin.label}: settings.requires-python"
+
+    # Both project files can declare the same value at equal precedence.
+    return " and ".join(
+        f"{source.label}: {project_key_path('requires-python', source.kind)}"
+        for source, _value in bound.stack
+        if not origin.outranks(source)
     )
 
 

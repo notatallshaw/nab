@@ -1501,10 +1501,22 @@ class TestRequiresPython:
         config = read_pyproject_config(path)
         with pytest.raises(
             ConfigError,
-            match=r"\[tool\.nab\] requires-python = '==3\.9\.\*' excludes the"
+            match=r"pyproject\.toml: tool\.nab\.requires-python = '==3\.9\.\*' excludes the"
             r" resolve target Python 3\.12[\s\S]*--python",
         ):
             plan_targets(config)
+
+    def test_equal_project_bounds_name_both_files(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nrequires-python = "<3"\n')
+        config_file = tmp_path / "nab.toml"
+        config_file.write_text('requires-python = "<3"\n')
+
+        with pytest.raises(ConfigError) as caught:
+            plan_targets(read_pyproject_config(path))
+
+        message = str(caught.value)
+        assert f"{path}: tool.nab.requires-python" in message
+        assert f"{config_file}: requires-python" in message
 
     def test_every_matrix_target_is_checked(self, tmp_path: Path) -> None:
         """The lock carries the declaration and the targets, so they must agree.
