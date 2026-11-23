@@ -1044,7 +1044,10 @@ class TestReadCacheEntry:
         path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.json.abc.tmp"
         path.parent.mkdir(parents=True)
         path.write_bytes(b"partial")
-        assert cache.read_cache_entry(path) is None
+        (entry,) = cache.iter_cache_entries()
+        path.unlink()  # The writer finished after verification listed its staging file.
+
+        assert cache.read_cache_entry(entry) is None
 
     def test_unreadable_entry(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)

@@ -738,13 +738,14 @@ class OnDiskCache:
         its two fields), ``.parsed`` as a parsed-listing blob. Any other
         suffix is not a nab entry and is reported clean.
         """
+        suffix = path.suffix
+        if suffix not in (".policy", ".neg", ".json") and suffix not in _ENTRY_READERS:
+            return None
+
         try:
             raw = path.read_bytes()
         except OSError as exc:
             return f"unreadable: {exc.strerror or exc}"
-        suffix = path.suffix
-        if suffix not in (".policy", ".neg", ".json") and suffix not in _ENTRY_READERS:
-            return None
         if self._bucket_of(path) in _CHECKED_RECORD_BUCKETS:
             payload = _record_payload(
                 raw[:_CACHE_RECORD_HEADER_BYTES], raw[_CACHE_RECORD_HEADER_BYTES:]
