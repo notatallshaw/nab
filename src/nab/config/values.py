@@ -1828,18 +1828,6 @@ def _parse_python_patches(value: object, where: str) -> dict[str, str] | None:
         if not isinstance(k, str) or not isinstance(v, str):
             msg = f"{label} entries must be string -> string, got {k!r}: {v!r}"
             raise SourceConfigError(msg)
-        try:
-            validate_python_version(k, variable="python_version")
-            validate_python_version(v)
-            minor = Version(k)
-            full = Version(v)
-        except ValueError as exc:
-            msg = f"{label} expects version strings, got {k!r}: {v!r}: {exc}"
-            raise SourceConfigError(msg) from exc
-
-        if full.release[:2] != minor.release[:2]:
-            msg = f"{label} value {v!r} is not a patch release of {k!r}"
-            raise SourceConfigError(msg)
         out[k] = v
     return out
 

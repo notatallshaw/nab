@@ -359,6 +359,15 @@ class TestForDeclared:
         assert target.marker_env["sys_platform"] == "darwin"
         assert target.python_full_version == "3.12.0"
 
+    @pytest.mark.parametrize("patch", ["", "3.12.4"])
+    def test_invalid_patch_cannot_define_a_target(self, patch: str) -> None:
+        with pytest.raises(ValueError, match="python-patches"):
+            ResolveTarget.for_declared(
+                python_version="3.11",
+                spec=PlatformSpec("linux_x86_64"),
+                python_full_version=patch,
+            )
+
     def test_patch_release_overrides_the_default(self) -> None:
         target = ResolveTarget.for_declared(
             python_version="3.11",

@@ -1370,6 +1370,22 @@ class ResolveTarget(HashableRecord):
         )
 
 
+def _check_python_patch(minor: str, full: str) -> None:
+    """Require a patch pin to identify an interpreter of the declared minor."""
+    try:
+        validate_python_version(minor, variable="python_version")
+        validate_python_version(full)
+        patch_minor = _language_minor(Version(full))
+        declared_minor = _language_minor(Version(minor))
+    except ValueError as exc:
+        msg = f"python-patches expects version strings, got {minor!r}: {full!r}: {exc}"
+        raise ValueError(msg) from exc
+
+    if patch_minor != declared_minor:
+        msg = f"python-patches value {full!r} is not a patch release of {minor!r}"
+        raise ValueError(msg)
+
+
 def declared_environment(
     python_version: str,
     spec: PlatformSpec,
@@ -1392,7 +1408,11 @@ def declared_environment(
     resolve.  The lock does not carry the synthetic value: see
     :func:`unboundable_variables`.
     """
-    full = python_full_version or f"{python_version}.0"
+    if python_full_version is None:
+        full = f"{python_version}.0"
+    else:
+        _check_python_patch(python_version, python_full_version)
+        full = python_full_version
     return {
         **PLATFORM_MARKERS[spec.platform_id],
         **IMPLEMENTATION_MARKERS[implementation],
@@ -1546,6 +1566,10 @@ class Matrix(Record):
                 " keys must be major.minor like '3.11'"
             )
             raise ValueError(msg)
+
+        # Check dormant pins as well as the ones selected by this matrix.
+        for minor, full in patches.items():
+            _check_python_patch(minor, full)
 
         self._validate_defaults_and_overrides()
         python_order = {

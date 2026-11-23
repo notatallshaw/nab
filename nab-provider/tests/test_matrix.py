@@ -208,6 +208,16 @@ class TestMatrixExpand:
         with pytest.raises(ValueError, match="python_patches"):
             matrix.expand()
 
+    @pytest.mark.parametrize("python", ["==3.11", "==3.12"])
+    def test_patch_must_match_its_minor_even_when_unselected(self, python: str) -> None:
+        matrix = Matrix(
+            python=python,
+            platforms=(PlatformSpec("linux_x86_64"),),
+            python_patches={"3.11": "3.12.4"},
+        )
+        with pytest.raises(ValueError, match="not a patch release of '3.11'"):
+            matrix.expand()
+
     def test_patch_level_marker_evaluation(self) -> None:
         """Patch-bound markers evaluate against the declared full version."""
         from nab_provider._vendor.packaging.markers import Marker
