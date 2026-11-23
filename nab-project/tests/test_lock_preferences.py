@@ -88,6 +88,15 @@ def test_conditional_versions_are_selected_per_actual_target() -> None:
 
     assert preferences.versions_for(target()) == {"a": Version("1")}
     assert preferences.versions_for(target("windows_amd64")) == {"a": Version("2")}
+    assert preferences.summary_versions() is None
+
+
+def test_conditional_rows_with_the_same_version_can_be_compared() -> None:
+    lock = prior(
+        wheel_package(version="1", marker='sys_platform == "linux"'),
+        wheel_package(version="1", marker='sys_platform == "win32"'),
+    )
+    assert LockPreferences(lock).summary_versions() == {"a": Version("1")}
 
 
 def test_selector_conjunction_uses_one_complete_context() -> None:

@@ -27,9 +27,9 @@ Choose `pylock` (default), `requirements`, or `requirements-without-hashes`. See
 
 ### `--output PATH`
 
-Write to `PATH`, or stdout with `-`. Project defaults are `pylock.toml` or `requirements.txt`. With
-`--script`, defaults are `pylock.<stem>.toml` and `<script>.requirements.txt` beside the script.
-Universal project requirements go to stdout unless you provide an
+Write to `PATH`, or stdout with `-`. The default lockfile is `pylock.toml`, or `pylock.<stem>.toml`
+beside a script. For a single target, requirements go to `requirements.txt` or
+`<script>.requirements.txt`. With multiple targets, requirements go to stdout unless you provide an
 [output template](formats.md#--output).
 
 ### `--locked`
@@ -166,8 +166,8 @@ examples.
 - `--project-decision-order`: use arrival or stable decision order.
 - `--project-mode`: set `specific` or `universal` instead of inferring mode from the matrix.
 - `--project-requires-python`: set the supported Python version range.
-- `--project-uploaded-prior-to`: exclude distributions uploaded after a timestamp or relative
-  cutoff.
+- `--project-uploaded-prior-to`: exclude files uploaded at or after the cutoff. Accepts a timestamp
+  or a relative duration.
 - `--project-dist-policy`: select allowed distribution types.
 - `--project-build-policy`: select which source distributions may be built.
 - `--project-build-requires-depth`: limit nested build environments.

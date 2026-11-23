@@ -15,9 +15,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import statistics
-import subprocess
 import sys
 import time
 from collections import Counter
@@ -35,7 +33,6 @@ else:
     import tomli as tomllib  # type: ignore[no-redef]
 
 from benchmark_config import (
-    BenchmarkRequirements,
     YankStats,
     benchmark_index_settings,
     build_benchmark_config,
@@ -43,6 +40,7 @@ from benchmark_config import (
     build_benchmark_resolver_inputs,
     direct_packages_from_requirements,
     expand_project_extras,
+    parse_requirements,
     parse_scenario_build_packages,
     parse_scenario_index_routes,
     parse_scenario_indexes,
@@ -66,21 +64,18 @@ from benchmark_host import (
     parse_requires_matching_host,
     parse_target_marker_environment,
 )
+from benchmark_paths import is_portable_path_component
+from benchmark_source import get_git_source_state
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_project.fetch import FetchCoordinator, index_routes
-from nab_provider._vendor.packaging.markers import default_environment
 from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
 from nab_provider.provider import (
     BuildPolicy,
     ResolutionStrategy,
-    VcsConfig,
     split_extra,
 )
-from nab_provider.vcs_admission import admit_vcs_url
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS, Resolver
 
@@ -157,62 +152,6 @@ def scenario_execution_hash(
     return hashlib.sha256(encoded).hexdigest()
 
 
-def get_git_source_state() -> dict[str, str | bool | None]:
-    """Describe the checked-out source without treating a label as identity."""
-    try:
-        commit = get_git_commit()
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return {"commit": None, "dirty": True, "diff_hash": None}
-    try:
-        root = Path(
-            subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                capture_output=True,
-                check=True,
-                text=True,
-                cwd=BENCHMARKS_DIR,
-            ).stdout.strip()
-        )
-        status = subprocess.run(
-            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        diff = subprocess.run(
-            ["git", "diff", "--binary", "HEAD", "--"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        untracked = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        untracked_hashes = bytearray()
-        for raw_path in untracked.split(b"\0"):
-            if not raw_path:
-                continue
-            object_hash = subprocess.run(  # noqa: S603 - path is one arg after --
-                ["git", "hash-object", "--", os.fsdecode(raw_path)],
-                capture_output=True,
-                check=True,
-                cwd=root,
-            ).stdout
-            untracked_hashes.extend(raw_path + b"\0" + object_hash)
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return {"commit": commit, "dirty": True, "diff_hash": None}
-    dirty = bool(status)
-    diff_hash = (
-        hashlib.sha256(status + b"\0" + diff + b"\0" + untracked_hashes).hexdigest()
-        if dirty
-        else None
-    )
-    return {"commit": commit, "dirty": dirty, "diff_hash": diff_hash}
-
-
 def _target_manifest(target: ResolveTarget) -> dict[str, object]:
     """Return the contract-v2 identity of an effective canary target."""
     tags = [str(tag) for tag in target.tags.ordered]
@@ -237,59 +176,6 @@ def _runtime_manifest(host: BenchmarkHost) -> dict[str, str]:
         "release": marker_environment["platform_release"],
         "machine": marker_environment["platform_machine"],
     }
-
-
-def parse_requirements(
-    requirement_strings: list[str],
-    *,
-    vcs_config: VcsConfig | None = None,
-    marker_environment: dict[str, str] | None = None,
-) -> dict[str, VersionRange]:
-    config = vcs_config or VcsConfig()
-    env = _full_marker_environment(marker_environment)
-    reqs = BenchmarkRequirements()
-    for req_str in requirement_strings:
-        req = Requirement(req_str)
-        if req.marker is not None and not req.marker.evaluate(env):
-            continue
-        if req.url is not None:
-            admit_vcs_url(req.url, config)
-            msg = (
-                f"VCS requirement admitted by policy but resolver path is not"
-                f" yet implemented: {req.name} @ {req.url}"
-            )
-            raise NotImplementedError(msg)
-        reqs.declarations.append(req)
-        name = canonicalize_name(req.name)
-        term = (
-            req.specifier.to_range()
-            if req.specifier
-            else VersionRange.full(admit_arbitrary=False)
-        )
-        reqs[name] = reqs.get(name, VersionRange.full()) & term
-        for extra in sorted(req.extras):
-            reqs[f"{name}[{extra}]"] = VersionRange.full(admit_arbitrary=False)
-    return reqs
-
-
-def _full_marker_environment(
-    overlay: dict[str, str] | None,
-) -> dict[str, str]:
-    env = dict(default_environment())
-    if overlay:
-        env.update(overlay)
-    return env
-
-
-def get_git_commit() -> str:
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True,
-        cwd=BENCHMARKS_DIR,
-    )
-    return result.stdout.strip()
 
 
 def run_one(
@@ -400,23 +286,6 @@ def run_one(
         }
 
 
-_PORTABLE_COMPONENT_START = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
-)
-_PORTABLE_COMPONENT_CHARS = _PORTABLE_COMPONENT_START | frozenset(".-")
-_MAX_PORTABLE_COMPONENT_LENGTH = 128
-_WINDOWS_RESERVED_COMPONENTS = frozenset(
-    {
-        "aux",
-        "con",
-        "nul",
-        "prn",
-        *(f"com{number}" for number in range(1, 10)),
-        *(f"lpt{number}" for number in range(1, 10)),
-    }
-)
-
-
 class _SelectionError(ValueError):
     """Raised when benchmark inputs select an unsafe or missing path."""
 
@@ -516,23 +385,9 @@ def _retired_selector_replacement(spec: str) -> str | None:
     return None
 
 
-def _is_portable_path_component(value: str) -> bool:
-    """Return whether *value* fits the portable ASCII filename grammar."""
-    if (
-        not value
-        or len(value) > _MAX_PORTABLE_COMPONENT_LENGTH
-        or value[0] not in _PORTABLE_COMPONENT_START
-        or value.endswith(".")
-        or any(char not in _PORTABLE_COMPONENT_CHARS for char in value)
-    ):
-        return False
-    windows_basename = value.partition(".")[0].casefold()
-    return windows_basename not in _WINDOWS_RESERVED_COMPONENTS
-
-
 def _result_directory_label(value: str) -> str:
     """Validate a user-provided results-directory label."""
-    if not _is_portable_path_component(value):
+    if not is_portable_path_component(value):
         msg = f"commit label must use a portable ASCII filename, got {value!r}"
         raise argparse.ArgumentTypeError(msg)
     return value
@@ -550,7 +405,7 @@ def _result_directory(label: str) -> Path:
 
 def _scenario_file(toml_stem: str) -> Path:
     """Return a top-level TOML path contained by the scenarios directory."""
-    if not _is_portable_path_component(toml_stem):
+    if not is_portable_path_component(toml_stem):
         msg = (
             f"scenario file stem must use a portable ASCII filename, got {toml_stem!r}"
         )
@@ -964,23 +819,34 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run canary benchmark")
     parser.add_argument("--commit", type=_result_directory_label, default=None)
     parser.add_argument("--runs", type=int, default=3)
-    parser.add_argument(
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument(
         "--scenario",
         action="append",
         help="Run only STEM:NAME, optionally with an explicit @STRATEGY",
     )
-    parser.add_argument("--scenarios-list", help="File with one scenario per line")
+    selection.add_argument(
+        "--scenarios-list", type=Path, help="File with one scenario per line"
+    )
     args = parser.parse_args()
+    if args.runs < 1:
+        parser.error("--runs must be at least 1")
 
     source = get_git_source_state()
     commit = args.commit or str(source["commit"] or "no-git")
     cases_to_run: list[tuple[CanaryCase, dict]]
-    if args.scenarios_list:
-        with Path(args.scenarios_list).open(encoding="utf-8") as f:
-            cases_to_run = _parse_scenario_selection(
-                parser,
-                [line.strip() for line in f if line.strip()],
+    if args.scenarios_list is not None:
+        try:
+            lines = args.scenarios_list.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            parser.error(
+                f"cannot read scenario list {args.scenarios_list} ({exc.strerror})"
             )
+        except UnicodeDecodeError:
+            parser.error(f"scenario list {args.scenarios_list} contains invalid UTF-8")
+        cases_to_run = _parse_scenario_selection(
+            parser, [line.strip() for line in lines if line.strip()]
+        )
     elif args.scenario:
         cases_to_run = _parse_scenario_selection(parser, args.scenario)
     else:
@@ -1050,6 +916,13 @@ def main() -> None:
             f"{summary['min_decisions']:>8} "
             f"{summary['max_decisions']:>8}"
         )
+
+    if get_git_source_state() != source:
+        print(
+            "The benchmark checkout changed. Rerun the canary from one revision.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
     out_file = _summary_path(parser, commit)
     with out_file.open("x", encoding="utf-8") as f:

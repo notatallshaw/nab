@@ -90,6 +90,9 @@ if TYPE_CHECKING:
     Blocked: TypeAlias = Literal["decided", "held", "root"]
 
     # One clause's worth of refusals, keyed by what refused them.
+    BaseListingDiagnosis: TypeAlias = tuple[
+        list["DroppedFile"], list[tuple[Version, DistFile]], set[Version]
+    ]
     _Groups: TypeAlias = "list[tuple[Cause, list[DroppedFile]]]"
 
 
@@ -536,7 +539,7 @@ def _shared_base_pass(
     normalized: str,
     files: Sequence[WheelFile | SdistFile],
     policy: ListingPolicy,
-) -> tuple[list[DroppedFile], list[tuple[Version, DistFile]], set[Version]]:
+) -> BaseListingDiagnosis:
     """Run the base pass through the memo the listing filter's own base pass uses.
 
     The rungs before the tag pass read the listing, the policy config and
@@ -563,7 +566,7 @@ def _base_pass(
     normalized: str,
     files: Sequence[WheelFile | SdistFile],
     policy: ListingPolicy,
-) -> tuple[list[DroppedFile], list[tuple[Version, DistFile]], set[Version]]:
+) -> BaseListingDiagnosis:
     """Partition ``files`` by every rung that runs before the wheel-tag pass.
 
     Returns the refusals, the survivors in listing order, and the versions

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from nab_provider._vendor.packaging.version import Version
     from nab_provider.target import ResolveTarget
 
-__all__ = ["LockPreferences", "read_lock_preferences"]
+__all__ = ["LockPreferences", "read_lock_preferences", "read_lockfile_packages"]
 
 
 class LockPreferences:
@@ -47,13 +47,9 @@ class LockPreferences:
                 advertised.update(parse_wheel_tag_set(wheel.filename) or ())
         self._tags = tuple((tag, frozenset((tag,))) for tag in advertised)
 
-    def summary_versions(self) -> dict[str, Version]:
-        """Return recorded versions for the before/after display summary."""
-        return {
-            str(package.name): package.version
-            for package in self._lock.packages
-            if package.version is not None
-        }
+    def summary_versions(self) -> dict[str, Version] | None:
+        """Return prior pins when each name has a single recorded version."""
+        return _summary_versions(self._lock)
 
     def versions_for(
         self,
@@ -107,15 +103,37 @@ class LockPreferences:
             return {}
 
 
-def read_lock_preferences(path: Path) -> LockPreferences | None:
-    """Read optional prior version hints, refusing an unreadable or invalid lock."""
+def _summary_versions(lock: Pylock) -> dict[str, Version] | None:
+    """Collect the single prior version of each package, if one exists."""
+    versions: dict[str, Version] = {}
+    for package in lock.packages:
+        if package.version is None:
+            continue
+        name = str(package.name)
+        if versions.setdefault(name, package.version) != package.version:
+            return None
+    return versions
+
+
+def _read_prior_lock(path: Path) -> Pylock | None:
+    """Read a previous lock for optional hints or the change summary."""
     if not path_state(path).should_read:
         return None
 
     try:
         with path.open("rb") as stream:
-            lock = Pylock.from_dict(toml_io.load(stream))
+            return Pylock.from_dict(toml_io.load(stream))
     except (OSError, ValueError, RecursionError, PylockValidationError):
         return None
 
-    return LockPreferences(lock)
+
+def read_lock_preferences(path: Path) -> LockPreferences | None:
+    """Read optional prior version hints, refusing an unreadable or invalid lock."""
+    lock = _read_prior_lock(path)
+    return LockPreferences(lock) if lock is not None else None
+
+
+def read_lockfile_packages(path: Path) -> dict[str, Version] | None:
+    """Read unambiguous previous versions for a lockfile change summary."""
+    lock = _read_prior_lock(path)
+    return _summary_versions(lock) if lock is not None else None

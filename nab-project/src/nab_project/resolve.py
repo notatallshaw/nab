@@ -53,7 +53,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Final
 
 from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.ranges import VersionRange
@@ -75,12 +75,12 @@ from nab_provider.resolver_inputs import (
 )
 from nab_provider.target import (
     UNBOUNDABLE_MARKER_VARIABLES,
+    MicroBoundaries,
     NonIntervalMarkerError,
     ResolveTarget,
     environment_declaration,
     marker_variables,
-    micro_boundary_points,
-    slices_from_points,
+    micro_boundaries,
 )
 from nab_provider.value import (
     FACTORY,
@@ -579,16 +579,16 @@ class _ProjectTables(Record):
     )
 
     dependencies: list[Requirement]
-    groups: Mapping[str, Sequence[str | Mapping[str, str]]]
-    optional: Mapping[str, Sequence[str]]
+    groups: Mapping[str, object]
+    optional: Mapping[str, object]
     project_name: str | None
     build_requires: list[Requirement]
 
     def __init__(
         self,
         dependencies: list[Requirement],
-        groups: Mapping[str, Sequence[str | Mapping[str, str]]],
-        optional: Mapping[str, Sequence[str]],
+        groups: Mapping[str, object],
+        optional: Mapping[str, object],
         project_name: str | None,
         build_requires: list[Requirement] | FactoryDefault = FACTORY,
     ) -> None:
@@ -658,7 +658,7 @@ def _project_tables(
 
 def complete_project_requirements(
     path: Path,
-    document: Mapping[str, Any],
+    document: Mapping[str, object],
     inputs: ResolveInputs,
     targets: Sequence[ResolveTarget],
     *,
@@ -681,7 +681,7 @@ def complete_project_requirements(
     optional = pyproject_files.project_optional_dependencies(
         document, require_static=bool(extras)
     )
-    bound: dict[str, Sequence[str]] = {
+    bound: dict[str, object] = {
         canonicalize_name(key): value for key, value in optional.items()
     }
     for extra in extras:
@@ -703,7 +703,7 @@ def complete_project_requirements(
 
 
 def _tables_for_build_requires(
-    document: Mapping[str, Any], path: Path
+    document: Mapping[str, object], path: Path
 ) -> _ProjectTables:
     """Read ``document`` as a project whose dependencies are its build requirements.
 
@@ -921,7 +921,7 @@ def _base_fork(reference: ConflictFork) -> ConflictFork:
 
 
 def _group_requirements(
-    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    groups: Mapping[str, object],
     selected: Sequence[str],
     path: Path,
 ) -> list[Requirement]:
@@ -931,7 +931,7 @@ def _group_requirements(
 
 
 def _group_requirements_by_group(
-    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    groups: Mapping[str, object],
     selected: Sequence[str],
     path: Path,
 ) -> dict[str, list[Requirement]]:
@@ -971,8 +971,8 @@ def _extra_requirements(
 
 def _validate_conflict_members_exist(
     conflicts: Sequence[ConflictSet],
-    optional: Mapping[str, Sequence[str]],
-    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    optional: Mapping[str, object],
+    groups: Mapping[str, object],
     configured_groups: Sequence[str] = (),
 ) -> None:
     """Raise when a declared conflict names an extra/group the project lacks.
@@ -1017,11 +1017,13 @@ def _conflict_check_targets(
     return [
         sliced
         for target in targets
-        for sliced in slices_from_points(target, _tileable_points(target, markers))
+        for sliced in _tileable_boundaries(target, markers).slices(target)
     ]
 
 
-def _tileable_points(target: ResolveTarget, markers: Sequence[Marker]) -> list[Version]:
+def _tileable_boundaries(
+    target: ResolveTarget, markers: Sequence[Marker]
+) -> MicroBoundaries:
     """Return the boundaries the tileable ``markers`` cut ``target``'s minor at.
 
     The self-extra closure is walked without an environment, so it carries
@@ -1029,11 +1031,11 @@ def _tileable_points(target: ResolveTarget, markers: Sequence[Marker]) -> list[V
     minor is skipped rather than raised on.  A marker a resolve does consult
     still raises, from the micro-narrowing loop.
     """
-    points: set[Version] = set()
+    boundaries = MicroBoundaries()
     for marker in markers:
         with suppress(NonIntervalMarkerError):
-            points.update(micro_boundary_points(target, [marker]))
-    return sorted(points)
+            boundaries = boundaries.merge(micro_boundaries(target, [marker]))
+    return boundaries
 
 
 def _check_conflict_minimums(

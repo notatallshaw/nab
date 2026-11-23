@@ -83,7 +83,7 @@ def test_extras_enter_in_sorted_order(
     harness: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module = _harness(harness)
-    monkeypatch.setattr(module, "Requirement", _ReverseExtrasRequirement)
+    monkeypatch.setattr("benchmark_config.Requirement", _ReverseExtrasRequirement)
     reqs = module.parse_requirements(["pkg[web,api,dev,cli]"])
     assert [name for name in reqs if "[" in name] == [
         "pkg[api]",
@@ -91,3 +91,26 @@ def test_extras_enter_in_sorted_order(
         "pkg[dev]",
         "pkg[web]",
     ]
+
+
+@pytest.mark.parametrize("harness", ["scenarios", "canary"])
+def test_equivalent_extra_names_share_one_root(harness: str) -> None:
+    module = _harness(harness)
+    texts = ["demo[Fast_Mode]", "demo[Fast.Mode]", "demo[fast-mode]"]
+
+    roots = module.parse_requirements(texts)
+
+    assert list(roots) == ["demo", "demo[fast-mode]"]
+    assert roots.declarations == [Requirement(text) for text in texts]
+
+
+@pytest.mark.parametrize("harness", ["scenarios", "canary"])
+def test_lockfile_only_sets_are_empty_in_root_markers(harness: str) -> None:
+    module = _harness(harness)
+    inactive = 'skip; "dev" in dependency_groups'
+    active = 'keep; "gpu" not in extras'
+
+    roots = module.parse_requirements([inactive, active])
+
+    assert list(roots) == ["keep"]
+    assert roots.declarations == [Requirement(active)]

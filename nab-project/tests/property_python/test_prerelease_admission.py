@@ -20,13 +20,12 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nab_project._packaging_provider import PackagingProvider
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
-from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver
 
+from ..packaging_provider import PackagingProvider, resolve_or_prove_conflict
 from .strategies import PROPERTY_SETTINGS
 
 pytestmark = pytest.mark.property
@@ -127,11 +126,10 @@ class TestNoUnauthorizedPrereleaseDropIn:
             root_version="0",
             max_iterations=2000,
         )
-        try:
-            solution = resolver.resolve(
-                {"root": VersionRange.singleton(Version("1.0"))}
-            )
-        except ResolutionError:
+        solution = resolve_or_prove_conflict(
+            resolver, {"root": VersionRange.singleton(Version("1.0"))}
+        )
+        if solution is None:
             return
 
         for package, version in solution.items():

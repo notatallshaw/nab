@@ -21,13 +21,13 @@ import itertools
 import pytest
 from hypothesis import given
 
-from nab_project._packaging_provider import PackagingProvider
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
-from nab_resolver.errors import ResolutionError
+from nab_resolver.errors import ResolutionLimitError
 from nab_resolver.resolver import Resolver
 
+from ..packaging_provider import PackagingProvider, resolve_or_prove_conflict
 from .strategies import (
     BRUTE_FORCE_SETTINGS,
     MAX_BRUTE_FORCE_COMBINATIONS,
@@ -53,8 +53,18 @@ def _verify_solution(
             f"{package!r} version {solution[package]} not in range {required_range}"
         )
 
-    for package, version in solution.items():
-        deps = graph.get(package, {}).get(version, {})
+    reachable: set[str] = set()
+    pending = list(requirements)
+    while pending:
+        package = pending.pop()
+        if package in reachable:
+            continue
+        reachable.add(package)
+        version = solution[package]
+        assert version in graph.get(package, {}), (
+            f"Unpublished pin: {package}=={version}"
+        )
+        deps = graph[package][version]
         for dep_package, dep_spec in deps.items():
             assert dep_package in solution, (
                 f"Dependency {dep_package!r} of {package!r}@{version} not in solution"
@@ -63,6 +73,9 @@ def _verify_solution(
                 f"{dep_package!r}@{solution[dep_package]} "
                 f"of {package!r}@{version} not in {dep_spec}"
             )
+            pending.append(dep_package)
+
+    assert set(solution) == reachable
 
 
 def _brute_force_has_solution(
@@ -70,10 +83,7 @@ def _brute_force_has_solution(
     requirements: dict[str, VersionRange],
 ) -> bool | None:
     """Return ``True``/``False`` for solvability, or ``None`` if too large."""
-    all_packages = sorted(
-        (p for p in graph if p != "root" and graph[p]),
-        key=str,
-    )
+    all_packages = sorted(p for p, versions in graph.items() if versions)
 
     total = 1
     for package in all_packages:
@@ -84,8 +94,7 @@ def _brute_force_has_solution(
     candidate_lists = [sorted(graph[p].keys()) for p in all_packages]
 
     for combo in itertools.product(*candidate_lists):
-        selection = dict(zip(all_packages, combo, strict=False))
-        selection["root"] = Version("1.0")
+        selection = dict(zip(all_packages, combo, strict=True))
 
         valid = True
         for package, required_range in requirements.items():
@@ -106,7 +115,7 @@ def _brute_force_has_solution(
             if ver is None:
                 valid = False
                 break
-            deps = graph.get(pkg, {}).get(ver, {})
+            deps = graph[pkg][ver]
             for dep_pkg, dep_spec in deps.items():
                 if dep_pkg not in selection or selection[dep_pkg] not in dep_spec:
                     valid = False
@@ -142,11 +151,9 @@ class TestSolutionsAreValidPEP440:
         resolver = Resolver(
             provider, range_type=VersionRange, root_version="0", max_iterations=1000
         )
-        try:
-            solution = resolver.resolve(requirements)
-        except ResolutionError:
-            return
-        _verify_solution(solution, requirements, graph)
+        solution = resolve_or_prove_conflict(resolver, requirements)
+        if solution is not None:
+            _verify_solution(solution, requirements, graph)
 
 
 class TestAgreesWithBruteForcePEP440:
@@ -173,10 +180,11 @@ class TestAgreesWithBruteForcePEP440:
             provider, range_type=VersionRange, root_version="0", max_iterations=1000
         )
         try:
-            solution = resolver.resolve(requirements)
-        except ResolutionError as error:
-            if "exceeded" in str(error):
-                return
+            solution = resolve_or_prove_conflict(resolver, requirements)
+        except ResolutionLimitError:
+            return
+
+        if solution is None:
             assert not brute_force_sat, (
                 f"Resolver reported impossible but brute-force found a "
                 f"solution.\nGraph: {graph}"

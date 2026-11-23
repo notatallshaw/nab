@@ -18,11 +18,8 @@ existing benchmarks are not affected.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import os
 import signal
-import subprocess
 import sys
 import time
 from contextlib import contextmanager
@@ -37,6 +34,9 @@ else:
 
 
 from benchmark_datetime import parse_datetime
+from benchmark_json import read_benchmark_json
+from benchmark_paths import result_directory_label
+from benchmark_source import get_git_source_state
 from universal_result import (
     MANIFEST_FILENAME,
     RESULT_SCHEMA_VERSION,
@@ -52,12 +52,13 @@ from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_project.build_policy import enforce_build_policy_for_targets
 from nab_project.fetch import FetchCoordinator
 from nab_project.inputs import ResolveInputs
-from nab_project.lockfile import build_pylock, render_lock
+from nab_project.lockfile import render_lock
 from nab_project.resolve import (
     ResolveResult,
     build_lock_input,
     resolve_with_coordinator,
 )
+from nab_provider._vendor.packaging.pylock import Pylock, PylockSelectError
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
@@ -132,110 +133,29 @@ def _scenario_wall_timeout() -> Generator[None, None, None]:
         signal.signal(sigalrm, previous_handler)
 
 
-def get_git_commit() -> str:
-    """Return the Git SHA for the working tree, or 'no-git'."""
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-            cwd=BENCHMARKS_DIR,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return "no-git"
-    return out.stdout.strip()
-
-
-def get_git_source_state() -> dict[str, str | bool | None]:
-    """Record source identity separately from the result-directory label."""
-    commit = get_git_commit()
-    if commit == "no-git":
-        return {"commit": None, "dirty": True, "diff_hash": None}
-    try:
-        root = Path(
-            subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                capture_output=True,
-                check=True,
-                text=True,
-                cwd=BENCHMARKS_DIR,
-            ).stdout.strip()
-        )
-        status = subprocess.run(
-            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        diff = subprocess.run(
-            ["git", "diff", "--binary", "HEAD", "--"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        untracked = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        untracked_hashes = bytearray()
-        for raw_path in untracked.split(b"\0"):
-            if not raw_path:
-                continue
-            object_hash = subprocess.run(  # noqa: S603 - path is one arg after --
-                ["git", "hash-object", "--", os.fsdecode(raw_path)],
-                capture_output=True,
-                check=True,
-                cwd=root,
-            ).stdout
-            untracked_hashes.extend(raw_path + b"\0" + object_hash)
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return {"commit": commit, "dirty": True, "diff_hash": None}
-    dirty = bool(status)
-    diff_hash = (
-        hashlib.sha256(status + b"\0" + diff + b"\0" + untracked_hashes).hexdigest()
-        if dirty
-        else None
-    )
-    return {"commit": commit, "dirty": dirty, "diff_hash": diff_hash}
-
-
 def check_lock_consistency(result: ResolveResult) -> tuple[bool, list[str]]:
-    """Verify the marker-gated lock reproduces each tuple's solution.
-
-    Builds the real PEP 751 lock and, for each tuple, projects every
-    package marker onto that tuple's environment. The packages whose
-    markers admit the environment must be exactly that tuple's pins; a
-    missing one is an under-firing marker (a silently dropped dep), an
-    extra one an over-firing marker. The corpus declares no conflict
-    forks, so the markers are pure environment markers and the
-    projection is a plain ``marker.evaluate``.
-
-    Call only when ``result.success`` so the lock covers every tuple.
-    """
+    """Check that an installer can select each target's pins from the emitted lock."""
     lock_input = build_lock_input(result)
     try:
-        render_lock(lock_input)
-        pylock = build_pylock(lock_input)
+        pylock = Pylock.from_dict(tomllib.loads(render_lock(lock_input)))
     except Exception as exc:
         return False, [f"lock emission raised {type(exc).__name__}: {exc}"[:200]]
 
     problems: list[str] = []
     for tr in result.target_results:
         expected = {canonicalize_name(n): str(v) for n, v in tr.pins.items()}
-        selected: dict[str, str | None] = {}
-        duplicates: set[str] = set()
-        for pkg in pylock.packages:
-            marker = pkg.marker
-            if marker is not None and not marker.evaluate(tr.target.marker_env):
-                continue
-            name = canonicalize_name(str(pkg.name))
-            if name in selected:
-                duplicates.add(name)
-            selected[name] = str(pkg.version) if pkg.version is not None else None
-        if selected != expected or duplicates:
+        try:
+            selected = {
+                str(pkg.name): str(pkg.version) if pkg.version is not None else None
+                for pkg, _artifact in pylock.select(
+                    environment=dict(tr.target.marker_env), tags=tr.target.tags.ordered
+                )
+            }
+        except PylockSelectError as exc:
+            problems.append(f"{tr.target.label}: {exc}")
+            continue
+
+        if selected != expected:
             missing = sorted(expected.keys() - selected.keys())
             extra = sorted(selected.keys() - expected.keys())
             mismatch = sorted(
@@ -245,7 +165,7 @@ def check_lock_consistency(result: ResolveResult) -> tuple[bool, list[str]]:
             )
             problems.append(
                 f"{tr.target.label}: missing={missing} extra={extra} "
-                f"mismatch={mismatch} duplicate={sorted(duplicates)}"
+                f"mismatch={mismatch}"
             )
     return not problems, problems
 
@@ -412,24 +332,17 @@ def validate_scenario(scenario_name: str, scenario: dict) -> ResolveInputs:
 
 def write_manifest(
     path: Path,
+    run: dict[str, object],
+    completed: list[str],
     *,
-    commit: str,
-    source: dict[str, str | bool | None],
-    run_kind: str,
-    available_scenarios: list[str],
-    selected_scenarios: list[str],
-    completed_scenarios: list[str],
-    complete: bool,
+    complete: bool = False,
+    source_end: dict[str, str | bool | None] | None = None,
 ) -> None:
-    """Write the scenario-set contract consumed by benchmark summaries."""
+    """Write the completed scenarios alongside the original run parameters."""
     data = {
-        "benchmark_schema": RESULT_SCHEMA_VERSION,
-        "commit": commit,
-        "source": source,
-        "run_kind": run_kind,
-        "available_scenarios": sorted(available_scenarios),
-        "selected_scenarios": sorted(selected_scenarios),
-        "completed_scenarios": sorted(completed_scenarios),
+        **run,
+        "source_end": source_end,
+        "completed_scenarios": sorted(completed),
         "complete": complete,
     }
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -551,7 +464,7 @@ def process_scenario(
     )
     if output_path.exists() and not force and source_is_cacheable:
         try:
-            existing = json.loads(output_path.read_text())
+            existing = read_benchmark_json(output_path)
         except (OSError, ValueError):
             existing = None
         if isinstance(existing, dict) and existing.get("input") == expected_input:
@@ -700,6 +613,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--commit",
+        type=result_directory_label,
         default=None,
         help="Override the commit label used for the results directory",
     )
@@ -742,21 +656,17 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"Results -> {output_dir}\n")
     manifest_path = output_dir / MANIFEST_FILENAME
-    available_names = list(scenarios)
-    selected_names = [name for name, _scenario in selected]
-    run_kind = "selected" if args.scenario else "full"
+    run = {
+        "benchmark_schema": RESULT_SCHEMA_VERSION,
+        "commit": commit,
+        "source": source,
+        "run_kind": "selected" if args.scenario else "full",
+        "available_scenarios": sorted(scenarios),
+        "selected_scenarios": sorted(name for name, _scenario in selected),
+    }
     completed_names: list[str] = []
     accepted: list[bool] = []
-    write_manifest(
-        manifest_path,
-        commit=commit,
-        source=source,
-        run_kind=run_kind,
-        available_scenarios=available_names,
-        selected_scenarios=selected_names,
-        completed_scenarios=completed_names,
-        complete=False,
-    )
+    write_manifest(manifest_path, run, completed_names)
     for name, scenario in selected:
         accepted.append(
             process_scenario(
@@ -770,26 +680,22 @@ def main() -> None:
         )
         if (output_dir / f"{name}.json").is_file():
             completed_names.append(name)
-        write_manifest(
-            manifest_path,
-            commit=commit,
-            source=source,
-            run_kind=run_kind,
-            available_scenarios=available_names,
-            selected_scenarios=selected_names,
-            completed_scenarios=completed_names,
-            complete=False,
-        )
+        write_manifest(manifest_path, run, completed_names)
+
+    source_end = get_git_source_state()
     write_manifest(
         manifest_path,
-        commit=commit,
-        source=source,
-        run_kind=run_kind,
-        available_scenarios=available_names,
-        selected_scenarios=selected_names,
-        completed_scenarios=completed_names,
-        complete=len(completed_names) == len(selected_names),
+        run,
+        completed_names,
+        complete=len(completed_names) == len(selected) and source_end == source,
+        source_end=source_end,
     )
+    if source_end != source:
+        print(
+            "The benchmark checkout changed. Rerun the benchmarks from one revision.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     if not all(accepted):
         raise SystemExit(1)
 

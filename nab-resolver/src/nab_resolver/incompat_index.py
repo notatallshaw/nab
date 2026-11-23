@@ -36,20 +36,19 @@ _NOT_CONTRADICTED = -1
 def add_incompatibility(
     resolver: Resolver[PackageType, VersionType],
     incompatibility: Incompatibility[PackageType, VersionType],
-) -> None:
-    """Add an incompatibility, merging into an existing clause if possible."""
+) -> int:
+    """Return the index of the added or merged incompatibility."""
     key = _dependency_merge_key(incompatibility)
     if key is None:
-        append_incompatibility(resolver, incompatibility)
-        return
+        return append_incompatibility(resolver, incompatibility)
 
     existing = resolver.dependency_index.get(key)
     if existing is None:
-        resolver.dependency_index[key] = append_incompatibility(
-            resolver, incompatibility
-        )
+        existing = append_incompatibility(resolver, incompatibility)
+        resolver.dependency_index[key] = existing
     else:
         _merge_dependency(resolver, existing, incompatibility.terms[0])
+    return existing
 
 
 def append_incompatibility(

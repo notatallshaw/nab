@@ -1,10 +1,8 @@
 """Evaluate a PEP 508 dependency marker for a resolve-time environment.
 
-``packaging.markers.Marker.evaluate`` binds ``extra`` to a single string and
-cannot say that several extras are active, so this goes through
-:class:`~nab_markersets.markersets.MarkerSet` instead.  Its own module so the resolve
-engine reaches no marker-set definition; ``tasks/check_engine_markersets.py``
-holds the import closure to a named list this module is on.
+The provider uses :class:`~nab_markersets.markersets.MarkerSet` to evaluate
+dependencies against an explicit target environment and its active extras.
+This module translates marker algebra errors into provider errors.
 """
 
 from __future__ import annotations
@@ -99,8 +97,9 @@ def dependency_marker_holds(
     normalised.  It defaults to the empty set when ``environment`` omits it.
 
     A standard variable a marker names but ``environment`` omits raises
-    ``UndefinedEnvironmentName``.  The lockfile-only set variables are seeded
-    empty, so a marker that tests one evaluates to False rather than raising.
+    ``UndefinedEnvironmentName``. The lockfile-only sets ``extras`` and
+    ``dependency_groups`` are empty during resolution, so membership is false
+    and non-membership is true.
 
     A clause no comparison decides raises :class:`UnevaluableMarkerError`, and
     a marker that overruns a budget raises :class:`IntractableMarkerError`.

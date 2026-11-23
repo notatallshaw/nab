@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import shutil
-import subprocess
 import sys
 from contextlib import nullcontext
 from functools import partial
@@ -34,6 +32,7 @@ _BENCHMARK = (
     Path(__file__).resolve().parents[2] / "benchmarks" / "universal_scenarios.py"
 )
 _CLEAN_SOURCE = {"commit": "a" * 40, "dirty": False, "diff_hash": None}
+_DIRTY_SOURCE = {**_CLEAN_SOURCE, "dirty": True, "diff_hash": "b" * 64}
 _WINDOWS_DEVICE_NAMES = (
     "AUX",
     "CON",
@@ -112,7 +111,7 @@ def _successful_result() -> tuple[ResolveTarget, ResolveResult]:
     return target, result
 
 
-def _result_data(result: dict, *, schema: int = 4) -> dict:
+def _result_data(result: dict, *, schema: int = 5) -> dict:
     complete_result = {
         "success": False,
         "resolution_success": None,
@@ -517,54 +516,26 @@ def test_result_contract_allows_multiple_slices_per_declared_cell() -> None:
     assert module.result_is_accepted(data) is True
 
 
-def test_git_source_state_hashes_untracked_contents(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("filename", "errors"),
+    [
+        ("foo-2.0-py3-none-any.whl", ("foo-2.0", "package version '1.0'")),
+        ("foo-1.0-cp311-cp311-win_amd64.whl", ("No wheel found", "foo")),
+        ("foo-1.0-py3-none-any.whl", ()),
+    ],
+    ids=["wrong-version", "wrong-platform", "installable"],
+)
+def test_lock_consistency_requires_an_installable_lock(
+    filename: str, errors: tuple[str, ...]
 ) -> None:
-    git = shutil.which("git")
-    assert git is not None
-
-    def run_git(*args: str) -> None:
-        subprocess.run([git, *args], cwd=tmp_path, check=True)  # noqa: S603
-
-    run_git("init", "-q")
-    benchmarks_dir = tmp_path / "nab-project" / "benchmarks"
-    benchmarks_dir.mkdir(parents=True)
-    (benchmarks_dir / "tracked").write_text("tracked\n")
-    run_git("add", "nab-project/benchmarks/tracked")
-    run_git(
-        "-c",
-        "user.name=Benchmark Test",
-        "-c",
-        "user.email=benchmark@example.invalid",
-        "commit",
-        "-qm",
-        "initial",
-    )
-    untracked = tmp_path / "nab-project" / "src" / "source.py"
-    untracked.parent.mkdir(parents=True)
-    untracked.write_text("first\n")
-    module = _harness()
-    monkeypatch.setattr(module, "BENCHMARKS_DIR", benchmarks_dir)
-
-    first = module.get_git_source_state()
-    untracked.write_text("second\n")
-    second = module.get_git_source_state()
-
-    assert first["commit"] == second["commit"]
-    assert first["dirty"] is second["dirty"] is True
-    assert first["diff_hash"] != second["diff_hash"]
-
-
-def test_lock_consistency_requires_a_valid_emitted_pylock() -> None:
     module = _harness()
     target = ResolveTarget.for_declared(
         python_version="3.11",
         spec=PlatformSpec("linux_x86_64"),
     )
     wheel = WheelArtifact(
-        filename="foo-2.0-py3-none-any.whl",
-        url="https://example.test/foo-2.0-py3-none-any.whl",
+        filename=filename,
+        url=f"https://example.test/{filename}",
         hashes=(("sha256", "a" * 64),),
     )
     pin = IndexPin(
@@ -586,10 +557,12 @@ def test_lock_consistency_requires_a_valid_emitted_pylock() -> None:
 
     consistent, problems = module.check_lock_consistency(result)
 
-    assert consistent is False
-    assert len(problems) == 1
-    assert "foo-2.0" in problems[0]
-    assert "package version '1.0'" in problems[0]
+    assert consistent is (not errors)
+    if errors:
+        assert len(problems) == 1
+        assert all(detail in problems[0] for detail in errors)
+    else:
+        assert problems == []
 
 
 def test_lock_inconsistency_fails_and_pins_are_retained(
@@ -1330,13 +1303,17 @@ def test_main_exits_nonzero_for_unexpected_failure(
     assert full_manifest.read_text() == '{"existing": true}'
 
 
-def test_main_records_the_complete_full_scenario_set(
+@pytest.mark.parametrize("edited", [False, True])
+def test_main_records_the_full_scenario_set_and_ending_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    edited: bool,
 ) -> None:
     module = _harness()
     monkeypatch.setattr(module, "RESULTS_DIR", tmp_path)
-    monkeypatch.setattr(module, "get_git_source_state", lambda: _CLEAN_SOURCE)
+    ending_source = _DIRTY_SOURCE if edited else _CLEAN_SOURCE
+    revisions = iter((_CLEAN_SOURCE, ending_source))
+    monkeypatch.setattr(module, "get_git_source_state", lambda: next(revisions))
 
     def fake_process(
         name: str,
@@ -1356,7 +1333,12 @@ def test_main_records_the_complete_full_scenario_set(
     monkeypatch.setattr(module, "process_scenario", fake_process)
     monkeypatch.setattr(sys, "argv", [str(_BENCHMARK)])
 
-    module.main()
+    if edited:
+        with pytest.raises(SystemExit) as caught:
+            module.main()
+        assert caught.value.code == 1
+    else:
+        module.main()
 
     manifest = json.loads(
         (
@@ -1364,10 +1346,11 @@ def test_main_records_the_complete_full_scenario_set(
         ).read_text()
     )
     assert manifest["run_kind"] == "full"
-    assert manifest["complete"] is True
+    assert manifest["complete"] is (not edited)
     assert manifest["available_scenarios"] == manifest["selected_scenarios"]
     assert manifest["available_scenarios"] == manifest["completed_scenarios"]
     assert manifest["source"] == _CLEAN_SOURCE
+    assert manifest["source_end"] == ending_source
     configured = module.tomllib.loads(
         (module.SCENARIOS_DIR / "universal.toml").read_text()
     )
@@ -1425,7 +1408,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "lock_consistent": None,
                 "error": "scenario exceeded wall-clock budget",
             },
-            4,
+            5,
             1,
         ),
         (
@@ -1437,7 +1420,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "timed_out": False,
                 "lock_consistent": None,
             },
-            4,
+            5,
             0,
         ),
         (
@@ -1449,7 +1432,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "timed_out": False,
                 "lock_consistent": None,
             },
-            4,
+            5,
             1,
         ),
         (
@@ -1461,7 +1444,7 @@ def test_summary_requires_portable_distinct_scenario_names(
                 "timed_out": False,
                 "lock_consistent": True,
             },
-            2,
+            4,
             1,
         ),
     ],
@@ -1484,9 +1467,10 @@ def test_summary_exit_status(
     (result_dir / "_manifest.json").write_text(
         json.dumps(
             {
-                "benchmark_schema": 4,
+                "benchmark_schema": 5,
                 "commit": "run",
                 "source": _CLEAN_SOURCE,
+                "source_end": _CLEAN_SOURCE,
                 "run_kind": "full",
                 "available_scenarios": ["example"],
                 "selected_scenarios": ["example"],
@@ -1510,6 +1494,42 @@ def test_summary_exit_status(
     assert module.main() == exit_code
 
 
+@pytest.mark.parametrize("scope", ["total", "target"])
+def test_unrepresentable_wall_time_invalidates_the_result(scope: str) -> None:
+    module = _summary_harness()
+    report = _result_data(
+        {"success": True, "resolution_success": True, "lock_consistent": True}
+    )
+    assert module.result_is_well_formed(report)
+
+    row = report["stats"] if scope == "total" else report["per_tuple"][0]
+    row["wall_time_seconds"] = 10**350
+    assert not module.result_is_well_formed(report)
+
+
+@pytest.mark.parametrize("command", ["runner", "summary"])
+def test_universal_commands_reject_nested_result_labels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    output = tmp_path / "reports"
+    if command == "runner":
+        module = _harness()
+        monkeypatch.setattr(module, "SCENARIOS_DIR", tmp_path)
+        (tmp_path / "universal.toml").write_text("")
+        args = ["--commit", "topic/refresh"]
+    else:
+        module = _summary_harness()
+        args = ["topic/refresh"]
+
+    monkeypatch.setattr(module, "RESULTS_DIR", output)
+    monkeypatch.setattr(sys, "argv", [command, *args])
+    with pytest.raises(SystemExit) as error:
+        module.main()
+
+    assert error.value.code == 2
+    assert not output.exists()
+
+
 def test_summary_exits_nonzero_without_results(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1531,9 +1551,10 @@ def test_summary_rejects_a_selected_run_manifest(
     (result_dir / "_manifest.json").write_text(
         json.dumps(
             {
-                "benchmark_schema": 4,
+                "benchmark_schema": 5,
                 "commit": "run",
                 "source": _CLEAN_SOURCE,
+                "source_end": _CLEAN_SOURCE,
                 "run_kind": "selected",
                 "available_scenarios": ["a", "b"],
                 "selected_scenarios": ["a"],
@@ -1548,19 +1569,29 @@ def test_summary_rejects_a_selected_run_manifest(
     assert module.main() == 1
 
 
-def test_summary_rejects_a_dirty_full_run(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("start", "end", "accepted"),
+    [
+        (_CLEAN_SOURCE, _CLEAN_SOURCE, True),
+        (_CLEAN_SOURCE, {**_CLEAN_SOURCE, "commit": "b" * 40}, False),
+        (_CLEAN_SOURCE, None, False),
+        (_DIRTY_SOURCE, _DIRTY_SOURCE, False),
+    ],
+)
+def test_summary_requires_one_clean_source(
+    tmp_path: Path, start: dict, end: dict | None, accepted: bool
 ) -> None:
     module = _summary_harness()
     result_dir = tmp_path / "run" / "universal"
     result_dir.mkdir(parents=True)
-    dirty_source = {"commit": "a" * 40, "dirty": True, "diff_hash": "b" * 64}
+    (result_dir / "example.json").write_text("{}")
     (result_dir / "_manifest.json").write_text(
         json.dumps(
             {
-                "benchmark_schema": 4,
+                "benchmark_schema": 5,
                 "commit": "run",
-                "source": dirty_source,
+                "source": start,
+                "source_end": end,
                 "run_kind": "full",
                 "available_scenarios": ["example"],
                 "selected_scenarios": ["example"],
@@ -1570,4 +1601,4 @@ def test_summary_rejects_a_dirty_full_run(
         )
     )
 
-    assert module.authoritative_result_paths(result_dir) is None
+    assert (module.authoritative_result_paths(result_dir) is not None) is accepted

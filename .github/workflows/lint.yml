@@ -57,7 +57,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check vendored packaging matches pin plus patch
+      - name: Rebuild and compare vendored packaging
         run: tasks/vendor-packaging.sh --check
 
   boundaries:

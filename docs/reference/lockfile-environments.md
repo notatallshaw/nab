@@ -19,8 +19,8 @@ variables below are exceptions.
 
 ## Patch-release boundaries
 
-`python_full_version` and `implementation_version` are not declared as one micro version. A target
-naming a minor stands for every micro in that minor, so a single value would reject the others.
+A target naming a Python minor covers its patch releases. Pinning `python_full_version` or
+`implementation_version` to a single patch would exclude the other releases.
 
 For a target spanning Python 3.13, this requirement changes at a patch release:
 
@@ -48,11 +48,20 @@ For example, both variables use the final-release boundary for `implementation_v
 Nab checks those bounds against the same CPython version. On PyPy the implementation version is
 independent of the Python language version.
 
+### Local Python builds
+
+When a marker compares a literal to the running version, a local build can select different
+dependencies from the public release. For example, `"3.12.4" == python_full_version` is true on
+3.12.4 and false on 3.12.4+vendor. Nab resolves both builds when the comparison distinguishes them.
+
+The marker `"+" in python_full_version` selects local builds across the minor. Its negation selects
+public releases.
+
 ### Unsplit targets
 
-A minor with no marker boundary uses a plain `python_version == "3.13"` row with no
-`python_full_version` clause: a marker outside the target minor gives the same answer on every
-patch.
+If every consulted version marker has the same result throughout Python 3.13, the row needs only
+`python_version == "3.13"` for its Python bound. For example, `python_full_version >= "3.12"` holds
+throughout that minor.
 
 To resolve one patch release without splitting it:
 
@@ -61,17 +70,22 @@ To resolve one patch release without splitting it:
 "3.13" = "3.13.4"
 ```
 
-Nab does not split a target pinned to an exact patch release, including the host interpreter and
-`[tool.nab.matrix.python-patches]` entries. It resolves that release once and records a
-`python_version == "X.Y"` environment row.
+With this pin, nab resolves Python 3.13.4 once and records `python_full_version == "3.13.4"` in the
+lock. An installer on 3.13.5 needs a lock that includes its patch release. If a dependency reads the
+full Python version or the CPython implementation version, the row also excludes local builds. To
+resolve for a build such as `3.13.4+vendor`, give its full version in `python-patches`. For a host
+lock, nab records the patch interval where the consulted version markers give the same answers as on
+the running interpreter. A marker that cannot be split into these intervals limits the lock to the
+observed build.
 
 ### Unsupported boundaries
 
 On a minor-interval target, a consulted full-version marker must describe intervals. Nab rejects:
 
-- membership (`in` or `not in`), verbatim `===`, non-version strings, and comparisons with another
-  variable;
+- membership other than testing for a local label (`"+" in python_full_version` or its negation),
+  verbatim `===`, non-version strings, and comparisons with another variable;
 - invalid PEP 440 operands such as `< "3.12.*"` or `~= "3"`;
+- local version labels within the target minor, such as `python_full_version == "3.12.4+vendor"`;
 - the pre- and post-release boundaries listed below.
 
 For a literal above the first final release in the minor, a prerelease is an error on `<`, `>=`,

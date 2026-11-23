@@ -157,7 +157,6 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _PolicyValue = TypeVar("_PolicyValue")
-_CachedResult = TypeVar("_CachedResult")
 
 
 class ProviderStats(Record):
@@ -369,8 +368,10 @@ class ListingFilterCache:
             tuple[str, str | None],
             tuple[list[tuple[Version, DistFile]], tuple[int, ...]],
         ] = {}
-        self._prepared: dict[str, tuple[object, tuple[int, ...]]] = {}
-        self._diagnosed: dict[tuple[str, str | None], object] = {}
+        self._prepared: dict[str, tuple[_listing.SharedListing, tuple[int, ...]]] = {}
+        self._diagnosed: dict[
+            tuple[str, str | None], _diagnosis.BaseListingDiagnosis
+        ] = {}
         self._tagged: dict[str, dict[str | None, CandidatePreparation]] = {}
         self._release_snapshots: dict[str, _ReleaseSnapshot] = {}
 
@@ -437,8 +438,8 @@ class ListingFilterCache:
         self,
         package: str,
         stats: ProviderStats,
-        compute: Callable[[], _CachedResult],
-    ) -> _CachedResult:
+        compute: Callable[[], _listing.SharedListing],
+    ) -> _listing.SharedListing:
         """Return the Python-invariant filter half, running ``compute`` once.
 
         Keyed by package alone, so every Python of a matrix shares one
@@ -450,7 +451,7 @@ class ListingFilterCache:
         if entry is not None:
             result, delta = entry
             _replay(stats, delta)
-            return cast("_CachedResult", result)
+            return result
 
         before = _counters(stats)
         result = compute()
@@ -462,8 +463,8 @@ class ListingFilterCache:
         self,
         package: str,
         python_version: str | None,
-        compute: Callable[[], _CachedResult],
-    ) -> _CachedResult:
+        compute: Callable[[], _diagnosis.BaseListingDiagnosis],
+    ) -> _diagnosis.BaseListingDiagnosis:
         """Return the diagnosis walk's base pass, running ``compute`` once.
 
         Keyed the way :meth:`filtered` is, because the rungs the walk shares
@@ -482,7 +483,7 @@ class ListingFilterCache:
         if entry is None:
             entry = compute()
             self._diagnosed[key] = entry
-        return cast("_CachedResult", entry)
+        return entry
 
 
 class _PreferredReleaseTrial:

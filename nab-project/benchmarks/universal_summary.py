@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import json
+import argparse
 import sys
 from pathlib import Path
 from typing import cast
 
+from benchmark_json import read_benchmark_json
+from benchmark_paths import result_directory_label
 from universal_result import (
     MANIFEST_FILENAME,
     RESULT_SCHEMA_VERSION,
@@ -46,7 +48,7 @@ def authoritative_result_paths(
     """Return the complete full-run scenario set declared by its manifest."""
     manifest_path = target_dir / MANIFEST_FILENAME
     try:
-        manifest = json.loads(manifest_path.read_text())
+        manifest = read_benchmark_json(manifest_path)
     except (OSError, ValueError):
         return None
     if (
@@ -66,6 +68,7 @@ def authoritative_result_paths(
         or not commit
         or commit != target_dir.parent.name
         or not _valid_clean_source(source)
+        or manifest.get("source_end") != source
         or not all(
             _valid_scenario_names(names) for names in (available, selected, completed)
         )
@@ -88,8 +91,11 @@ def authoritative_result_paths(
 
 def main() -> int:
     """Print a markdown table with one row per scenario."""
-    if len(sys.argv) > 1:
-        target_dir = RESULTS_DIR / sys.argv[1] / "universal"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("label", nargs="?", type=result_directory_label)
+    args = parser.parse_args()
+    if args.label is not None:
+        target_dir = RESULTS_DIR / args.label / "universal"
     else:
         # Pick the most recently modified universal/ dir.
         candidates = sorted(
@@ -111,7 +117,7 @@ def main() -> int:
     records: list[tuple[Path, dict]] = []
     for path in paths:
         try:
-            data = json.loads(path.read_text())
+            data = read_benchmark_json(path)
         except (OSError, ValueError):
             print(f"Invalid universal result: {path}", file=sys.stderr)
             return 1

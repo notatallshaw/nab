@@ -28,10 +28,9 @@ def make_release_coordinator(
     metadata = {}
     for raw_name, version, yanked, dependencies in releases:
         name = canonicalize_name(raw_name)
-        distribution = name.replace("-", "_")
         file = make_wheel(
             version,
-            package=distribution,
+            package=name,
             url=f"https://example.test/{name}-{version}-{yanked}.whl",
             hashes=(("sha256", "a" * 64),),
         )

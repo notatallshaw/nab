@@ -37,7 +37,7 @@ def _provider() -> Provider:
     metadata = {}
     for (name, version), dependencies in requirements.items():
         wheel = make_wheel(
-            package=name.replace("-", "_"),
+            package=name,
             version=str(version),
             hashes=(("sha256", "a" * 64),),
         )

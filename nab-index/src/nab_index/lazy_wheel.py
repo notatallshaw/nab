@@ -78,7 +78,7 @@ _HTTP_RANGE_NOT_SATISFIABLE = 416
 # a refusal steps down to the next request shape rather than failing the read.
 _RANGE_REJECT_STATUSES = frozenset({400, 403, _HTTP_RANGE_NOT_SATISFIABLE, 501})
 
-_CONTENT_RANGE_RE = re.compile(r"bytes\s+(\d+)-(\d+)/(\d+)")
+_CONTENT_RANGE_RE = re.compile(r"bytes\s+(\d+)-(\d+)/(\d+)", re.ASCII | re.IGNORECASE)
 
 
 class RangeCapability(enum.Enum):
@@ -264,7 +264,7 @@ def _parse_content_range(value: str | None) -> tuple[int, int, int] | None:
     """Parse ``bytes start-end/total`` into a tuple, or ``None``."""
     if value is None:
         return None
-    match = _CONTENT_RANGE_RE.match(value.strip())
+    match = _CONTENT_RANGE_RE.fullmatch(value.strip())
     if match is None:
         return None
 

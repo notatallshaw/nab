@@ -17,7 +17,7 @@ __lazy_modules__ = (
     "nab_provider.requirements_file",
 )
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
@@ -29,7 +29,7 @@ from nab_provider.requirements_file import (
 from . import toml_io
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Mapping
     from pathlib import Path
 
     from nab_provider._vendor.packaging.requirements import Requirement
@@ -103,7 +103,9 @@ def project_dependencies(document: Mapping[str, object]) -> list[Requirement]:
     return parse_requirements(dep_strings, source)
 
 
-def build_system_requires(document: Mapping[str, Any], path: Path) -> list[Requirement]:
+def build_system_requires(
+    document: Mapping[str, object], path: Path
+) -> list[Requirement]:
     """Read [build-system].requires from a parsed pyproject (PEP 518).
 
     ``path`` names the file in the errors.  There is no fallback to the PEP
@@ -136,7 +138,7 @@ def build_system_requires(document: Mapping[str, Any], path: Path) -> list[Requi
     return parse_requirements(require_string_list(table["requires"], source), source)
 
 
-def project_name(document: Mapping[str, Any]) -> str | None:
+def project_name(document: Mapping[str, object]) -> str | None:
     """Read [project].name from a parsed pyproject.
 
     ``None`` when the file has no ``[project]`` table or no ``name`` key (a
@@ -150,11 +152,11 @@ def project_optional_dependencies(
     document: Mapping[str, object],
     *,
     require_static: bool = True,
-) -> Mapping[str, Sequence[str]]:
+) -> Mapping[str, object]:
     """Read [project.optional-dependencies] from a parsed pyproject.
 
-    The requirement strings come back unparsed; an absent table reads as an
-    empty dict. A selected extra requires a complete dependency list.
+    The table contains raw TOML values. The provider checks the requirement
+    lists when expanding extras. An absent table reads as an empty dict.
     """
     if require_static and "optional-dependencies" in project_dynamic_fields(document):
         msg = (
@@ -172,14 +174,10 @@ def project_optional_dependencies(
     return raw
 
 
-def dependency_groups(
-    document: Mapping[str, Any],
-) -> Mapping[str, Sequence[str | Mapping[str, str]]]:
+def dependency_groups(document: Mapping[str, object]) -> Mapping[str, object]:
     """Read [dependency-groups] from a parsed pyproject (PEP 735).
 
-    The group table comes back unparsed, so an entry is either a requirement
-    string or an include record (``{"include-group": "other-group"}``).  An
-    absent table reads as an empty dict.
+    Group bodies are validated when selected. An absent table reads as an empty dict.
     """
     raw = document.get("dependency-groups", {})
     if not isinstance(raw, dict):
@@ -203,15 +201,11 @@ def read_pyproject_name(path: Path) -> str | None:
     return project_name(toml_io.load_path(path))
 
 
-def read_pyproject_optional_dependencies(
-    path: Path,
-) -> Mapping[str, Sequence[str]]:
+def read_pyproject_optional_dependencies(path: Path) -> Mapping[str, object]:
     """Parse ``path`` and read [project.optional-dependencies] from it."""
     return project_optional_dependencies(toml_io.load_path(path))
 
 
-def read_pyproject_groups(
-    path: Path,
-) -> Mapping[str, Sequence[str | Mapping[str, str]]]:
+def read_pyproject_groups(path: Path) -> Mapping[str, object]:
     """Parse ``path`` and read [dependency-groups] from it."""
     return dependency_groups(toml_io.load_path(path))

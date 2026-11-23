@@ -36,10 +36,10 @@ pytestmark = [
 
 _BENCHMARKS = Path(__file__).resolve().parents[2] / "benchmarks"
 _STANDARD_FILES = 14
-_STANDARD_SCENARIOS = 552
-_RUNNABLE_SCENARIOS = 529
+_STANDARD_SCENARIOS = 553
+_RUNNABLE_SCENARIOS = 530
 _UNSUPPORTED_SCENARIOS = 23
-_TOTAL_EXECUTION_IDENTITIES = 1_656
+_TOTAL_EXECUTION_IDENTITIES = 1_659
 _OUT_OF_SCOPE_ECOSYSTEM_SCENARIOS = {
     "ecosystem:dask-bottleneck-2024",
     "ecosystem:gradio-client-sync",
@@ -84,6 +84,14 @@ _UNVERIFIED_SDIST_METADATA_SCENARIOS = {
 }
 _UNVERIFIED_SDIST_METADATA_REASON = "requires unverified sdist dependency metadata"
 _MATCHING_HOST_MARKERS = {
+    "uv:uv-issue-18527-flashinfer-jit-cache": {
+        "implementation_name": "cpython",
+        "os_name": "posix",
+        "platform_machine": "x86_64",
+        "platform_python_implementation": "CPython",
+        "platform_system": "Linux",
+        "sys_platform": "linux",
+    },
     "uv:uv-tensorflow-macos": {
         "implementation_name": "cpython",
         "os_name": "posix",
@@ -1210,6 +1218,25 @@ def test_target_marker_declarations_accept_every_pep508_variable() -> None:
 
     assert parsed == declared
     assert list(parsed) == list(declared)
+
+
+def test_foreign_platform_uses_its_own_os_markers() -> None:
+    module = _harness("scenarios")
+    markers = module.parse_marker_environment("windows", {"platform_system": "Windows"})
+    requirements = module.parse_requirements(
+        ['windows-only; sys_platform == "win32"', 'posix-only; os_name == "posix"'],
+        marker_environment=markers,
+    )
+    assert set(requirements) == {"windows-only"}
+    assert "platform_machine" not in markers
+
+
+def test_interpreter_name_sets_its_display_marker() -> None:
+    module = _harness("scenarios")
+    markers = module.parse_marker_environment(
+        "pypy", {"marker_environment": {"implementation_name": "pypy"}}
+    )
+    assert markers["platform_python_implementation"] == "PyPy"
 
 
 def test_target_marker_declarations_accept_partial_known_overlays() -> None:
@@ -3088,6 +3115,16 @@ def test_matching_host_scenarios_retain_their_reviewed_inputs() -> None:
     ("logical_key", "host_kwargs"),
     [
         (
+            "uv:uv-issue-18527-flashinfer-jit-cache",
+            {
+                "system": "Linux",
+                "sys_platform": "linux",
+                "machine": "x86_64",
+                "os_name": "posix",
+                "platform_tag": "manylinux_2_28_x86_64",
+            },
+        ),
+        (
             "uv:uv-tensorflow-macos",
             {
                 "system": "Darwin",
@@ -4216,7 +4253,7 @@ def test_main_rejects_a_traversing_result_label_before_any_write(
     module = _harness("scenarios")
     results = tmp_path / "results"
     monkeypatch.setattr(module, "RESULTS_DIR", results)
-    monkeypatch.setattr(module, "get_git_commit", lambda: "../escape")
+    monkeypatch.setattr(module, "get_git_commit", lambda **_kwargs: "../escape")
     argv = ["--commit", "../escape"] if explicit else []
 
     with pytest.raises(SystemExit) as exc_info:
@@ -4225,6 +4262,21 @@ def test_main_rejects_a_traversing_result_label_before_any_write(
     assert exc_info.value.code == 2
     assert not results.exists()
     assert not (tmp_path / "escape").exists()
+
+
+def test_default_label_without_a_checkout_names_the_option(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _harness("scenarios")
+
+    def unavailable(**_kwargs: bool) -> str:
+        raise FileNotFoundError
+
+    monkeypatch.setattr(module, "get_git_commit", unavailable)
+    with pytest.raises(SystemExit) as info:
+        module.main([])
+    assert info.value.code == 2
+    assert "Use --commit to name this run." in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

@@ -5653,9 +5653,7 @@ class TestDependencyGraph:
 
     def test_umbrella_extra_drops_self_edge(self) -> None:
         wheels = {
-            name: make_wheel(
-                package=name.replace("-", "_"), hashes=(("sha256", "a" * 64),)
-            )
+            name: make_wheel(package=name, hashes=(("sha256", "a" * 64),))
             for name in ("mypkg", "graphviz-lib", "otel-lib")
         }
         metadata = {

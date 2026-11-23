@@ -1,10 +1,5 @@
 lock-version = "1.0"
 environments = [
-    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
-    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
-    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
-    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
-    "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\"",
     "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
     "python_version == \"3.12\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\"",
     "python_version == \"3.12\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\"",
@@ -35,6 +30,16 @@ environments = [
     "python_version == \"3.10\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version >= \"3.10.2.dev0\"",
     "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\" and python_full_version < \"3.10.2\"",
     "python_version == \"3.10\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\" and python_full_version >= \"3.10.2.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version < \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version >= \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version < \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"linux\" and platform_machine == \"aarch64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Linux\" and python_full_version >= \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version < \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"arm64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version >= \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version < \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"darwin\" and platform_machine == \"x86_64\" and implementation_name == \"cpython\" and os_name == \"posix\" and platform_python_implementation == \"CPython\" and platform_system == \"Darwin\" and python_full_version >= \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\" and python_full_version < \"3.11.0a7.dev0\"",
+    "python_version == \"3.11\" and sys_platform == \"win32\" and platform_machine == \"AMD64\" and implementation_name == \"cpython\" and os_name == \"nt\" and platform_python_implementation == \"CPython\" and platform_system == \"Windows\" and python_full_version >= \"3.11.0a7.dev0\"",
 ]
 requires-python = ">=3.10"
 dependency-groups = [
@@ -6924,64 +6929,64 @@ sha256 = "27592957fedf6e0b62f281e96effd28043345e0e66001f97683aa9a40c667c93"
 
 [[packages]]
 name = "ruff"
-version = "0.17.4"
+version = "0.17.5"
 marker = "\"lint\" in dependency_groups"
 requires-python = ">=3.7"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "ruff-0.17.4.tar.gz"
-upload-time = 2026-11-05T18:52:17.638366+00:00
-url = "https://files.pythonhosted.org/packages/84/0e/3d154514b5bad104f7e1c13169c2d09aa9959fccdc06eb47610ccdfa83ed/ruff-0.17.4.tar.gz"
-size = 5357750
+name = "ruff-0.17.5.tar.gz"
+upload-time = 2026-11-12T17:54:55.040697+00:00
+url = "https://files.pythonhosted.org/packages/86/cc/7b71512eb8b49926efb887cc66c74dd993642943c29eba51a877f6b85692/ruff-0.17.5.tar.gz"
+size = 5368382
 
 [packages.sdist.hashes]
-sha256 = "f32d178b50e826e00f6c6c1be3f56333068acb9b67fe167143527fa9b81e890d"
+sha256 = "625e57d80cd43352d12ea81690f3eac46cddc8c0f35026d137fb0f157f94592e"
 
 [[packages.wheels]]
-name = "ruff-0.17.4-py3-none-macosx_10_12_x86_64.whl"
-upload-time = 2026-11-05T18:51:39.502528+00:00
-url = "https://files.pythonhosted.org/packages/0a/12/dd158708378866e8b53e145a465dbc51a7cccb9fa197a74d67eaedde7234/ruff-0.17.4-py3-none-macosx_10_12_x86_64.whl"
-size = 10266044
+name = "ruff-0.17.5-py3-none-macosx_10_12_x86_64.whl"
+upload-time = 2026-11-12T17:54:11.983670+00:00
+url = "https://files.pythonhosted.org/packages/d1/72/8ed970f3361f7c8d3f8e1b3b1af27cf086bc4b3a6b62ec20e21a1aaaaff5/ruff-0.17.5-py3-none-macosx_10_12_x86_64.whl"
+size = 10250018
 
 [packages.wheels.hashes]
-sha256 = "13e781c3c5f663e7fba737eaaeb70dd943dd55171daf316afb25cd5268cfe0c7"
+sha256 = "b72fbc232e328bdbb9cdddf4f1aedcd61bd1aa64d75fc012114b4add0bd7f26b"
 
 [[packages.wheels]]
-name = "ruff-0.17.4-py3-none-macosx_11_0_arm64.whl"
-upload-time = 2026-11-05T18:51:41.968586+00:00
-url = "https://files.pythonhosted.org/packages/28/32/89a94a8eb11fd505a381ae6f04e190d038d9958695209dc1786ce5cfcda3/ruff-0.17.4-py3-none-macosx_11_0_arm64.whl"
-size = 9432227
+name = "ruff-0.17.5-py3-none-macosx_11_0_arm64.whl"
+upload-time = 2026-11-12T17:54:14.567832+00:00
+url = "https://files.pythonhosted.org/packages/dc/4b/8b10f6c9d0a18413301ae8dd2af9d180a81bb738b1b731d944a37404c523/ruff-0.17.5-py3-none-macosx_11_0_arm64.whl"
+size = 9504737
 
 [packages.wheels.hashes]
-sha256 = "7ed2f416349944f908f9574215994602242b0836844eba48eec61473033afca0"
+sha256 = "6f0db748508f04a04e3fbebcc636a5c8b3bd76274f8ed28f497c44d75c2ea2d7"
 
 [[packages.wheels]]
-name = "ruff-0.17.4-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
-upload-time = 2026-11-05T18:51:44.562560+00:00
-url = "https://files.pythonhosted.org/packages/58/de/a392dc38b215798ae72e639d228b7f6c02d826a95d1c0ad7c4c0ee49ef5b/ruff-0.17.4-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
-size = 10136900
+name = "ruff-0.17.5-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+upload-time = 2026-11-12T17:54:17.195340+00:00
+url = "https://files.pythonhosted.org/packages/b7/ea/1b3afa3943239dede7a0755ea139bdb51879f0f3f96f92894081d5c7d2e5/ruff-0.17.5-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+size = 10168006
 
 [packages.wheels.hashes]
-sha256 = "8ea6e0017c785f7282092b11e46338e4ebed1b9e575ebf2e55a8a1eda968241a"
+sha256 = "6f6a7b138edf9cc402ca736a59d9525e6d766e5395760b72e7e146e6251ac963"
 
 [[packages.wheels]]
-name = "ruff-0.17.4-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-upload-time = 2026-11-05T18:51:56.129056+00:00
-url = "https://files.pythonhosted.org/packages/af/1b/62874f14c7873f27c7887d2b1ea41de990e14ba9518801ffe8eacb5d51a6/ruff-0.17.4-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-size = 10572829
+name = "ruff-0.17.5-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+upload-time = 2026-11-12T17:54:30.862368+00:00
+url = "https://files.pythonhosted.org/packages/f2/8a/1e29c0c3785ae7e5cd0d54ee8717a08867ef71545796340be4c653c57e24/ruff-0.17.5-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+size = 10613231
 
 [packages.wheels.hashes]
-sha256 = "2cd025509b2e15721b426fc70fd946d71f43b3db3b08e946dfec2d696d911690"
+sha256 = "40ca8afaac309b41a5b2e09e4e7beb1f824826b93c25697c4d74f573324fba4e"
 
 [[packages.wheels]]
-name = "ruff-0.17.4-py3-none-win_amd64.whl"
-upload-time = 2026-11-05T18:52:13.436805+00:00
-url = "https://files.pythonhosted.org/packages/bd/15/42af8a72d8946e3c9efd2bbf6641e462b6832783b0d043d63ef5b280ba7f/ruff-0.17.4-py3-none-win_amd64.whl"
-size = 10292922
+name = "ruff-0.17.5-py3-none-win_amd64.whl"
+upload-time = 2026-11-12T17:54:49.401522+00:00
+url = "https://files.pythonhosted.org/packages/ec/8c/e4db9ae1e0ee233c04df007ab6d0d42f799ae9abd95d352b6092ee7bc4bf/ruff-0.17.5-py3-none-win_amd64.whl"
+size = 10275454
 
 [packages.wheels.hashes]
-sha256 = "67c5a894fc054cf41f75f7afa24815de5a74329d97634126c2a1015740ff4e8c"
+sha256 = "aa415d57c244299279901d776607fee3df7831c2a7435433fbfacde8632c6550"
 
 [[packages]]
 name = "secretstorage"
@@ -8028,64 +8033,64 @@ sha256 = "b854164df26db268af05f49aa5c0344b10e27a494343ff05b1e0bad3b135f5a7"
 
 [[packages]]
 name = "ty"
-version = "0.0.100"
+version = "0.0.104"
 marker = "\"ty\" in dependency_groups or \"types\" in dependency_groups"
 requires-python = ">=3.8"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "ty-0.0.100.tar.gz"
-upload-time = 2026-11-09T20:16:27.534294+00:00
-url = "https://files.pythonhosted.org/packages/2a/b4/ac430b910566e28b1cd01faf7ee07ca38bcd7585b30fce8fd25dfc104edc/ty-0.0.100.tar.gz"
-size = 8238916
+name = "ty-0.0.104.tar.gz"
+upload-time = 2026-11-13T20:52:59.529794+00:00
+url = "https://files.pythonhosted.org/packages/a9/23/e7e960c518df4fe79c38154469f500ebc54631c1e8724a44c28ea052b7ef/ty-0.0.104.tar.gz"
+size = 8295902
 
 [packages.sdist.hashes]
-sha256 = "ca75081ead663c077e40b90c38b6e9f039b6d168051e02918a8a1d7ecc4fa0dd"
+sha256 = "8aa1330e722a5a56336d8d1938d8897cb5dfc0841fffd8ed0627fdea177a9bdb"
 
 [[packages.wheels]]
-name = "ty-0.0.100-py3-none-macosx_10_12_x86_64.whl"
-upload-time = 2026-11-09T20:15:44.801063+00:00
-url = "https://files.pythonhosted.org/packages/c5/a1/9bb8d1c79d46257289299d42c5e1719527eb99624bd1ce07ebb775f78e6a/ty-0.0.100-py3-none-macosx_10_12_x86_64.whl"
-size = 14482351
+name = "ty-0.0.104-py3-none-macosx_10_12_x86_64.whl"
+upload-time = 2026-11-13T20:52:20.658557+00:00
+url = "https://files.pythonhosted.org/packages/db/61/2b8c8fa58bfd59ccb31b430e2798515fd9f6f7e19139f804a1bd4ecc18ff/ty-0.0.104-py3-none-macosx_10_12_x86_64.whl"
+size = 14555253
 
 [packages.wheels.hashes]
-sha256 = "de874a1cef7bc54b2f162a82e3f8a066c6356204df0f44e31c4f84e0a0f46fdc"
+sha256 = "d83988dd0ace56c133417a976b798844c4c3f6b9e28b2856e5026432a6d907ee"
 
 [[packages.wheels]]
-name = "ty-0.0.100-py3-none-macosx_11_0_arm64.whl"
-upload-time = 2026-11-09T20:15:47.498997+00:00
-url = "https://files.pythonhosted.org/packages/57/3f/7a6790546398fdf4d2dcd2c496a9f229c018f9a72f8e95120432ee85609c/ty-0.0.100-py3-none-macosx_11_0_arm64.whl"
-size = 13437855
+name = "ty-0.0.104-py3-none-macosx_11_0_arm64.whl"
+upload-time = 2026-11-13T20:52:22.853679+00:00
+url = "https://files.pythonhosted.org/packages/20/df/7b3865d367b83cce6411857f8769e05bd625034adc16d8dabf3f22ee58ad/ty-0.0.104-py3-none-macosx_11_0_arm64.whl"
+size = 13956073
 
 [packages.wheels.hashes]
-sha256 = "c45a02b8d11675f009124ee082b070204e5c57721acb3b44b0567721db3710d5"
+sha256 = "bab34539aedf4fb5dfcc9724874bce05fc79cb85cb783b1084e8615d4e6d6755"
 
 [[packages.wheels]]
-name = "ty-0.0.100-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
-upload-time = 2026-11-09T20:15:49.849582+00:00
-url = "https://files.pythonhosted.org/packages/4b/45/ad4c8b88eacdb0e09590dbb90ca15b3eeebdaf91bfbfae265a00cad6608c/ty-0.0.100-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
-size = 14317038
+name = "ty-0.0.104-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+upload-time = 2026-11-13T20:52:24.995333+00:00
+url = "https://files.pythonhosted.org/packages/f9/9e/195afd5f9472fe09655b22b14c70db9920332ff7c975359232e21947d9c6/ty-0.0.104-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+size = 14844026
 
 [packages.wheels.hashes]
-sha256 = "1e85f94c680722635e07e24949faf2c52b62139e721ba724981801ac47ab6e67"
+sha256 = "6e2b7a31a117b45e88827b86746ef04760274c6813c9455a1d8fb456ac660476"
 
 [[packages.wheels]]
-name = "ty-0.0.100-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-upload-time = 2026-11-09T20:16:05.195593+00:00
-url = "https://files.pythonhosted.org/packages/b8/56/02b46b2a5f78f6edbd29afde54fce4461dd6462f901974deac0c9c1a987b/ty-0.0.100-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
-size = 16749475
+name = "ty-0.0.104-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+upload-time = 2026-11-13T20:52:39.513868+00:00
+url = "https://files.pythonhosted.org/packages/c0/55/ac634ca578d3a3b39a293aab14c9c9334009c179c79564e59af7ea61ca12/ty-0.0.104-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+size = 17568960
 
 [packages.wheels.hashes]
-sha256 = "e23076fd67dc5c740a5cd292f3bbc10b82127dd01df3cb559e12b3144ceef72d"
+sha256 = "57b142b2e1a7396e0775df67469ec89f0e519d0a842787ffb8a2f5276f61c12e"
 
 [[packages.wheels]]
-name = "ty-0.0.100-py3-none-win_amd64.whl"
-upload-time = 2026-11-09T20:16:22.858900+00:00
-url = "https://files.pythonhosted.org/packages/3b/35/2becc700b2384a2d0b373626ed59c6706d2089888a14721199dba1aa3094/ty-0.0.100-py3-none-win_amd64.whl"
-size = 14440120
+name = "ty-0.0.104-py3-none-win_amd64.whl"
+upload-time = 2026-11-13T20:52:55.077307+00:00
+url = "https://files.pythonhosted.org/packages/d8/ff/5fbb55f4afedc80e319d41927589c0c80325ed3e0e525f682684d3351c76/ty-0.0.104-py3-none-win_amd64.whl"
+size = 14759284
 
 [packages.wheels.hashes]
-sha256 = "01c230d3046f0d5e8ab6e1def4131aab21659a1d290cc88b39b4fde04bfad0c0"
+sha256 = "ae5f746b4c800f202f8dae94957cc6dacbf3f4b19bd2b2d0df013043fb8af856"
 
 [[packages]]
 name = "typeshed-client"
@@ -9038,7 +9043,7 @@ sha256 = "48483b9ec019da045b7f826c496f2ab1639c3f036fcab6e9e74b42d4e2fa3d34"
 
 [tool.nab]
 nab-version = "0.0.31.dev0"
-created-at = 2026-11-18T08:00:18.268224+00:00
+created-at = 2026-11-20T23:59:33.229483+00:00
 command-line = [
     "nab",
     "lock",
@@ -9048,6 +9053,7 @@ command-line = [
     "pylock.dev.toml",
     "--lock-policy",
     "prefer-existing",
+    "--upgrade",
 ]
 input-path = "pyproject.toml"
 mode = "universal"
@@ -9059,9 +9065,12 @@ platforms = [
     "macos_x86_64",
     "windows_amd64",
 ]
+package-metadata-overrides = [
+    "pyyaml==6.0.3: requires-python",
+]
 
 [tool.nab.validation]
 version = 1
-all-inputs-sha256 = "4938b87624b424ac0471f3a45e1842c4fee4eca9e80b685c237c200be6f91329"
-selection-inputs-sha256 = "1f736ec5ed3879132540736aee524a83fb8b20938af686fdfd2c721eed2abff2"
-contents-sha256 = "f9930b8098f2b7fbd8d0499151debd860599918f8509528ac7dbf38795910ba9"
+all-inputs-sha256 = "2135b8c1ae2ff61e2e23472775f652737eb70c1565d924b4770388317dc559f5"
+selection-inputs-sha256 = "154b8d4abd393437817b6b1905d69370c6966c9ab4d2377d8719f3d22d5a2da4"
+contents-sha256 = "d5a6b05a6bb8df93a1e4d17f433551aef6515368fd7df859c3c414701d4a70ee"

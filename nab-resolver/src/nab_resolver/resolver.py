@@ -31,7 +31,7 @@ __lazy_modules__ = (
     "nab_resolver.root",
 )
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final, Generic, Protocol
 
@@ -277,6 +277,7 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
     ) -> list[Incompatibility[PackageType, VersionType]]:
         """Return incompatibilities the provider queued during ``choose_version``.
 
+        Each returned clause is checked even if it describes only earlier decisions.
         Drained after every ``choose_version`` call.  When non-empty AND
         ``choose_version`` returned None, the resolver suppresses the default
         ``NO_VERSIONS`` clause (which would persist across backjumps) so the
@@ -577,15 +578,15 @@ def _as_root_requirements(
     ]
 
 
-class _RecordedDependencies:
+class _RecordedDependencies(Generic[PackageType, VersionType]):
     """Retain a parent range and refinement causes across repeated decisions."""
 
     __slots__ = ("parent_range", "refinement_causes")
 
     def __init__(
         self,
-        parent_range: RangeProtocol[Any],
-        refinement_causes: list[Incompatibility[Any, Any]],
+        parent_range: RangeProtocol[VersionType],
+        refinement_causes: list[Incompatibility[PackageType, VersionType]],
     ) -> None:
         self.parent_range = parent_range
         self.refinement_causes = refinement_causes
@@ -631,7 +632,7 @@ class Resolver(Generic[PackageType, VersionType]):
         provider: ResolverProvider[PackageType, VersionType],
         observer: ResolverObserver[PackageType, VersionType] | None = None,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
-        range_type: type[RangeProtocol[Any]] = Range,
+        range_type: type[RangeProtocol[VersionType]] = Range,
         root_version: Any = 1,
         format_range: Callable[[RangeProtocol[VersionType]], str] = str,
     ) -> None:
@@ -689,6 +690,7 @@ class Resolver(Generic[PackageType, VersionType]):
         # last seen contradicted; unit propagation skips a clause whose stamp
         # is still current.
         self.clause_contradicted_at: list[int] = []
+        self.unchecked_provider_clauses: deque[int] = deque()
 
         # Keyed by (package, dep_package, dep_constraint, dep_positive); used
         # to merge mergeable dependency clauses (pubgrub-rs's merge_dependents).
@@ -698,7 +700,8 @@ class Resolver(Generic[PackageType, VersionType]):
 
         # Dependency clauses survive backtracking and restarts.
         self.recorded_dependencies: dict[
-            tuple[PackageType, VersionType], _RecordedDependencies
+            tuple[PackageType, VersionType],
+            _RecordedDependencies[PackageType, VersionType],
         ] = {}
 
         self.solution: PartialSolution[Any, Any] = PartialSolution(
@@ -1064,7 +1067,7 @@ class Resolver(Generic[PackageType, VersionType]):
             changed_package = ROOT
         return changed_package, restart_threshold, restarts_remaining
 
-    def _decide_next(self, next_package: Any) -> Any:
+    def _decide_next(self, next_package: PackageType) -> PackageType:
         """Run the decision phase for ``next_package``. Return next changed package."""
         chosen_version = decide.choose_version(self, next_package)
         had_pending = decide.absorb_pending_clauses(self)
@@ -1100,7 +1103,7 @@ class Resolver(Generic[PackageType, VersionType]):
         self,
         package: PackageType,
         version: VersionType,
-        exact_range: RangeProtocol[Any],
+        exact_range: RangeProtocol[VersionType],
         dependencies: Mapping[PackageType, RangeProtocol[VersionType]],
     ) -> None:
         """Record dependency clauses or reapply their retained refinement causes."""
@@ -1118,7 +1121,9 @@ class Resolver(Generic[PackageType, VersionType]):
                 )
             return
 
-        record = _RecordedDependencies(parent_range, [])
+        record: _RecordedDependencies[PackageType, VersionType] = _RecordedDependencies(
+            parent_range, []
+        )
         for dependency_package, supplied_range in dependencies.items():
             dependency_range = self.as_term_range(supplied_range)
             cross_package = dependency_package != package
@@ -1175,6 +1180,7 @@ class Resolver(Generic[PackageType, VersionType]):
         self.incompatibilities.clear()
         self.package_to_incompatibilities.clear()
         self.clause_contradicted_at.clear()
+        self.unchecked_provider_clauses.clear()
         self.dependency_index.clear()
         self.recorded_dependencies.clear()
         self.solution = PartialSolution(range_type=self.range_type)

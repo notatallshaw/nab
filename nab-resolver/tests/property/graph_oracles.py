@@ -12,12 +12,13 @@ from __future__ import annotations
 
 from hypothesis import strategies as st
 
+from nab_resolver.errors import ResolutionError, ResolutionLimitError
 from nab_resolver.ranges import Range
-from nab_resolver.resolver import ResolutionError, Resolver
+from nab_resolver.resolver import Resolver
 from nab_resolver.root import ROOT
 from nab_resolver.types import Incompatibility, IncompatibilityCause
 
-from .providers import FuzzProvider
+from .providers import FuzzProvider, is_proven_conflict
 from .strategies import PACKAGE_NAMES, non_empty_ranges, version_ranges
 
 Graph = dict[str, dict[int, dict[str, Range[int]]]]
@@ -40,9 +41,11 @@ def solve(
     reqs = requirements if requirements is not None else graph["root"][1]
     try:
         return resolver.resolve(reqs, constraints=constraints), None
+    except ResolutionLimitError:
+        return None, None
     except ResolutionError as error:
-        if "exceeded" in str(error):
-            return None, None
+        if not is_proven_conflict(error):
+            raise
         return None, error
 
 

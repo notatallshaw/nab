@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
-import shutil
-import subprocess
 import sys
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 
 import pytest
 from typing_extensions import Self
@@ -591,14 +588,20 @@ def test_canary_configures_lowest_direct_roots(
     assert seen["resolver_constraints"] is inputs.constraints
 
 
-def test_canary_main_records_v2_contract(
+@pytest.mark.parametrize("edited", [False, True])
+def test_canary_main_records_v2_contract_for_one_checkout(
+    edited: bool,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _harness()
     monkeypatch.setattr(module, "RESULTS_DIR", tmp_path)
     source = {"commit": "source-sha", "dirty": False, "diff_hash": None}
-    monkeypatch.setattr(module, "get_git_source_state", lambda: source)
+    ending_source = (
+        {**source, "dirty": True, "diff_hash": "changed"} if edited else source
+    )
+    revisions = iter((source, ending_source))
+    monkeypatch.setattr(module, "get_git_source_state", lambda: next(revisions))
     scenario = {"requirements": [], "unsupported_reason": "test fixture"}
     input_hash = module.scenario_input_hash("quick:requests", scenario)
     monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
@@ -607,6 +610,13 @@ def test_canary_main_records_v2_contract(
         "argv",
         ["canary.py", "--commit", "test", "--scenario", "quick:requests"],
     )
+
+    if edited:
+        with pytest.raises(SystemExit) as caught:
+            module.main()
+        assert caught.value.code == 1
+        assert not list((tmp_path / "test").glob("canary_*.json"))
+        return
 
     module.main()
 
@@ -931,124 +941,6 @@ def test_canary_v2_identity_reconstructs_historical_clone_input(
     assert identity.definition == expected_definition
     if strategy is not module.ResolutionStrategy.HIGHEST:
         assert next(iter(identity.definition)) == "resolution"
-
-
-@pytest.mark.parametrize(
-    ("status", "diff", "dirty"),
-    [
-        (b"", b"", False),
-        (b" M canary.py\0", b"diff --git a/canary.py b/canary.py\n", True),
-    ],
-)
-def test_canary_source_state_marks_dirty_trees(
-    monkeypatch: pytest.MonkeyPatch,
-    status: bytes,
-    diff: bytes,
-    dirty: bool,
-) -> None:
-    module = _harness()
-    monkeypatch.setattr(module, "get_git_commit", lambda: "source-sha")
-
-    def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
-        if command == ["git", "rev-parse", "--show-toplevel"]:
-            return SimpleNamespace(stdout="/repo")
-        if command[:2] == ["git", "status"]:
-            return SimpleNamespace(stdout=status)
-        if command[:2] == ["git", "diff"]:
-            return SimpleNamespace(stdout=diff)
-        if command[:2] == ["git", "ls-files"]:
-            return SimpleNamespace(stdout=b"")
-        raise AssertionError(command)
-
-    monkeypatch.setattr(
-        module.subprocess,
-        "run",
-        run,
-    )
-
-    state = module.get_git_source_state()
-
-    assert state["commit"] == "source-sha"
-    assert state["dirty"] is dirty
-    expected_hash = (
-        hashlib.sha256(status + b"\0" + diff + b"\0").hexdigest() if dirty else None
-    )
-    assert state["diff_hash"] == expected_hash
-
-
-def test_canary_source_state_hashes_sibling_untracked_contents(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    git = shutil.which("git")
-    assert git is not None
-
-    def run_git(*args: str) -> None:
-        subprocess.run([git, *args], cwd=tmp_path, check=True)  # noqa: S603
-
-    run_git("init", "-q")
-    benchmarks_dir = tmp_path / "nab-project" / "benchmarks"
-    benchmarks_dir.mkdir(parents=True)
-    (benchmarks_dir / "tracked").write_text("tracked\n")
-    run_git("add", "nab-project/benchmarks/tracked")
-    run_git(
-        "-c",
-        "user.name=Canary Test",
-        "-c",
-        "user.email=canary@example.invalid",
-        "commit",
-        "-qm",
-        "initial",
-    )
-    untracked = tmp_path / "nab-project" / "src" / "source.py"
-    untracked.parent.mkdir(parents=True)
-    untracked.write_text("first\n")
-    module = _harness()
-    monkeypatch.setattr(module, "BENCHMARKS_DIR", benchmarks_dir)
-
-    first = module.get_git_source_state()
-    untracked.write_text("second\n")
-    second = module.get_git_source_state()
-
-    assert first["commit"] == second["commit"]
-    assert first["dirty"] is second["dirty"] is True
-    assert first["diff_hash"] != second["diff_hash"]
-
-
-def test_canary_source_state_marks_a_source_export_dirty(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = _harness()
-
-    def fail_commit() -> str:
-        raise module.subprocess.CalledProcessError(128, ["git", "rev-parse"])
-
-    monkeypatch.setattr(module, "get_git_commit", fail_commit)
-
-    assert module.get_git_source_state() == {
-        "commit": None,
-        "dirty": True,
-        "diff_hash": None,
-    }
-
-
-def test_canary_source_state_preserves_commit_when_hashing_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = _harness()
-    commit = "a" * 40
-    monkeypatch.setattr(module, "get_git_commit", lambda: commit)
-
-    def fail_hashing(*_args: object, **_kwargs: object) -> object:
-        raise module.subprocess.CalledProcessError(128, ["git", "status"])
-
-    monkeypatch.setattr(module.subprocess, "run", fail_hashing)
-
-    assert module.get_git_source_state() == {
-        "commit": commit,
-        "dirty": True,
-        "diff_hash": None,
-    }
 
 
 def test_canary_main_rejects_duplicate_output_labels(

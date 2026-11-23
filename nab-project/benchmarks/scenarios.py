@@ -37,13 +37,13 @@ else:
 from benchmark_config import (
     DEFAULT_INDEXES,
     DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS,
-    BenchmarkRequirements,
     YankStats,
     benchmark_index_settings,
     build_benchmark_config,
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
     expand_project_extras,
+    parse_requirements,
     parse_scenario_build_packages,
     parse_scenario_index_routes,
     parse_scenario_indexes,
@@ -65,7 +65,10 @@ from benchmark_host import (
     parse_target_marker_environment,
     settings_hash,
 )
-from standard_result import read_benchmark_json, valid_outcome, valid_statistics
+from benchmark_json import read_benchmark_json
+from benchmark_paths import is_portable_path_component, result_directory_label
+from benchmark_source import get_git_commit, get_git_source_state
+from standard_result import valid_outcome, valid_statistics
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_project.fetch import (
@@ -73,9 +76,7 @@ from nab_project.fetch import (
     IndexRoute,
     index_routes,
 )
-from nab_provider._vendor.packaging.markers import default_environment
 from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
 from nab_provider.provider import (
@@ -86,7 +87,6 @@ from nab_provider.provider import (
     VcsPolicy,
     split_extra,
 )
-from nab_provider.vcs_admission import admit_vcs_url
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS, Resolver
 
@@ -106,22 +106,7 @@ STANDARD_STRATEGIES = (
     ResolutionStrategy.LOWEST_DIRECT,
 )
 _LOWER_HEX = frozenset("0123456789abcdef")
-_PORTABLE_COMPONENT_START = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
-)
-_PORTABLE_COMPONENT_CHARS = _PORTABLE_COMPONENT_START | frozenset(".-")
-_MAX_PORTABLE_COMPONENT_LENGTH = 128
 _MAX_STORAGE_COMPONENT_LENGTH = 255
-_WINDOWS_RESERVED_COMPONENTS = frozenset(
-    {
-        "aux",
-        "con",
-        "nul",
-        "prn",
-        *(f"com{number}" for number in range(1, 10)),
-        *(f"lpt{number}" for number in range(1, 10)),
-    }
-)
 _RESERVED_RESULT_DIRECTORIES = frozenset({"universal", "universal-selected"})
 _STANDARD_MANIFEST_FIELDS = frozenset(
     {
@@ -151,36 +136,10 @@ _STANDARD_MANIFEST_FIELDS = frozenset(
 )
 
 
-def _is_portable_path_component(
-    value: str,
-    *,
-    max_length: int = _MAX_PORTABLE_COMPONENT_LENGTH,
-) -> bool:
-    """Return whether *value* is a portable single filename component."""
-    if (
-        not value
-        or len(value) > max_length
-        or value[0] not in _PORTABLE_COMPONENT_START
-        or value.endswith(".")
-        or any(char not in _PORTABLE_COMPONENT_CHARS for char in value)
-    ):
-        return False
-    windows_basename = value.partition(".")[0].casefold()
-    return windows_basename not in _WINDOWS_RESERVED_COMPONENTS
-
-
-def _result_directory_label(value: str) -> str:
-    """Validate a user-provided results-directory label."""
-    if not _is_portable_path_component(value):
-        msg = f"result label must use a portable ASCII filename, got {value!r}"
-        raise argparse.ArgumentTypeError(msg)
-    return value
-
-
 def _is_standard_result_directory_component(value: str) -> bool:
     """Return whether *value* can name a standard result directory."""
     return bool(
-        _is_portable_path_component(value)
+        is_portable_path_component(value)
         and not value.casefold().endswith(".json")
         and value.casefold() not in _RESERVED_RESULT_DIRECTORIES
     )
@@ -190,8 +149,8 @@ def _is_standard_result_scenario_name(value: str) -> bool:
     """Return whether *value* can produce a standard JSON result filename."""
     filename = f"{value}.json"
     return bool(
-        _is_portable_path_component(value)
-        and _is_portable_path_component(
+        is_portable_path_component(value)
+        and is_portable_path_component(
             filename,
             max_length=_MAX_STORAGE_COMPONENT_LENGTH,
         )
@@ -262,7 +221,7 @@ def _safe_tree_members(root: Path) -> tuple[list[Path], list[Path]]:
                         msg = f"reserved result namespace must be a directory: {path}"
                         raise ValueError(msg)
                     continue
-                if not _is_portable_path_component(
+                if not is_portable_path_component(
                     entry.name,
                     max_length=_MAX_STORAGE_COMPONENT_LENGTH,
                 ):
@@ -690,133 +649,6 @@ def _requires_matching_host_logical_keys(rows: list[StandardScenario]) -> list[s
         ):
             required.append(row.logical_key)
     return sorted(required)
-
-
-def get_git_commit() -> str:
-    """Return the short hash of HEAD."""
-    result = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout.strip()
-
-
-def get_git_source_state() -> dict[str, str | bool | None]:
-    """Return the full Git source identity for a standard benchmark run."""
-    try:
-        commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-            cwd=BENCHMARKS_DIR,
-        ).stdout.strip()
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return {"commit": None, "dirty": True, "diff_hash": None}
-    try:
-        root = Path(
-            subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                capture_output=True,
-                check=True,
-                text=True,
-                cwd=BENCHMARKS_DIR,
-            ).stdout.strip()
-        )
-        status = subprocess.run(
-            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        diff = subprocess.run(
-            ["git", "diff", "--binary", "HEAD", "--"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        untracked = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
-            capture_output=True,
-            check=True,
-            cwd=root,
-        ).stdout
-        untracked_hashes = bytearray()
-        for raw_path in untracked.split(b"\0"):
-            if not raw_path:
-                continue
-            object_hash = subprocess.run(  # noqa: S603 - path follows --
-                ["git", "hash-object", "--", os.fsdecode(raw_path)],
-                capture_output=True,
-                check=True,
-                cwd=root,
-            ).stdout
-            untracked_hashes.extend(raw_path + b"\0" + object_hash)
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return {"commit": commit, "dirty": True, "diff_hash": None}
-    dirty = bool(status)
-    diff_hash = (
-        hashlib.sha256(status + b"\0" + diff + b"\0" + untracked_hashes).hexdigest()
-        if dirty
-        else None
-    )
-    return {"commit": commit, "dirty": dirty, "diff_hash": diff_hash}
-
-
-def parse_requirements(
-    requirement_strings: list[str],
-    *,
-    vcs_config: VcsConfig | None = None,
-    marker_environment: dict[str, str] | None = None,
-) -> dict[str, VersionRange]:
-    """Convert PEP 508 requirement strings to resolver input.
-
-    Root requirements whose marker evaluates False against
-    ``marker_environment`` are dropped, matching pip / uv behaviour:
-    a top-level dependency with a marker is an opt-in per env.
-
-    Direct-URL requirements (``pkg @ git+https://...``) are screened by
-    :func:`nab_provider.vcs_admission.admit_vcs_url`; admission failures raise
-    :class:`UnsupportedVcsError`.  Admitted VCS requirements raise
-    :class:`NotImplementedError`.
-    """
-    config = vcs_config or VcsConfig()
-    env = _full_marker_environment(marker_environment)
-    reqs = BenchmarkRequirements()
-    for req_str in requirement_strings:
-        req = Requirement(req_str)
-        if req.marker is not None and not req.marker.evaluate(env):
-            continue
-        if req.url is not None:
-            admit_vcs_url(req.url, config)
-            msg = (
-                f"VCS requirement admitted by policy but resolver path is not"
-                f" implemented: {req.name} @ {req.url}"
-            )
-            raise NotImplementedError(msg)
-        reqs.declarations.append(req)
-        name = canonicalize_name(req.name)
-        term = (
-            req.specifier.to_range()
-            if req.specifier
-            else VersionRange.full(admit_arbitrary=False)
-        )
-        reqs[name] = reqs.get(name, VersionRange.full()) & term
-        for extra in sorted(req.extras):
-            reqs[f"{name}[{extra}]"] = VersionRange.full(admit_arbitrary=False)
-    return reqs
-
-
-def _full_marker_environment(
-    overlay: dict[str, str] | None,
-) -> dict[str, str]:
-    """Return the host marker env overlaid with ``overlay``."""
-    env = dict(default_environment())
-    if overlay:
-        env.update(overlay)
-    return env
 
 
 SCENARIO_WALL_TIMEOUT_SECONDS = 120
@@ -1557,7 +1389,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run nab resolution scenarios")
     parser.add_argument(
         "--commit",
-        type=_result_directory_label,
+        type=result_directory_label,
         default=None,
         help="Label for this run (default: git short hash of HEAD)",
     )
@@ -1581,7 +1413,12 @@ def main(argv: list[str] | None = None) -> None:
     commit = args.commit
     if commit is None:
         try:
-            commit = _result_directory_label(get_git_commit())
+            commit = result_directory_label(get_git_commit(short=True))
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            parser.error(
+                "cannot read the benchmark checkout's revision. "
+                "Use --commit to name this run."
+            )
         except argparse.ArgumentTypeError as exc:
             parser.error(str(exc))
     source_start = get_git_source_state()

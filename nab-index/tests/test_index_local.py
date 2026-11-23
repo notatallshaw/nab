@@ -30,6 +30,27 @@ def _make_index(tmp_path: Path, body: str) -> Path:
     return package_dir
 
 
+def test_local_files_precede_remote_links_without_losing_page_order(
+    tmp_path: Path,
+) -> None:
+    filenames = [f"foo-{version}-py3-none-any.whl" for version in ("1", "2")]
+    urls = [f"https://mirror.example/{filename}" for filename in filenames]
+    links = [urls[0], filenames[1], urls[1], filenames[0]]
+    directory = _make_index(
+        tmp_path, "".join(f'<a href="{url}">foo</a>' for url in links)
+    )
+    for filename in filenames:
+        (directory / filename).touch()
+
+    records = run(LocalIndexClient(tmp_path.as_uri()).get_files("foo"))
+
+    assert [file.url for file in records] == [
+        (directory / filenames[1]).as_uri(),
+        (directory / filenames[0]).as_uri(),
+        *urls,
+    ]
+
+
 def test_anchor_with_unknown_attribute_is_parsed(tmp_path: Path) -> None:
     # An attribute the parser does not recognise (here 'rel') is skipped
     # without disturbing the href it accompanies.

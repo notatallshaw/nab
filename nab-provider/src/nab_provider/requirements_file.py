@@ -75,7 +75,7 @@ class InvalidProjectTableError(TypeError):
 
 
 def _canonicalize_optional_deps(
-    optional_deps: Mapping[str, Sequence[str]],
+    optional_deps: Mapping[str, object],
 ) -> dict[str, list[str]]:
     """Map each extra name to its requirements under PEP 685 normalization."""
     canonical: dict[str, list[str]] = {}
@@ -88,7 +88,7 @@ def _canonicalize_optional_deps(
 
 
 def expand_self_extras(
-    optional_deps: Mapping[str, Sequence[str]],
+    optional_deps: Mapping[str, object],
     project_name: str | None,
     selected: Sequence[str],
     environment: Mapping[str, str] | None = None,
@@ -170,7 +170,7 @@ def _self_references(
 
 
 def self_extra_markers(
-    optional_deps: Mapping[str, Sequence[str]],
+    optional_deps: Mapping[str, object],
     project_name: str | None,
     selected: Sequence[str],
 ) -> list[Marker]:
@@ -227,7 +227,7 @@ def _environment_residual(marker: Marker, extra: str) -> str | bool:
 
 
 def expand_extra_requirements(
-    optional_deps: Mapping[str, Sequence[str]],
+    optional_deps: Mapping[str, object],
     project_name: str | None,
     selected: Sequence[str],
     *,
@@ -317,7 +317,7 @@ def _self_ref_edges(
 
 def expand_project_requirements(
     requirements: Sequence[Requirement],
-    projects: Mapping[str, Mapping[str, Sequence[str]] | None],
+    projects: Mapping[str, Mapping[str, object] | None],
 ) -> list[Requirement]:
     """Replace references to supplied projects with their selected extra dependencies.
 
@@ -390,7 +390,7 @@ def _project_extra_requirements(
 
 
 def expand_group_includes(
-    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    groups: Mapping[str, object],
     selected: Sequence[str],
 ) -> list[str]:
     """Return ``selected`` plus every group reached through ``include-group``.
@@ -410,7 +410,7 @@ def expand_group_includes(
     if not selected:
         return []
 
-    canonical_groups: dict[str, list[str | Mapping[str, str]]] = {}
+    canonical_groups: dict[str, list[object]] = {}
     for name, entries in groups.items():
         # str is a Sequence, so a bare string would expand into characters.
         if isinstance(entries, str) or not isinstance(entries, Sequence):
@@ -461,7 +461,7 @@ def _too_deep_error(exc: RecursionError) -> InvalidProjectRequirementError:
 
 
 def iter_group_requirements(
-    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    groups: Mapping[str, object],
     selected: Sequence[str],
 ) -> Iterator[tuple[str, list[Requirement]]]:
     """Yield each selected group's name and requirements in selection order."""
@@ -469,7 +469,10 @@ def iter_group_requirements(
         return
 
     try:
-        resolver = DependencyGroupResolver(groups)
+        # Packaging validates raw group bodies when resolve() first needs them.
+        resolver = DependencyGroupResolver(
+            groups,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        )
         resolved = [
             (name, [str(req) for req in resolver.resolve(name)]) for name in selected
         ]
@@ -488,7 +491,7 @@ def iter_group_requirements(
 
 
 def resolve_groups_to_requirements(
-    groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    groups: Mapping[str, object],
     selected: Sequence[str],
 ) -> list[Requirement]:
     """Combine the requirements of the selected PEP 735 groups in order.

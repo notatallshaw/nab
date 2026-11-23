@@ -1,22 +1,23 @@
-"""Provider that bridges packaging's PEP 440 types to nab-resolver."""
+"""In-memory PEP 440 provider for the resolver integration tests."""
 
 from __future__ import annotations
-
-__lazy_modules__ = ("nab_provider._vendor.packaging.ranges",)
 
 from typing import TYPE_CHECKING
 
 from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from nab_provider._vendor.packaging.specifiers import SpecifierSet
     from nab_provider._vendor.packaging.version import Version
+    from nab_resolver.resolver import Resolver
     from nab_resolver.types import Incompatibility, RangeProtocol
 
 __all__ = [
     "PackagingProvider",
+    "resolve_or_prove_conflict",
 ]
 
 
@@ -122,3 +123,16 @@ class PackagingProvider:
         """Identity: constraints render as stored."""
         del package
         return constraint
+
+
+def resolve_or_prove_conflict(
+    resolver: Resolver[str, Version], requirements: Mapping[str, VersionRange]
+) -> dict[str, Version] | None:
+    """Return the selected versions or None for a proved dependency conflict."""
+    try:
+        return resolver.resolve(requirements)
+    except ResolutionTerminatedError:
+        raise
+    except ResolutionError as error:
+        assert error.incompatibility is not None, error
+        return None

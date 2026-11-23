@@ -91,7 +91,8 @@ preserving universal results and top-level provenance.
 
 `canary.toml` selects canonical scenario definitions and declares each case's strategy. Manual
 selections may use an explicit suffix such as `pip:trustllm@lowest`. The runner records the complete
-TOML input, effective target and policy, source state, and content hashes.
+TOML input, effective target and policy, source state, and content hashes. It checks the checkout
+again before writing the summary and reports an error if the source changed.
 
 Canary artifacts use contract version 2. An explicit strategy is serialized with the selector and
 input definition used by that contract's input hash, keeping existing scoreboards comparable. The
@@ -110,17 +111,21 @@ python nab-project/benchmarks/universal_scenarios.py --scenario marker-heavy
 python nab-project/benchmarks/universal_summary.py
 ```
 
-`universal_summary.py` walks the latest results directory and prints a markdown table.
+`universal_summary.py` walks the latest results directory and prints a markdown table. To name a
+run, pass a portable filename such as `--commit topic-refresh` to the runner, then pass
+`topic-refresh` to the summary.
 
 Each result retains its per-target solutions and merged target-label pin projection. The runner
 exits nonzero after an unexpected resolution, timeout, lock-emission failure, or projection failure.
 
 The report records the Python versions selected from the scenario's range before resolution. A
-completed result must cover every requested Python version and platform. Rerun older scenarios to
-write this target list, or read their reports with the summary script from the original checkout.
+completed result must cover every requested Python version and platform. The installer must be able
+to select the expected packages from the emitted lock with each target's wheel tags. Rerun older
+scenarios for this check, or read their reports with the summary from the original checkout.
 
 A full run writes `_manifest.json` with the current scenario set. The summary follows that set,
-ignores removed result files, and accepts only complete runs from a clean source tree.
+ignores removed result files, and accepts only complete runs that started and ended on the same
+clean revision. If the checkout changes during a run, rerun it to get a complete report.
 
 If a release's wheels and source distribution have the same dependencies on every target, add
 `assume_universal_deps = { package = "==1.2" }` to the scenario. Nab can then read those
@@ -166,7 +171,8 @@ to use the same instant. Without an offset, pip uses local time and can see a di
 releases.
 
 `marker_environment` and the `platform_system` shorthand define the resolver target without
-restricting the host. Set `requires_matching_host = true` when the physical host must match those
+restricting the host. For example, `platform_system = "Windows"` also sets `sys_platform` to `win32`
+and `os_name` to `nt`. Set `requires_matching_host = true` when the physical host must match those
 values so its wheel tags remain faithful.
 
 `platform_system` alone admits any machine in that OS family; machine and implementation markers

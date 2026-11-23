@@ -11,9 +11,6 @@ tests exercise:
   comparison.
 * ``canonical_names``/``versions``/``sha256s``: primitives for the
   PEP 751 lockfile property tests.
-* ``range_clauses``/``range_specs``: specifier text over a version pool
-  spanning pre-release, post, local, and epoch shapes, for the
-  ``VersionRange`` differential tests.
 """
 
 from __future__ import annotations
@@ -50,13 +47,6 @@ The ``deep`` profile (env ``HYPOTHESIS_PROFILE=deep``) bumps
 counter-examples that the default 100-example budget would miss.
 """
 
-DEEP_SETTINGS = settings(
-    max_examples=3000 if _DEEP else 300,
-    deadline=None,
-    suppress_health_check=[HealthCheck.too_slow],
-)
-"""Heavier settings for properties that benefit from more examples."""
-
 BRUTE_FORCE_SETTINGS = settings(
     max_examples=200 if _DEEP else 30,
     deadline=None,
@@ -90,18 +80,12 @@ def pep440_specifiers(draw: st.DrawFn) -> SpecifierSet:
     representation.
     """
     num_specs = draw(st.integers(min_value=0, max_value=2))
-    if num_specs == 0:
-        return SpecifierSet()
-
     parts: list[str] = []
     for _ in range(num_specs):
         op = draw(st.sampled_from([">=", "<=", ">", "<", "==", "!="]))
         version = draw(st.sampled_from(VERSION_POOL))
         parts.append(f"{op}{version}")
-    try:
-        return SpecifierSet(",".join(parts))
-    except Exception:  # noqa: BLE001
-        return SpecifierSet()
+    return SpecifierSet(",".join(parts))
 
 
 @st.composite
@@ -214,58 +198,3 @@ def small_packaging_graphs(
     graph["root"] = {Version("1.0"): root_deps}
 
     return graph
-
-
-# The version pool includes pre-releases, development and post releases, local
-# versions, and a second epoch.
-RANGE_VERSION_POOL = [
-    "0.9",
-    "1.0.dev1",
-    "1.0a1",
-    "1.0rc1",
-    "1.0",
-    "1.0+local",
-    "1.0.post1",
-    "1.4",
-    "1.5",
-    "1.8",
-    "1.9.9",
-    "2.0",
-    "3.0",
-    "1!0.5",
-    "1!1.0",
-]
-
-_ORDERED_OPERATORS = [">=", "<=", ">", "<"]
-_EQUALITY_OPERATORS = ["==", "!="]
-
-
-@st.composite
-def range_clauses(draw: st.DrawFn) -> str:
-    """One specifier clause over ``RANGE_VERSION_POOL``.
-
-    Local versions and ``.*`` wildcards are only legal on some operators,
-    so each operator is paired with versions it accepts.
-    """
-    kind = draw(st.integers(min_value=0, max_value=3))
-    if kind == 0:
-        operator = draw(st.sampled_from(_ORDERED_OPERATORS))
-        version = draw(st.sampled_from([v for v in RANGE_VERSION_POOL if "+" not in v]))
-        return f"{operator}{version}"
-    if kind == 1:
-        operator = draw(st.sampled_from(_EQUALITY_OPERATORS))
-        return f"{operator}{draw(st.sampled_from(RANGE_VERSION_POOL))}"
-    if kind == 2:
-        operator = draw(st.sampled_from(_EQUALITY_OPERATORS))
-        base = draw(st.sampled_from(["1", "1.0", "2", "1!1"]))
-        return f"{operator}{base}.*"
-    return f"~={draw(st.sampled_from(['1.4', '1.0.0', '2.0']))}"
-
-
-@st.composite
-def range_specs(draw: st.DrawFn) -> str:
-    """A specifier set of zero to three clauses, or a ``===`` literal."""
-    if draw(st.integers(min_value=0, max_value=7)) == 0:
-        literal = draw(st.sampled_from([*RANGE_VERSION_POOL, "frobnicate"]))
-        return f"==={literal}"
-    return ",".join(draw(st.lists(range_clauses(), min_size=0, max_size=3)))

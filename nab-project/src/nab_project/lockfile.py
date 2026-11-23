@@ -20,6 +20,7 @@ __lazy_modules__ = (
     "nab_project._lockfile.pylock",
     "nab_project._lockfile.requirements",
     "nab_project._lockfile.validate",
+    "nab_project.lock_preferences",
     "nab_provider._vendor.packaging.pylock",
     "nab_provider._vendor.packaging.utils",
     "nab_provider._vendor.packaging.version",
@@ -49,7 +50,6 @@ from ._lockfile.builder import (
     build_target_lock,
     collect_dependency_requirements,
     read_lockfile_anchor,
-    read_lockfile_packages,
     strip_userinfo,
 )
 from ._lockfile.disjointness import DisjointnessError
@@ -73,6 +73,7 @@ from ._lockfile.validate import (
     check_locked,
     resolve_dependency_references,
 )
+from .lock_preferences import read_lockfile_packages
 from .value import ValueType
 
 if TYPE_CHECKING:

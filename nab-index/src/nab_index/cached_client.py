@@ -15,6 +15,7 @@ __lazy_modules__ = (
     "datetime",
     "hashlib",
     "nab_index._json_decode",
+    "nab_index._simple_media",
     "nab_index.cache",
     "nab_index.lazy_wheel",
     "nab_index.parsed_listing",
@@ -37,11 +38,12 @@ from typing import TYPE_CHECKING, ParamSpec
 from packaging.utils import canonicalize_name
 
 from nab_provider.records import ACCEPTED_HASH_ALGORITHMS, select_artifact_hash
-from nab_provider.serialization import SimpleSerialization, simple_accept_header
+from nab_provider.serialization import SimpleSerialization
 from nab_provider.store import sdist_artifact_key
 from nab_provider.value import Record, replace
 
 from ._json_decode import decode_json
+from ._simple_media import simple_accept_header
 from .cache import (
     CacheBackend,
     CachePolicy,

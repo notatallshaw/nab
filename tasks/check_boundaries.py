@@ -27,11 +27,9 @@ so a distribution cannot join the release without also joining this check.
 
 ``supported``
     Where a sibling publishes a supported-path table in its package
-    docstring, a name in that table must be imported from the path the
-    table gives it. Another module may re-export the same name, but only
-    the table's path is held still across releases. Each row is also read
-    against its own package's source, so a stale row fails without waiting
-    for a sibling to import the name.
+    docstring, sibling packages must use the import paths listed for this
+    release. The checker also verifies each row against the package's source,
+    so it can find a stale entry before a sibling imports the name.
 
 ``vendored``
     ``_vendor`` is stricter still: it is off limits to every other package

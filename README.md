@@ -71,8 +71,9 @@ targets.
 backend just to discover its dependencies. nab makes remote builds opt-in, reducing code execution
 during locking.
 
-- Universal locking runs no build backends. Host-specific locking allows local project builds;
-  remote builds need explicit permission, which you can limit to one package or index. See
+- Universal locking disables metadata builds by default. To build on the host for a declared target,
+  enable `assume-universal-deps` and allow the build. Host-specific locking allows local builds by
+  default. You can limit remote build permission to one package or index. See
   [build policy](https://nab.readthedocs.io/en/stable/reference/build-policy.html).
 - Git sources are blocked until you allow them. Opting in requires allowed schemes and repository
   prefixes, with full commit pins required by default. See
@@ -215,14 +216,14 @@ dependencies change.
 
 ## Libraries
 
-nab also publishes components for other tools:
+Nab also publishes components for other tools.
 
-- `nab-resolver`: a generic PubGrub resolver with stable public module paths.
+- `nab-resolver`: a generic PubGrub dependency resolver.
 - `nab-markersets`: PEP 508 marker algebra.
 - `nab-provider`: Python packaging policy and resolution logic without I/O.
 - `nab-index`: package-index and source clients with caching.
 - `nab-project`: resolve orchestration, lockfiles and downloads.
 
-The other component APIs are experimental. See
+Component APIs can change between 0.0.x releases. See
 [how the packages fit together](https://nab.readthedocs.io/en/stable/explanation/packages.html) and
 the [CLI walkthrough](src/nab/_cli/README.md) to explore the code.

@@ -20,7 +20,7 @@ from hypothesis import strategies as st
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.version import Version
 
-from .strategies import PROPERTY_SETTINGS
+from .settings import PROPERTY_SETTINGS
 
 pytestmark = pytest.mark.property
 

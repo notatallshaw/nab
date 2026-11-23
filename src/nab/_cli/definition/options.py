@@ -220,7 +220,7 @@ class ProjectKeys(
             sample="P7D",
             label="datetime|PnD",
         ),
-        help="ignore distributions uploaded after this point",
+        help="exclude distributions uploaded at or after the cutoff",
     )
 
     dist_policy = Value[DistPolicyFlag | None](

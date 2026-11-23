@@ -320,37 +320,36 @@ class TestStoredMetadata:
         assert idx.get_metadata("foo", "1.0") is None
         assert not idx.metadata_from_sdist("foo", "1.0")
 
-    def test_parsed_metadata_roundtrip(self) -> None:
-        """``store_parsed_metadata`` and ``get_parsed_metadata`` round-trip."""
-        idx = InMemoryIndex()
-        sentinel = object()
-        assert idx.get_parsed_metadata("foo", "1.0", "METADATA") is None
-        idx.store_parsed_metadata("foo", "1.0", sentinel, "METADATA")
-        assert idx.get_parsed_metadata("foo", "1.0", "METADATA") is sentinel
-
     def test_parsed_metadata_per_version(self) -> None:
-        """Each ``(package, version)`` pair has its own slot."""
         idx = InMemoryIndex()
-        idx.store_parsed_metadata("foo", "1.0", "v1", "TEXT-1")
-        idx.store_parsed_metadata("foo", "2.0", "v2", "TEXT-2")
-        assert idx.get_parsed_metadata("foo", "1.0", "TEXT-1") == "v1"
-        assert idx.get_parsed_metadata("foo", "2.0", "TEXT-2") == "v2"
+        text = make_metadata("foo", "1.0")
+        metadata = parse_metadata(text)
+        assert idx.get_parsed_metadata("foo", "1.0", text) is None
+
+        idx.store_parsed_metadata("foo", "1.0", metadata, text)
+        assert idx.get_parsed_metadata("foo", "1.0", text) is metadata
+        assert idx.get_parsed_metadata("foo", "2.0", text) is None
 
     def test_parsed_metadata_keeps_every_text_of_a_version(self) -> None:
-        """Keep a separate parse for each metadata text at a version."""
         idx = InMemoryIndex()
-        idx.store_parsed_metadata("foo", "1.0", "linux-parse", "LINUX-METADATA")
-        idx.store_parsed_metadata("foo", "1.0", "win-parse", "WIN-METADATA")
-        assert idx.get_parsed_metadata("foo", "1.0", "LINUX-METADATA") == "linux-parse"
-        assert idx.get_parsed_metadata("foo", "1.0", "WIN-METADATA") == "win-parse"
+        linux = make_metadata("foo", "1.0", "linux-dependency")
+        windows = make_metadata("foo", "1.0", "windows-dependency")
+        linux_parse = parse_metadata(linux)
+        windows_parse = parse_metadata(windows)
+
+        idx.store_parsed_metadata("foo", "1.0", linux_parse, linux)
+        idx.store_parsed_metadata("foo", "1.0", windows_parse, windows)
+        assert idx.get_parsed_metadata("foo", "1.0", linux) is linux_parse
+        assert idx.get_parsed_metadata("foo", "1.0", windows) is windows_parse
 
     def test_parsed_metadata_answers_only_for_its_own_text(self) -> None:
-        """Do not return a parse for different metadata text."""
         idx = InMemoryIndex()
-        idx.store_sdist_metadata("foo", "1.0", "PKG-INFO")
-        idx.store_parsed_metadata("foo", "1.0", "sdist-parse", "PKG-INFO")
-        idx.store_metadata("foo", "1.0", "METADATA")
-        assert idx.get_parsed_metadata("foo", "1.0", "METADATA") is None
+        sdist = make_metadata("foo", "1.0", "source-dependency")
+        wheel = make_metadata("foo", "1.0", "wheel-dependency")
+        idx.store_sdist_metadata("foo", "1.0", sdist)
+        idx.store_parsed_metadata("foo", "1.0", parse_metadata(sdist), sdist)
+        idx.store_metadata("foo", "1.0", wheel)
+        assert idx.get_parsed_metadata("foo", "1.0", wheel) is None
 
     def test_get_metadata_with_origin_reports_the_last_write(self) -> None:
         """Text and origin come back together, from whichever kind wrote last."""

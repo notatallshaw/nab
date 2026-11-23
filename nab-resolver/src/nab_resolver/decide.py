@@ -20,6 +20,7 @@ from .types import Incompatibility, IncompatibilityCause, RangeProtocol, Term
 
 if TYPE_CHECKING:
     from .resolver import Resolver
+    from .types import PackageType, VersionType
 
 __all__ = [
     "absorb_pending_clauses",
@@ -30,7 +31,9 @@ __all__ = [
 ]
 
 
-def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
+def choose_package_to_decide(
+    resolver: Resolver[PackageType, VersionType],
+) -> PackageType | None:
     """Choose the next undecided package, or None if all decided.
 
     Prefers ``is_ready`` packages so resolution keeps making progress while
@@ -68,7 +71,7 @@ def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
     tiebreak_cache = resolver.tiebreak_cache
     root_order = resolver.root_package_order
 
-    def sort_key(package: Any) -> tuple[Any, ...]:
+    def sort_key(package: PackageType) -> tuple[int, Any, tuple[int, int, str]]:
         priority = prioritize(
             package,
             get_range(package) or any_range,
@@ -93,7 +96,9 @@ def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
     )
 
 
-def choose_version(resolver: Resolver[Any, Any], package: Any) -> Any | None:
+def choose_version(
+    resolver: Resolver[PackageType, VersionType], package: PackageType
+) -> VersionType | None:
     """Ask the provider to pick a version within the allowed range.
 
     A user constraint narrows the acceptable range here rather than acting
@@ -118,7 +123,8 @@ def choose_version(resolver: Resolver[Any, Any], package: Any) -> Any | None:
 
 
 def _normalize_terms(
-    resolver: Resolver[Any, Any], incompatibility: Incompatibility[Any, Any]
+    resolver: Resolver[PackageType, VersionType],
+    incompatibility: Incompatibility[PackageType, VersionType],
 ) -> None:
     """Replace, in place, any term whose constraint is not a legal term range.
 
@@ -133,7 +139,7 @@ def _normalize_terms(
             )
 
 
-def absorb_pending_clauses(resolver: Resolver[Any, Any]) -> bool:
+def absorb_pending_clauses(resolver: Resolver[PackageType, VersionType]) -> bool:
     """Drain provider-queued incompatibilities into the formula.
 
     Look-ahead providers push binary clauses like
@@ -144,15 +150,16 @@ def absorb_pending_clauses(resolver: Resolver[Any, Any]) -> bool:
     clauses = list(resolver.provider.consume_pending_clauses())
     for incompatibility in clauses:
         _normalize_terms(resolver, incompatibility)
-        add_incompatibility(resolver, incompatibility)
+        index = add_incompatibility(resolver, incompatibility)
+        resolver.unchecked_provider_clauses.append(index)
     return bool(clauses)
 
 
 def absorb_redundant_requirement(
-    resolver: Resolver[Any, Any],
-    package: Any,
-    requirement: RangeProtocol[Any],
-    cause: Incompatibility[Any, Any],
+    resolver: Resolver[PackageType, VersionType],
+    package: PackageType,
+    requirement: RangeProtocol[VersionType],
+    cause: Incompatibility[PackageType, VersionType],
 ) -> None:
     """Derive a requirement that refines a package's range without narrowing it.
 
@@ -177,7 +184,9 @@ def absorb_redundant_requirement(
 
 
 def _constraint_hid_a_version(
-    resolver: Resolver[Any, Any], package: Any, current_range: RangeProtocol[Any]
+    resolver: Resolver[PackageType, VersionType],
+    package: PackageType,
+    current_range: RangeProtocol[VersionType],
 ) -> bool:
     """Return whether a user constraint is why ``choose_version`` found nothing.
 
@@ -191,7 +200,10 @@ def _constraint_hid_a_version(
 
 
 def record_no_versions(
-    resolver: Resolver[Any, Any], package: Any, *, had_pending: bool
+    resolver: Resolver[PackageType, VersionType],
+    package: PackageType,
+    *,
+    had_pending: bool,
 ) -> None:
     """Add the default ``NO_VERSIONS`` clause for ``package``.
 

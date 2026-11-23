@@ -221,8 +221,7 @@ command-line = [
     "--output",
     ".github/requirements/pylock.build.toml",
     "--lock-policy",
-    "resolve",
-    "--upgrade",
+    "prefer-existing",
 ]
 input-path = "pyproject.toml"
 mode = "universal"
@@ -234,9 +233,12 @@ platforms = [
     "macos_x86_64",
     "windows_amd64",
 ]
+package-metadata-overrides = [
+    "pyyaml==6.0.3: requires-python",
+]
 
 [tool.nab.validation]
 version = 1
-all-inputs-sha256 = "580cc84edf8dd170338df86809b70587df7f5e4e5bf2d6fc1739083c99fbd76c"
-selection-inputs-sha256 = "38fb54b85a28a2d84e3f10fef33fc6ecd96a80139addef5049f610f5e154e0b5"
+all-inputs-sha256 = "d68add183a208697c17633bf4a7e2d8783a5073d41b9b7bb84b4ef6243735b7b"
+selection-inputs-sha256 = "a5e8b126650e23070729c76492713bf6dbc30aad3b0e37db56a772f7f2a58897"
 contents-sha256 = "f40241d6df9fe373636721080a9a3c2729fa58547c040776baa10e1a2cbc54fd"
