@@ -920,6 +920,7 @@ class TestMatrixIncludes:
             ),
         )
         targets = matrix.expand()
+        assert matrix.target_count() == len(targets)
         expected = [
             "py310-linux_x86_64",
             "py311-linux_x86_64",

@@ -2462,10 +2462,10 @@ def _parse_matrix_free_threaded(
 
 
 def _validate_matrix_axes(config: MatrixConfig, where: str) -> None:
-    """Expand the matrix eagerly to catch bad axes at parse time."""
+    """Validate the matrix axes before returning the parsed configuration."""
     matrix = matrix_from_config(config)
     try:
-        matrix.expand()
+        matrix.target_count()
     except ValueError as exc:
         msg = f"{where} is invalid: {exc}"
         raise SourceConfigError(msg) from exc

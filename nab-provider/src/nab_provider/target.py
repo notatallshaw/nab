@@ -1552,6 +1552,30 @@ class Matrix(Record):
 
     def expand(self) -> list[ResolveTarget]:
         """Validate and expand the declared target groups in stable axis order."""
+        ordered = self._points()
+        patches = self.python_patches or {}
+        implementations = {point.implementation for point in ordered}
+        return [
+            ResolveTarget.for_declared(
+                python_version=point.python,
+                spec=point.platform,
+                implementation=point.implementation,
+                python_full_version=patches.get(point.python),
+                multi_implementation=len(implementations) > 1,
+            )
+            for point in ordered
+        ]
+
+    def target_count(self) -> int:
+        """Validate the declarations and count their distinct target coordinates."""
+        points = self._points()
+        # Full expansion checks the ABI when it builds each target's wheel tags.
+        for point in points:
+            point.platform.check_implementation(point.implementation)
+        return len(points)
+
+    def _points(self) -> list[_MatrixPoint]:
+        """Expand the matrix axes in the order shared by counting and resolution."""
         if self.python_order not in {"asc", "desc"}:
             msg = f"python_order must be 'asc' or 'desc'; got {self.python_order!r}"
             raise ValueError(msg)
@@ -1587,20 +1611,9 @@ class Matrix(Record):
             )
 
         # Preserve each group's order while merging exact coordinates across groups.
-        ordered = sorted(
+        return sorted(
             dict.fromkeys(points), key=lambda point: python_order[point.python]
         )
-        implementations = {point.implementation for point in ordered}
-        return [
-            ResolveTarget.for_declared(
-                python_version=point.python,
-                spec=point.platform,
-                implementation=point.implementation,
-                python_full_version=patches.get(point.python),
-                multi_implementation=len(implementations) > 1,
-            )
-            for point in ordered
-        ]
 
     def _validate_defaults_and_overrides(self) -> None:
         """Validate even dormant bodies without enabling their implementations."""

@@ -500,7 +500,7 @@ def _config_from_effective(
     if mode is ResolveMode.SPECIFIC and matrix is not None:
         if mode_value.origin.outranks(matrix_value.origin):
             matrix = None
-        elif len(matrix_from_config(matrix).expand()) > 1:
+        elif matrix_from_config(matrix).target_count() > 1:
             raise ConfigError(_specific_mode_message(matrix_value))
 
     dist_policy, trust_unverified = effective["dist-policy"].value

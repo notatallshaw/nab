@@ -731,7 +731,7 @@ def _apply_mode_default(effective: dict[str, EffectiveValue]) -> None:
 
     value = (
         ResolveMode.UNIVERSAL
-        if len(matrix_from_config(matrix).expand()) > 1
+        if matrix_from_config(matrix).target_count() > 1
         else ResolveMode.SPECIFIC
     )
     origin = Origin(SourceKind.DEFAULT, "inferred from matrix")
