@@ -1852,7 +1852,11 @@ class TestFetchCoordinator:
         assert len(escaped) == 1
         assert isinstance(escaped[0], SystemExit)
         assert len(rejected) == 1
-        assert rejected[0].cr_frame is None
+        # Python 3.12.0 keeps the frame of a closed, unstarted coroutine.
+        with pytest.raises(
+            RuntimeError, match="cannot reuse already awaited coroutine"
+        ):
+            rejected[0].send(None)
         error = coord.index.get_listing_error("pkg")
         assert isinstance(error, IndexAccessError)
         assert "scheduler stopped" in str(error)
