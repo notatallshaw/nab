@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import pytest
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import DistPolicy
 from nab_provider.provider import ListingFilterCache, Provider

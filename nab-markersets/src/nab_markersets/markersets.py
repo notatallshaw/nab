@@ -34,7 +34,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from collections.abc import Set as AbstractSet
 
-    from ._markersets import Formula, MarkerLike
+    from packaging.markers import Marker
+
+    from ._markersets import Formula
 
 # Resource caps, not semantic parameters: no answer depends on their value, so
 # neither reaches the public surface. `_MAX_CELLS` bounds one decision and
@@ -91,7 +93,7 @@ class DecisionStore(_markersets.Memo):
     __slots__ = ()
 
 
-def factor_membership_marker(marker: str | MarkerLike) -> str:
+def factor_membership_marker(marker: str | Marker) -> str:
     """Return equivalent text with certified membership factoring.
 
     Other shapes and bounded refusals keep the original text.
@@ -179,10 +181,10 @@ class MarkerSet:
 
     @classmethod
     @_bounded
-    def from_marker(cls, marker: str | MarkerLike) -> MarkerSet:
+    def from_marker(cls, marker: str | Marker) -> MarkerSet:
         """Return the set of environments a marker denotes.
 
-        A ``Marker`` from either copy of packaging is read through ``str()``. A
+        A ``Marker`` is read through ``str()``. A
         blank string is the absent marker and gives the full set, where
         packaging refuses it.
 
@@ -198,7 +200,7 @@ class MarkerSet:
     @classmethod
     @_bounded
     def from_marker_with_variables(
-        cls, marker: str | MarkerLike
+        cls, marker: str | Marker
     ) -> tuple[MarkerSet, frozenset[str]]:
         """Return a marker set and the variable names from the same parsed syntax.
 

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import IncompatiblePythonError, UnsupportedSdistError
 from nab_provider.metadata import parse_metadata
 from nab_provider.provider import BuildPolicy, Provider

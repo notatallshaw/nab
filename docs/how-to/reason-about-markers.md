@@ -5,7 +5,7 @@ markers overlap, whether one implies another, or whether a marker is always true
 `packaging` evaluates a marker against one environment; nab-markersets compares the sets they
 select.
 
-Install it with `pip install "nab-markersets[packaging]"`. A set comes from `MarkerSet.from_marker`,
+Install it with `pip install nab-markersets`. A set comes from `MarkerSet.from_marker`,
 `MarkerSet.full` or `MarkerSet.empty`; `intersection`, `union`, `complement` and `difference` are
 also available as `&`, `|`, `~` and `-`.
 

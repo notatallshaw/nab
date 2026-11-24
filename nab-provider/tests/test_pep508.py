@@ -5,8 +5,8 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+from packaging.requirements import InvalidRequirement
 
-from nab_provider._vendor.packaging.requirements import InvalidRequirement
 from nab_provider.pep508 import parse_requirement
 
 

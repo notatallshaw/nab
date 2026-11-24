@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+from packaging.markers import Marker, default_environment
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 
 from nab.config.ladder import (
     OPTIONS,
@@ -61,9 +64,6 @@ from nab_project.fetch import (
 )
 from nab_project.inputs import ResolveInputs
 from nab_project.workspace import WorkspaceConfig
-from nab_provider._vendor.packaging.markers import Marker, default_environment
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import ConfigError
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import ArchiveSource, ResolveMode

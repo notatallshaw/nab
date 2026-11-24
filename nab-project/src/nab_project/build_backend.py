@@ -14,20 +14,20 @@ __lazy_modules__ = (
     "nab_project",
     "nab_project._build.errors",
     "nab_project.paths",
-    "nab_provider._vendor.packaging.utils",
-    "nab_provider._vendor.packaging.version",
     "nab_provider.metadata",
     "nab_provider.project_requirements",
     "nab_resolver.diagnostics",
+    "packaging.utils",
+    "packaging.version",
     "tomli",
 )
 
 from typing import TYPE_CHECKING
 
 import tomli
+from packaging.utils import canonicalize_name
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import (
     WheelMetadata,
     static_project_from_table,
@@ -52,8 +52,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from pathlib import Path
 
+    from packaging.requirements import Requirement
+
     from nab_index.transport import AsyncHttpTransport
-    from nab_provider._vendor.packaging.requirements import Requirement
 
     from .inputs import ResolveInputs
 

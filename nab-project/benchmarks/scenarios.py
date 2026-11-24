@@ -68,6 +68,8 @@ from benchmark_host import (
 from benchmark_json import read_benchmark_json
 from benchmark_paths import is_portable_path_component, result_directory_label
 from benchmark_source import get_git_commit, get_git_source_state
+from packaging.ranges import VersionRange
+from packaging.utils import canonicalize_name
 from standard_result import valid_outcome, valid_statistics
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
@@ -76,8 +78,6 @@ from nab_project.fetch import (
     IndexRoute,
     index_routes,
 )
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
 from nab_provider.provider import (
     BuildPolicy,

@@ -5,9 +5,8 @@ from __future__ import annotations
 import re
 
 import pytest
-
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, Specifier
+from packaging.requirements import Requirement
+from packaging.specifiers import InvalidSpecifier, Specifier
 
 # Whitespace padding accepted around the operator and version.
 PADDED = [

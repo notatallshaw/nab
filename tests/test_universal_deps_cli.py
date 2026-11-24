@@ -9,11 +9,11 @@ from contextlib import nullcontext
 from typing import TYPE_CHECKING
 
 import pytest
+from packaging.pylock import PackageSdist, Pylock
+from packaging.tags import Tag
 
 from nab.cli import run
 from nab_project.toml_io import loads
-from nab_provider._vendor.packaging.pylock import PackageSdist, Pylock
-from nab_provider._vendor.packaging.tags import Tag
 from nab_provider.metadata import parse_metadata
 from nab_provider.records import IndexConfig
 from nab_provider.tags import PlatformSpec

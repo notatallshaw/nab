@@ -24,15 +24,15 @@ __lazy_modules__ = (
     "nab_project._lockfile.groups",
     "nab_project.conflicts",
     "nab_project.toml_writer",
-    "nab_provider._vendor.packaging.markers",
-    "nab_provider._vendor.packaging.pylock",
-    "nab_provider._vendor.packaging.specifiers",
-    "nab_provider._vendor.packaging.utils",
-    "nab_provider._vendor.packaging.version",
     "nab_provider.conflict_kind",
     "nab_provider.marker_holds",
     "nab_provider.tags",
     "os",
+    "packaging.markers",
+    "packaging.pylock",
+    "packaging.specifiers",
+    "packaging.utils",
+    "packaging.version",
     "pathlib",
 )
 
@@ -45,15 +45,11 @@ from itertools import product
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeAlias
 
-from nab_index.atomic import atomic_write_text
-from nab_markersets.conversions import PreparedMarkerSets
-from nab_markersets.errors import IntractableMarkerSet, UnserializableMarkerSet
-from nab_markersets.markersets import DecisionStore, MarkerSet, factor_membership_marker
-from nab_provider._vendor.packaging.markers import (
+from packaging.markers import (
     MARKERS_REQUIRING_VERSION,
     Marker,
 )
-from nab_provider._vendor.packaging.pylock import (
+from packaging.pylock import (
     Package,
     PackageArchive,
     PackageDirectory,
@@ -63,9 +59,14 @@ from nab_provider._vendor.packaging.pylock import (
     Pylock,
     PylockValidationError,
 )
-from nab_provider._vendor.packaging.specifiers import Specifier, SpecifierSet
-from nab_provider._vendor.packaging.utils import canonicalize_name, is_normalized_name
-from nab_provider._vendor.packaging.version import InvalidVersion, Version
+from packaging.specifiers import Specifier, SpecifierSet
+from packaging.utils import canonicalize_name, is_normalized_name
+from packaging.version import InvalidVersion, Version
+
+from nab_index.atomic import atomic_write_text
+from nab_markersets.conversions import PreparedMarkerSets
+from nab_markersets.errors import IntractableMarkerSet, UnserializableMarkerSet
+from nab_markersets.markersets import DecisionStore, MarkerSet, factor_membership_marker
 from nab_provider.conflict_kind import KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 from nab_provider.marker_holds import intractable_as_error
 from nab_provider.tags import TagSet, wheel_tag_set
@@ -84,8 +85,9 @@ if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
     from typing import Protocol, TypedDict, TypeVar
 
-    from nab_provider._vendor.packaging.tags import Tag
-    from nab_provider._vendor.packaging.utils import NormalizedName
+    from packaging.tags import Tag
+    from packaging.utils import NormalizedName
+
     from nab_provider.target import ResolveTarget
 
     from ..lockfile import (
@@ -494,8 +496,7 @@ class DivergentBaseDependencyError(ValueError):
 class LockValidationError(ValueError):
     """The document a render would emit is not a valid PEP 751 lock.
 
-    Covers nab's own checks and the vendored validator's refusals, so a
-    caller catches one class instead of the vendored exceptions.
+    Wraps refusals from nab's checks and packaging's lock validator.
     """
 
 

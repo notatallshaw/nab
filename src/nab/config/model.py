@@ -20,11 +20,11 @@ __lazy_modules__ = (
     "nab_project.inputs",
     "nab_project.paths",
     "nab_project.workspace",
-    "nab_provider._vendor.packaging.specifiers",
-    "nab_provider._vendor.packaging.utils",
-    "nab_provider._vendor.packaging.version",
     "nab_provider.errors",
     "nab_resolver.diagnostics",
+    "packaging.specifiers",
+    "packaging.utils",
+    "packaging.version",
     "tomli",
 )
 
@@ -33,6 +33,9 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import tomli
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 from nab_project import toml_io
 from nab_project.build_policy import enforce_build_policy_for_targets
@@ -58,9 +61,6 @@ from nab_project.workspace import (
     read_workspace_members,
     workspace_local_sources,
 )
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import ConfigError
 from nab_provider.policy import (
     ArchiveSource,

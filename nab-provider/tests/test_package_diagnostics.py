@@ -1,11 +1,11 @@
 """Package diagnostic adapters preserve metadata failures and legacy hosts."""
 
 import pytest
+from packaging.ranges import VersionRange
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from nab_provider._provider.listing_diagnosis import MetadataBlock, metadata_diagnostic
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.diagnostics import Diagnostic, ResolutionMessage
 from nab_provider.errors import MetadataError, MissingExtraError, UnsupportedSdistError
 from nab_provider.provider import Provider

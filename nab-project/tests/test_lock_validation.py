@@ -8,6 +8,11 @@ from datetime import date, datetime, time, timezone
 from pathlib import Path
 
 import pytest
+from packaging.pylock import Pylock
+from packaging.ranges import VersionRange
+from packaging.specifiers import SpecifierSet
+from packaging.tags import Tag
+from packaging.version import Version
 
 from nab_project import toml_io
 from nab_project.input_source import InputFormat
@@ -21,11 +26,6 @@ from nab_project.lock_validation import (
 )
 from nab_project.lockfile import build_pylock, render_lock
 from nab_project.resolve import build_lock_input, resolve_with_coordinator
-from nab_provider._vendor.packaging.pylock import Pylock
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.tags import Tag
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.overrides import PackageOverride
 from nab_provider.pep508 import parse_requirement
 from nab_provider.policy import (

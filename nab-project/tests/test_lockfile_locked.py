@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from nab_markersets._compat import get_int_max_str_digits
 from nab_project.lockfile import (
@@ -23,8 +25,6 @@ from nab_project.lockfile import (
     render_lock,
     summarize_lock,
 )
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 

@@ -6,9 +6,8 @@ from dataclasses import dataclass
 from itertools import product
 
 from hypothesis import strategies as st
-
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import Version
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 
 SPECS = (
     "",

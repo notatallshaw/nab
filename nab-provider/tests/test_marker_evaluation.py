@@ -1,10 +1,9 @@
-"""Check dependency and lock marker comparisons with vendored packaging."""
+"""Check dependency and lock marker comparisons with packaging."""
 
 from __future__ import annotations
 
 import pytest
-
-from nab_provider._vendor.packaging.markers import Marker
+from packaging.markers import Marker
 
 LINUX_CP311: dict[str, str] = {
     "os_name": "posix",

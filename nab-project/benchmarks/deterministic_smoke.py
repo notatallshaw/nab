@@ -31,12 +31,18 @@ from urllib.request import url2pathname
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from nab_provider._vendor.packaging.pylock import Pylock
+    from packaging.pylock import Pylock
 
 if sys.version_info >= (3, 11):
     import tomllib
 else:
     import tomli as tomllib  # type: ignore[no-redef]
+
+from packaging.markers import Marker
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 from nab_index.multi_index import IndexConfig
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
@@ -54,11 +60,6 @@ from nab_project.resolve import (
     build_lock_input,
     resolve_with_coordinator,
 )
-from nab_provider._vendor.packaging.markers import Marker
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import ResolutionStrategy
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget, environment_declaration

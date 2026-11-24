@@ -23,28 +23,30 @@ from __future__ import annotations
 __lazy_modules__ = (
     "collections",
     "nab_provider._provider.listing_diagnosis",
-    "nab_provider._vendor.packaging.ranges",
-    "nab_provider._vendor.packaging.utils",
     "nab_provider.errors",
     "nab_resolver.types",
+    "packaging.ranges",
+    "packaging.utils",
 )
 
 from collections import defaultdict
 from typing import TYPE_CHECKING, NamedTuple
 
+from packaging.ranges import VersionRange
+from packaging.utils import canonicalize_name
+
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
-from .._vendor.packaging.ranges import VersionRange
-from .._vendor.packaging.utils import canonicalize_name
 from ..errors import MetadataError
 from .listing_diagnosis import MetadataBlock
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
+    from packaging.version import Version
+
     from nab_resolver.types import RangeProtocol
 
-    from .._vendor.packaging.version import Version
     from ..provider import Provider
 
 

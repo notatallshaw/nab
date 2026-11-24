@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 import pytest
+from packaging.requirements import Requirement
 
 from nab._cli.definition.model import Kind, Opt, Scope, VType
 from nab.config import hooks, ladder, model, values
@@ -50,7 +51,6 @@ from nab_project.lockfile import (
 from nab_project.script_metadata import ScriptMetadata
 from nab_project.value import ValueType
 from nab_project.workspace import WorkspaceConfig
-from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider.overrides import IndexOverride, PackageOverride
 from nab_provider.policy import (
     ArchiveSource,

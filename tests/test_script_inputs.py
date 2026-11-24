@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 import tomli
+from packaging.pylock import Pylock
+from packaging.tags import Tag
 
 from nab._lock import lock
 from nab._run import effective_config
@@ -20,8 +22,6 @@ from nab.config.ladder import SourceKind
 from nab.config.model import plan_targets, read_pyproject_config
 from nab_index.local_index import LocalIndexClient
 from nab_project.input_source import InputFormat
-from nab_provider._vendor.packaging.pylock import Pylock
-from nab_provider._vendor.packaging.tags import Tag
 from nab_provider.errors import ConfigError
 from nab_provider.testing import make_metadata
 

@@ -7,10 +7,10 @@ from dataclasses import dataclass
 import pytest
 from hypothesis import example, given
 from hypothesis import strategies as st
+from packaging.ranges import VersionRange
+from packaging.requirements import Requirement
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.yank_candidates import Candidate, CandidateData
 from nab_provider.yanked_resolution import MetadataProxy, PermissionProxy
 from nab_resolver.ranges import Range

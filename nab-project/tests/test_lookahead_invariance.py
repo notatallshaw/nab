@@ -28,11 +28,12 @@ from __future__ import annotations
 import random
 from typing import TYPE_CHECKING, NamedTuple
 
+from packaging.ranges import VersionRange
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
+
 from nab_index.client import WheelFile
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import Provider
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import make_metadata

@@ -30,11 +30,11 @@ assert GIT is not None
         ("nab-resolver/src/nab_resolver/ranges.py", list(WORKSPACES)),
         ("nab-resolver/tests/property/test_pubgrub_resolver.py", ["resolver"]),
         (
-            "nab-markersets/src/nab_markersets/_packaging.py",
+            "nab-markersets/src/nab_markersets/_markersets.py",
             ["provider", "project", "umbrella"],
         ),
         (
-            "nab-provider/src/nab_provider/_vendor/packaging/ranges.py",
+            "nab-provider/src/nab_provider/ranges.py",
             ["provider", "project", "umbrella"],
         ),
         ("nab-index/src/nab_index/client.py", ["project", "umbrella"]),

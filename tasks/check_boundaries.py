@@ -31,22 +31,8 @@ so a distribution cannot join the release without also joining this check.
     release. The checker also verifies each row against the package's source,
     so it can find a stale entry before a sibling imports the name.
 
-``vendored``
-    ``_vendor`` is stricter still: it is off limits to every other package
-    and must not be re-exported to make it reachable. ``VENDOR_ALLOWANCES``
-    holds the exceptions, nab-project and ``nab.config`` naming
-    ``nab_provider._vendor.packaging``: both build ``Version``,
-    ``Requirement`` and ``VersionRange`` objects the provider consumes, and a
-    second copy of the fork is a second set of classes that ``isinstance`` and
-    dict keying disagree about. They go away once the fork's changes land
-    upstream.
-
-    ``nab_markersets._packaging`` reaches the same tree, by name at import
-    time rather than by an import statement, so nothing here can see it;
-    ``tests/test_workspace_shape.py`` holds that reach instead.
-
 The check covers installed code in the ``src`` trees. Tests may use private
-interfaces. Vendored third-party code is excluded.
+interfaces.
 
 Run directly::
 
@@ -88,13 +74,6 @@ REMEDY = (
     "existing callers."
 )
 
-# (importing package, exact vendored prefix it may name); see ``vendored`` above.
-VENDOR_ALLOWANCES: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("nab", "nab_provider._vendor.packaging"),
-        ("nab_project", "nab_provider._vendor.packaging"),
-    }
-)
 
 # Packages whose docstring publishes a supported-path table. Listed so a table
 # that stops parsing fails the run instead of dropping the ``supported`` rule.
@@ -294,25 +273,10 @@ def _direct_requirement_calls(
     return sorted(lines)
 
 
-def _vendor_allowed(importer: str, dotted: str) -> bool:
-    """Whether ``importer`` naming ``dotted`` is one of the listed allowances.
-
-    Matched on the whole prefix, so allowing one subtree does not open the
-    rest of that package's ``_vendor``.
-    """
-    return any(
-        importer == allowed_importer
-        and (dotted == prefix or dotted.startswith(f"{prefix}."))
-        for allowed_importer, prefix in VENDOR_ALLOWANCES
-    )
-
-
 def violations(package: Package, modules: dict[str, Package]) -> list[str]:
     """Return every boundary rule ``package`` breaks, as printable lines."""
     found: list[str] = []
     for path in sorted(package.source.rglob("*.py")):
-        if "_vendor" in path.parts:
-            continue
         tree = ast.parse(path.read_text("utf-8"), str(path))
         location = path.relative_to(REPO_ROOT)
         found.extend(
@@ -347,16 +311,6 @@ def violations(package: Package, modules: dict[str, Package]) -> list[str]:
                 )
 
             parts = rest.split(".")
-            if "_vendor" in parts:
-                if _vendor_allowed(package.module, dotted):
-                    continue
-                found.append(
-                    f"{location}:{lineno}: {dotted} reaches into a vendored tree; "
-                    f"it stays private to {modules[head].dist_name} and is not to "
-                    "be re-exported"
-                )
-                continue
-
             private = next(
                 (
                     part

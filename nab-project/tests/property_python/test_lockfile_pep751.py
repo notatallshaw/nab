@@ -25,6 +25,9 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover - 3.10 fallback
     import tomli as tomllib  # type: ignore[no-redef]
 
+from packaging.pylock import PackageWheel, Pylock
+from packaging.utils import is_normalized_name
+
 from nab_project.lockfile import (
     IndexPin,
     LocalPin,
@@ -36,8 +39,6 @@ from nab_project.lockfile import (
     build_pylock,
     write_lock,
 )
-from nab_provider._vendor.packaging.pylock import PackageWheel, Pylock
-from nab_provider._vendor.packaging.utils import is_normalized_name
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 

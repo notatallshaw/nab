@@ -17,15 +17,13 @@ import os
 import re
 import shutil
 import subprocess
-from itertools import chain
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 import pytest
 import tomli
-
-from nab_provider._vendor.packaging.pylock import Pylock
+from packaging.pylock import Pylock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NOXFILE = REPO_ROOT / "noxfile.py"
@@ -35,15 +33,14 @@ DEPENDABOT = REPO_ROOT / ".github" / "dependabot.yml"
 TEST_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "test.yml"
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 CLI_OUTPUT = REPO_ROOT / "src" / "nab" / "output.py"
-PACKAGING_BACKENDS = (
-    REPO_ROOT / "nab-markersets" / "src" / "nab_markersets" / "_packaging.py"
-)
 
 # The released `packaging` each distribution declares, wherever it declares it.
 PACKAGING_REQUIREMENTS = {
-    "nab-markersets": "packaging>=26.3",
-    "nab-index": "packaging>=24.0",
-    "nab-project": "packaging>=24.0",
+    "nab": "packaging>=26.4",
+    "nab-provider": "packaging>=26.4",
+    "nab-markersets": "packaging>=26.4",
+    "nab-index": "packaging>=26.4",
+    "nab-project": "packaging>=26.4",
 }
 
 
@@ -110,15 +107,9 @@ def _toml(path: Path) -> dict[str, Any]:
     return tomli.loads(path.read_text(encoding="utf-8"))
 
 
-def _imports_released_packaging(name: str) -> bool:
-    """Whether a distribution's shipped modules import released ``packaging``.
-
-    The vendored fork is a different package under a different name, so the
-    ``_vendor`` tree is skipped rather than counted as a use of this dependency.
-    """
+def _imports_packaging(name: str) -> bool:
+    """Whether a distribution's shipped modules import ``packaging``."""
     for path in (RELEASED_DIRS[name] / "src").rglob("*.py"):
-        if "_vendor" in path.parts:
-            continue
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.ImportFrom) and node.level == 0:
                 roots = [(node.module or "").split(".")[0]]
@@ -132,14 +123,9 @@ def _imports_released_packaging(name: str) -> bool:
 
 
 def _packaging_requirement(name: str) -> str | None:
-    """The ``packaging`` requirement a distribution declares, or None.
-
-    An extra counts: nab-markersets runs on either copy and declares one under
-    each, so either released requirement is optional rather than absent.
-    """
+    """The mandatory ``packaging`` requirement, if declared."""
     manifest = _toml(RELEASED_DIRS[name] / "pyproject.toml")["project"]
-    extras = manifest.get("optional-dependencies", {}).values()
-    for text in [*manifest.get("dependencies", []), *chain.from_iterable(extras)]:
+    for text in manifest.get("dependencies", []):
         found = _REQUIREMENT_NAME.match(text)
         if found is not None and found.group() == "packaging":
             return text
@@ -548,20 +534,15 @@ def test_lock_config_covers_every_released_package() -> None:
     assert exempt == set(PACKAGES)
 
 
-def test_released_packaging_is_declared_wherever_it_is_imported() -> None:
-    """Every distribution that imports released ``packaging`` declares it."""
-    importing = {name for name in PACKAGES if _imports_released_packaging(name)}
+def test_packaging_is_declared_wherever_it_is_imported() -> None:
+    """Every distribution that imports ``packaging`` declares it."""
+    importing = {name for name in PACKAGES if _imports_packaging(name)}
 
     assert importing == set(PACKAGING_REQUIREMENTS)
 
 
 def test_declared_packaging_ranges_are_the_ones_recorded_here() -> None:
-    """The declared ranges are the ones this file records.
-
-    nab_markersets reads ``packaging._parser``, ``packaging._tokenizer`` and
-    ``packaging.markers._eval_op``, none of which packaging promises, so its
-    floor is higher than the others need.
-    """
+    """Keep package metadata at the supported packaging floor."""
     declared = {
         name: requirement
         for name in PACKAGES
@@ -571,47 +552,14 @@ def test_declared_packaging_ranges_are_the_ones_recorded_here() -> None:
     assert declared == PACKAGING_REQUIREMENTS
 
 
-def test_the_marker_algebra_takes_the_vendored_fork_first() -> None:
-    """nab-markersets binds nab's fork when it is installed, released packaging otherwise.
-
-    The reach into nab-provider's ``_vendor`` is by name at import time, so
-    ``tasks/check_boundaries.py`` cannot see it and this is where it is held.
-    Each candidate is an extra, so an install can ask for either by name.
-    """
-    extras = _toml(RELEASED_DIRS["nab-markersets"] / "pyproject.toml")["project"][
-        "optional-dependencies"
-    ]
-    version = _toml(PYPROJECT)["project"]["version"]
-
-    assert _literal(PACKAGING_BACKENDS, "BACKENDS") == (
-        "nab_provider._vendor.packaging",
-        "packaging",
-    )
-    assert extras == {
-        "packaging": [PACKAGING_REQUIREMENTS["nab-markersets"]],
-        "nab-vendored-packaging": [f"nab-provider=={version}"],
-    }
-
-
-def test_the_marker_algebra_holds_the_floor_it_declares() -> None:
-    """The floor `_packaging` checks at import is the one the extra installs."""
-    minimum = _literal(PACKAGING_BACKENDS, "MINIMUM")
-
-    assert PACKAGING_REQUIREMENTS["nab-markersets"] == f"packaging>={minimum}"
-
-
 def test_the_standalone_session_installs_the_algebra_alone() -> None:
-    """The algebra and shared diagnostic core leave nab-provider absent.
-
-    That session is the only run where `nab_markersets` binds released
-    packaging, and nothing about it would go red if it stopped doing so.
-    """
+    """The algebra and shared diagnostic core leave nab-provider absent."""
     assert _session_installs("standalone") == [
         "--no-build-isolation",
         "-e",
         "nab-resolver",
         "-e",
-        "nab-markersets[packaging]",
+        "nab-markersets",
     ]
 
 

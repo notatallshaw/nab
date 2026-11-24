@@ -4,7 +4,6 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "nab_provider._provider.listing_diagnosis",
-    "nab_provider._vendor.packaging.utils",
     "nab_provider.diagnostics",
     "nab_provider.extra_keys",
     "nab_provider.ranges",
@@ -12,9 +11,12 @@ __lazy_modules__ = (
     "nab_resolver.errors",
     "nab_resolver.ranges",
     "nab_resolver.types",
+    "packaging.utils",
 )
 
 from typing import TYPE_CHECKING, Final
+
+from packaging.utils import canonicalize_name
 
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 from nab_resolver.priority import compute_tier
@@ -29,7 +31,6 @@ from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 from ._compat import override
 from ._provider.listing_diagnosis import MetadataBlock, metadata_diagnostic
-from ._vendor.packaging.utils import canonicalize_name
 from .diagnostics import ResolutionMessage
 from .extra_keys import split_extra
 from .ranges import VersionRange, require_version_range
@@ -45,10 +46,11 @@ from .yank_preference import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
 
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+
     from nab_resolver.types import RangeProtocol, RootRequirement
 
-    from ._vendor.packaging.requirements import Requirement
-    from ._vendor.packaging.version import Version
     from .diagnostics import Diagnostic
     from .provider import Provider
 

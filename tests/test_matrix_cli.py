@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from packaging.pylock import Pylock, PylockSelectError
+from packaging.tags import Tag
 
 from nab.cli import run
 from nab_project.toml_io import loads
-from nab_provider._vendor.packaging.pylock import Pylock, PylockSelectError
-from nab_provider._vendor.packaging.tags import Tag
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 

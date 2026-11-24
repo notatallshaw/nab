@@ -3,8 +3,8 @@
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from packaging.specifiers import SpecifierSet
 
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider.provider import ListingFilterCache, Provider
 from nab_provider.records import SdistFile, WheelFile
 from nab_provider.testing import make_coordinator, make_sdist, make_wheel

@@ -9,14 +9,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import tomli
+from packaging.pylock import Pylock
 
 from nab_markersets.markersets import MarkerSet
-from nab_provider._vendor.packaging.pylock import Pylock
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from nab_provider._vendor.packaging.pylock import Package
+    from packaging.pylock import Package
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_LOCK = Path(".github/requirements/pylock.build.toml")

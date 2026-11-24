@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.policy import ResolutionStrategy
 from nab_provider.provider import Provider
 from nab_provider.store import InMemoryIndex

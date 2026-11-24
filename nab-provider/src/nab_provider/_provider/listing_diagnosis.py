@@ -22,10 +22,10 @@ from __future__ import annotations
 __lazy_modules__ = (
     "json",
     "nab_provider._provider",
-    "nab_provider._vendor.packaging.version",
     "nab_provider.errors",
     "nab_provider.policy",
     "nab_provider.records",
+    "packaging.version",
     "re",
 )
 
@@ -33,9 +33,10 @@ import json
 import re
 from typing import TYPE_CHECKING, Final
 
+from packaging.version import Version
+
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion, error_message
 
-from .._vendor.packaging.version import Version
 from ..diagnostics import Diagnostic
 from ..errors import InvalidUploadTimeError, MetadataError, MissingExtraError
 from ..policy import DistPolicy
@@ -48,9 +49,10 @@ if TYPE_CHECKING:
     from datetime import datetime
     from typing import Literal, TypeAlias
 
+    from packaging.ranges import VersionRange
+
     from nab_resolver.types import RangeProtocol
 
-    from .._vendor.packaging.ranges import VersionRange
     from ..provider import DistFile, Provider
     from .listing import Cause, ListingPolicy
 

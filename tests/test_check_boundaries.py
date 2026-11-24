@@ -129,7 +129,7 @@ def test_only_the_provider_parser_constructs_requirements(
 ) -> None:
     source = (
         "from packaging.requirements import Requirement\n"
-        "from ._vendor.packaging.requirements import Requirement as Req\n"
+        "from packaging.requirements import Requirement as Req\n"
         "from a.packaging import requirements\n"
         "from nab_resolver.types import RootRequirement\n"
         "first = Requirement('a')\n"
@@ -335,16 +335,6 @@ def test_shared_records_use_the_public_provider_module(
 
     if status:
         assert "nab_provider._value is private" in capsys.readouterr().err
-
-
-def test_vendored_tree_is_off_limits(
-    workspace: FakeWorkspace, capsys: pytest.CaptureFixture[str]
-) -> None:
-    workspace.add("pkg-a")
-    workspace.add("pkg-b", requires=("pkg-a>=1",), use="import pkg_a._vendor.thing\n")
-
-    assert check_boundaries.main() == 1
-    assert "reaches into a vendored tree" in capsys.readouterr().err
 
 
 def test_import_off_the_supported_path_is_reported(

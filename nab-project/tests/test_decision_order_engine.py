@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
+from packaging.requirements import Requirement
+
 from nab_project.inputs import ResolveInputs
 from nab_project.resolve import resolve_with_coordinator
-from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider.provider import BuildPolicy, DecisionOrder
 from nab_provider.records import WheelFile
 from nab_provider.tags import PlatformSpec

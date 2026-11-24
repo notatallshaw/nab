@@ -28,6 +28,17 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
+from packaging.markers import Marker, default_environment
+from packaging.pylock import (
+    Package,
+    PackageSdist,
+    PackageWheel,
+    Pylock,
+)
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+from packaging.version import Version
+
 from nab_index.client import SdistFile, WheelFile, _parse_files
 from nab_index.multi_index import IndexConfig
 from nab_markersets.errors import IntractableMarkerSet
@@ -92,16 +103,6 @@ from nab_project.resolve import (
     build_lock_input,
     resolve_with_coordinator,
 )
-from nab_provider._vendor.packaging.markers import Marker, default_environment
-from nab_provider._vendor.packaging.pylock import (
-    Package,
-    PackageSdist,
-    PackageWheel,
-    Pylock,
-)
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.overrides import IndexOverride
 from nab_provider.provider import (
     ArchiveSource,
@@ -1730,8 +1731,8 @@ class TestErrorPaths:
 
         assert "extra '_cli' normalizes to '-cli'" in str(excinfo.value)
 
-    def test_vendored_refusal_reraised_as_lock_validation_error(self) -> None:
-        """A refusal from the vendored validator arrives as nab's own class.
+    def test_packaging_refusal_reraised_as_lock_validation_error(self) -> None:
+        """A refusal from the packaging validator arrives as nab's own class.
 
         Package names are canonicalized on the way in and checked nowhere
         else, so ``_foo`` gets as far as ``Pylock.validate``.

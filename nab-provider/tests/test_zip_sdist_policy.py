@@ -6,10 +6,10 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import pytest
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 
 from nab_provider._provider import metadata_resolver
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import OverrideConflictError, UnsupportedSdistError
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import DistPolicy

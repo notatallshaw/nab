@@ -18,6 +18,8 @@ import zipfile
 from typing import TYPE_CHECKING
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from nab_index.client import WheelHashMismatchError
 from nab_index.lazy_wheel import RangeOutcome
@@ -26,8 +28,6 @@ from nab_index.transport import HttpError
 from nab_project.fetch import FetchCoordinator
 from nab_project.inputs import ResolveInputs
 from nab_project.resolve import ResolveResult, resolve_with_coordinator
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import BuildPolicy
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget

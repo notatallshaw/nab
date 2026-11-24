@@ -16,21 +16,13 @@ import weakref
 from collections.abc import Iterable
 
 import pytest
+from packaging._parser import Op, Value, Variable, parse_marker
+from packaging._tokenizer import ParserSyntaxError
+from packaging.markers import InvalidMarker, Marker, UndefinedEnvironmentName, _eval_op
+from packaging.version import Version
 
 from nab_markersets import errors, markersets
 from nab_markersets._compat import get_int_max_str_digits
-from nab_markersets._packaging import (
-    InvalidMarker,
-    Marker,
-    Op,
-    ParserSyntaxError,
-    UndefinedEnvironmentName,
-    Value,
-    Variable,
-    Version,
-    _eval_op,
-    parse_marker,
-)
 from nab_markersets.errors import IntractableMarkerSet, UnserializableMarkerSet
 from nab_markersets.markersets import MarkerSet, _markersets, variable_names
 

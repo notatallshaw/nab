@@ -297,7 +297,7 @@ jobs:
 
       # Without nab-provider installed the algebra binds released packaging,
       # which no other job reaches.
-      - name: Run the marker-set suite without the vendored fork
+      - name: Run the marker-set suite without nab-provider
         run: nox -s standalone
 
   pass:

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+from packaging.version import Version
 
 from nab_index import cache as cache_module
 from nab_index.cache import CachePolicy, OfflineError, OnDiskCache
@@ -17,7 +18,6 @@ from nab_index.client import AsyncSimpleClient, SdistFile, WheelFile
 from nab_index.multi_index import MultiIndexClient
 from nab_index.parsed_listing import decode, encode
 from nab_index.transport import HttpError
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import IndexAccessError
 from nab_provider.provider import Provider
 from nab_provider.testing import make_coordinator, make_wheel

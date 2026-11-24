@@ -6,9 +6,9 @@ import gc
 import weakref
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.policy import ResolutionStrategy
 from nab_provider.provider import Provider
 from nab_provider.testing import make_coordinator, make_wheel

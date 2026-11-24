@@ -34,25 +34,25 @@ from __future__ import annotations
 __lazy_modules__ = (
     "nab_project",
     "nab_project.toml_writer",
-    "nab_provider._vendor.packaging.markers",
-    "nab_provider._vendor.packaging.pylock",
-    "nab_provider._vendor.packaging.specifiers",
-    "nab_provider._vendor.packaging.utils",
     "nab_provider.marker_holds",
     "nab_provider.metadata",
     "nab_provider.pep508",
     "nab_provider.target",
+    "packaging.markers",
+    "packaging.pylock",
+    "packaging.specifiers",
+    "packaging.utils",
     "tomli",
 )
 
 from typing import TYPE_CHECKING, Final
 
 import tomli
+from packaging.markers import UndefinedEnvironmentName
+from packaging.pylock import Pylock, PylockValidationError
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
 
-from nab_provider._vendor.packaging.markers import UndefinedEnvironmentName
-from nab_provider._vendor.packaging.pylock import Pylock, PylockValidationError
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.marker_holds import (
     IntractableMarkerError,
     UnevaluableMarkerError,
@@ -71,12 +71,12 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import TypedDict
 
+    from packaging.markers import Marker
+    from packaging.pylock import Package
+    from packaging.requirements import Requirement
+    from packaging.version import Version
     from typing_extensions import NotRequired
 
-    from nab_provider._vendor.packaging.markers import Marker
-    from nab_provider._vendor.packaging.pylock import Package
-    from nab_provider._vendor.packaging.requirements import Requirement
-    from nab_provider._vendor.packaging.version import Version
     from nab_provider.target import ResolveTarget
 
     class _ReferenceRow(TypedDict):

@@ -5,15 +5,15 @@ from __future__ import annotations
 import itertools
 
 import pytest
+from packaging.markers import Marker
 from packaging.markers import Marker as ExternalMarker
+from packaging.pylock import Package
+from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 from nab_markersets.conversions import PreparedMarkerSets
 from nab_markersets.markersets import DecisionStore, MarkerSet
 from nab_project._lockfile import disjointness, pylock
-from nab_provider._vendor.packaging.markers import Marker
-from nab_provider._vendor.packaging.pylock import Package
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.conflict_kind import KIND_EXTRA
 
 

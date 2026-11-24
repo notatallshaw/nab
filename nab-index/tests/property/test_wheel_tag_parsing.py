@@ -19,8 +19,7 @@ pytestmark = pytest.mark.property
 tag_part = st.text(alphabet="abcdefgh0123456789_", min_size=1, max_size=8)
 compressed = st.lists(tag_part, min_size=1, max_size=3, unique=True).map(".".join)
 
-# Packaging 26.3 requires interpreter identifiers. Use inputs accepted by
-# both the vendored parser and the earlier released parser in this comparison.
+# Packaging requires interpreter identifiers.
 compressed_interpreters = st.lists(
     tag_part.filter(str.isidentifier), min_size=1, max_size=3, unique=True
 ).map(".".join)
@@ -78,8 +77,7 @@ class TestAdmittedWheelsCarryTags:
     """A wheel nab_index admits must be one ``nab_provider.tags`` can rank.
 
     nab_index applies its own copy of the tag rules and nab_provider runs the
-    vendored ``parse_tag``, so re-vendoring a stricter one is how the two come
-    apart. The interpreter field draws the wide alphabet to reach that.
+    packaging parser, so the two can diverge when its validation changes.
     """
 
     @given(filename=wheel_filenames(compressed))

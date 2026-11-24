@@ -23,7 +23,7 @@ classifiers = [
 dependencies = [
     "nab-resolver==0.0.31.dev0",
     "nab-provider==0.0.31.dev0",
-    "packaging>=24.0",
+    "packaging>=26.4",
     "truststore>=0.10",
     "typing_extensions>=4.6",
     "urllib3>=2.0",

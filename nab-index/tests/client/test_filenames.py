@@ -2,8 +2,7 @@
 
 ``_parse_wheel_filename`` skips the tag-set parse that
 :func:`packaging.utils.parse_wheel_filename` runs, and interns the canonical
-name and version. Its oracle is nab-provider's vendored packaging, not the
-ambient one, because the vendored ``parse_tag`` ranks the wheel afterwards.
+name and version. It is compared with packaging's filename parser.
 
 Neither parser raises: a filename it cannot read comes back as ``None``.
 """
@@ -11,7 +10,11 @@ Neither parser raises: a filename it cannot read comes back as ``None``.
 from __future__ import annotations
 
 import pytest
-from packaging.utils import canonicalize_name
+from packaging.utils import (
+    InvalidWheelFilename,
+    canonicalize_name,
+    parse_wheel_filename,
+)
 from packaging.version import InvalidVersion, Version
 
 from nab_index.client import (
@@ -22,10 +25,6 @@ from nab_index.client import (
     _parse_wheel_filename,
 )
 from nab_markersets._compat import get_int_max_str_digits
-from nab_provider._vendor.packaging.utils import (
-    InvalidWheelFilename,
-    parse_wheel_filename,
-)
 
 requires_int_limit = pytest.mark.skipif(
     get_int_max_str_digits() == 0, reason="requires an enabled integer conversion limit"
@@ -66,8 +65,8 @@ CORPUS = [
 ]
 
 
-def _vendored_result(filename: str) -> tuple[str, str] | None:
-    """Parse via the vendored packaging; ``None`` when it rejects."""
+def _packaging_result(filename: str) -> tuple[str, str] | None:
+    """Parse via packaging; ``None`` when it rejects."""
     try:
         name, version, _build, _tags = parse_wheel_filename(filename)
     except InvalidWheelFilename:
@@ -76,8 +75,8 @@ def _vendored_result(filename: str) -> tuple[str, str] | None:
 
 
 @pytest.mark.parametrize("filename", CORPUS)
-def test_matches_vendored_packaging(filename: str) -> None:
-    assert _parse_wheel_filename(filename) == _vendored_result(filename)
+def test_matches_packaging(filename: str) -> None:
+    assert _parse_wheel_filename(filename) == _packaging_result(filename)
 
 
 EMPTY_TAG_COMPONENT = [
@@ -114,7 +113,7 @@ def test_rejects_non_identifier_interpreter(filename: str) -> None:
     sits here beside the bare ``3.7``.
     """
     assert _parse_wheel_filename(filename) is None
-    assert _vendored_result(filename) is None
+    assert _packaging_result(filename) is None
 
 
 NON_IDENTIFIER_ABI_OR_PLATFORM = [
@@ -127,13 +126,13 @@ NON_IDENTIFIER_ABI_OR_PLATFORM = [
 @pytest.mark.parametrize("filename", NON_IDENTIFIER_ABI_OR_PLATFORM)
 def test_accepts_non_identifier_abi_and_platform(filename: str) -> None:
     """Only the interpreter field is held to the identifier rule."""
-    assert _parse_wheel_filename(filename) == _vendored_result(filename) is not None
+    assert _parse_wheel_filename(filename) == _packaging_result(filename) is not None
 
 
 def test_rejects_empty_project_name() -> None:
     filename = "-1.0-py3-none-any.whl"
     assert _parse_wheel_filename(filename) is None
-    assert _vendored_result(filename) is None
+    assert _packaging_result(filename) is None
 
 
 def test_rejects_newline_terminated_project_name() -> None:

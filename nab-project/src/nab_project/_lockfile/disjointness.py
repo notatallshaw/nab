@@ -25,17 +25,18 @@ __lazy_modules__ = (
     "itertools",
     "nab_markersets.errors",
     "nab_markersets.markersets",
-    "nab_provider._vendor.packaging.utils",
     "nab_provider.conflict_kind",
+    "packaging.utils",
 )
 
 import itertools
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from packaging.utils import canonicalize_name
+
 from nab_markersets.errors import IntractableMarkerSet
 from nab_markersets.markersets import MarkerSet
-from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.conflict_kind import KIND_EXTRA, KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 
 if TYPE_CHECKING:
@@ -43,10 +44,11 @@ if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
     from typing import Protocol
 
+    from packaging.markers import Marker
+    from packaging.utils import NormalizedName
+    from packaging.version import Version
+
     from nab_markersets.conversions import PreparedMarkerSets
-    from nab_provider._vendor.packaging.markers import Marker
-    from nab_provider._vendor.packaging.utils import NormalizedName
-    from nab_provider._vendor.packaging.version import Version
 
     class PackageIdentity(Protocol):
         """Package fields used for lock identity and marker checks."""

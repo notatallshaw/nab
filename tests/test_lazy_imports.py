@@ -23,12 +23,12 @@ if TYPE_CHECKING:
         ),
         (
             "nab_markersets.python_versions",
-            "nab_markersets._packaging",
+            "packaging.version",
             'module.validate_python_version("3.12")',
         ),
         (
             "nab_provider.extra_keys",
-            "nab_provider._vendor.packaging.utils",
+            "packaging.utils",
             'assert module.join_extra("pkg", "SOME_Extra") == "pkg[some-extra]"',
         ),
         ("nab_index._json_decode", "json", 'assert module.decode_json(b"[]") == []'),
@@ -108,7 +108,7 @@ import sys
 from nab_project.lock_policy import LockPolicy
 assert LockPolicy.RESOLVE.value == "resolve"
 assert "nab_project.lock_check" not in sys.modules
-assert "nab_provider._vendor.packaging.pylock" not in sys.modules
+assert "packaging.pylock" not in sys.modules
 """
     subprocess.run(  # noqa: S603 - fixed import probe in the current interpreter.
         [sys.executable, "-c", probe], env=dict(os.environ), check=True

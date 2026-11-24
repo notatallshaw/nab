@@ -38,10 +38,6 @@ __lazy_modules__ = (
     "nab_project.download",
     "nab_project.lockfile",
     "nab_project.toml_writer",
-    "nab_provider._vendor.packaging.requirements",
-    "nab_provider._vendor.packaging.specifiers",
-    "nab_provider._vendor.packaging.utils",
-    "nab_provider._vendor.packaging.version",
     "nab_provider.errors",
     "nab_provider.marker_holds",
     "nab_provider.metadata",
@@ -53,6 +49,10 @@ __lazy_modules__ = (
     "nab_provider.vcs_admission",
     "nab_resolver.diagnostics",
     "os",
+    "packaging.requirements",
+    "packaging.specifiers",
+    "packaging.utils",
+    "packaging.version",
     "pathlib",
     "subprocess",
     "sys",
@@ -79,18 +79,18 @@ from installer import install as installer_install
 from installer.destinations import SchemeDictionaryDestination
 from installer.sources import WheelFile
 from installer.utils import get_launcher_kind
+from packaging.ranges import VersionRange
+from packaging.requirements import InvalidRequirement
+from packaging.specifiers import SpecifierSet
+from packaging.utils import (
+    canonicalize_name,
+    parse_wheel_filename,
+)
+from packaging.version import Version
 
 from nab_index.client import extract_sdist_archive
 from nab_index.local_index import UnreadableLocalIndexError, read_wheel_metadata
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import InvalidRequirement
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.utils import (
-    canonicalize_name,
-    parse_wheel_filename,
-)
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import MissingExtraError, UnsupportedWheelError
 from nab_provider.marker_holds import (
     IntractableMarkerError,

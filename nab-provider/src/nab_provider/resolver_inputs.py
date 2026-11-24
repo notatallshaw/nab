@@ -10,12 +10,12 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "collections",
-    "nab_provider._vendor.packaging.utils",
     "nab_provider.errors",
     "nab_provider.extra_keys",
     "nab_provider.vcs_admission",
     "nab_resolver.errors",
     "nab_resolver.types",
+    "packaging.utils",
 )
 
 import logging
@@ -23,13 +23,14 @@ from collections import defaultdict
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, NamedTuple
 
+from packaging.ranges import VersionRange
+from packaging.utils import canonicalize_name
+
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 from nab_resolver.errors import ResolutionError
 from nab_resolver.types import RootRequirement
 
 from ._compat import override
-from ._vendor.packaging.ranges import VersionRange
-from ._vendor.packaging.utils import canonicalize_name
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS, KIND_EXTRA, MARKER_VARIABLE_FOR_KIND
 from .errors import ConfigError
 from .extra_keys import join_extra, split_extra
@@ -39,11 +40,12 @@ from .vcs_admission import admit_vcs_url
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
 
+    from packaging.markers import Marker
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+
     from nab_resolver.types import RangeProtocol
 
-    from ._vendor.packaging.markers import Marker
-    from ._vendor.packaging.requirements import Requirement
-    from ._vendor.packaging.version import Version
     from .vcs_admission import VcsConfig
 
     # Whether a dependency marker holds for one environment.

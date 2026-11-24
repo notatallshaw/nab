@@ -142,7 +142,7 @@ class TestReadPyprojectDependencies:
         p.write_text(f'[project]\ndependencies = ["foo ; {over_nested_marker}"]\n')
         with pytest.raises(
             InvalidProjectRequirementError,
-            match=r"\[project\].dependencies: .*nested too deeply",
+            match=r"\[project\].dependencies: .*nested",
         ):
             read_pyproject_dependencies(p)
 

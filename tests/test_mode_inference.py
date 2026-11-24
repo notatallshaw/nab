@@ -6,13 +6,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 import tomli
+from packaging.markers import Environment
+from packaging.pylock import Pylock, PylockSelectError
 
 from nab.cli import run
 from nab.config.model import plan_targets, read_pyproject_config
 from nab.config.subflags import BY_PARENT, build_cli_tables
 from nab_project import toml_writer
-from nab_provider._vendor.packaging.markers import Environment
-from nab_provider._vendor.packaging.pylock import Pylock, PylockSelectError
 from nab_provider.errors import ConfigError
 from nab_provider.policy import BuildPolicy, ResolveMode
 

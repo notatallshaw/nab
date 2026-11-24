@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
+from packaging.markers import Marker
 
-from nab_markersets._packaging import Marker
 from nab_markersets.markersets import MarkerSet
 from nab_markersets.python_versions import validate_python_version
 

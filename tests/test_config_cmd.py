@@ -22,6 +22,7 @@ from unittest.mock import patch
 
 import pytest
 import tomli
+from packaging.version import Version
 
 import nab._config_cmd as config_cmd
 from nab import _run as nab_run
@@ -44,7 +45,6 @@ from nab_project.lockfile import (
     read_lockfile_anchor,
 )
 from nab_project.resolve import ResolveResult, TargetResult
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import (
     BuildPolicy,
     DecisionOrder,

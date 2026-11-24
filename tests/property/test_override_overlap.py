@@ -25,10 +25,10 @@ from datetime import datetime, timezone
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 
 from nab.config.values import check_package_override_overlap
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.errors import ConfigError
 from nab_provider.overrides import PackageOverride
 from nab_provider.provider import BuildPolicy, DistPolicy

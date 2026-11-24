@@ -6,6 +6,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from packaging.markers import Marker
+from packaging.pylock import (
+    Package,
+    PackageDirectory,
+    Pylock,
+)
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 from nab_project._lockfile import validate
 from nab_project._lockfile.validate import (
@@ -14,16 +24,6 @@ from nab_project._lockfile.validate import (
     check_envelope,
 )
 from nab_project.lockfile import LockDisqualification, RootRequirement
-from nab_provider._vendor.packaging.markers import Marker
-from nab_provider._vendor.packaging.pylock import (
-    Package,
-    PackageDirectory,
-    Pylock,
-)
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 

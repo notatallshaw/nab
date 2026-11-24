@@ -31,20 +31,11 @@ False
 
 ## Installing
 
-The engine runs on `packaging`'s parse tree and its single-atom evaluator. Two copies of `packaging`
-exist: the released one, and the fork [`nab`](https://pypi.org/project/nab/) vendors. An extra picks
-which.
-
 ```bash
-pip install "nab-markersets[packaging]"
-pip install "nab-markersets[nab-vendored-packaging]"
+pip install nab-markersets
 ```
 
-The first copy at version 26.3 or newer is used. The vendored fork is tried first, followed by
-released `packaging`.
-
-A `Marker` from the other copy is accepted too. If neither copy is new enough, importing
-`nab_markersets.markersets` fails and says what it found.
+The marker algebra uses the marker parser and evaluator from `packaging` 26.4 or newer.
 
 ## When to use it
 

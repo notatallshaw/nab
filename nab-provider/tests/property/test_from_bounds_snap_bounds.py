@@ -16,9 +16,8 @@ from functools import reduce
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.version import Version
+from packaging.ranges import VersionRange
+from packaging.version import Version
 
 from .settings import PROPERTY_SETTINGS
 

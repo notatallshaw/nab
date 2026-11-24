@@ -5,23 +5,24 @@ from __future__ import annotations
 __lazy_modules__ = (
     "collections",
     "collections.abc",
-    "nab_provider._vendor.packaging.errors",
-    "nab_provider._vendor.packaging.markers",
-    "nab_provider._vendor.packaging.utils",
     "nab_provider.marker_holds",
     "nab_provider.pep508",
     "nab_provider.project_requirements",
     "nab_provider.resolver_inputs",
+    "packaging.errors",
+    "packaging.markers",
+    "packaging.utils",
 )
 
 from collections import deque
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
-from ._vendor.packaging.dependency_groups import DependencyGroupResolver
-from ._vendor.packaging.errors import ExceptionGroup
-from ._vendor.packaging.markers import Marker
-from ._vendor.packaging.utils import canonicalize_name
+from packaging.dependency_groups import DependencyGroupResolver
+from packaging.errors import ExceptionGroup
+from packaging.markers import Marker
+from packaging.utils import canonicalize_name
+
 from .marker_holds import (
     dependency_marker_holds,
     intractable_as_error,
@@ -43,7 +44,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from types import CodeType
 
-    from ._vendor.packaging.requirements import Requirement
+    from packaging.requirements import Requirement
 
 __all__ = [
     "InvalidProjectRequirementError",

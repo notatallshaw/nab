@@ -6,11 +6,11 @@ from collections.abc import Sequence
 from cProfile import Profile
 
 import pytest
+from packaging.ranges import VersionRange
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import Provider, ResolutionStrategy
 from nab_provider.testing import make_coordinator
 from nab_provider.yank_candidates import Candidate, YankCandidates

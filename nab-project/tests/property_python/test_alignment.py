@@ -19,6 +19,9 @@ from __future__ import annotations
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 from nab_project.lockfile import IndexPin, TargetLock
 from nab_project.resolve import (
@@ -26,9 +29,6 @@ from nab_project.resolve import (
     TargetResult,
     build_lock_input,
 )
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.provider import VcsConfig
 from nab_provider.resolver_inputs import build_resolver_inputs

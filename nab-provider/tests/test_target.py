@@ -10,16 +10,16 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
-
-from nab_markersets._compat import get_int_max_str_digits
-from nab_provider._vendor.packaging.markers import (
+from packaging.markers import (
     InvalidMarker,
     Marker,
     default_environment,
 )
-from nab_provider._vendor.packaging.specifiers import Specifier, SpecifierSet
-from nab_provider._vendor.packaging.tags import Tag
-from nab_provider._vendor.packaging.version import InvalidVersion, Version
+from packaging.specifiers import Specifier, SpecifierSet
+from packaging.tags import Tag
+from packaging.version import InvalidVersion, Version
+
+from nab_markersets._compat import get_int_max_str_digits
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import (
     IMPLEMENTATION_MARKERS,

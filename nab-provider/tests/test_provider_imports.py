@@ -17,9 +17,9 @@ for name in (
 ):
     sys.modules[name] = None
 
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import Version
+from packaging.ranges import VersionRange
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 from nab_provider.provider import Provider
 from nab_provider.records import WheelFile
 from nab_provider.testing import make_coordinator
@@ -63,7 +63,6 @@ import sys
 for name in (
     "packaging",
     "nab_markersets",
-    "nab_provider._vendor",
     "nab_provider.provider",
     "nab_provider.target",
     "nab_provider.marker_holds",

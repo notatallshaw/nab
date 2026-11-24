@@ -21,18 +21,19 @@ __lazy_modules__ = (
     "nab_project._lockfile.requirements",
     "nab_project._lockfile.validate",
     "nab_project.lock_preferences",
-    "nab_provider._vendor.packaging.pylock",
-    "nab_provider._vendor.packaging.utils",
-    "nab_provider._vendor.packaging.version",
+    "packaging.pylock",
+    "packaging.utils",
+    "packaging.version",
 )
 
 import logging
 from datetime import timezone
 from typing import TYPE_CHECKING, Any, ClassVar, Final
 
-from nab_provider._vendor.packaging.pylock import is_valid_pylock_path
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import Version
+from packaging.pylock import is_valid_pylock_path
+from packaging.utils import canonicalize_name
+from packaging.version import Version
+
 from nab_provider.value import (
     FACTORY,
     FactoryDefault,
@@ -81,7 +82,8 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
-    from nab_provider._vendor.packaging.markers import Marker
+    from packaging.markers import Marker
+
     from nab_provider.overrides import PackageOverride
     from nab_provider.target import ResolveTarget
 

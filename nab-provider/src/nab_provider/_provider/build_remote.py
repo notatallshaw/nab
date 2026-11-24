@@ -17,22 +17,24 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "nab_provider._provider.metadata_resolver",
-    "nab_provider._vendor.packaging.specifiers",
-    "nab_provider._vendor.packaging.utils",
     "nab_provider.errors",
     "nab_provider.store",
+    "packaging.specifiers",
+    "packaging.utils",
 )
 
 from typing import TYPE_CHECKING
 
-from .._vendor.packaging.specifiers import SpecifierSet
-from .._vendor.packaging.utils import canonicalize_name
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
+
 from ..errors import UnsupportedSdistError
 from ..store import sdist_artifact_key
 from .metadata_resolver import find_sdist
 
 if TYPE_CHECKING:
-    from .._vendor.packaging.version import Version
+    from packaging.version import Version
+
     from ..metadata import WheelMetadata
     from ..provider import Provider
 

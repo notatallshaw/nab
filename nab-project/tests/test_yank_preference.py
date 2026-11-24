@@ -7,10 +7,10 @@ from collections import defaultdict
 from functools import partial
 
 import pytest
+from packaging.ranges import VersionRange
+from packaging.requirements import Requirement
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.policy import ExtrasMode
 from nab_provider.provider import Provider
 from nab_provider.yank_candidates import Candidate, YankCandidates, is_pin

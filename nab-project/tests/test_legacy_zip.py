@@ -10,15 +10,15 @@ import zipfile
 from typing import TYPE_CHECKING, NoReturn
 
 import pytest
+from packaging.markers import default_environment
+from packaging.pylock import Pylock
+from packaging.version import Version
 
 from nab_project.download import DownloadError, download_lock
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import IndexPin, build_pylock, write_lock
 from nab_project.resolve import build_lock_input, resolve_for_targets
 from nab_project.toml_io import loads
-from nab_provider._vendor.packaging.markers import default_environment
-from nab_provider._vendor.packaging.pylock import Pylock
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import WheelMetadata
 from nab_provider.policy import BuildPolicy
 from nab_provider.records import IndexConfig

@@ -1,17 +1,16 @@
 """Parse PEP 508 requirements and inspect formatted marker comparisons.
 
-The vendored parser recurses through each parenthesised marker group, so a
-deeply nested marker raises ``RecursionError`` instead of
-``InvalidRequirement``.
+Translate stack exhaustion when a caller has less stack available than
+packaging's marker parser needs.
 """
 
 from __future__ import annotations
 
-__lazy_modules__ = ("nab_provider._vendor.packaging.requirements",)
+__lazy_modules__ = ("packaging.requirements",)
 
 import re
 
-from ._vendor.packaging.requirements import InvalidRequirement, Requirement
+from packaging.requirements import InvalidRequirement, Requirement
 
 __all__ = ["MARKER_COMPARISON", "NESTED_MARKER_MESSAGE", "parse_requirement"]
 

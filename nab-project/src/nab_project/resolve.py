@@ -30,9 +30,6 @@ __lazy_modules__ = (
     "nab_project.conflicts",
     "nab_project.inputs",
     "nab_project.lockfile",
-    "nab_provider._vendor.packaging.markers",
-    "nab_provider._vendor.packaging.ranges",
-    "nab_provider._vendor.packaging.utils",
     "nab_provider.errors",
     "nab_provider.marker_holds",
     "nab_provider.pep508",
@@ -40,6 +37,9 @@ __lazy_modules__ = (
     "nab_provider.requirements_file",
     "nab_provider.target",
     "nab_resolver.errors",
+    "packaging.markers",
+    "packaging.ranges",
+    "packaging.utils",
     "pathlib",
     "tempfile",
 )
@@ -54,9 +54,10 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
-from nab_provider._vendor.packaging.markers import Marker
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.utils import canonicalize_name
+from packaging.markers import Marker
+from packaging.ranges import VersionRange
+from packaging.utils import canonicalize_name
+
 from nab_provider.errors import ConfigError
 from nab_provider.marker_holds import DependencyMarkerEvaluator, dependency_marker_holds
 from nab_provider.pep508 import parse_requirement
@@ -121,9 +122,10 @@ from .lockfile import LockInput, TargetLock
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Mapping, Sequence
 
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+
     from nab_index.transport import AsyncHttpTransport
-    from nab_provider._vendor.packaging.requirements import Requirement
-    from nab_provider._vendor.packaging.version import Version
     from nab_provider.fetch_port import PrefetchSettings
     from nab_provider.provider import ResolutionStrategy
     from nab_provider.resolver_inputs import MarkerHolds

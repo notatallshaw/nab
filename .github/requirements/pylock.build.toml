@@ -68,27 +68,27 @@ sha256 = "415290b84f464d2884303fca8974d38e7b85579069fab02a15db0828fbb1446d"
 
 [[packages]]
 name = "packaging"
-version = "26.3"
-requires-python = ">=3.9"
+version = "26.4"
+requires-python = ">=3.10"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "packaging-26.3.tar.gz"
-upload-time = 2026-08-04T18:15:28.737071+00:00
-url = "https://files.pythonhosted.org/packages/7d/fa/3944b40b07da9ce895c0e6303a5ab7d53da063554f534556b134a54d6093/packaging-26.3.tar.gz"
-size = 313412
+name = "packaging-26.4.tar.gz"
+upload-time = 2026-11-23T21:44:11.152574+00:00
+url = "https://files.pythonhosted.org/packages/c3/75/ffb1dc0ed12352139fb4ca0e3fde4325a23e3d0f3f40efe89717bc4f557b/packaging-26.4.tar.gz"
+size = 355877
 
 [packages.sdist.hashes]
-sha256 = "94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79"
+sha256 = "c4b671c41ddb9bf26e543c37723610d28fb6bf7affc4da17cf048d419d2c062a"
 
 [[packages.wheels]]
-name = "packaging-26.3-py3-none-any.whl"
-upload-time = 2026-08-04T18:15:27.159957+00:00
-url = "https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl"
-size = 129956
+name = "packaging-26.4-py3-none-any.whl"
+upload-time = 2026-11-23T21:44:09.531657+00:00
+url = "https://files.pythonhosted.org/packages/ba/7b/5504f91c9c2733f693d7759e50ede5d27119d4da7e5836c46d3b5ff81d56/packaging-26.4-py3-none-any.whl"
+size = 140049
 
 [packages.wheels.hashes]
-sha256 = "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c"
+sha256 = "81383611a09c1bc0b08b76e0fd5829d7c6824c65b27a6aee339da133f4233ea2"
 
 [[packages]]
 name = "pathspec"
@@ -222,7 +222,6 @@ command-line = [
     ".github/requirements/pylock.build.toml",
     "--lock-policy",
     "resolve",
-    "--upgrade",
 ]
 input-path = "pyproject.toml"
 mode = "universal"
@@ -240,6 +239,6 @@ package-metadata-overrides = [
 
 [tool.nab.validation]
 version = 1
-all-inputs-sha256 = "38a7189ef1f7ea97a721c94c67ead39449685261322fe82837f83597fb0b415f"
-selection-inputs-sha256 = "fb6367ddc12f40739a6e3cd044a3ec284e8bc5d10f20a44f2c8cd6f5eb7ae994"
-contents-sha256 = "f40241d6df9fe373636721080a9a3c2729fa58547c040776baa10e1a2cbc54fd"
+all-inputs-sha256 = "d4f06d9e87ddbb071e022bdabb84d76d69291907453fb3a7dcfe007f25a17052"
+selection-inputs-sha256 = "cd1477ec3d20a983f1030b9e10deb09557723970652ab248c67fa5c96a905c93"
+contents-sha256 = "b5f7643522525a401248d5afff654b893457bc81931c2b13a98bab373d04202d"

@@ -9,8 +9,6 @@ each ``Requires-Dist`` entry into base deps vs per-extra deps.
 from __future__ import annotations
 
 __lazy_modules__ = (
-    "nab_provider._vendor.packaging.specifiers",
-    "nab_provider._vendor.packaging.utils",
     "nab_provider.environment",
     "nab_provider.errors",
     "nab_provider.extra_keys",
@@ -23,6 +21,8 @@ __lazy_modules__ = (
     "nab_provider.value",
     "nab_provider.vcs_admission",
     "nab_resolver.diagnostics",
+    "packaging.specifiers",
+    "packaging.utils",
     "urllib.parse",
 )
 
@@ -31,13 +31,14 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Literal, NamedTuple, TypeGuard
 from urllib.parse import urlsplit
 
+from packaging.ranges import VersionRange
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
+
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .._compat import override
-from .._vendor.packaging.ranges import VersionRange
-from .._vendor.packaging.specifiers import SpecifierSet
-from .._vendor.packaging.utils import canonicalize_name
-from .._vendor.packaging.version import InvalidVersion, Version
 from ..environment import UnevaluableMarkerError, classify_dependency, evaluate_prepared
 from ..errors import (
     ForeignMetadataError,
@@ -74,8 +75,9 @@ from ..vcs_admission import admit_vcs_url
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
-    from .._vendor.packaging.markers import Marker
-    from .._vendor.packaging.requirements import Requirement
+    from packaging.markers import Marker
+    from packaging.requirements import Requirement
+
     from ..provider import DistFile, Provider
     from ..store import InMemoryIndex, WheelMetadataContext
     from ..tags import TagSet
@@ -1140,7 +1142,13 @@ def _requirement_gating(provider: Provider, req: Requirement) -> Gating:
     if marker is None:
         return "base"
     marker_id = id(marker)
-    if _marker_matches_base(provider, marker, marker_id):
+    applies_to_base = provider.marker_base_cache.get(marker_id)
+    if applies_to_base is None:
+        # Record each marker once for the lock's environments declaration.
+        provider.consulted_markers.add(marker)
+        applies_to_base = evaluate_prepared(marker, provider.prepared_environment)
+        provider.marker_base_cache[marker_id] = applies_to_base
+    if applies_to_base:
         return "base"
     if "extra" not in str(marker):
         return "excluded"
@@ -1170,21 +1178,6 @@ def classify_requirement(
         provider, marker, id(marker), provided_extras
     )
     return matched_extras or None
-
-
-def _marker_matches_base(provider: Provider, marker: Marker, marker_id: int) -> bool:
-    """Evaluate ``marker`` against the env without ``extra`` set, cached.
-
-    Every dependency marker the resolve reads passes through here, so this
-    is where it is recorded for the lock's ``environments`` declaration.
-    Recording on the cache miss keeps each distinct marker once.
-    """
-    result = provider.marker_base_cache.get(marker_id)
-    if result is None:
-        provider.consulted_markers.add(marker)
-        result = evaluate_prepared(marker, provider.prepared_environment)
-        provider.marker_base_cache[marker_id] = result
-    return result
 
 
 def _marker_matched_extras(

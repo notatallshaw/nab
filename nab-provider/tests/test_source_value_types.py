@@ -18,9 +18,9 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.archive import ArchiveRequest
 from nab_provider.metadata import WheelMetadata
 from nab_provider.overrides import IndexOverride, PackageOverride
@@ -57,8 +57,7 @@ class Case(NamedTuple):
     time reaches a field that a comparison or a hash left out.  ``defaults``
     is every constructor parameter that carries one, and ``keyword_only``
     every one a caller cannot pass positionally.  ``uncompared`` names the
-    fields the comparison and the hash skip, and ``rebuildable`` is False
-    where a field value refuses to be deep-copied or pickled.
+    fields the comparison and the hash skip.
     """
 
     cls: type[SlottedValue]
@@ -68,7 +67,6 @@ class Case(NamedTuple):
     keyword_only: frozenset[str] = frozenset()
     hashable: bool = True
     uncompared: frozenset[str] = frozenset()
-    rebuildable: bool = True
 
 
 CASES = [
@@ -198,7 +196,6 @@ CASES = [
         },
         keyword_only=frozenset(PackageOverride.__match_args__),
         uncompared=frozenset({"source_label"}),
-        rebuildable=False,
     ),
     Case(
         IndexOverride,
@@ -393,14 +390,7 @@ def test_a_shallow_copy_restores_every_field(case: Case) -> None:
 
 @pytest.mark.parametrize("case", VALUE_TYPES)
 def test_deep_copying_and_pickling_restore_every_field(case: Case) -> None:
-    """Both rebuild every field value, which the vendored ``VersionRange`` refuses."""
     instance = _build(case, case.base)
-    if not case.rebuildable:
-        with pytest.raises(TypeError):
-            copy.deepcopy(instance)
-        with pytest.raises(TypeError):
-            pickle.loads(pickle.dumps(instance))  # noqa: S301
-        return
 
     assert copy.deepcopy(instance) == instance
     assert pickle.loads(pickle.dumps(instance)) == instance  # noqa: S301

@@ -22,9 +22,9 @@ from __future__ import annotations
 __lazy_modules__ = (
     "nab_project",
     "nab_project.paths",
-    "nab_provider._vendor.packaging.utils",
     "nab_provider.policy",
     "nab_resolver.diagnostics",
+    "packaging.utils",
     "tomli",
 )
 
@@ -32,8 +32,8 @@ import logging
 from typing import TYPE_CHECKING, Any, Final
 
 import tomli
+from packaging.utils import InvalidName, canonicalize_name
 
-from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
 from nab_provider.policy import LocalSource
 from nab_provider.value import HashableRecord
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion

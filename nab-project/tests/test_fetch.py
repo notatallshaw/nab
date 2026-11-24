@@ -23,6 +23,7 @@ import httpx
 import httpx2
 import pytest
 import respx
+from packaging.version import Version
 
 from nab_index.cache import CachePolicy, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient, SdistArchiveHold
@@ -53,7 +54,6 @@ from nab_project.fetch import (
     _resolve_routes,
 )
 from nab_project.inputs import ResolveInputs
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import IndexAccessError
 from nab_provider.metadata import WheelMetadata
 from nab_provider.overrides import IndexOverride

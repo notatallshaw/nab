@@ -5,9 +5,9 @@ from __future__ import annotations
 import email.parser
 
 import pytest
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import (
     _READ_FIELDS,
     _read_header_fields,

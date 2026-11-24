@@ -25,6 +25,9 @@ from typing import TYPE_CHECKING, Any, NoReturn
 import httpx
 import pytest
 import respx
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 from nab_index.client import SdistHashMismatchError, extract_sdist_archive
 from nab_index.httpx_async_transport import HttpxAsyncTransport
@@ -42,9 +45,6 @@ from nab_project.download import (
 )
 from nab_project.fetch import FetchCoordinator
 from nab_project.lockfile import ArchivePin, LockInput, TargetLock
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.archive import ArchiveRequest
 from nab_provider.metadata import WheelMetadata
 from nab_provider.provider import (

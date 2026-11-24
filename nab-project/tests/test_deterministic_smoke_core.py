@@ -13,13 +13,13 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from packaging.pylock import Pylock
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import IndexPin, TargetLock, WheelArtifact
 from nab_project.resolve import ResolveResult, TargetResult
-from nab_provider._vendor.packaging.pylock import Pylock
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
 from nab_provider.value import replace
 
 pytestmark = pytest.mark.benchmark
