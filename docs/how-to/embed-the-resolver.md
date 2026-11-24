@@ -223,8 +223,7 @@ final result and diagnostics.
 
 ## The supported API
 
-Import these names from the modules listed below. Import paths and APIs can change between 0.0.x
-releases, so pin the version you tested.
+Import these names from the modules listed below and pin the nab version you tested.
 
 | Module                     | Supported names                                                                                                              |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |

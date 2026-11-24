@@ -224,6 +224,6 @@ Nab also publishes components for other tools.
 - `nab-index`: package-index and source clients with caching.
 - `nab-project`: resolve orchestration, lockfiles and downloads.
 
-Component APIs can change between 0.0.x releases. See
+Pin the nab version you tested when embedding a component. See
 [how the packages fit together](https://nab.readthedocs.io/en/stable/explanation/packages.html) and
 the [CLI walkthrough](src/nab/_cli/README.md) to explore the code.
