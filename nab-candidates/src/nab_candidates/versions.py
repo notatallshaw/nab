@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar, Final, Generic, TypeVar
 
-from ..value import HashableRecord, Record
+from .records import HashableRecord, Record
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

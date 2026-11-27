@@ -15,6 +15,7 @@ updates:
       - /
       - /nab-resolver
       - /nab-markersets
+      - /nab-candidates
       - /nab-provider
       - /nab-project
       - /nab-index

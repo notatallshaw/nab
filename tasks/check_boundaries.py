@@ -78,6 +78,7 @@ REMEDY = (
 # Packages whose docstring publishes a supported-path table. Listed so a table
 # that stops parsing fails the run instead of dropping the ``supported`` rule.
 PUBLISHES_SUPPORTED_PATHS = (
+    "nab_candidates",
     "nab_index",
     "nab_markersets",
     "nab_resolver",

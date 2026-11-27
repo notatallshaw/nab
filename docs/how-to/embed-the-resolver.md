@@ -208,7 +208,7 @@ returns `None` if every possible selection satisfies the combined term.
 
 ## Reuse scoped artifact preference
 
-`nab-provider` supplies `nab_provider.preference.PreferenceSearch` for hosts that prefer working
+`nab-candidates` supplies `nab_candidates.preference.PreferenceSearch` for hosts that prefer working
 non-yanked artifacts before admitting a permitted yanked artifact. It shares the ancestor proofs,
 scoped queries and known-metadata checks used by nab's Python provider. The module's runtime imports
 require only the standard library and `nab-resolver`; the host retains metadata preparation and
@@ -230,16 +230,16 @@ final result and diagnostics.
 
 ## Resolve a prepared catalogue
 
-Install `nab-provider` to use `PreparedVersionCatalogue` from `nab_provider.catalogue.versions`.
-Implement its listing and metadata reads with your installer's finder. Give each file a stable
-candidate identity, including files with the same version but different dependencies. Retain the
-original exact pins alongside the dependency ranges so the provider can check yanked releases.
+Install `nab-candidates` to use `PreparedVersionCatalogue` from `nab_candidates.versions`. Implement
+its listing and metadata reads with your installer's finder. Give each file a stable candidate
+identity, including files with the same version but different dependencies. Retain the original
+exact pins alongside the dependency ranges so the provider can check yanked releases.
 
 Pass the catalogue, root ranges, input pins and constraints to
-`nab_provider.catalogue.resolution.PreparedResolution.from_catalogue`. Its `solve()` method returns
-the selected candidate for each package, the edges between packages, and the pins that permitted
-yanked releases. Start a fresh resolution when a newly discovered source replaces the set of
-candidate files.
+`nab_candidates.resolution.PreparedResolution.from_catalogue`. Its `solve()` method returns the
+selected candidate for each package, the edges between packages, and the pins that permitted yanked
+releases. Start a fresh resolution when a newly discovered source replaces the set of candidate
+files.
 
 A host that builds its own dependency graph can call `select()` for the package-to-candidate
 mapping. Nab uses this entry point when checking file-level yanked admission. It retains its native

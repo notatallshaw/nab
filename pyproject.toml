@@ -209,6 +209,7 @@ uv-consumer = ["uv"]
 members = [
     "nab-resolver",
     "nab-markersets",
+    "nab-candidates",
     "nab-provider",
     "nab-project",
     "nab-index",
@@ -273,6 +274,7 @@ match = [
     "nab",
     "nab-resolver",
     "nab-markersets",
+    "nab-candidates",
     "nab-provider",
     "nab-project",
     "nab-index",
@@ -306,6 +308,7 @@ timeout = 300
 testpaths = [
     "nab-resolver/tests",
     "nab-markersets/tests",
+    "nab-candidates/tests",
     "nab-provider/tests",
     "nab-project/tests",
     "nab-index/tests",
@@ -336,6 +339,7 @@ disable_warnings = ["module-not-imported"]
 source_pkgs = [
     "nab_resolver",
     "nab_markersets",
+    "nab_candidates",
     "nab_provider",
     "nab_project",
     "nab_index",
@@ -374,6 +378,7 @@ nab_markersets = [
     "nab-markersets/src/nab_markersets",
     "*/nab_markersets",
 ]
+nab_candidates = ["nab-candidates/src/nab_candidates", "*/nab_candidates"]
 nab_provider = [
     "nab-provider/src/nab_provider",
     "*/nab_provider",
@@ -539,6 +544,7 @@ known-first-party = [
     "nab",
     "nab_index",
     "nab_markersets",
+    "nab_candidates",
     "nab_provider",
     "nab_project",
     "nab_resolver",
@@ -607,6 +613,7 @@ include = [
     "nab-resolver/src",
     "nab-resolver/tests",
     "nab-markersets/src",
+    "nab-candidates/src",
     "nab-provider/src",
     "nab-project/src",
     "nab-index/src",
@@ -618,6 +625,7 @@ include = [
 extraPaths = [
     "nab-resolver/src",
     "nab-markersets/src",
+    "nab-candidates/src",
     "nab-provider/src",
     "nab-project/src",
     "nab-index/src",
@@ -631,6 +639,7 @@ min-severity = "warn"
 project-includes = [
     "nab-resolver/src",
     "nab-markersets/src",
+    "nab-candidates/src",
     "nab-provider/src",
     "nab-project/src",
     "nab-index/src",
@@ -737,6 +746,7 @@ explicit_package_bases = true
 mypy_path = [
     "nab-resolver/src",
     "nab-markersets/src",
+    "nab-candidates/src",
     "nab-provider/src",
     "nab-project/src",
     "nab-index/src",

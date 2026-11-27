@@ -230,6 +230,7 @@ def _auxiliary_outputs(paths: list[str] | None) -> dict[str, str]:
         elif package in {
             "nab-resolver",
             "nab-markersets",
+            "nab-candidates",
             "nab-provider",
             "nab-index",
             "nab-project",

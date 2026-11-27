@@ -34,9 +34,9 @@ hatch shell
 nab --version
 ```
 
-That shell runs in the check-out's `.venv`, with all six distributions installed editable plus the
-`tests` and `nox` dependency-groups. The commands below run tools by path, so they work outside the
-shell too.
+That shell runs in the check-out's `.venv`, with all workspace distributions installed editable plus
+the `tests` and `nox` dependency-groups. The commands below run tools by path, so they work outside
+the shell too.
 
 Development and CI dependencies share `pylock.dev.toml` at the repository root. Hatch and nox select
 its dependency groups with pip 26.3 or newer. The build backend remains in
@@ -117,8 +117,8 @@ value, raise an error that identifies it and explains how to fix it.
 
 ### Run the suite
 
-The default suite covers every module under `nab_resolver`, `nab_markersets`, `nab_provider`,
-`nab_project`, `nab_index`, and `nab`:
+The default suite covers every module under `nab_resolver`, `nab_candidates`, `nab_markersets`,
+`nab_provider`, `nab_project`, `nab_index`, and `nab`:
 
 ```bash
 .venv/bin/python -m pytest                # default selection (no markers)
@@ -306,8 +306,9 @@ build. `tasks/refresh_locks.py` locks `[build-system].requires` into
 `.github/requirements/pylock.build.toml` with `nab lock --build-requirements`. The `dists` nox
 session, release workflow, and `hatch run release:build` install that lock.
 
-One lock serves all six packages while they declare the same `[build-system]`. The refresh script
-checks that before writing, then checks the build and development locks agree on shared packages.
+One lock serves all workspace packages while they declare the same `[build-system]`. The refresh
+script checks that before writing, then checks the build and development locks agree on shared
+packages.
 
 ## Building the docs
 
@@ -332,14 +333,17 @@ committed lock unless `--upgrade` is given.
 ## Coverage policy
 
 The `pyproject.toml` `[tool.coverage.report] fail_under = 100` setting requires 100 percent branch
-coverage on every workspace package: `nab_resolver`, `nab_markersets`, `nab_provider`,
-`nab_project`, `nab_index`, and `nab`.
+coverage on every workspace package: `nab_resolver`, `nab_candidates`, `nab_markersets`,
+`nab_provider`, `nab_project`, `nab_index`, and `nab`.
 
 ### Workspace coverage
 
-The full local suite under `coverage run -m pytest` checks all six together. Nox splits them per
-workspace in CI and runs each suite once, appending to one coverage data file. Its result includes
-the workspace's own suites plus every suite run before it.
+The full local suite under `coverage run -m pytest` checks all distributions together. Nox splits
+them per workspace in CI and runs each suite once, appending to one coverage data file. Its result
+includes the workspace's own suites plus every suite run before it.
+
+The `candidates` workspace checks `nab_candidates` with only the generic solver and its public
+dependencies installed.
 
 `nab_index` and `nab_provider` are checked in the `project` workspace; reaching every line of both
 takes `nab-project/tests` as well as `nab-provider/tests`. The `provider` workspace runs

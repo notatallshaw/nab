@@ -11,6 +11,10 @@ implemented by the application using the provider. That application is called th
 `nab-project` supplies it for the nab CLI. `nab_provider.testing` supplies an in-memory
 implementation for tests.
 
+The provider uses `nab-candidates` for prepared file identities, metadata and yanked-release
+admission. Hosts that already implement their own finder and preparation policy can install
+`nab-candidates` directly.
+
 ## When to use it
 
 Use `nab-provider` to embed nab's resolution in a host that already owns its networking and caching,

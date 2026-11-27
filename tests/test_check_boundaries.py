@@ -160,6 +160,7 @@ def test_the_packages_that_publish_a_table_are_pinned() -> None:
     """
 
     assert check_boundaries.PUBLISHES_SUPPORTED_PATHS == (
+        "nab_candidates",
         "nab_index",
         "nab_markersets",
         "nab_resolver",

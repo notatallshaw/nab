@@ -220,6 +220,8 @@ command-line = [
     "--no-emit-workspace",
     "--output",
     ".github/requirements/pylock.build.toml",
+    "--lock-policy",
+    "prefer-existing",
 ]
 input-path = "pyproject.toml"
 mode = "universal"
@@ -237,6 +239,6 @@ package-metadata-overrides = [
 
 [tool.nab.validation]
 version = 1
-all-inputs-sha256 = "79ab185cc8bdc8ee235c674a72a7b1d2891297a67f767cfb7de2509d3dafe769"
-selection-inputs-sha256 = "cd1477ec3d20a983f1030b9e10deb09557723970652ab248c67fa5c96a905c93"
+all-inputs-sha256 = "ed1bc143083f4a914bd02e2cf438db78506223c23e88d2c86b600019c03968c5"
+selection-inputs-sha256 = "a497e638e78cbb9568b8d7dbddfced40fc10ee17bc56b01613597d15e8bedf94"
 contents-sha256 = "b5f7643522525a401248d5afff654b893457bc81931c2b13a98bab373d04202d"

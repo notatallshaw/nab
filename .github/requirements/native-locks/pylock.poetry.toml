@@ -874,9 +874,10 @@ command-line = [
     "lock",
     "--output",
     ".github/requirements/native-locks/pylock.poetry.toml",
+    "--lock-policy",
+    "prefer-existing",
     "--plan",
     "poetry",
-    "--upgrade",
 ]
 input-path = "pyproject.toml"
 mode = "specific"
@@ -887,6 +888,6 @@ package-metadata-overrides = [
 
 [tool.nab.validation]
 version = 1
-all-inputs-sha256 = "3ae498ee701f8f617f3c76c6dd4a30157999f36db8d37522fdbd822f71127158"
-selection-inputs-sha256 = "e850be051368bb03a297302a2aae08ab18cae0c77b06061c814bf411fbe7e165"
+all-inputs-sha256 = "fbb404f6c889baf9c2ab65081d86dc574fe5af9a37b12a8a83a50e84aa37e568"
+selection-inputs-sha256 = "b5ae525c4372fdb85d3fcfb32a018cf10aaec40a11914fd1ceacc73aa0947c06"
 contents-sha256 = "9a6db4749ec2109b33e5f1cc5abcb061c44c5726dfdc4bd9cf42239b129e2e8d"

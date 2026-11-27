@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from nab_provider.catalogue.provider import MetadataProxy, PermissionProxy
-from nab_provider.catalogue.resolution import PreparedResolution
-from nab_provider.preference import PreferenceScope
+from nab_candidates.preference import PreferenceScope
+from nab_candidates.provider import MetadataProxy, PermissionProxy
+from nab_candidates.resolution import PreparedResolution
 from nab_resolver.errors import ResolutionInvariantError, ResolutionLimitError
 from nab_resolver.ranges import Range
 
-from .test_preference_core import Catalogue, Choice, Data, Pin
+from .catalogue_fixtures import Catalogue, Choice, Data, Pin
 
 
 @pytest.mark.parametrize("preferred", [False, True])

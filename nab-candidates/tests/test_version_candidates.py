@@ -2,27 +2,20 @@
 
 from __future__ import annotations
 
-import copy
-import os
-import pickle
-import subprocess
-import sys
-
 import pytest
 from packaging.ranges import VersionRange
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
-from nab_provider._compat import override
-from nab_provider.catalogue.versions import (
+from nab_candidates._compat import override
+from nab_candidates.resolution import PreparedResolution
+from nab_candidates.versions import (
     PreparedVersionCatalogue,
     VersionCandidate,
     VersionCandidateData,
-    VersionCatalogue,
+    is_pin,
 )
-from nab_provider.value import field_names, replace
-from nab_provider.yank_candidates import Candidate
 
 
 class Catalogue(PreparedVersionCatalogue[VersionCandidate, VersionCandidateData]):
@@ -69,54 +62,6 @@ class Catalogue(PreparedVersionCatalogue[VersionCandidate, VersionCandidateData]
         return None if candidate == self.rejected else self.data
 
 
-def test_native_candidate_identity_preserves_raw_labels_and_withdrawal() -> None:
-    original = Candidate("sample[feature]", Version("1.0"), withdrawn=False)
-    same = Candidate("sample[feature]", Version("1.0"), withdrawn=False)
-    different = [
-        Candidate("sample", Version("1.0"), withdrawn=False),
-        Candidate("sample[feature]", Version("1"), withdrawn=False),
-        Candidate("sample[feature]", Version("1.0"), withdrawn=True),
-        VersionCandidate("sample[feature]", Version("1.0"), withdrawn=False),
-    ]
-
-    assert {original: "metadata"}[same] == "metadata"
-    assert all(original != candidate for candidate in different)
-    assert original != object()
-    assert len({original, same, *different}) == 1 + len(different)
-
-    assert copy.copy(original) == original
-    assert pickle.loads(pickle.dumps(original)) == original  # noqa: S301 - locally created test data.
-    assert replace(original, withdrawn=True) == different[2]
-    assert field_names(original) == ("package", "version", "withdrawn", "label")
-
-
-def test_native_candidate_pickle_rehashes_under_another_seed() -> None:
-    setup = """import pickle, sys
-from packaging.version import Version
-from nab_provider.yank_candidates import Candidate
-candidate = Candidate('sample', Version('1.0'), withdrawn=False)
-"""
-    payload = subprocess.check_output(  # noqa: S603 - fixed interpreter and literal test program.
-        [
-            sys.executable,
-            "-c",
-            setup + "sys.stdout.buffer.write(pickle.dumps({candidate: 'metadata'}))",
-        ],
-        env={**os.environ, "PYTHONHASHSEED": "0"},
-    )
-    subprocess.run(  # noqa: S603 - fixed interpreter and literal test program.
-        [
-            sys.executable,
-            "-c",
-            setup
-            + "assert pickle.loads(sys.stdin.buffer.read())[candidate] == 'metadata'",
-        ],
-        input=payload,
-        env={**os.environ, "PYTHONHASHSEED": "1"},
-        check=True,
-    )
-
-
 def test_listing_cache_retains_distinct_version_text() -> None:
     catalogue = Catalogue()
     candidates = catalogue.choices("sample")
@@ -150,16 +95,6 @@ def test_empty_listing_is_cached() -> None:
     assert catalogue.choices("empty") == ()
     assert catalogue.choices("empty") == ()
     assert catalogue.listing_reads == 1
-
-
-def test_extra_base_keeps_its_native_withdrawal_identity() -> None:
-    candidate = Candidate("sample[feature]", Version("1.0"), withdrawn=True)
-
-    base = VersionCatalogue.base_candidate(candidate)
-
-    assert type(base) is Candidate
-    assert base == Candidate("sample", Version("1.0"), withdrawn=True)
-    assert base.label == "1.0"
 
 
 @pytest.mark.parametrize(
@@ -207,3 +142,54 @@ def test_automatic_fallback_keeps_an_admitted_prerelease_without_a_final() -> No
     assert catalogue.order_candidates("sample", VersionRange.full(), [choice]) == [
         choice
     ]
+
+
+def test_prepared_version_catalogue_resolves_a_permitted_yanked_file() -> None:
+    class Wheels(Catalogue):
+        @override
+        def read_choices(self, package: str) -> tuple[VersionCandidate, ...]:
+            return (
+                VersionCandidate(package, Version("1"), withdrawn=package == "dep"),
+            )
+
+        @override
+        def read_candidate(self, candidate: VersionCandidate) -> VersionCandidateData:
+            if candidate.package == "app":
+                requirement = Requirement("dep==1")
+                return VersionCandidateData(
+                    {"dep": requirement.specifier.to_range()}, (requirement,)
+                )
+
+            return VersionCandidateData({}, ())
+
+        def ordered(
+            self, package: str, allowed: VersionRange
+        ) -> list[VersionCandidate]:
+            return self.order_candidates(package, allowed, self.choices(package))
+
+    catalogue = Wheels()
+    root = Requirement("app")
+    approved = Requirement("dep==1")
+    session = PreparedResolution.from_catalogue(
+        catalogue,
+        {root.name: catalogue.full_range()},
+        tuple(req for req in (root, approved) if is_pin(req)),
+        {},
+        try_live=True,
+    )
+
+    solution = session.solve()
+
+    dep = solution.candidates["dep"]
+    assert catalogue.candidate_package(dep) == catalogue.candidate_base(dep) == "dep"
+    assert catalogue.candidate_label(dep) == "1"
+    assert catalogue.candidate_withdrawn(dep)
+    assert catalogue.range_contains(
+        dep,
+        catalogue.intersect_ranges(
+            catalogue.full_range(), approved.specifier.to_range()
+        ),
+    )
+    assert catalogue.base_candidate(dep) == dep
+    assert solution.edges == (("app", "dep"),)
+    assert solution.admission_sources["dep"] == ("input pin dep==1",)

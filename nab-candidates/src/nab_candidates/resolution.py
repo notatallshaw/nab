@@ -15,7 +15,7 @@ from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver
 from nab_resolver.result import IncompleteSelectionError, walk_selected
 
-from .._compat import override
+from ._compat import override
 from .provider import MetadataProxy, Package, PreferenceProvider
 
 if TYPE_CHECKING:

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import dataclasses
-from reprlib import recursive_repr
 from typing import TYPE_CHECKING, ClassVar, TypeVar, overload
+
+from nab_candidates.records import HashableRecord, Record, record_fields
 
 from ._compat import override
 
@@ -53,58 +54,6 @@ def factory_value(
     return value
 
 
-class Record:  # noqa: PLW1641 - Mutable records are intentionally unhashable.
-    """A value whose constructor and field names are written by its owner."""
-
-    __slots__ = ()
-    __record_fields__: ClassVar[tuple[str, ...] | None] = None
-    __match_args__: ClassVar[tuple[str, ...]] = ()
-    __record_compare_fields__: ClassVar[tuple[str, ...] | None] = None
-    __record_repr_fields__: ClassVar[tuple[str, ...] | None] = None
-    __record_init_fields__: ClassVar[tuple[str, ...] | None] = None
-
-    def _comparison_values(self) -> tuple[object, ...]:
-        """Read the fields participating in equality and hashing."""
-        names = self.__record_compare_fields__
-        if names is None:
-            names = self.__record_fields__
-            if names is None:
-                names = self.__match_args__
-
-        return tuple([getattr(self, name) for name in names])
-
-    @override
-    def __eq__(self, other: object) -> bool:
-        """Compare same-type records by their selected fields."""
-        if not isinstance(other, Record) or type(other) is not type(self):
-            return NotImplemented
-        return self._comparison_values() == other._comparison_values()
-
-    @override
-    @recursive_repr()
-    def __repr__(self) -> str:
-        """Render the record's visible fields."""
-        names = self.__record_repr_fields__
-        if names is None:
-            names = field_names(self)
-        values = ", ".join(f"{name}={getattr(self, name)!r}" for name in names)
-        return f"{type(self).__qualname__}({values})"
-
-
-class HashableRecord(Record):
-    """A record whose comparison fields support hashing.
-
-    Owners declare fixed fields with ``Final``; no runtime write guard is installed.
-    """
-
-    __slots__ = ()
-
-    @override
-    def __hash__(self) -> int:
-        """Hash the fields used by equality."""
-        return hash(self._comparison_values())
-
-
 def is_record(value: object) -> bool:
     """Recognize explicit records and standard dataclass instances or types."""
     return (
@@ -119,11 +68,7 @@ def field_names(value: object) -> tuple[str, ...]:
     if isinstance(value, Record) or (
         isinstance(value, type) and issubclass(value, Record)
     ):
-        return (
-            value.__match_args__
-            if value.__record_fields__ is None
-            else value.__record_fields__
-        )
+        return record_fields(value)
     if dataclasses.is_dataclass(value):
         return tuple(field.name for field in dataclasses.fields(value))
     msg = "expected a record type or instance"

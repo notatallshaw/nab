@@ -1,6 +1,6 @@
 # Releasing
 
-All six packages release together at one version (lockstep).
+The workspace distributions release together at one version (lockstep).
 
 ## Cut a release
 
@@ -20,11 +20,14 @@ All six packages release together at one version (lockstep).
 3. Merge it with a merge commit, not a squash, so the `0.0.3` commit and the tag stay in history.
 
 4. Draft a GitHub release for the `v0.0.3` tag, click "Generate release notes", and publish it. That
-   triggers the release workflow, which builds and validates all six packages and publishes them to
-   PyPI via trusted publishing. Approve the `pypi` deployment in the Actions tab when prompted.
+   triggers the release workflow, which builds and validates all workspace distributions and
+   publishes them to PyPI via trusted publishing. Approve the `pypi` deployment in the Actions tab
+   when prompted.
 
 ## Notes
 
+- Before its first release, configure the PyPI trusted publisher for `nab-candidates` with the same
+  repository, release workflow and `pypi` environment as the other distributions.
 - Prereleases work: `hatch run release:make 0.0.3rc1`.
 - The changelog is the generated GitHub release notes (a list of merged PRs).
 - The workflow runs `tasks/release.py check` and `tasks/build_dists.py`, and installs the release

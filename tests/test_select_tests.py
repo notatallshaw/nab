@@ -37,6 +37,11 @@ assert GIT is not None
             "nab-provider/src/nab_provider/ranges.py",
             ["provider", "project", "umbrella"],
         ),
+        (
+            "nab-candidates/src/nab_candidates/resolution.py",
+            ["candidates", "provider", "project", "umbrella"],
+        ),
+        ("nab-candidates/tests/test_preference_core.py", ["candidates"]),
         ("nab-index/src/nab_index/client.py", ["project", "umbrella"]),
         (
             "nab-project/tests/property_python/test_alignment.py",

@@ -5,6 +5,12 @@ from __future__ import annotations
 import subprocess
 import sys
 
+import pytest
+
+from nab_candidates.preference import IncompletePreferenceError, PreferenceScope
+from nab_provider.preference import IncompletePreferenceError as LegacyError
+from nab_provider.preference import PreferenceScope as LegacyScope
+
 _PROBE = """
 import sys
 
@@ -81,3 +87,13 @@ assert callable(PreferenceSearch.run)
     subprocess.run(  # noqa: S603 - fixed interpreter and import probe
         [sys.executable, "-c", probe], check=True
     )
+
+
+def test_released_preference_imports_share_canonical_keys_and_errors() -> None:
+    scopes = {LegacyScope(live=frozenset({"dep"})): "already checked"}
+    assert scopes[PreferenceScope(live=frozenset({"dep"}))] == "already checked"
+
+    failure = IncompletePreferenceError("unavailable metadata")
+    with pytest.raises(LegacyError) as caught:
+        raise failure
+    assert caught.value is failure

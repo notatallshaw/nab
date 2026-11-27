@@ -28,9 +28,10 @@ command-line = [
     "lock",
     "--output",
     ".github/requirements/native-locks/pylock.uv.toml",
+    "--lock-policy",
+    "prefer-existing",
     "--plan",
     "uv",
-    "--upgrade",
 ]
 input-path = "pyproject.toml"
 mode = "specific"
@@ -41,6 +42,6 @@ package-metadata-overrides = [
 
 [tool.nab.validation]
 version = 1
-all-inputs-sha256 = "8509ebf4014b1e4fabdaaa7211c9049bdc8624750d4e022d2873683eacc43ea7"
-selection-inputs-sha256 = "a887ef38ae1cecb75e557a0e8a6be09e36a6fe3fa848db20383f38c7399076fa"
+all-inputs-sha256 = "ebfb6b0bf53025e29ad4eeb2d11877935e73128cb449e81eff2fda91c7395538"
+selection-inputs-sha256 = "d4359d8835c933ba1d3f51c05750dfd607bd77843030026a293475959b232a2f"
 contents-sha256 = "55d93fa572d8356d8efb8a5964168e91b2515be42b78b1dc781b53abc0cd09d8"

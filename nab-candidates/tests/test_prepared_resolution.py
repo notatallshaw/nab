@@ -2,21 +2,21 @@ from collections.abc import Mapping
 
 import pytest
 
-from nab_provider.catalogue.provider import (
+from nab_candidates.preference import (
+    IncompletePreferenceError,
+    PreferenceScope,
+)
+from nab_candidates.provider import (
     CataloguePreference,
     MetadataProxy,
     PermissionProxy,
     PreferenceProvider,
 )
-from nab_provider.catalogue.resolution import (
+from nab_candidates.resolution import (
     PreparedResolution,
     _PreferredProvider,
     _PreferredTokens,
     _SelectedAdmission,
-)
-from nab_provider.preference import (
-    IncompletePreferenceError,
-    PreferenceScope,
 )
 from nab_resolver.errors import (
     ResolutionError,
@@ -25,7 +25,7 @@ from nab_resolver.errors import (
 )
 from nab_resolver.ranges import Range
 
-from .test_preference_core import Catalogue, Choice, Data, Pin
+from .catalogue_fixtures import Catalogue, Choice, Data, Pin
 
 
 class ObservedCatalogue(Catalogue):

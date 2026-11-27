@@ -18,8 +18,8 @@ from nab_resolver.resolver import BaseProvider, Resolver
 from nab_resolver.root import ROOT
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
-from .._compat import override
-from ..preference import (
+from ._compat import override
+from .preference import (
     DependencyData,
     IncompletePreferenceError,
     PreferenceCatalogue,
@@ -28,7 +28,7 @@ from ..preference import (
     PreparationStatus,
     encode_dependencies,
 )
-from ..value import HashableRecord
+from .records import HashableRecord
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence

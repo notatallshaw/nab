@@ -15,6 +15,13 @@ __lazy_modules__ = (
 
 from typing import TYPE_CHECKING
 
+from nab_candidates.provider import (
+    MetadataProxy,
+    Package,
+    PermissionProxy,
+    PreferenceProvider,
+)
+from nab_candidates.resolution import PreparedResolution
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 from nab_resolver.priority import compute_tier
 from nab_resolver.ranges import IntegerRangeMembership, Range
@@ -23,13 +30,6 @@ from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 from ._compat import override
 from ._provider.listing_diagnosis import MetadataBlock, metadata_diagnostic
-from .catalogue.provider import (
-    MetadataProxy,
-    Package,
-    PermissionProxy,
-    PreferenceProvider,
-)
-from .catalogue.resolution import PreparedResolution
 from .diagnostics import ResolutionMessage
 from .extra_keys import split_extra
 from .ranges import VersionRange, require_version_range
