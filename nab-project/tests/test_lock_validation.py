@@ -42,6 +42,7 @@ from nab_provider.requirements_file import InvalidProjectTableError
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, MatrixInclude, ResolveTarget
 from nab_provider.testing import make_metadata, make_wheel
+from nab_provider.vcs_admission import VcsConfig, VcsPolicy
 from nab_test_support.coordinator import make_coordinator
 
 
@@ -162,6 +163,23 @@ def test_input_snapshot_ignores_formatting_and_search_preferences(
     path.write_text(path.read_text().replace("Demo>=1", "Demo>=2"))
 
     assert snapshot_inputs(path, ResolveInputs(), _targets()) != first
+
+
+def test_declared_default_keeps_the_fingerprint_without_vcs_sources(
+    tmp_path: Path,
+) -> None:
+    path = _project(tmp_path)
+    targets = _targets()
+    previous = snapshot_inputs(
+        path, ResolveInputs(vcs=VcsConfig(policy=VcsPolicy.BLOCK)), targets
+    )
+    declared = snapshot_inputs(path, ResolveInputs(), targets)
+    allowed = snapshot_inputs(
+        path, ResolveInputs(vcs=VcsConfig(policy=VcsPolicy.ALLOW)), targets
+    )
+
+    assert declared == previous
+    assert allowed["policy-sha256"] != declared["policy-sha256"]
 
 
 @pytest.mark.parametrize(

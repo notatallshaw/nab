@@ -102,9 +102,8 @@ def index_vcs_sources(
     local source.  ``VcsPolicy.BLOCK`` still refuses any declaration up-front:
     whether VCS fetching is permitted at all is a separate decision.
 
-    Each URL is passed through :func:`admit_vcs_url` so the scheme, repo, and
-    pin allowlists apply to ``[[tool.nab.vcs-sources]]`` just like project-root
-    direct-URL requirements.
+    Each declaration can admit its own URL in declared mode. Explicit
+    allowlists still apply in allow mode.
     """
     if not sources:
         return {}
@@ -112,20 +111,18 @@ def index_vcs_sources(
     if provider.vcs_config.policy is VcsPolicy.BLOCK:
         report = DiagnosticMessage(
             (
-                "vcs_sources require VcsPolicy.ALLOW; current policy is "
+                "vcs_sources require VcsPolicy.DECLARED or ALLOW; current policy is "
                 f"{provider.vcs_config.policy.value}"
             ),
             suggestions=(
-                Suggestion(
-                    "set vcs_config to a permissive VcsConfig before declaring sources."
-                ),
+                Suggestion("set vcs_config to VcsConfig(policy=VcsPolicy.DECLARED)"),
             ),
         )
         raise ValueError(report)
 
     sources_by_name: dict[str, VcsSource] = {}
     for source in sources:
-        admit_vcs_url(source.url, provider.vcs_config)
+        admit_vcs_url(source.url, provider.vcs_config, declared=True)
 
         canonical = canonicalize_name(source.name)
         if canonical in sources_by_name or canonical in provider.local_sources:

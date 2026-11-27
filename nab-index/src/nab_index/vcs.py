@@ -1,28 +1,28 @@
-"""Shallow VCS clone helper for nab-index.
+"""Materialize pinned VCS source trees.
 
 Lands one commit under the cache root with ``git init``,
-``git fetch --depth 1`` and ``git checkout FETCH_HEAD``.  URL admission
+``git fetch --depth 1`` and ``git checkout FETCH_HEAD``. Mercurial pulls a
+specific changeset and its ancestors. URL admission
 lives upstream in :func:`nab_provider.vcs_admission.admit_vcs_url`.
 
 Cache layout under ``cache_root / "vcs"``:
 
     <repo-key>/<commit-sha>/
 
-``repo-key`` is the 16-char prefix of a SHA-256 over
-``VcsRequest.repo_url``: the requirement URL without its ``git+``
-prefix, ``@<ref>`` suffix and ``#`` fragment.  Nothing canonicalises
-what is left, so two URL forms for one repo get two cache entries.
+``repo-key`` is the first 16 hexadecimal characters of a SHA-256 over
+the repository URL. Mercurial includes the ``hg+`` prefix in that key
+so the backends have separate cache entries for the same URL.
 
-``commit-sha`` is always a concrete 40-char hash; floating refs are
-resolved via ``git ls-remote`` before the fetch runs.  A finished clone
-carries a ``.git/nab-complete`` marker file; a tree without it is
-discarded and refetched.
+``commit-sha`` is a concrete 40-character hash. Git resolves floating
+refs via ``git ls-remote`` before fetching. The completion marker lives
+in the backend's repository directory.
 """
 
 from __future__ import annotations
 
 __lazy_modules__ = (
     "hashlib",
+    "nab_index._mercurial",
     "nab_provider.vcs_request",
     "os",
     "pathlib",
@@ -39,6 +39,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from nab_provider.vcs_request import (
@@ -46,7 +47,14 @@ from nab_provider.vcs_request import (
     VcsClone,
     VcsCloneError,
     VcsRequest,
+    is_mercurial_node,
+    mercurial_transport,
 )
+
+from . import _mercurial
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 __all__ = [
     "FULL_GIT_SHA_RE",
@@ -113,15 +121,13 @@ def prepare_clone(
     require_pin: bool,
     offline: bool = False,
 ) -> VcsClone:
-    """Resolve ``request.ref`` to a SHA and ensure a clone exists at it.
+    """Resolve ``request.ref`` to a full node and ensure a checkout exists.
 
-    When ``require_pin`` is True and the ref is not already a 40-char
-    SHA, raises :class:`VcsCloneError` rather than fetching a floating
-    ref.  When False, the helper consults ``git ls-remote`` to resolve
-    the named ref to a SHA, then performs a shallow clone of that
-    commit.
+    Mercurial always requires a complete changeset ID. For Git,
+    ``require_pin=False`` permits resolving a floating ref with
+    ``git ls-remote`` before a shallow fetch.
 
-    ``offline`` withholds every git call that would reach the remote: a
+    ``offline`` withholds every call that would reach the remote: a
     complete cached clone is still served; anything else raises
     :class:`VcsCloneError`.  A ``file://`` repo is read through the
     filesystem rather than the network, so it still clones.
@@ -132,16 +138,55 @@ def prepare_clone(
     a concurrent or interrupted run never leaves a partial tree at the
     cache path.
     """
+    if request.scheme == "hg":
+        transport = mercurial_transport(request.repo_url)
+        if not is_mercurial_node(request.ref):
+            msg = "Mercurial sources require a full 40-character changeset ID"
+            raise VcsCloneError(msg)
+        return _prepare_at_node(
+            cache_root,
+            request,
+            request.ref.lower(),
+            repo_key=_repo_key(f"hg+{request.repo_url}"),
+            complete=_mercurial.clone_complete,
+            checkout=_mercurial.checkout,
+            may_reach_remote=not offline or transport == "file",
+        )
+
+    if request.scheme != "git":
+        msg = f"unknown VCS backend {request.scheme!r}"
+        raise VcsCloneError(msg)
+
     may_reach_remote = not offline or _is_local_repo(request.repo_url)
     sha = _resolve_sha(
         request, require_pin=require_pin, may_reach_remote=may_reach_remote
     )
+    return _prepare_at_node(
+        cache_root,
+        request,
+        sha,
+        repo_key=_repo_key(request.repo_url),
+        complete=_clone_complete,
+        checkout=_shallow_clone,
+        may_reach_remote=may_reach_remote,
+    )
 
-    dest = cache_root / "vcs" / _repo_key(request.repo_url) / sha
 
+def _prepare_at_node(
+    cache_root: Path,
+    request: VcsRequest,
+    sha: str,
+    *,
+    repo_key: str,
+    complete: Callable[[Path], bool],
+    checkout: Callable[[str, str, Path], None],
+    may_reach_remote: bool,
+) -> VcsClone:
+    """Open a completed checkout or publish a verified temporary tree."""
+    dest = cache_root / "vcs" / repo_key / sha
     # The presence check stats the cache path, so it sits inside the guard too.
     try:
-        if _clone_complete(dest):
+        if complete(dest):
             return VcsClone(
                 path=dest,
                 commit_sha=sha,
@@ -153,7 +198,7 @@ def prepare_clone(
             raise VcsCloneError(msg)
 
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if dest.exists() and not _clone_complete(dest):
+        if dest.exists() and not complete(dest):
             # A concurrent run may have completed dest since the top check;
             # only wipe a partial.
             shutil.rmtree(dest)
@@ -164,12 +209,12 @@ def prepare_clone(
         raise VcsCloneError(msg) from exc
 
     try:
-        _shallow_clone(request.repo_url, sha, tmp)
+        checkout(request.repo_url, sha, tmp)
         try:
             tmp.rename(dest)
         except OSError as exc:
             # A concurrent run renamed its own finished clone first: use it.
-            if not _clone_complete(dest):
+            if not complete(dest):
                 msg = (
                     f"clone of {request.repo_url} @ {sha} could not be"
                     f" moved into place: {exc}"
@@ -203,7 +248,7 @@ def _resolve_sha(
     ``may_reach_remote=False`` refuses: no cache holds a ref-to-SHA
     mapping.
     """
-    if request.ref and FULL_GIT_SHA_RE.match(request.ref):
+    if FULL_GIT_SHA_RE.fullmatch(request.ref):
         return request.ref.lower()
 
     if require_pin:

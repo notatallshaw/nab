@@ -75,9 +75,8 @@ during locking.
   enable `assume-universal-deps` and allow the build. Host-specific locking allows local builds by
   default. You can limit remote build permission to one package or index. See
   [build policy](https://nab.readthedocs.io/en/stable/reference/build-policy.html).
-- Git sources are blocked until you allow them. Opting in requires allowed schemes and repository
-  prefixes, with full commit pins required by default. See
-  [Git sources](https://nab.readthedocs.io/en/stable/how-to/vcs.html).
+- Git and Mercurial declarations permit the source they name. See
+  [VCS sources](https://nab.readthedocs.io/en/stable/how-to/vcs.html).
 - Direct archive sources require a hash, verified before reading metadata. See
   [archive sources](https://nab.readthedocs.io/en/stable/how-to/archive-sources.html).
 
@@ -102,7 +101,7 @@ By default, Nab checks dependencies and artifact compatibility for every environ
 
 Use [requirements and markers](https://nab.readthedocs.io/en/stable/how-to/choose-dependencies.html)
 to select dependencies by environment, and extras or groups for optional sets. Nab also supports
-scoped policies and metadata overrides, multiple indexes, workspaces, pinned Git sources and hashed
+scoped policies and metadata overrides, multiple indexes, workspaces, pinned VCS sources and hashed
 archives. [Browse the guides](https://nab.readthedocs.io/en/stable/how-to/index.html) for these
 workflows.
 

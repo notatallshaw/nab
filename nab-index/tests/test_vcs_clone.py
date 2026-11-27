@@ -63,8 +63,9 @@ class TestResolveSha:
         req = VcsRequest("git", "https://x", sha, "")
         assert _resolve_sha(req, require_pin=True) == sha
 
-    def test_floating_under_pin_raises(self) -> None:
-        req = VcsRequest("git", "https://x", "main", "")
+    @pytest.mark.parametrize("ref", ["main", "a" * 40 + "\n"])
+    def test_floating_under_pin_raises(self, ref: str) -> None:
+        req = VcsRequest("git", "https://x", ref, "")
         with pytest.raises(VcsCloneError, match=r"vcs\.require-pin"):
             _resolve_sha(req, require_pin=True)
 

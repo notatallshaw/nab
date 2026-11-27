@@ -3307,10 +3307,10 @@ class TestVcs:
         assert vcs.allowed_repos == ("github.com/me/x",)
         assert vcs.require_pin is False
 
-    def test_default_block(self, tmp_path: Path) -> None:
+    def test_default_declared(self, tmp_path: Path) -> None:
         path = write(tmp_path, "[tool.nab.vcs]\n")
         vcs = read_pyproject_config(path).vcs
-        assert vcs.policy is VcsPolicy.BLOCK
+        assert vcs.policy is VcsPolicy.DECLARED
         assert vcs.require_pin is True
 
     def test_must_be_table(self, tmp_path: Path) -> None:
@@ -3581,10 +3581,13 @@ class TestVcsSources:
     def test_declared_under_block_policy_rejected(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
+            '[tool.nab.vcs]\npolicy = "block"\n'
             '[[tool.nab.vcs-sources]]\nname = "pkg"\n'
             'url = "git+https://github.com/org/pkg.git@abc"\n',
         )
-        with pytest.raises(ConfigError, match=r'\[tool\.nab\.vcs\]\.policy = "allow"'):
+        with pytest.raises(
+            ConfigError, match=r'\[tool\.nab\.vcs\]\.policy = "declared"'
+        ):
             read_pyproject_config(path)
 
     def test_nab_toml_sources_under_block_named_at_top_level(
@@ -3597,14 +3600,14 @@ class TestVcsSources:
             '[[vcs-sources]]\nname = "pkg"\n'
             'url = "git+https://github.com/org/pkg.git@abc"\n'
         )
-        nab_toml.write_text(sources, encoding="utf-8")
+        nab_toml.write_text(sources + '[vcs]\npolicy = "block"\n', encoding="utf-8")
 
         with pytest.raises(ConfigError) as excinfo:
             read_pyproject_config(path, discover_workspace=False)
 
         message = str(excinfo.value)
         assert "[[vcs-sources]] is declared" in message
-        assert '[vcs].policy = "allow"' in message
+        assert '[vcs].policy = "declared"' in message
         assert "tool.nab" not in message
 
         nab_toml.write_text(sources + '[vcs]\npolicy = "allow"\n', encoding="utf-8")
@@ -3632,7 +3635,7 @@ class TestVcsSources:
 
         message = str(excinfo.value)
         assert "[[vcs-sources]] is declared" in message
-        assert '[tool.nab.vcs].policy = "allow"' in message
+        assert '[tool.nab.vcs].policy = "declared"' in message
 
         write(tmp_path, pyproject + '"allow"\n')
         config = read_pyproject_config(path, discover_workspace=False)

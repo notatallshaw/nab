@@ -32,7 +32,7 @@ from nab_provider.requirements_file import (
     require_string_list,
 )
 from nab_provider.serialization import SimpleSerialization
-from nab_provider.value import Record, SlottedValue, field_names
+from nab_provider.value import Record, SlottedValue, field_names, replace
 from nab_provider.vcs_admission import VcsPolicy
 
 from . import toml_io
@@ -353,6 +353,10 @@ def snapshot_inputs(  # noqa: PLR0913 - independently selectable project inputs 
         for name in inputs.__match_args__
         if name not in _PREFERENCES
     }
+    # Without declarations, both policies refuse every VCS URL.
+    if inputs.vcs.policy is VcsPolicy.DECLARED and not inputs.vcs_sources:
+        policy["vcs"] = replace(inputs.vcs, policy=VcsPolicy.BLOCK)
+
     local: dict[str, Any] = {}
     for source in inputs.local_sources:
         directory = Path(source.path)

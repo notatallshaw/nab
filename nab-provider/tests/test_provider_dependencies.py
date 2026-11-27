@@ -100,10 +100,10 @@ class TestTransitiveDirectUrlDep:
         with pytest.raises(UnsupportedVcsError, match="not a recognized VCS scheme"):
             provider.get_dependencies("foo", V("1.0"))
 
-    def test_vcs_url_dep_blocked_by_default(self) -> None:
-        """A VCS dep is refused under the default BLOCK policy."""
+    def test_vcs_url_dep_refused_by_declared_policy(self) -> None:
+        """Dependency metadata cannot select its own VCS source."""
         provider = self._provider_for("git+https://example.com/bar.git@" + "a" * 40)
-        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "declared"'):
             provider.get_dependencies("foo", V("1.0"))
 
     def test_admitted_vcs_url_dep_raises_not_implemented(self) -> None:
@@ -188,12 +188,12 @@ class TestTransitiveDirectUrlDep:
             provider.get_dependencies("foo[uvloop]", V("1.0"))
 
     def test_selected_extra_vcs_url_dep_is_refused(self) -> None:
-        """Selecting the extra fires the deferred VCS refusal under BLOCK."""
+        """Selecting the extra fires the deferred VCS refusal."""
         provider = self._provider_with_extra_url(
             "git+https://example.com/bar.git@" + "a" * 40
         )
         provider.get_dependencies("foo", V("1.0"))
-        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "declared"'):
             provider.get_dependencies("foo[uvloop]", V("1.0"))
 
     def test_selected_extra_admitted_vcs_url_raises_not_implemented(self) -> None:

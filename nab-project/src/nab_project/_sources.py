@@ -227,7 +227,17 @@ def _materialize_vcs(
 
     # The cache dir can be relative, and a file URI needs an absolute path.
     root = clone.path.resolve()
-    path = root / clone.subdirectory if clone.subdirectory else root
+    path = root
+    if clone.subdirectory:
+        try:
+            path = (root / clone.subdirectory).resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            msg = f"{source.descriptor}: cannot resolve the source subdirectory"
+            raise UnsupportedSdistError(msg) from exc
+        if not path.is_relative_to(root):
+            msg = f"{source.descriptor}: source subdirectory leaves the checkout"
+            raise UnsupportedSdistError(msg)
+
     metadata = extract_source_metadata(
         path,
         descriptor=source.descriptor,

@@ -1463,15 +1463,8 @@ def _reject_vcs_sources_under_block(
     if not sources or config.policy is not VcsPolicy.BLOCK:
         return
 
-    # The default policy sits in no file, so its repair goes in the one that
-    # declared the sources.
-    policy_kind = (
-        vcs_sources.origin.kind
-        if vcs.origin.kind is SourceKind.DEFAULT
-        else vcs.origin.kind
-    )
     sources_table = project_key_path("vcs-sources", vcs_sources.origin.kind)
-    vcs_table = project_key_path("vcs", policy_kind)
+    vcs_table = project_key_path("vcs", vcs.origin.kind)
     policy_tables = [
         project_key_path("vcs", origin.kind)
         for origin, _value in vcs.stack
@@ -1483,7 +1476,7 @@ def _reject_vcs_sources_under_block(
         )
     ] or [vcs_table]
     policy_repair = " and ".join(
-        f'[{table}].policy = "allow"' for table in policy_tables
+        f'[{table}].policy = "declared"' for table in policy_tables
     )
 
     report = DiagnosticMessage(
@@ -1491,13 +1484,7 @@ def _reject_vcs_sources_under_block(
             f"[[{sources_table}]] is declared but [{vcs_table}].policy is "
             f"{config.policy.value!r}, which refuses every clone"
         ),
-        suggestions=(
-            Suggestion(
-                f"remove the sources, or set {policy_repair} and "
-                "configure the remaining VCS filters (vcs.allowed-schemes and "
-                "vcs.allowed-repos are empty by default and each denies every URL)"
-            ),
-        ),
+        suggestions=(Suggestion(f"remove the sources or set {policy_repair}"),),
     )
     raise ConfigError(report)
 

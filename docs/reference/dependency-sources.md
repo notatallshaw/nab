@@ -2,8 +2,8 @@
 
 ## VCS policy
 
-`[tool.nab.vcs]` controls whether nab clones a VCS URL. It blocks cloning by default. The form that
-resolves is a `[[tool.nab.vcs-sources]]` entry, described under "Pinned VCS sources" below.
+`[tool.nab.vcs]` controls whether nab clones a VCS URL. The default `"declared"` policy permits the
+exact source selected by a `[[tool.nab.vcs-sources]]` entry.
 
 A direct-URL requirement (`pkg @ git+https://...`) at the project root or in a dependency's metadata
 must pass the same policy checks. Even when the URL is allowed, nab cannot resolve it in that form.
@@ -13,7 +13,7 @@ resolve never requests, never reaches those checks. See [Add a VCS dependency](.
 
 ```toml
 [tool.nab.vcs]
-policy = "block"                # "block" | "allow"
+policy = "declared"             # "declared" | "block" | "allow"
 allowed-schemes = ["git+https"]
 allowed-repos = ["https://github.com/me/x"]
 require-pin = true
@@ -40,14 +40,12 @@ metadata requirements.
 
 ## Pinned VCS sources
 
-`[[tool.nab.vcs-sources]]` pins a package to a VCS URL. Declaring one while `vcs.policy` is left at
-its default `block` is a contradiction and is rejected when the config is read, before any resolve
-starts.
+`[[tool.nab.vcs-sources]]` pins a package to a VCS URL. An explicit `vcs.policy = "block"` refuses
+both new clones and cached checkouts.
 
-Each URL must satisfy the same `[tool.nab.vcs]` policy as a direct-URL requirement. Beyond
-`vcs.policy = "allow"`, its scheme must be in `vcs.allowed-schemes`, its repository in
-`vcs.allowed-repos`, and it must pin a 40-char commit hash unless `vcs.require-pin = false`. Both
-allow lists are empty by default, so each denies every URL until configured.
+With `vcs.policy = "allow"`, the scheme must be in `vcs.allowed-schemes` and the repository in
+`vcs.allowed-repos`. Pins take a full 40-character hexadecimal commit or changeset ID. Git permits
+floating revisions with `vcs.require-pin = false`. Both allowlists are empty by default.
 
 Reading static metadata works at any `build-policy`. If that metadata is missing or dynamic, nab
 needs `build-policy = "build-remote"` to invoke the clone's backend; see

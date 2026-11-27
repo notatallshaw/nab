@@ -1549,7 +1549,7 @@ def parse_vcs(value: object, where: str) -> VcsConfig:
         msg = f"{where} has unknown keys: {unknown!r}; expected {allowed!r}"
         raise SourceConfigError(msg)
     policy = parse_enum(
-        value.get("policy"), f"{where}.policy", VcsPolicy, VcsPolicy.BLOCK
+        value.get("policy"), f"{where}.policy", VcsPolicy, VcsPolicy.DECLARED
     )
     allowed_schemes = parse_string_list(
         value.get("allowed-schemes", []), f"{where}.allowed-schemes"
