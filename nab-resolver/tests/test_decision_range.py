@@ -38,7 +38,8 @@ def test_decision_constructs_one_singleton(
     result = resolver.resolve({"foo": range_type.full()})
 
     assert result == ({"foo": 2, "bar": 1} if dependency == "bar" else {"foo": 2})
-    # Root construction uses version 0; only foo's decision uses version 2.
+    # The virtual root and foo each construct their own singleton.
+    assert constructions.count(0) == 1
     assert constructions.count(2) == 1
 
 

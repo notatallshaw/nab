@@ -61,8 +61,7 @@ class Profile(NamedTuple):
     equality_calls: int
 
 
-# Dependency clauses reuse the decision's singleton, including its cached hash,
-# rather than hashing and comparing a second, equal range.
+# Root and dependency clauses reuse their decision's singleton and cached hash.
 SUITE_PROFILE = {
     "wrong-package-backtracking": Profile(
         rounds=40,
@@ -71,8 +70,8 @@ SUITE_PROFILE = {
         membership_tests=363,
         intervals_seen=755,
         largest_range=8,
-        hash_misses=48,
-        equality_calls=145,
+        hash_misses=47,
+        equality_calls=144,
     ),
     "conflict-free-fanout": Profile(
         rounds=8,
@@ -81,8 +80,8 @@ SUITE_PROFILE = {
         membership_tests=308,
         intervals_seen=308,
         largest_range=1,
-        hash_misses=4,
-        equality_calls=22,
+        hash_misses=3,
+        equality_calls=21,
     ),
     "satisfied-ceiling-fanin": Profile(
         rounds=10,
@@ -91,8 +90,8 @@ SUITE_PROFILE = {
         membership_tests=235,
         intervals_seen=1300,
         largest_range=6,
-        hash_misses=11,
-        equality_calls=45,
+        hash_misses=10,
+        equality_calls=44,
     ),
 }
 
