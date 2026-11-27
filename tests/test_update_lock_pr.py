@@ -73,13 +73,20 @@ def test_only_refresh_provenance_is_ignored(task: ModuleType) -> None:
     assert task.same_lock(LOCK, after)
 
 
-@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize(
+    ("existing", "changed_path"),
+    [
+        (False, "pylock.dev.toml"),
+        (True, ".github/requirements/native-locks/pylock.poetry.toml"),
+    ],
+)
 @pytest.mark.parametrize("failure", [None, "lookup", "commit", "verification", "push"])
 def test_publication_handles_existing_prs_and_external_failures(
     tmp_path: Path,
     task: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
     existing: bool,
+    changed_path: str,
     failure: str | None,
 ) -> None:
     calls = []
@@ -87,7 +94,7 @@ def test_publication_handles_existing_prs_and_external_failures(
     for name in task.LOCKS:
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(changed if name == "pylock.dev.toml" else LOCK)
+        path.write_bytes(changed if name == changed_path else LOCK)
 
     def invoke(
         command: tuple[str, ...],
@@ -117,7 +124,7 @@ def test_publication_handles_existing_prs_and_external_failures(
             assert request["expectedHeadOid"] == "base-head"
             assert request["fileChanges"]["additions"] == [
                 {
-                    "path": "pylock.dev.toml",
+                    "path": changed_path,
                     "contents": base64.b64encode(changed).decode(),
                 }
             ]

@@ -16,6 +16,9 @@ def install(destination: Path) -> None:
     for tool in ("pdm", "poetry", "uv"):
         environment = destination / tool
         venv.EnvBuilder(symlinks=os.name != "nt").create(environment)
+
+        # The runner's pip can read pylock even when the new environment has no pip.
+        lockfile = LOCKS / f"pylock.{tool}.toml"
         subprocess.run(
             [
                 sys.executable,
@@ -25,7 +28,7 @@ def install(destination: Path) -> None:
                 str(environment),
                 "install",
                 "-r",
-                str(LOCKS / f"pylock.{tool}.toml"),
+                str(lockfile),
             ],
             check=True,
         )

@@ -21,12 +21,13 @@ def _consumer(name: str) -> Path:
     location = os.environ.get("LOCKFILE_CONSUMER_ENVS")
     if not location:
         pytest.skip("set LOCKFILE_CONSUMER_ENVS to run native lockfile tests")
-    return (
-        Path(location).resolve()
-        / name
-        / ("Scripts" if os.name == "nt" else "bin")
-        / (name + ".exe" if os.name == "nt" else name)
-    )
+
+    # Resolve before the consumer changes into its temporary project.
+    environment = Path(location).resolve() / name
+    if os.name == "nt":
+        return environment / "Scripts" / f"{name}.exe"
+
+    return environment / "bin" / name
 
 
 @pytest.fixture
@@ -217,9 +218,7 @@ def test_uv_selects_each_conflicting_extra(
 def test_uv_installs_dependencies_of_omitted_workspace_members(
     native_project: Path, format_name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    uv = shutil.which(format_name)
-    if uv is None:
-        pytest.skip("requires the uv consumer executable")
+    uv = _consumer(format_name)
 
     project = native_project.parent
     member = project / "member"

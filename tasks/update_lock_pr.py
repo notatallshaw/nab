@@ -29,7 +29,7 @@ LOCKS = (
     ".github/requirements/native-locks/pylock.uv.toml",
 )
 BRANCH = "ci/update-locks"
-TITLE = "Update development, build and lockfile consumer dependencies"
+TITLE = "ci: refresh development, build and consumer locks"
 BODY = "Refresh the dependency locks with the seven-day upload cutoff."
 COMMIT = """mutation($input: CreateCommitOnBranchInput!) {
   createCommitOnBranch(input: $input) { commit { oid } }
