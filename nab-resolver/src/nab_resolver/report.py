@@ -118,23 +118,28 @@ def _narrow_positive(
     """Return ``term`` with a narrowed constraint when originally positive."""
     if not term.is_positive():
         return term
-    return Term(term.package, narrow(term.package, term.constraint), positive=True)
+
+    constraint = narrow(term.package, term.constraint)
+    if constraint is term.constraint:
+        return term
+    return Term(term.package, constraint, positive=True)
 
 
 def _shown_terms(
     incompatibility: Incompatibility[PackageType, VersionType],
     narrow: _NarrowRange[PackageType, VersionType],
+    changed: set[PackageType],
 ) -> dict[PackageType, Term[PackageType, VersionType]]:
-    """Return the terms of ``incompatibility`` as its line renders them.
-
-    The comparison runs on exactly what the reader sees, so a requirement is
-    read as printed, un-narrowed, the way the line states it.
-    """
-    if incompatibility.cause is IncompatibilityCause.NO_VERSIONS:
-        return {term.package: term for term in incompatibility.terms}
-    return {
-        term.package: _narrow_positive(term, narrow) for term in incompatibility.terms
-    }
+    """Index the displayed terms and record which packages were narrowed."""
+    shown = {}
+    for term in incompatibility.terms:
+        displayed = term
+        if incompatibility.cause is not IncompatibilityCause.NO_VERSIONS:
+            displayed = _narrow_positive(term, narrow)
+            if displayed is not term:
+                changed.add(term.package)
+        shown[term.package] = displayed
+    return shown
 
 
 def _satisfying(
@@ -222,15 +227,23 @@ def _narrowed_away(
     ):
         return []
 
+    changed: set[PackageType] = set()
+    shown_left = _shown_terms(left, narrow, changed)
+    shown_right = _shown_terms(right, narrow, changed)
+    shown_node = _shown_terms(incompatibility, narrow, changed)
+    if not changed:
+        return []
+
     raw_left = {term.package: term for term in left.terms}
     raw_right = {term.package: term for term in right.terms}
     raw_node = {term.package: term for term in incompatibility.terms}
-    shown_left = _shown_terms(left, narrow)
-    shown_right = _shown_terms(right, narrow)
-    shown_node = _shown_terms(incompatibility, narrow)
 
     found: list[tuple[PackageType, RangeProtocol[VersionType]]] = []
     for package in {**raw_left, **raw_right}:
+        # Identical inputs give the same shortfall before and after narrowing.
+        if package not in changed:
+            continue
+
         raw_gap = _shortfall(
             raw_node.get(package), raw_left.get(package), raw_right.get(package)
         )

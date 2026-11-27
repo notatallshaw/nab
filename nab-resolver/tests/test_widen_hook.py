@@ -516,6 +516,27 @@ class TestUnstatedVersions:
             incompatibility, narrow=provider.narrow_for_display
         ) == format_error(incompatibility)
 
+    def test_narrowing_does_not_explain_a_gap_already_in_the_proof(self) -> None:
+        cause: Incompatibility[str, int] = Incompatibility(
+            [Term("a", Range.at_least(2))],
+            cause=IncompatibilityCause.DEPENDENCY,
+            dependency_range=Range.less_than(2),
+        )
+        conclusion: Incompatibility[str, int] = Incompatibility(
+            [Term("a", Range.at_least(1))],
+            cause=IncompatibilityCause.DERIVED,
+            cause_left=cause,
+            cause_right=cause,
+        )
+
+        def narrow(_package: str, constraint: RangeProtocol[int]) -> RangeProtocol[int]:
+            return constraint & Range.at_most(3)
+
+        message = format_error(conclusion, narrow=narrow)
+
+        assert "no versions" not in message
+        assert message.endswith("so a [1, 3]")
+
     def test_states_nothing_for_a_derivation_without_causes(self) -> None:
         clause = Incompatibility(
             [Term("a", Range.at_least(2), positive=True)],
