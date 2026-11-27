@@ -12,7 +12,9 @@ Choose the file type with `--format`:
 - `--format pdm` writes `pdm.lock` for `pdm sync`. Pass the same groups and extras to nab that you
   want available to PDM.
 - `--format poetry` writes `poetry.lock` for `poetry sync`. Configure custom package indexes in both
-  nab and Poetry when Poetry needs to choose between distribution files.
+  nab and Poetry when Poetry needs to choose between distribution files. Poetry builds source
+  archives from their root. For a package in an archive subdirectory, use PDM or publish an archive
+  rooted at the package.
 - `--format requirements` writes a pip-compatible `requirements.txt`, sorted by name. An index pin
   is `name==version` with recorded `--hash` lines; local, VCS, and archive pins render as URLs.
 - `--format requirements-without-hashes` writes the same output without separate `--hash` lines. An

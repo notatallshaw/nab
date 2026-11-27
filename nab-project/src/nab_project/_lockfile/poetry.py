@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlsplit
 
 from nab_index.atomic import atomic_write_text
+from nab_index.file_urls import is_file_url, parse_file_url
 from nab_markersets.markersets import MarkerSet
 from nab_provider.marker_holds import intractable_as_error
 from nab_provider.requirements_file import expand_extra_requirements
 from nab_provider.value import replace
 
 from .. import toml_writer
+from ..paths import relative_lock_path
 from ..pyproject_files import project_name, project_optional_dependencies
 from .native import distribution_files, file_digest, install_contexts
 from .pylock import LockValidationError, project_packages
@@ -55,7 +58,9 @@ def _content_hash(document: Mapping[str, Any]) -> str:
     return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
 
 
-def _source(package: Package, repositories: Mapping[str, str]) -> dict[str, Any]:
+def _source(
+    package: Package, repositories: Mapping[str, str], lock_dir: Path
+) -> dict[str, Any]:
     """Select the source that Poetry's installer will open for this release."""
     if package.directory is not None:
         directory = package.directory
@@ -65,7 +70,10 @@ def _source(package: Package, repositories: Mapping[str, str]) -> dict[str, Any]
     elif package.vcs is not None:
         vcs = package.vcs
         if vcs.type != "git":
-            msg = f"Poetry cannot install {package.name} from {vcs.type}"
+            msg = (
+                f"Poetry cannot install {package.name} from {vcs.type}. "
+                "Use --format pdm or a Git source."
+            )
             raise LockValidationError(msg)
         if vcs.url is None or vcs.url == "":
             msg = f"Poetry needs a Git repository URL for {package.name}"
@@ -81,11 +89,27 @@ def _source(package: Package, repositories: Mapping[str, str]) -> dict[str, Any]
         subdirectory = vcs.subdirectory
     elif package.archive is not None:
         archive = package.archive
+        if (
+            archive.subdirectory is not None
+            and PurePosixPath(archive.subdirectory).parts
+        ):
+            msg = (
+                f"Poetry builds {package.name} from the archive root and cannot select "
+                f"archive subdirectory {archive.subdirectory!r}. Use --format pdm "
+                "or publish an archive rooted at the package."
+            )
+            raise LockValidationError(msg)
+
         url = archive.url or ""
         filename = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
-        source = {"type": "url", "url": url}
-        subdirectory = archive.subdirectory
-        fields = {
+        if is_file_url(url):
+            path = relative_lock_path(parse_file_url(url), lock_dir)
+            source = {"type": "file", "url": path}
+        else:
+            source = {"type": "url", "url": url}
+
+        return {
+            "source": source,
             "files": [
                 {"file": filename, "hash": file_digest(filename, archive.hashes)}
             ],
@@ -198,7 +222,7 @@ def write_poetry_lock(
                 "description": "",
                 "python-versions": str(package.source.requires_python or "*"),
                 **_selection(package, groups, lock_input.extras),
-                **_source(package.source, repositories),
+                **_source(package.source, repositories, directory),
             }
             if package.source.dependencies is not None:
                 row["dependencies"] = {

@@ -29,9 +29,7 @@ _DIGEST = (("sha256", "ab" * 32),)
 
 
 def test_poetry_qualified_sources_and_optional_selections(tmp_path: Path) -> None:
-    archive = ArchivePin(
-        "archive", "1", "https://example.org/archive.zip", _DIGEST, subdirectory="lib"
-    )
+    archive = ArchivePin("archive", "1", "https://example.org/archive.tar.gz", _DIGEST)
     git = VcsPin(
         "gitdep",
         "1",
@@ -94,7 +92,10 @@ def test_poetry_qualified_sources_and_optional_selections(tmp_path: Path) -> Non
 
     assert packages["archive"]["optional"]
     assert packages["archive"]["markers"]["main"] == 'extra == "fast"'
-    assert packages["archive"]["source"]["subdirectory"] == "lib"
+    assert packages["archive"]["source"] == {
+        "type": "url",
+        "url": "https://example.org/archive.tar.gz",
+    }
     assert document["extras"] == {"fast": ["archive"]}
 
     assert packages["gitdep"]["source"]["resolved_reference"] == "b" * 40
@@ -108,6 +109,35 @@ def test_poetry_qualified_sources_and_optional_selections(tmp_path: Path) -> Non
     }
     assert packages["app"]["develop"]
     assert packages["app"]["dependencies"] == {"dep": "*"}
+
+
+@pytest.mark.parametrize("subdirectory", [None, "./"])
+def test_local_archive_uses_a_lock_relative_file_source(
+    tmp_path: Path, subdirectory: str | None
+) -> None:
+    archive = tmp_path / "source files" / "demo-1.tar.gz"
+    pin = ArchivePin("demo", "1", archive.as_uri(), _DIGEST, subdirectory=subdirectory)
+    target = ResolveTarget.for_host()
+    lock = LockInput(targets={target.label: TargetLock(target, {"demo": pin})})
+    output = tmp_path / "locks" / "poetry.lock"
+    output.parent.mkdir()
+
+    write_poetry_lock(lock, {}, project_dir=tmp_path, output_path=output)
+    (package,) = tomli.loads(output.read_text())["package"]
+
+    assert package["source"] == {"type": "file", "url": "../source files/demo-1.tar.gz"}
+    assert package["files"] == [{"file": archive.name, "hash": "sha256:" + "ab" * 32}]
+
+
+def test_poetry_refuses_an_archive_subdirectory(tmp_path: Path) -> None:
+    pin = ArchivePin(
+        "demo", "1", "https://example.org/demo.tar.gz", _DIGEST, subdirectory="lib"
+    )
+    target = ResolveTarget.for_host()
+    lock = LockInput(targets={target.label: TargetLock(target, {"demo": pin})})
+
+    with pytest.raises(LockValidationError, match="archive subdirectory"):
+        write_poetry_lock(lock, {}, project_dir=tmp_path)
 
 
 def test_poetry_registry_and_direct_files(tmp_path: Path) -> None:

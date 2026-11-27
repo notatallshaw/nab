@@ -20,6 +20,7 @@ __all__ = [
     "is_usable_path_name",
     "path_state",
     "realpath",
+    "relative_lock_path",
     "resolve_path",
 ]
 
@@ -114,3 +115,12 @@ def resolve_path(base: Path, entry: str) -> Path | None:
         return realpath(base / entry)
     except ValueError:
         return None
+
+
+def relative_lock_path(target: str | os.PathLike[str], base: Path) -> str:
+    """Use POSIX separators and keep an absolute path across Windows drives."""
+    try:
+        relative = os.path.relpath(target, base)
+    except ValueError:
+        relative = os.fspath(target)
+    return Path(relative).as_posix()
