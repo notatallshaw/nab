@@ -97,7 +97,7 @@ def _source(package: Package, repositories: Mapping[str, str]) -> dict[str, Any]
 def _registry_source(
     package: Package, repositories: Mapping[str, str]
 ) -> dict[str, Any]:
-    """Reference the configured Poetry repository or the only available artifact."""
+    """Select the configured Poetry repository or the only available artifact."""
     artifacts = [*(package.wheels or ()), *((package.sdist,) if package.sdist else ())]
     result: dict[str, Any] = {
         "files": [
