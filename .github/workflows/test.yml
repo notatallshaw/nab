@@ -84,6 +84,10 @@ jobs:
           python -m pip install "pip>=26.3"
           python -m pip install --group pylock.dev.toml:nox
 
+      - name: Install PDM for the lockfile integration test
+        if: matrix.os == 'ubuntu' && matrix.python == '3.14' && contains(needs.select.outputs.workspaces, 'umbrella')
+        run: pipx install pdm==2.29.7
+
       - name: Test affected workspaces on Python ${{ matrix.python }}
         run: &test-workspaces |
           read -r -a workspaces <<< "$WORKSPACES"

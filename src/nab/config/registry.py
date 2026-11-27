@@ -566,7 +566,7 @@ OPTIONS: tuple[Opt, ...] = (
         scope=Scope.USER,
         kind=Kind.VALUE,
         vtype=VType.CHOICE,
-        choices=("pylock", "requirements", "requirements-without-hashes"),
+        choices=("pylock", "pdm", "requirements", "requirements-without-hashes"),
         nullable=True,
         env=True,
         commands=("lock", "config"),
@@ -574,10 +574,10 @@ OPTIONS: tuple[Opt, ...] = (
         rdefault="pylock",
         parse=values.parse_lock_format,
         render=hooks.render_text,
-        type_label="enum(pylock|requirements|requirements-without-hashes)",
+        type_label="enum(pylock|pdm|requirements|requirements-without-hashes)",
         help=(
-            "emit pylock, requirements with index-pin hash lines, or requirements "
-            "without them"
+            "emit pylock, pdm.lock, requirements with index-pin hash lines, or "
+            "requirements without them"
         ),
         docs="reference/formats.md",
         generated=True,

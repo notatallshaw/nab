@@ -6,9 +6,11 @@ represents its targets. See the [CLI](cli.md) for the command and
 
 ## `--format`
 
-Three formats:
+Choose the file type with `--format`:
 
 - `--format pylock` (default) writes a [PEP 751] `pylock.toml`.
+- `--format pdm` writes `pdm.lock` for `pdm sync`. Pass the same groups and extras to nab that you
+  want available to PDM.
 - `--format requirements` writes a pip-compatible `requirements.txt`, sorted by name. An index pin
   is `name==version` with recorded `--hash` lines; local, VCS, and archive pins render as URLs.
 - `--format requirements-without-hashes` writes the same output without separate `--hash` lines. An
@@ -45,13 +47,16 @@ variables that distinguish them. If the templates cannot distinguish the targets
 
 ## Universal output
 
-Universal mode (`[tool.nab].mode = "universal"`) is supported for all three formats:
+Universal mode (`[tool.nab].mode = "universal"`) is supported for each format:
 
 - `pylock` produces one PEP 751 file. Pins shared by every target appear once; divergent pins use
   environment markers.
 
   A minor split at a micro boundary contributes one entry per slice. See [Lockfiles](lockfile.md)
   and [Universal resolution](../explanation/universal.md).
+
+- `pdm` records the supported targets and attaches environment markers to packages that differ
+  across them.
 
 - When either requirements format prints multiple targets together, each target's pins follow a
   `# label` header. Use an output template to create separate requirements files for pip.

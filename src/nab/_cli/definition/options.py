@@ -595,8 +595,8 @@ class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
         ),
         env=True,
         help=(
-            "emit pylock, requirements with index-pin hash lines, or requirements "
-            "without them"
+            "emit pylock, pdm.lock, requirements with index-pin hash lines, "
+            "or requirements without them"
         ),
         docs="reference/formats.md",
         on=("lock", "config"),

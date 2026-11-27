@@ -631,7 +631,7 @@ def parse_run_selection(value: object, where: str) -> tuple[str, ...]:
 
 def parse_lock_format(value: object, where: str) -> str:
     """Read the output format selected for lock generation."""
-    formats = ("pylock", "requirements", "requirements-without-hashes")
+    formats = ("pylock", "pdm", "requirements", "requirements-without-hashes")
     if not isinstance(value, str) or value not in formats:
         msg = f"{where} must be one of {formats!r}, got {value!r}"
         raise SourceConfigError(msg)

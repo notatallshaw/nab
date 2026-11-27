@@ -47,7 +47,10 @@ HELP: tuple[str, ...] = (
     "the transport index and artefact fetches go through",
     "how many fetches may be in flight at once",
     "resolve, check existing choices, or reuse a consistent saved lock",
-    "emit pylock, requirements with index-pin hash lines, or requirements without them",
+    (
+        "emit pylock, pdm.lock, requirements with index-pin hash lines, or "
+        "requirements without them"
+    ),
     "read and write the on-disk cache",
     "the dependency groups to select",
     "select every dependency group",
@@ -179,8 +182,8 @@ COMMANDS: dict[
         ("--lock-policy", "", "value", "lock_policy", "choice?",
         ("resolve", "prefer-existing", "reuse"), None, None, False, 37),
         ("--format", "", "value", "format", "choice?",
-        ("pylock", "requirements", "requirements-without-hashes"), None, None, False,
-        38),
+        ("pylock", "pdm", "requirements", "requirements-without-hashes"), None, None,
+        False, 38),
         ("--cache", "", "flag", "cache", "bool?", (), True, None, False, 39),
         ("--no-cache", "", "neg", "cache", "", (), False, None, False, 39),
         ("--groups", "", "star", "groups", "str", (), None, (), False, 40),
@@ -277,8 +280,8 @@ COMMANDS: dict[
         ("--lock-policy", "", "value", "lock_policy", "choice?",
         ("resolve", "prefer-existing", "reuse"), None, None, False, 37),
         ("--format", "", "value", "format", "choice?",
-        ("pylock", "requirements", "requirements-without-hashes"), None, None, False,
-        38),
+        ("pylock", "pdm", "requirements", "requirements-without-hashes"), None, None,
+        False, 38),
         ("--cache", "", "flag", "cache", "bool?", (), True, None, False, 39),
         ("--no-cache", "", "neg", "cache", "", (), False, None, False, 39),
         ("--plan", "", "value", "plan", "str?", (), None, None, False, 53),

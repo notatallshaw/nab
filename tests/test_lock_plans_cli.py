@@ -839,3 +839,19 @@ def test_declared_format_collision_is_checked_before_resolution(
     assert command(named, "--all-plans") == 1
     assert not named.coordinators
     assert "both write" in capsys.readouterr().err
+
+
+def test_pdm_plan_default_name_and_stdout(
+    named: Registry, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with named.project.open("a") as file:
+        file.write('format="pdm"\n')
+
+    assert command(named, "--plan", "build") == 0
+    output = named.project.with_name("build.pdm.lock")
+    document = toml_io.load_path(output)
+    assert [p["name"] for p in document["package"]] == ["b"]
+    capsys.readouterr()
+
+    assert command(named, "--plan", "build", "--output", "-") == 0
+    assert toml_io.loads(capsys.readouterr().out) == document

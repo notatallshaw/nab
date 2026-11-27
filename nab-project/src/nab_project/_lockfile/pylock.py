@@ -43,7 +43,7 @@ from datetime import datetime, timezone
 from functools import cached_property, lru_cache, reduce
 from itertools import product
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, NamedTuple, TypeAlias
 
 from packaging.markers import (
     MARKERS_REQUIRING_VERSION,
@@ -706,6 +706,45 @@ def _prepare_environment_rows(
             uses_implementation_version = "implementation_version" in names
         rows.append(converted)
     return rows, uses_implementation_version
+
+
+class ProjectedPackage(NamedTuple):
+    """A merged package row with its resolved source and conditional dependencies."""
+
+    source: Package
+    version: Version
+
+    @property
+    def name(self) -> NormalizedName:
+        return self.source.name
+
+    @property
+    def marker(self) -> Marker | None:
+        return self.source.marker
+
+
+def _project_pin(
+    pin: PinShape,
+    marker: Marker | None = None,
+    *,
+    lock_dir: Path,
+    dependencies: list[dict[str, str]] | None = None,
+) -> ProjectedPackage:
+    source = _pin_to_package(pin, marker, lock_dir=lock_dir, dependencies=dependencies)
+    # Native project locks also record versions for VCS and directory pins.
+    return ProjectedPackage(source, Version(pin.version))
+
+
+def project_packages(
+    lock_input: LockInput, project_dir: Path
+) -> list[ProjectedPackage]:
+    """Merge conditional pins with paths relative to the consuming project."""
+    require_artifact_hashes(lock_input)
+    with intractable_as_error():
+        _, packages = _prepare_pylock(
+            lock_input, lock_dir=project_dir, package_output=_project_pin
+        )
+    return packages
 
 
 def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylock:

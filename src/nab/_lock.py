@@ -92,6 +92,7 @@ from nab_project.lockfile import (
     render_lock,
     summarize_lock,
     write_lock,
+    write_pdm_lock,
     write_requirements_with_hashes,
     write_requirements_without_hashes,
 )
@@ -673,7 +674,7 @@ def _lock_one(
         project_input=project_input,
         resolution_strategy=settings.resolution,
         lock_preferences=previous_lock,
-        reconcile_build_variants=settings.format == "pylock",
+        reconcile_build_variants=settings.format in ("pylock", "pdm"),
         progress=ProgressReporter(printer()),
         max_concurrency=settings.max_concurrency,
     )
@@ -706,6 +707,7 @@ def _lock_one(
             lock_input,
             output_format=settings.format,
             output=output,
+            project_path=path,
             script=path if input_format is InputFormat.SCRIPT else None,
             build_requirements=settings.build_requirements,
             previous_lock=previous_lock,
@@ -786,6 +788,7 @@ def _emit(
     *,
     output_format: str,
     output: Path | None,
+    project_path: Path = _DEFAULT_PROJECT_PATH,
     script: Path | None = None,
     build_requirements: bool = False,
     previous_lock: LockPreferences | None = None,
@@ -800,6 +803,16 @@ def _emit(
             output=output,
             default_output=default_output,
             previous_lock=previous_lock,
+        )
+    elif output_format == "pdm":
+        target = output or (
+            script.with_name(script.name + ".pdm.lock") if script else default_output
+        )
+        _emit_pdm(
+            lock_input,
+            project_path,
+            target,
+            input_format=InputFormat.SCRIPT if script else InputFormat.PROJECT,
         )
     else:
         if script is not None:
@@ -827,12 +840,14 @@ def _packages_only(text: str) -> dict[str, Any]:
 
 _DEFAULT_OUTPUT: dict[str, str] = {
     "pylock": "pylock.toml",
+    "pdm": "pdm.lock",
     "requirements": "requirements.txt",
     "requirements-without-hashes": "requirements.txt",
 }
 
 _BUILD_DEFAULT_OUTPUT: dict[str, str] = {
     "pylock": "pylock.build.toml",
+    "pdm": "build.pdm.lock",
     "requirements": "build-requirements.txt",
     "requirements-without-hashes": "build-requirements.txt",
 }
@@ -1445,6 +1460,23 @@ def _check_reproduction(lock_input: LockInput, *, run: _LockRun) -> None:
         )
     )
     sys.exit(1)
+
+
+def _emit_pdm(
+    lock_input: LockInput, path: Path, target: Path, *, input_format: InputFormat
+) -> None:
+    """Write the native file with the content hash PDM checks against the project."""
+    document = read_input_document(path, input_format=input_format)
+    destination = None if _is_stdout(target) else target
+    text = _render_or_exit(
+        lambda: write_pdm_lock(
+            lock_input, document, project_dir=path.parent, output_path=destination
+        )
+    )
+    if destination is None:
+        _print_lock(text)
+    else:
+        printer().done(f"Wrote {destination} ({summarize_lock(lock_input, None)})")
 
 
 def _emit_pylock(

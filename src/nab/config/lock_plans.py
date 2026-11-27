@@ -99,6 +99,9 @@ class LockPlan(NamedTuple):
         if format_name == "pylock":
             return f"pylock.{self.name}.toml"
 
+        if format_name == "pdm":
+            return f"{self.name}.pdm.lock"
+
         return f"{self.name}.requirements.txt"
 
     def settings_layer(self, path: Path, *, check_conflicts: bool = False) -> Layer:

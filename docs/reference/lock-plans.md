@@ -63,6 +63,20 @@ format = "requirements"
 
 `--format` and `NAB_FORMAT` override the format for every selected plan.
 
+To install a named selection with PDM, write the plan to PDM's project filename:
+
+```toml
+[tool.nab.plans.pdm-test]
+groups = ["test"]
+format = "pdm"
+output = "pdm.lock"
+```
+
+```console
+nab lock --plan pdm-test
+pdm sync --no-self
+```
+
 Use `nab lock --all-plans` to refresh every declared plan and `nab lock --all-plans --locked` to
 check the files. A batch checks the option names and values in every plan’s `settings` table,
 verifies that its input sources are declared and checks for duplicate output paths before writing
