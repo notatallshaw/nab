@@ -22,6 +22,8 @@ import collections
 import itertools
 from functools import cache
 
+import pytest
+
 from nab_resolver.ranges import (
     NEGATIVE_INFINITY,
     POSITIVE_INFINITY,
@@ -632,3 +634,23 @@ class TestMembershipDoesNotNeedTheInvariant:
             parts: list[Range[int]] = [Range((interval,)) for interval in intervals]
             for probe in PROBES:
                 assert (probe in whole) == any(probe in part for part in parts)
+
+
+@pytest.mark.parametrize(
+    ("allowed", "point"),
+    [
+        (Range.empty(), None),
+        (Range.full(), None),
+        (Range.at_most(1), None),
+        (Range.at_least(1), None),
+        (Range.between(1, 2), None),
+        (Range.from_versions([1, 2]), None),
+        (Range.singleton(0), 0),
+        (Range.singleton("1.0"), "1.0"),
+        (Range.at_least(1) & Range.at_most(1), 1),
+    ],
+)
+def test_single_version_recognizes_only_a_closed_point(
+    allowed: Range[int] | Range[str], point: int | str | None
+) -> None:
+    assert allowed.single_version() == point

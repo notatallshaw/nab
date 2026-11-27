@@ -281,6 +281,15 @@ class Range(Generic[VersionType]):
             return cls(())
         return cls(((lower, True, upper, False),))
 
+    def single_version(self) -> VersionType | None:
+        """Return the value of a closed point, or None for any other range."""
+        if len(self._intervals) == 1:
+            lower, include_lower, upper, include_upper = self._intervals[0]
+            if include_lower and include_upper and lower == upper:
+                # Infinite bounds are exclusive, so a closed point is a version.
+                return cast("VersionType", lower)
+        return None
+
     @property
     def is_empty(self) -> bool:
         """``True`` if this range contains no versions."""
