@@ -21,6 +21,7 @@ project.
 
 ## Use and maintain a lock
 
+- [Update an existing lockfile](../reference/lock-policy.md).
 - [Install from a lock or prepare an offline wheelhouse](use-the-lock.md).
 - [Write requirements for each target](../reference/formats.md).
 - [Control wheel selection and builds](../reference/configuration.md).
