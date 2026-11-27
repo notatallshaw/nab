@@ -1456,9 +1456,9 @@ class TestBuildResolverInputs:
             )
 
     def test_vcs_url_refused_by_default_policy(self) -> None:
-        """A git+https requirement is refused under the default BLOCK policy."""
+        """The default policy requires a source declaration."""
         env = _linux_311().marker_env
-        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "declared"'):
             build_resolver_inputs(
                 _reqs(f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"),
                 VcsConfig(),
@@ -1469,7 +1469,7 @@ class TestBuildResolverInputs:
     def test_url_constraint_refused(self) -> None:
         """A direct-URL constraint is refused the same way as a requirement."""
         env = _linux_311().marker_env
-        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "declared"'):
             build_resolver_inputs(
                 _reqs(f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"),
                 VcsConfig(),
@@ -1707,9 +1707,7 @@ class TestVcsConfigPlumbing:
         """``_resolve_one_target`` surfaces the BLOCK refusal as a ValueError.
 
         If the VCS config were dropped on the way through the engine the
-        default :class:`VcsConfig` is also BLOCK, so we additionally
-        check the error string matches the policy diagnostic (not a
-        NoneType crash or a generic ``ValueError``).
+        The error names the policy sent through the settings.
         """
         settings = _settings(
             make_coordinator(listings={}, auto_metadata=True),
@@ -1717,7 +1715,7 @@ class TestVcsConfigPlumbing:
                 vcs=VcsConfig(policy=VcsPolicy.BLOCK), vcs_sources=(self._source(),)
             ),
         )
-        with pytest.raises(ValueError, match="vcs_sources require VcsPolicy.ALLOW"):
+        with pytest.raises(ValueError, match="current policy is block"):
             _resolve_one_target(_linux_311(), _reqs("pkg"), (), settings, {})
 
     def test_allow_policy_admits_vcs_source_via_one_target(
@@ -1768,7 +1766,7 @@ class TestVcsConfigPlumbing:
         Failing at the indexing step is the visible signal that the
         config reached the :class:`Provider`.
         """
-        with pytest.raises(ValueError, match="vcs_sources require VcsPolicy.ALLOW"):
+        with pytest.raises(ValueError, match="current policy is block"):
             resolve_with_coordinator(
                 make_coordinator(listings={}, auto_metadata=True),
                 _one_target(),

@@ -1347,7 +1347,7 @@ class TestVcsConfigPlumbing:
             name="pkg",
             url=f"git+https://example.com/pkg.git@{_FORTY_SHA}",
         )
-        with pytest.raises(ValueError, match="vcs_sources require VcsPolicy.ALLOW"):
+        with pytest.raises(ValueError, match="current policy is block"):
             Provider(
                 coordinator,
                 _LINUX_TARGET,

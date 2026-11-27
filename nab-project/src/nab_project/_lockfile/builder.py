@@ -866,7 +866,7 @@ def _vcs_pin_from_source(
     ``bare_repo_url`` comes from ``parsed.repo_url``, which
     :meth:`VcsRequest.parse` has already separated from the ref and the
     fragment.  ``repo_url`` re-pins that bare URL to ``commit_id`` (the
-    ``git+`` prefix, ``@<sha>``, and any ``#subdirectory=`` fragment) so
+    VCS prefix, ``@<sha>``, and any ``#subdirectory=`` fragment) so
     the requirements.txt line installs the locked commit, not the ref
     the user supplied.
     """
@@ -885,7 +885,7 @@ def _vcs_pin_from_source(
     parsed = VcsRequest.parse(source.url)
     # Keep the named ref only when it differs from the SHA (tag or branch case).
     requested_revision = (
-        parsed.ref if parsed.ref and parsed.ref != resolved_sha else None
+        parsed.ref if parsed.ref and parsed.ref.lower() != resolved_sha else None
     )
 
     # Compose a pinned installable URL from the parsed pieces, not from source.url,

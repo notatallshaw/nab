@@ -706,17 +706,17 @@ def test_vcs_policy_repair_updates_both_declaring_files(script_source: Path) -> 
     with pytest.raises(ConfigError) as error:
         read_pyproject_config(script_source, input_format=InputFormat.SCRIPT)
     repairs = re.findall(
-        r'\[(tool\.nab\.vcs|vcs)\]\.policy = "allow"', str(error.value)
+        r'\[(tool\.nab\.vcs|vcs)\]\.policy = "declared"', str(error.value)
     )
     files = {"tool.nab.vcs": script_source, "vcs": directory_config}
     for table in repairs:
         target = files[table]
         target.write_text(
-            target.read_text().replace('policy="block"', 'policy="allow"')
+            target.read_text().replace('policy="block"', 'policy="declared"')
         )
 
     config = read_pyproject_config(script_source, input_format=InputFormat.SCRIPT)
-    assert config.vcs.policy.value == "allow"
+    assert config.vcs.policy.value == "declared"
 
 
 def test_environment_repair_updates_both_declaring_files(script_source: Path) -> None:

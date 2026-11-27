@@ -83,7 +83,7 @@ def test_duplicate_vcs_policy_repair_resolves(
     ):
         assert run(args) == 1
         message = capsys.readouterr().err
-        tables = re.findall(r'\[(tool\.nab\.vcs|vcs)\]\.policy = "allow"', message)
+        tables = re.findall(r'\[(tool\.nab\.vcs|vcs)\]\.policy = "declared"', message)
         assert tables, message
 
         files = {"tool.nab.vcs": pyproject, "vcs": nab_toml}
@@ -91,7 +91,7 @@ def test_duplicate_vcs_policy_repair_resolves(
             path = files[table]
             path.write_text(
                 path.read_text(encoding="utf-8").replace(
-                    'policy = "block"', 'policy = "allow"'
+                    'policy = "block"', 'policy = "declared"'
                 ),
                 encoding="utf-8",
             )

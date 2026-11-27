@@ -125,9 +125,9 @@ def test_documented_vcs_default_is_the_shipped_default() -> None:
     assert _documented_vcs_default() == VcsConfig()
 
 
-def test_documented_vcs_default_refuses_a_pinned_url() -> None:
-    """The documented default refuses even a commit-pinned URL."""
-    with pytest.raises(UnsupportedVcsError, match=r'vcs\.policy is "block"'):
+def test_documented_vcs_default_requires_a_declaration() -> None:
+    """A pin alone cannot grant permission to a direct URL."""
+    with pytest.raises(UnsupportedVcsError, match=r'vcs\.policy is "declared"'):
         admit_vcs_url(PINNED_URL, _documented_vcs_default())
 
 

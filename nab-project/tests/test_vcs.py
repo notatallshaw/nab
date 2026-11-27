@@ -1,4 +1,4 @@
-"""Resolve, lock and build projects with Git sources."""
+"""Resolve, lock and build projects with VCS sources."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from packaging.version import Version
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.vcs import (
     _COMPLETE_MARKER,
+    VcsClone,
     VcsCloneError,
 )
 from nab_project.fetch import FetchCoordinator
@@ -155,6 +156,97 @@ class TestProviderVcsIntegration:
         assert len(versions) == 1
         assert versions[0][1].url == clone_dir.resolve().as_uri()
 
+    def test_mercurial_pin_uses_the_verified_node_and_subdirectory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        node = "a" * 40
+        cache = tmp_path / "cache"
+        checkout = cache / "vcs" / "hg-key" / node
+        project = checkout / "packages" / "foo"
+        project.mkdir(parents=True)
+        (checkout / ".hg").mkdir()
+        (checkout / ".hg" / "nab-complete").touch()
+        (project / "pyproject.toml").write_text(
+            '[project]\nname="foo"\nversion="1.0.0"\n', encoding="utf-8"
+        )
+        monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: "hg-key")
+        repo = "https://example.com/foo"
+        provider = Provider(
+            self.coordinator(),
+            vcs_sources=[
+                VcsSource(
+                    name="foo",
+                    url=f"hg+{repo}@{node.upper()}#subdirectory=packages/foo",
+                ),
+            ],
+            vcs_cache_dir=cache,
+            build_policy=BuildPolicy.NEVER,
+        )
+
+        provider.fetch_versions("foo")
+        lock = build_target_lock(
+            provider, ResolveTarget.for_host(), {"foo": Version("1.0.0")}
+        )
+
+        pin = lock.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert pin.vcs_type == "hg"
+        assert pin.commit_id == node
+        assert pin.requested_revision is None
+        assert pin.subdirectory == "packages/foo"
+        assert pin.repo_url == f"hg+{repo}@{node}#subdirectory=packages/foo"
+
+    @pytest.mark.parametrize("outside", [False, True])
+    def test_vcs_source_subdirectory_is_checked_before_reading_metadata(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, outside: bool
+    ) -> None:
+        node = "a" * 40
+        root = tmp_path.resolve() / "checkout"
+        root.mkdir()
+        message = "cannot resolve the source subdirectory"
+        if outside:
+            target = root.parent / "other"
+            target.mkdir()
+            (target / "pyproject.toml").write_text(
+                '[project]\nname="foo"\nversion="1"\n', encoding="utf-8"
+            )
+            link = root / "package"
+            try:
+                link.symlink_to(target, target_is_directory=True)
+            except OSError:
+                original_resolve = Path.resolve
+
+                def resolve(path: Path, *, strict: bool = False) -> Path:
+                    if path == link:
+                        return target
+                    return original_resolve(path, strict=strict)
+
+                monkeypatch.setattr(Path, "resolve", resolve)
+            message = "source subdirectory leaves the checkout"
+        monkeypatch.setattr(
+            "nab_index.vcs.prepare_clone",
+            lambda *_args, **_kwargs: VcsClone(root, node, "package"),
+        )
+        provider = Provider(
+            self.coordinator(),
+            vcs_config=VcsConfig(
+                policy=VcsPolicy.ALLOW,
+                allowed_schemes=frozenset({"git+https"}),
+                allowed_repos=("https://example.com/foo",),
+            ),
+            vcs_sources=[
+                VcsSource(
+                    name="foo",
+                    url=f"git+https://example.com/foo@{node}#subdirectory=package",
+                )
+            ],
+            vcs_cache_dir=tmp_path / "cache",
+            build_policy=BuildPolicy.NEVER,
+        )
+
+        with pytest.raises(UnsupportedSdistError, match=message):
+            provider.fetch_versions("foo")
+
     def test_floating_ref_lock_records_resolved_sha(
         self,
         tmp_path: Path,
@@ -241,9 +333,10 @@ class TestProviderVcsIntegration:
         assert "foo" in str(excinfo.value)
 
     def test_vcs_under_block_policy_raises(self, tmp_path: Path) -> None:
-        with pytest.raises(ValueError, match="VcsPolicy.ALLOW"):
+        with pytest.raises(ValueError, match="current policy is block"):
             Provider(
                 self.coordinator(),
+                vcs_config=VcsConfig(policy=VcsPolicy.BLOCK),
                 vcs_sources=[
                     VcsSource(name="foo", url="git+https://example.com/foo.git@abc"),
                 ],

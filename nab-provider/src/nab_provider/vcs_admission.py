@@ -30,7 +30,13 @@ from urllib.parse import unquote, urlsplit
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 
 from .value import HashableRecord
-from .vcs_request import FULL_GIT_SHA_RE
+from .vcs_request import (
+    FULL_GIT_SHA_RE,
+    VcsCloneError,
+    VcsRequest,
+    is_mercurial_node,
+    mercurial_transport,
+)
 
 __all__ = [
     "UnsupportedVcsError",
@@ -44,12 +50,14 @@ class VcsPolicy(enum.Enum):
 
     Cloning a remote repo is one short step from arbitrary code execution
     (modern Python projects build via PEP 517 backends, which run user
-    code).  Default posture is :attr:`BLOCK`; opt-in is per-protocol via
-    ``vcs.allowed-schemes`` and per-repo via ``vcs.allowed-repos``.
+    code). By default, each source declaration selects one repository.
     """
 
     BLOCK = "block"
     """Refuse any requirement whose URL is non-empty."""
+
+    DECLARED = "declared"
+    """Allow only URLs chosen by a VCS source declaration."""
 
     ALLOW = "allow"
     """Honor VCS subject to scheme + repo allowlists.
@@ -72,8 +80,7 @@ class UnsupportedVcsError(Exception):
 class VcsConfig(HashableRecord):
     """Bundle of VCS opt-in knobs passed through the resolver stack.
 
-    Default is fully restrictive (``BLOCK`` policy, empty allowlists,
-    pin required).
+    Defaults to declared sources, empty general allowlists, and required pins.
     """
 
     __match_args__ = ("policy", "allowed_schemes", "allowed_repos", "require_pin")
@@ -86,7 +93,7 @@ class VcsConfig(HashableRecord):
     def __init__(
         self,
         *,
-        policy: VcsPolicy = VcsPolicy.BLOCK,
+        policy: VcsPolicy = VcsPolicy.DECLARED,
         allowed_schemes: frozenset[str] = frozenset(),
         allowed_repos: tuple[str, ...] = (),
         require_pin: bool = True,
@@ -105,17 +112,14 @@ _VCS_SCHEMES: frozenset[str] = frozenset(
         "git+http",
         "git+file",
         "git+git",
+        "hg+https",
+        "hg+file",
     }
 )
 
 
 def known_vcs_schemes() -> frozenset[str]:
-    """Return the VCS URL schemes nab recognises (e.g. ``git+https``).
-
-    nab is git-only, so every entry is a ``git+`` scheme.  Exposed so
-    config parsing can reject an unknown ``vcs.allowed-schemes`` entry
-    without importing the private scheme set.
-    """
+    """Return the schemes allowed in a ``vcs.allowed-schemes`` list."""
     return _VCS_SCHEMES
 
 
@@ -131,12 +135,11 @@ def split_vcs_scheme(url: str) -> tuple[str | None, str]:
 
     Returns ``(None, url)`` for non-VCS URLs (e.g. plain ``https://``
     archives or ``file://`` paths) so the caller can refuse them
-    separately.  Only ``git+`` schemes are recognised; ``hg+``/``bzr+``/``svn+``
-    are intentionally absent so they are refused as non-VCS.
+    separately.
     """
     for vcs_scheme in _VCS_SCHEMES:
         if url.startswith(f"{vcs_scheme}://"):
-            return (vcs_scheme, url[len("git+") :])
+            return (vcs_scheme, url.partition("+")[2])
     return (None, url)
 
 
@@ -213,7 +216,7 @@ def _skip_optional_git_suffix(rest: str) -> str:
     return tail
 
 
-def _repo_prefix_matches(inner_url: str, prefix: str) -> bool:
+def _repo_prefix_matches(inner_url: str, prefix: str, *, git: bool) -> bool:
     r"""Return True if ``inner_url`` names a repo under ``prefix``.
 
     A bare :meth:`str.startswith` would admit a sibling repo whose URL
@@ -228,31 +231,27 @@ def _repo_prefix_matches(inner_url: str, prefix: str) -> bool:
     Both URLs have their authority ``user[:pass]@`` / ``git@`` stripped
     by the caller.
 
-    A path git would rewrite is refused first, since a ``..`` could pass
-    the string match while git fetches a repo outside the prefix.  The ref
-    is dropped before that check, off the whole post-authority remainder
-    rather than the path alone, matching the split :mod:`nab_index.vcs`
-    makes at clone time; otherwise a ``..`` in the final segment hides as
-    the ordinary name ``..@<ref>``.  The prefix comparison below is on the
-    raw URL.
     """
-    parts = urlsplit(inner_url)
-    remainder = f"{parts.path}?{parts.query}" if parts.query else parts.path
-    repo = _drop_ref(remainder)
-
-    # An http URL ends its path at the "?"; a file URL keeps it as a path
-    # character, and either way the query reaches git.
-    if any(_rewritten_by_git(part) for part in (repo, repo.partition("?")[0])):
-        return False
-
-    prefix = prefix.removesuffix(_GIT_SUFFIX)
+    if git:
+        prefix = prefix.removesuffix(_GIT_SUFFIX)
     if not inner_url.startswith(prefix):
         return False
 
-    rest = _skip_optional_git_suffix(inner_url[len(prefix) :])
+    rest = inner_url[len(prefix) :]
+    if git:
+        rest = _skip_optional_git_suffix(rest)
     if not rest or not prefix or prefix[-1] in _REPO_BOUNDARY_CHARS:
         return True
     return rest[0] in _REPO_BOUNDARY_CHARS
+
+
+def _git_path_is_literal(inner_url: str) -> bool:
+    """Check the path Git will receive after removing the revision."""
+    parts = urlsplit(inner_url)
+    remainder = f"{parts.path}?{parts.query}" if parts.query else parts.path
+    repo = _drop_ref(remainder)
+    # The query can contribute to the path of a file URL.
+    return not any(_rewritten_by_git(part) for part in (repo, repo.partition("?")[0]))
 
 
 def has_full_commit_sha(url: str) -> bool:
@@ -268,7 +267,7 @@ def has_full_commit_sha(url: str) -> bool:
     if "@" not in path:
         return False
     ref = path.rsplit("@", 1)[1]
-    return bool(FULL_GIT_SHA_RE.match(ref))
+    return bool(FULL_GIT_SHA_RE.fullmatch(ref))
 
 
 def _display_url(url: str) -> str:
@@ -279,7 +278,7 @@ def _display_url(url: str) -> str:
         return "<malformed URL>"
 
     if not parts.netloc:
-        if parts.path and parts.scheme not in {"file", "git+file"}:
+        if parts.path and parts.scheme not in {"file", "git+file", "hg+file"}:
             return "<URL without a host>"
         # Preserve the empty authority in git+file:///path and scheme-only prefixes.
         return url.partition("?")[0].partition("#")[0]
@@ -288,13 +287,81 @@ def _display_url(url: str) -> str:
     return parts._replace(netloc=host, query="", fragment="").geturl()
 
 
-def admit_vcs_url(url: str, config: VcsConfig) -> str:
-    """Admit a direct-URL requirement, or raise :class:`UnsupportedVcsError`.
+def _mercurial_repo_url(url: str) -> str:
+    """Require an unambiguous transport URL and a complete Mercurial node."""
+    try:
+        request = VcsRequest.parse(url)
+    except VcsCloneError:
+        msg = "refusing malformed Mercurial source URL"
+        raise UnsupportedVcsError(msg) from None
+    try:
+        mercurial_transport(request.repo_url)
+    except VcsCloneError as exc:
+        raise UnsupportedVcsError(str(exc)) from None
+    if not is_mercurial_node(request.ref):
+        msg = "Mercurial sources require a full 40-character changeset ID"
+        raise UnsupportedVcsError(msg)
 
-    Returns the recognized VCS scheme on success.  Called eagerly when
-    ingesting root requirements with a non-empty
-    :attr:`Requirement.url <packaging.requirements.Requirement.url>`.
-    """
+    return request.repo_url
+
+
+def _check_vcs_policy(url: str, policy: VcsPolicy, *, declared: bool) -> None:
+    """Distinguish source-specific permission from permission for other URLs."""
+    if policy is VcsPolicy.BLOCK:
+        report = DiagnosticMessage(
+            (
+                f"refusing VCS requirement\n    {_display_url(url)}\n"
+                '    reason: vcs.policy is "block".'
+            ),
+            suggestions=(
+                Suggestion(
+                    'set vcs.policy = "declared" to permit declared sources, or '
+                    'configure vcs.policy = "allow" and its allowlists'
+                ),
+            ),
+        )
+        raise UnsupportedVcsError(report)
+
+    if policy is VcsPolicy.DECLARED and not declared:
+        report = DiagnosticMessage(
+            (
+                f"refusing VCS requirement\n    {_display_url(url)}\n"
+                '    reason: vcs.policy is "declared" and the requirement'
+                " uses a direct URL."
+            ),
+            suggestions=(
+                Suggestion("declare the package's repository in vcs-sources"),
+            ),
+        )
+        raise UnsupportedVcsError(report)
+
+
+def _require_git_repo_path(url: str, inner_url: str) -> None:
+    """Require a Git repository path before a revision."""
+    try:
+        path = _repo_path(inner_url)
+    except ValueError:
+        raise UnsupportedVcsError(_MALFORMED_VCS_URL) from None
+    if path.strip("/"):
+        return
+
+    report = DiagnosticMessage(
+        (
+            f"refusing VCS URL that names no repository\n    {_display_url(url)}\n"
+            "    reason: the URL has no repository path."
+        ),
+        suggestions=(
+            Suggestion(
+                "use a repository URL like git+https://host/org/repo.git@<ref>",
+                detail="Everything after the final @ is the ref.",
+            ),
+        ),
+    )
+    raise UnsupportedVcsError(report)
+
+
+def admit_vcs_url(url: str, config: VcsConfig, *, declared: bool = False) -> str:
+    """Admit a VCS URL, with explicit declarations confined to their own URL."""
     scheme, inner_url = split_vcs_scheme(url)
     if scheme is None:
         report = DiagnosticMessage(
@@ -302,35 +369,13 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
                 "refusing direct-URL requirement (not a recognized VCS scheme)\n    "
                 f"{_display_url(url)}"
             ),
-            suggestions=(
-                Suggestion(
-                    "use git+https, git+ssh, git+http, git+file, or git+git",
-                    detail=(
-                        "nab supports git+https / git+ssh / git+http / git+file / "
-                        "git+git only; hg/bzr/svn and plain http(s)/file archive "
-                        "URLs are not supported."
-                    ),
-                ),
-            ),
+            suggestions=(Suggestion("use one of " + ", ".join(sorted(_VCS_SCHEMES))),),
         )
         raise UnsupportedVcsError(report)
 
-    if config.policy is VcsPolicy.BLOCK:
-        report = DiagnosticMessage(
-            (
-                f"refusing VCS requirement\n    {_display_url(url)}\n"
-                '    reason: vcs.policy is "block" (default).'
-            ),
-            suggestions=(
-                Suggestion(
-                    'set vcs.policy = "allow" and configure vcs.allowed-schemes and '
-                    "vcs.allowed-repos"
-                ),
-            ),
-        )
-        raise UnsupportedVcsError(report)
+    _check_vcs_policy(url, config.policy, declared=declared)
 
-    if scheme not in config.allowed_schemes:
+    if config.policy is VcsPolicy.ALLOW and scheme not in config.allowed_schemes:
         allowed_str = ", ".join(sorted(config.allowed_schemes)) or "<empty>"
         msg = (
             "refusing VCS scheme\n"
@@ -345,46 +390,31 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
         )
         raise UnsupportedVcsError(DiagnosticMessage(msg, suggestions=suggestions))
 
-    try:
-        repo_path = _repo_path(inner_url)
-    except ValueError:
-        raise UnsupportedVcsError(_MALFORMED_VCS_URL) from None
-
-    # Without a repo path there is nothing to clone, and an appended pin's
-    # "@" lands in the netloc instead of the path, where urlsplit reads
-    # "host@<sha>" as userinfo "host" and host "<sha>".  Requiring a path
-    # leaves the checks below a real host and a real repo to look at.
-    if not repo_path.strip("/"):
-        report = DiagnosticMessage(
-            (
-                f"refusing VCS URL that names no repository\n    {_display_url(url)}\n"
-                "    reason: the URL has no repository path."
-            ),
-            suggestions=(
-                Suggestion(
-                    "use a repository URL like git+https://host/org/repo.git@<ref>",
-                    detail="Everything after the final @ is the ref.",
-                ),
-            ),
-        )
-        raise UnsupportedVcsError(report)
+    git = scheme.startswith("git+")
+    if git:
+        _require_git_repo_path(url, inner_url)
+    else:
+        inner_url = _mercurial_repo_url(url)
 
     # Stripping userinfo can unbalance an IPv6 bracket, so the match may raise
     # on a netloc that parsed whole above.
     try:
-        repo_admitted = any(
-            _repo_prefix_matches(
-                _without_userinfo(inner_url), _without_userinfo(prefix)
+        candidate = _without_userinfo(inner_url)
+        literal = not git or _git_path_is_literal(candidate)
+        repo_admitted = literal and (
+            config.policy is VcsPolicy.DECLARED
+            or any(
+                _repo_prefix_matches(candidate, _without_userinfo(prefix), git=git)
+                for prefix in config.allowed_repos
             )
-            for prefix in config.allowed_repos
         )
     except ValueError:
         raise UnsupportedVcsError(_MALFORMED_VCS_URL) from None
 
-    # An empty allowed-repos denies every repo (deny-all), matching
-    # allowed-schemes: under policy = "allow" the user must list at least
-    # one repo prefix.
     if not repo_admitted:
+        if config.policy is VcsPolicy.DECLARED:
+            msg = "refusing VCS source with a repository path Git would rewrite"
+            raise UnsupportedVcsError(msg)
         allowed_str = (
             ", ".join(sorted(_display_url(repo) for repo in config.allowed_repos))
             or "<empty>"
@@ -397,7 +427,7 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
         )
         raise UnsupportedVcsError(msg)
 
-    if config.require_pin and not has_full_commit_sha(url):
+    if git and config.require_pin and not has_full_commit_sha(url):
         report = DiagnosticMessage(
             (
                 f"refusing unpinned VCS ref\n    {_display_url(url)}\n"

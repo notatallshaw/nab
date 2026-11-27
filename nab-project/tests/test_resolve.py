@@ -2848,14 +2848,14 @@ class TestResolveUniversalPyproject:
 class TestResolvePyprojectVcs:
     """VCS direct-URL requirements get admission-checked before drop."""
 
-    def test_block_default_refuses_vcs_dependency(self, tmp_path: Path) -> None:
+    def test_default_requires_a_vcs_source_declaration(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             f"[project]\ndependencies = "
             f'["foo @ git+https://github.com/foo/bar.git@{_FORTY}"]\n',
         )
 
-        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "declared"'):
             _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
     def test_admitted_vcs_dependency_raises_not_implemented(

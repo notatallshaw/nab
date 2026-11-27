@@ -354,7 +354,7 @@ class VcsPin(ValueType):
     """A package resolved from a VCS clone.
 
     ``repo_url`` is the reproducible pip-style installable URL: the
-    ``git+`` prefix, the bare repository URL, ``@<commit-id>``, and any
+    VCS prefix, the bare repository URL, ``@<commit-id>``, and any
     ``#subdirectory=`` fragment.  The requirements.txt emitter writes it
     verbatim, so a branch or tag pin installs the locked commit rather
     than a moving ref.  ``bare_repo_url`` is the plain repository URL

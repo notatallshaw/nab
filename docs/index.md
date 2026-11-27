@@ -30,14 +30,14 @@ use other package sources, or install from a lock. Use the
 nab is experimental. The table below states the current boundary; feature pages carry their own
 stability warnings.
 
-| Area                  | Current boundary                                                                                                                                                               |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Runtime               | CPython 3.10 and newer. Other interpreters are not tested.                                                                                                                     |
-| Commands              | `nab lock` resolves and writes a lock. `nab download` resolves again and fetches artifacts. Neither command installs packages.                                                 |
-| Sources               | Simple indexes, local checkouts, declared git sources, hash-pinned `.tar.gz` archives, and workspace members. Project-root `name @ git+...` requirements are not resolved yet. |
-| Output                | PEP 751 `pylock.toml`, requirements with recorded index hashes, and requirements without those hashes.                                                                         |
-| Experimental features | Universal locks, multiple indexes, and workspaces. Their feature pages state the current boundary.                                                                             |
-| Embedding             | Component APIs can change between 0.0.x releases. Pin the version your tool supports.                                                                                          |
+| Area                  | Current boundary                                                                                                               |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Runtime               | CPython 3.10 and newer. Other interpreters are not tested.                                                                     |
+| Commands              | `nab lock` resolves and writes a lock. `nab download` resolves again and fetches artifacts. Neither command installs packages. |
+| Sources               | Simple indexes, local checkouts, declared Git and Mercurial sources, hash-pinned `.tar.gz` archives, and workspace members.    |
+| Output                | PEP 751 `pylock.toml`, requirements with recorded index hashes, and requirements without those hashes.                         |
+| Experimental features | Universal locks, multiple indexes, and workspaces. Their feature pages state the current boundary.                             |
+| Embedding             | Component APIs can change between 0.0.x releases. Pin the version your tool supports.                                          |
 
 ```{toctree}
 ---

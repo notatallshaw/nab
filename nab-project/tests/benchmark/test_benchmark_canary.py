@@ -695,7 +695,10 @@ def test_canary_main_records_v2_contract_for_one_checkout(
                 "vcs_policy": "permit",
             },
             False,
-            "quick:requests: vcs_policy must be one of ['allow', 'block'], got 'permit'",
+            (
+                "quick:requests: vcs_policy must be one of"
+                " ['allow', 'block', 'declared'], got 'permit'"
+            ),
         ),
         (
             {

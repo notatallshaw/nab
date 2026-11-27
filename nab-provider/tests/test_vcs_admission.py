@@ -36,16 +36,20 @@ class TestKnownVcsSchemes:
     """The scheme allowlist a host validates ``vcs.allowed-schemes`` against."""
 
     def test_names_every_scheme_admission_accepts(self) -> None:
-        """nab clones git only, so every entry is a ``git+`` scheme."""
-        schemes = known_vcs_schemes()
-
-        assert "git+https" in schemes
-        assert all(scheme.startswith("git+") for scheme in schemes)
+        assert known_vcs_schemes() == {
+            "git+https",
+            "git+ssh",
+            "git+http",
+            "git+file",
+            "git+git",
+            "hg+https",
+            "hg+file",
+        }
 
     def test_a_scheme_it_omits_is_refused(self) -> None:
         """The set is the same one ``split_vcs_scheme`` recognises."""
-        assert "hg+https" not in known_vcs_schemes()
-        url = "hg+https://example.com/repo"
+        assert "hg+ssh" not in known_vcs_schemes()
+        url = "hg+ssh://example.com/repo"
         assert split_vcs_scheme(url) == (None, url)
 
 
@@ -74,11 +78,11 @@ class TestSplitVcsScheme:
         assert scheme is None
         assert inner == "git://example.com/r.git"
 
-    def test_hg_https_refused(self) -> None:
+    def test_strips_hg_https(self) -> None:
         url = "hg+https://hg.example.com/r"
         scheme, inner = split_vcs_scheme(url)
-        assert scheme is None
-        assert inner == url
+        assert scheme == "hg+https"
+        assert inner == "https://hg.example.com/r"
 
     def test_https_archive_returns_none(self) -> None:
         url = "https://example.com/pkg.whl"
@@ -177,11 +181,53 @@ class TestAdmitVcsUrlBlock:
         assert display in str(caught.value)
         assert url not in str(caught.value)
 
-    def test_block_default_refuses_vcs(self) -> None:
-        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
+    def test_default_requires_a_source_declaration(self) -> None:
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "declared"'):
             admit_vcs_url(
                 f"git+https://github.com/foo/bar.git@{_FORTY}",
                 VcsConfig(),
+            )
+
+    @pytest.mark.parametrize("scheme", ["git+https", "hg+https"])
+    def test_declared_mode_grants_only_the_source(self, scheme: str) -> None:
+        url = f"{scheme}://example.com/repo@{_FORTY}"
+        config = VcsConfig()
+
+        assert admit_vcs_url(url, config, declared=True) == scheme
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "declared"'):
+            admit_vcs_url(url, config)
+
+    def test_declared_git_path_still_requires_a_literal_repo(self) -> None:
+        with pytest.raises(UnsupportedVcsError, match="path Git would rewrite"):
+            admit_vcs_url(
+                f"git+https://example.com/team/../repo@{_FORTY}",
+                VcsConfig(),
+                declared=True,
+            )
+
+    @pytest.mark.parametrize("ref", ["main", _FORTY + "\n"])
+    def test_git_declaration_requires_a_full_pin_by_default(self, ref: str) -> None:
+        with pytest.raises(UnsupportedVcsError, match="no 40-char commit hash"):
+            admit_vcs_url(
+                f"git+https://example.com/repo@{ref}",
+                VcsConfig(),
+                declared=True,
+            )
+
+    def test_git_declaration_can_explicitly_allow_its_floating_ref(self) -> None:
+        url = "git+https://example.com/repo@main"
+        config = VcsConfig(require_pin=False)
+
+        assert admit_vcs_url(url, config, declared=True) == "git+https"
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "declared"'):
+            admit_vcs_url(url, config)
+
+    def test_explicit_allow_policy_still_checks_declared_urls(self) -> None:
+        with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-schemes"):
+            admit_vcs_url(
+                f"hg+https://example.com/repo@{_FORTY}",
+                _allow_https(),
+                declared=True,
             )
 
     def test_block_with_allowlists_still_refuses(self) -> None:
@@ -770,8 +816,8 @@ class TestAdmitVcsUrlNonVcsRefusal:
         with pytest.raises(UnsupportedVcsError, match="not a recognized VCS scheme"):
             admit_vcs_url("https://example.com/pkg.whl", VcsConfig())
 
-    def test_hg_url_refused(self) -> None:
-        with pytest.raises(UnsupportedVcsError, match="not a recognized VCS scheme"):
+    def test_mercurial_has_its_own_scheme_opt_in(self) -> None:
+        with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-schemes"):
             admit_vcs_url(
                 "hg+https://hg.example.com/r",
                 _allow_https(),
@@ -790,6 +836,91 @@ class TestAdmitVcsUrlNonVcsRefusal:
                 "bzr+https://bzr.example.com/r",
                 _allow_https(),
             )
+
+
+@pytest.mark.parametrize(
+    ("scheme", "repo"),
+    [
+        ("hg+https", "https://example.com/team/demo"),
+        ("hg+file", "file:///tmp/private%20mirror/demo"),
+    ],
+)
+def test_admit_mercurial_repository(scheme: str, repo: str) -> None:
+    config = VcsConfig(
+        policy=VcsPolicy.ALLOW,
+        allowed_schemes=frozenset({scheme}),
+        allowed_repos=(repo,),
+    )
+
+    assert admit_vcs_url(f"hg+{repo}@{_FORTY}", config) == scheme
+
+
+@pytest.mark.parametrize("ref", ["", "tip", "abcdef", "0" * 40])
+def test_mercurial_requires_a_node_even_when_git_pins_are_optional(ref: str) -> None:
+    config = VcsConfig(
+        policy=VcsPolicy.ALLOW,
+        allowed_schemes=frozenset({"hg+https"}),
+        allowed_repos=("https://example.com/demo",),
+        require_pin=False,
+    )
+    revision = f"@{ref}" if ref else ""
+
+    with pytest.raises(UnsupportedVcsError, match="full 40-character changeset"):
+        admit_vcs_url(f"hg+https://example.com/demo{revision}", config)
+
+
+@pytest.mark.parametrize(
+    ("repo", "prefix"),
+    [
+        ("https://example.com/demos", "https://example.com/demo"),
+        ("https://example.com/demo.git", "https://example.com/demo"),
+        ("https://example.com/demo", "https://example.com/demo.git"),
+    ],
+)
+def test_mercurial_repository_prefix_has_literal_path_boundaries(
+    repo: str, prefix: str
+) -> None:
+    config = VcsConfig(
+        policy=VcsPolicy.ALLOW,
+        allowed_schemes=frozenset({"hg+https"}),
+        allowed_repos=(prefix,),
+    )
+
+    with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
+        admit_vcs_url(f"hg+{repo}@{_FORTY}", config)
+
+
+@pytest.mark.parametrize(
+    "repo",
+    [
+        "https://name:secret@example.com/demo",
+        "https://example.com/demo/%2e%2e/other",
+    ],
+)
+def test_mercurial_refuses_ambiguous_repository_locations(repo: str) -> None:
+    config = VcsConfig(
+        policy=VcsPolicy.ALLOW,
+        allowed_schemes=frozenset({"hg+https", "hg+file"}),
+        allowed_repos=("https://", "file://"),
+    )
+
+    with pytest.raises(UnsupportedVcsError, match="Mercurial requires") as error:
+        admit_vcs_url(f"hg+{repo}@{_FORTY}", config)
+
+    assert "secret" not in str(error.value)
+
+
+def test_mercurial_admission_refuses_an_escaping_subdirectory() -> None:
+    config = VcsConfig(
+        policy=VcsPolicy.ALLOW,
+        allowed_schemes=frozenset({"hg+https"}),
+        allowed_repos=("https://example.com/demo",),
+    )
+
+    with pytest.raises(UnsupportedVcsError, match="malformed Mercurial source URL"):
+        admit_vcs_url(
+            f"hg+https://example.com/demo@{_FORTY}#subdirectory=../other", config
+        )
 
 
 class TestAdmitVcsUrlRepoPath:

@@ -52,7 +52,7 @@ ALL_SCHEMES = [
     "https",
     "http",
     "file",
-    "hg+https",
+    "hg+ssh",
     "svn+ssh",
     "GIT+HTTPS",
 ]

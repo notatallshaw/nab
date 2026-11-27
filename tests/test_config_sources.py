@@ -2096,7 +2096,7 @@ class TestTableProjectOptions:
     def test_vcs_default_render(self, tmp_path: Path) -> None:
         _project(tmp_path)
         eff = _resolve(SourceRoots(project_dir=tmp_path))
-        assert eff["vcs"].spec.render(VcsConfig()) == "policy=block"
+        assert eff["vcs"].spec.render(VcsConfig()) == "policy=declared"
 
     def test_vcs_render_full(self) -> None:
         spec = next(s for s in OPTIONS if s.key == "vcs")
