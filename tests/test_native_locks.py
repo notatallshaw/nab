@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import venv
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
@@ -16,8 +15,18 @@ from nab_provider.testing import make_metadata
 
 from ._local_artifacts import make_wheel_archive, publish_artifacts
 
-if TYPE_CHECKING:
-    from pathlib import Path
+
+def _consumer(name: str) -> Path:
+    """Use the executable installed from the consumer's own lock."""
+    location = os.environ.get("LOCKFILE_CONSUMER_ENVS")
+    if not location:
+        pytest.skip("set LOCKFILE_CONSUMER_ENVS to run native lockfile tests")
+    return (
+        Path(location).resolve()
+        / name
+        / ("Scripts" if os.name == "nt" else "bin")
+        / (name + ".exe" if os.name == "nt" else name)
+    )
 
 
 @pytest.fixture
@@ -45,9 +54,7 @@ def native_project(tmp_path: Path, format_name: str) -> Path:
 def test_native_tool_installs_plan_and_transitive_dependency(
     native_project: Path, tmp_path: Path, format_name: str
 ) -> None:
-    executable = shutil.which(format_name)
-    if executable is None:
-        pytest.skip(f"requires the {format_name} consumer executable")
+    executable = _consumer(format_name)
 
     assert run(("lock", str(native_project), "--plan", "install", "--no-cache")) == 0
     output = tmp_path / f"{format_name}.lock"
@@ -106,9 +113,7 @@ def test_native_tool_installs_plan_and_transitive_dependency(
 def test_uv_runs_a_script_from_nabs_lock(
     native_project: Path, format_name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    executable = shutil.which(format_name)
-    if executable is None:
-        pytest.skip("requires the uv consumer executable")
+    executable = _consumer(format_name)
 
     project_dir = native_project.parent
     script = project_dir / "demo.py"
@@ -144,9 +149,7 @@ def test_uv_runs_a_script_from_nabs_lock(
 def test_uv_selects_each_conflicting_extra(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    uv = shutil.which("uv")
-    if uv is None:
-        pytest.skip("requires the uv consumer executable")
+    uv = _consumer("uv")
     wheels = tmp_path / "wheels"
     files = {}
     for version in ("1", "2"):

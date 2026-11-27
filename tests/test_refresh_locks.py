@@ -106,12 +106,17 @@ def test_generation_uses_the_active_python_and_preserves_failure(
 
     monkeypatch.setattr(task.subprocess, "run", invoke)
     assert task.main(["--locked"], tmp_path) == exit_code
-    assert len(calls) == (2 if exit_code == 0 else 1)
+    assert len(calls) == (3 if exit_code == 0 else 1)
     assert calls[0][:4] == (sys.executable, "-m", "nab", "lock")
     assert "--all-groups" in calls[0]
     assert calls[0][-1] == "--locked"
     if exit_code == 0:
         assert "--build-requirements" in calls[1]
+        assert calls[2][4:] == (
+            ".github/requirements/native-locks/pyproject.toml",
+            "--all-plans",
+            "--locked",
+        )
 
 
 def test_shared_version_mismatch_is_refused(

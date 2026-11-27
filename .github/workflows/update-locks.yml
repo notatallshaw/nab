@@ -47,6 +47,7 @@ jobs:
           path: |
             pylock.dev.toml
             .github/requirements/pylock.build.toml
+            .github/requirements/native-locks/pylock.*.toml
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1

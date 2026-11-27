@@ -1,0 +1,44 @@
+lock-version = "1.0"
+environments = [
+    "python_version == \"3.14\" and sys_platform == \"linux\" and platform_machine == \"x86_64\"",
+]
+requires-python = "==3.14.*"
+created-by = "nab"
+
+[[packages]]
+name = "uv"
+version = "0.13.9"
+requires-python = ">=3.8"
+index = "https://pypi.org/simple/"
+
+[[packages.wheels]]
+name = "uv-0.13.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+upload-time = 2026-11-17T09:44:01.023609+00:00
+url = "https://files.pythonhosted.org/packages/3d/aa/26d64642d808de4a652579ef950d7cd2d37f080a8babf9c67c6b75fc4c3f/uv-0.13.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+size = 17606939
+
+[packages.wheels.hashes]
+sha256 = "d7f459fe4fd247d830351c75686d3996ace3c6f3f728eb0e85a30b7ada0cef19"
+
+[tool.nab]
+nab-version = "0.0.32.dev0"
+created-at = 2026-11-27T19:47:58.961289+00:00
+command-line = [
+    "nab",
+    "lock",
+    ".github/requirements/native-locks/pyproject.toml",
+    "--output",
+    ".github/requirements/native-locks/pylock.uv.toml",
+    "--plan",
+    "uv",
+    "--upgrade",
+]
+input-path = ".github/requirements/native-locks/pyproject.toml"
+mode = "specific"
+python-specifier = "==3.14.*"
+
+[tool.nab.validation]
+version = 1
+all-inputs-sha256 = "acf0aa27c6c7a39cabe98d321844face3df690ea965c68e388b410d629a14504"
+selection-inputs-sha256 = "2f14d1f4e06e8274e3e4e70fddeb59c5b5a32f65e556a33cb176cbe58eba9756"
+contents-sha256 = "55d93fa572d8356d8efb8a5964168e91b2515be42b78b1dc781b53abc0cd09d8"

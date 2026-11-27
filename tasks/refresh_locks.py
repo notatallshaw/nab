@@ -1,4 +1,4 @@
-"""Refresh the development and build locks, forwarding options to ``nab lock``."""
+"""Refresh repository locks, forwarding options to ``nab lock``."""
 
 from __future__ import annotations
 
@@ -113,24 +113,20 @@ def check_shared_pins(root: Path) -> None:
 
 
 def main(args: Sequence[str], root: Path = ROOT) -> int:
-    """Refresh both locks with this interpreter and the forwarded Nab options."""
+    """Refresh the repository locks with the forwarded nab options."""
     try:
         _check_build_systems(root)
-        for selection, output in (
-            (("--all-groups",), DEV_LOCK),
-            (("--build-requirements",), BUILD_LOCK),
-        ):
-            command = (
-                sys.executable,
-                "-m",
-                "nab",
-                "lock",
-                *selection,
+        for selection in (
+            ("--all-groups", "--no-emit-workspace", "--output", str(DEV_LOCK)),
+            (
+                "--build-requirements",
                 "--no-emit-workspace",
                 "--output",
-                str(output),
-                *args,
-            )
+                str(BUILD_LOCK),
+            ),
+            (".github/requirements/native-locks/pyproject.toml", "--all-plans"),
+        ):
+            command = (sys.executable, "-m", "nab", "lock", *selection, *args)
             result = subprocess.run(command, cwd=root, check=False)
             if result.returncode:
                 return result.returncode
