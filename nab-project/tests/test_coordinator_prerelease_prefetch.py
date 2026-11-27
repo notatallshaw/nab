@@ -102,6 +102,24 @@ def resolve_metadata(
     )
 
 
+def test_constrained_prerelease_is_prefetched_when_positive_bounds_arrive() -> None:
+    releases = ["1.0rc1", "2.0"]
+    allowed = SpecifierSet("==1.0rc1").to_range()
+
+    with (
+        metadata_index(releases) as routes,
+        FetchCoordinator(HttpxAsyncTransport()) as coordinator,
+    ):
+        provider = Provider(coordinator, constraints={"pkg": allowed})
+        versions = provider.fetch_versions("pkg")
+        provider.prefetch_in_range("pkg", versions, SpecifierSet("").to_range())
+
+        assert provider.metadata_prefetch_decisions["pkg"] == Version("1.0rc1")
+
+    assert routes["1.0rc1"].call_count == 1
+    assert not routes["2.0"].called
+
+
 def test_explicit_prefetch_window_retains_prerelease_guess() -> None:
     selected, requests, _ = resolve_metadata(
         ["1.0", "2.0b1"], "", settings=PrefetchSettings(metadata_versions=1)

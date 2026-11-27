@@ -86,6 +86,19 @@ def test_normalized_roots_combine_constraints_without_retaining_provider() -> No
     assert allowed("1.5")
 
 
+def test_constraints_filter_future_listings_without_requesting_them() -> None:
+    port = HintPort()
+    Provider(port, constraints={"dep": SpecifierSet("==2").to_range()})
+
+    assert not port.calls_to("request_listing")
+    assert port.filters["dep"]("2")
+    assert not port.filters["dep"]("1")
+
+    Provider(port)
+
+    assert not port.filters
+
+
 def test_new_provider_replaces_previous_root_filters() -> None:
     port = HintPort()
     Provider(port, root_requirements={"first": SpecifierSet("==1").to_range()})

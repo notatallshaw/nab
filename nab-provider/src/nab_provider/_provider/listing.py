@@ -277,6 +277,7 @@ def prefetch_root_batch(
     items: list[tuple[str, str, str, tuple[str, str] | None]] = []
     previous_version: Version | None = None
     in_root_range = False
+    constraint = provider.constraints.get(normalized)
     for version, dist in ordered:
         if len(items) >= PREFETCH_BATCH:
             break
@@ -284,7 +285,9 @@ def prefetch_root_batch(
         # Equal versions can retain different text for literal matching.
         if previous_version is None or version is not previous_version:
             previous_version = version
-            in_root_range = version in root_range
+            in_root_range = version in root_range and (
+                constraint is None or version in constraint
+            )
         if not in_root_range:
             continue
         if (normalized, version) in provider.deps_cache:
@@ -347,6 +350,11 @@ def _prefetch_transitive_best(
     )
     if version is None:
         return
+
+    # A custom candidate-selection hook can propose a release outside the constraint.
+    constraint = provider.constraints.get(normalized)
+    if constraint is not None and version not in constraint:
+        return
     if (normalized, version) in provider.deps_cache:
         return
 
@@ -387,7 +395,10 @@ def pick_best_candidate(
     )
 
     version_range = provider.root_requirements.get(normalized)
+    constraint = provider.constraints.get(normalized)
     for version, dist in ordered:
+        if constraint is not None and version not in constraint:
+            continue
         if version_range is None or version in version_range:
             return (version, dist)
     return None
