@@ -1064,9 +1064,9 @@ def dropped_release_in_range(
 ) -> bool:
     """Whether a file the filter dropped carries a version inside ``version_range``.
 
-    Callers ask only when no surviving version falls in the range, so a
-    dropped one that does is the release the requirement asked for.  A
-    dropped version equal to a survivor is represented by that survivor:
+    Look-ahead uses this to keep filtered releases out of a dependency clause.
+    Failure reporting uses it to find a release the requirement asked for.
+    A dropped version equal to a survivor is represented by that survivor:
     :func:`filter_distributions` collapses equal versions onto one
     representative. ``===`` compares its string form. Filtering through
     ``version_range`` keeps the pre-release

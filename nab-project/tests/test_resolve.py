@@ -4451,7 +4451,10 @@ class TestAugmentResolutionError:
 
     @staticmethod
     def _self_dependency_result(
-        *, requires_python: str | None = ">=3.13", minimum: str = "2"
+        *,
+        requires_python: str | None = ">=3.13",
+        minimum: str = "2",
+        self_requirement: str = ">=4",
     ) -> ResolveResult:
         """Resolve a Python-filtered release beside an impossible self-dependency."""
         coordinator = make_coordinator(
@@ -4472,7 +4475,7 @@ class TestAugmentResolutionError:
                     "bridge", "1", f"leaf>={minimum}"
                 ),
                 "https://example.com/leaf-3-py3-none-any.whl.metadata": make_metadata(
-                    "leaf", "3", "leaf>=4"
+                    "leaf", "3", f"leaf{self_requirement}"
                 ),
                 "https://example.com/leaf-2-py3-none-any.whl.metadata": make_metadata(
                     "leaf", "2", requires_python=requires_python
@@ -4506,6 +4509,15 @@ class TestAugmentResolutionError:
         repaired = self._self_dependency_result(requires_python=None).target_results[0]
         assert repaired.success
         assert repaired.pins == {"app": V("1"), "bridge": V("1"), "leaf": V("2")}
+
+    def test_disjoint_self_requirement_preserves_the_filtered_release_reason(
+        self,
+    ) -> None:
+        failed = self._self_dependency_result(self_requirement="<2").target_results[0]
+
+        assert failed.error is not None
+        assert "leaf ==3 depends on leaf <2" in str(failed.error)
+        assert "leaf: no version in range supports Python 3.12" in str(failed.error)
 
     def test_filtered_release_outside_the_failure_domain_is_not_reported(self) -> None:
         failed = self._self_dependency_result(minimum="3").target_results[0]

@@ -1397,11 +1397,7 @@ class TestNoVersionsReasons:
             ("other", "baz", SpecifierSet("<2.0").to_range())
         ].append(V("1.0"))
         provider.pending_self_blocks[
-            (
-                "other",
-                SpecifierSet("==5.0").to_range(),
-                SpecifierSet(">=6.0").to_range(),
-            )
+            ("other", SpecifierSet("==5.0").to_range())
         ].append(V("1.0"))
         provider.pending_root_blocks[
             (

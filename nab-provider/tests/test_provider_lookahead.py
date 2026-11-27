@@ -428,6 +428,50 @@ class TestDecisionLookAhead:
         assert V("5.0") not in term.constraint
         assert clause.dependency_range == SpecifierSet("==5.0").to_range()
 
+    def test_self_requirement_selects_the_release_it_admits(self) -> None:
+        versions = ("4.0", "3.0", "2.0", "1.0")
+        coordinator = make_coordinator(
+            [make_wheel(v) for v in versions],
+            metadata_by_version={
+                v: make_metadata("foo", v, "foo==1.0") for v in versions
+            },
+            package="foo",
+        )
+        roots = {"foo": SpecifierSet(">=1").to_range()}
+        provider = Provider(coordinator, target=_PY312, root_requirements=roots)
+        resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+
+        pins = resolver.resolve(roots)
+
+        assert pins == {"foo": V("1.0")}
+        assert resolver.stats.conflicts == 0
+
+    def test_self_rejections_leave_a_filtered_release_out_of_the_clause(self) -> None:
+        versions = ("4.0", "3.0", "2.0", "1.0")
+        coordinator = make_coordinator(
+            [
+                make_wheel(v, requires_python=">=3.13" if v == "3.0" else None)
+                for v in versions
+            ],
+            metadata_by_version={
+                v: make_metadata("foo", v, "foo==1.0") for v in versions if v != "3.0"
+            },
+            package="foo",
+        )
+        requirement = SpecifierSet(">=1").to_range()
+        provider = Provider(
+            coordinator, target=_PY312, root_requirements={"foo": requirement}
+        )
+
+        chosen = provider.choose_version("foo", requirement)
+        (clause,) = provider.consume_pending_clauses()
+        (term,) = clause.terms
+
+        assert chosen == V("1.0")
+        assert term.package == "foo"
+        assert {v for v in versions if V(v) in term.constraint} == {"4.0", "2.0"}
+        assert clause.dependency_range == SpecifierSet("==1.0").to_range()
+
     def test_self_dependency_report_names_the_edge(self) -> None:
         """The report names both versions in the self-dependency.
 
@@ -985,13 +1029,9 @@ class TestLookAheadAbort:
     def test_should_abort_none_when_self_block_present(self) -> None:
         provider = self._provider()
         provider.pending_blocks[("foo", "bar", V("1.0"))].append(V("0.9"))
-        provider.pending_self_blocks[
-            (
-                "foo",
-                SpecifierSet("==5.0").to_range(),
-                SpecifierSet(">=6.0").to_range(),
-            )
-        ].append(V("0.9"))
+        provider.pending_self_blocks[("foo", SpecifierSet("==5.0").to_range())].append(
+            V("0.9")
+        )
         assert provider._should_abort_lookahead("foo") is None
 
     def test_should_abort_none_when_root_block_present(self) -> None:
