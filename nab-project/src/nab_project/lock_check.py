@@ -388,6 +388,7 @@ def _read_native(
     if lock.project_identity != native_project_identity(format_name, project):
         msg = "the project inputs recorded in the native lock changed; update the lock"
         raise LockConsistencyError(msg)
+
     return lock
 
 

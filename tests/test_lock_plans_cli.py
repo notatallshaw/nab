@@ -876,6 +876,8 @@ def test_native_saved_plan_checks_reuse_and_upgrades(
     assert command(named, *args) == 0
     saved = output.read_bytes()
     fetches = len(named.coordinators)
+
+    # A consistency check and a reuse hit do not open a resolver transport.
     assert command(named, *args, "--locked") == 0
     assert command(named, *args, "--lock-policy", "reuse") == 0
     assert len(named.coordinators) == fetches
@@ -885,6 +887,7 @@ def test_native_saved_plan_checks_reuse_and_upgrades(
     named.add_release()
     assert command(named, *args, "--reproduce") == 1
     assert output.read_bytes() == saved
+
     assert command(named, *args, "--lock-policy", "prefer-existing") == 0
 
     def pin() -> str:

@@ -44,6 +44,7 @@ def test_remote_saved_lock_checks_bounds_and_consumer_freshness(
     writer = {"pdm": write_pdm_lock, "poetry": write_poetry_lock, "uv": write_uv_lock}[
         format_name
     ]
+
     project = tmp_path / "pyproject.toml"
     project.write_text(
         '[project]\nname="app"\nversion="1"\nrequires-python=">=3.12"\ndependencies=["demo"]\n'
@@ -75,6 +76,7 @@ def test_remote_saved_lock_checks_bounds_and_consumer_freshness(
     assert can_reuse_saved_lock(
         dest, project, current, inputs, [target], native_format=format_name
     )
+
     compatible = ResolveInputs(requires_python=">=3.12", constraints=("demo>=1",))
     check_saved_lock(
         dest,
@@ -84,6 +86,7 @@ def test_remote_saved_lock_checks_bounds_and_consumer_freshness(
         [target],
         native_format=format_name,
     )
+
     incompatible = ResolveInputs(requires_python=">=3.12", constraints=("demo>=2",))
     with pytest.raises(LockConsistencyError, match="does not satisfy"):
         check_saved_lock(
@@ -126,12 +129,15 @@ def test_local_file_hashes_and_nonindex_hints(tmp_path: Path) -> None:
     project.write_text('[project]\nname="app"\nversion="1"\n')
     target = ResolveTarget.for_host()
     current = snapshot_inputs(project, ResolveInputs(), [target])
+
     local = tmp_path / "demo-1-py3-none-any.whl"
     local.write_bytes(b"wheel")
     hashes = (("sha256", hashlib.sha256(local.read_bytes()).hexdigest()),)
+
     archive = tmp_path / "remote.zip"
     archive.write_bytes(b"archive")
-    ah = (("sha256", hashlib.sha256(archive.read_bytes()).hexdigest()),)
+    archive_hashes = (("sha256", hashlib.sha256(archive.read_bytes()).hexdigest()),)
+
     pins = {
         "demo": IndexPin(
             "demo",
@@ -141,12 +147,13 @@ def test_local_file_hashes_and_nonindex_hints(tmp_path: Path) -> None:
                 WheelArtifact(local.name, local.as_uri(), hashes, local_path=local),
             ),
         ),
-        "unpack": ArchivePin("unpack", "3", archive.as_uri(), ah),
+        "unpack": ArchivePin("unpack", "3", archive.as_uri(), archive_hashes),
         "directory": LocalPin("directory", "2", str(tmp_path)),
     }
     value = LockInput(
         targets={target.label: TargetLock(target, pins)}, validation_inputs=current
     )
+
     dest = tmp_path / "pdm.lock"
     write_pdm_lock(
         value, toml_io.load_path(project), project_dir=tmp_path, output_path=dest
@@ -157,11 +164,13 @@ def test_local_file_hashes_and_nonindex_hints(tmp_path: Path) -> None:
     check_saved_lock(
         dest, project, current, ResolveInputs(), [target], native_format="pdm"
     )
+
     prior = read_lock_preferences(dest, native_format="pdm", exclude={"Demo"})
     assert prior is not None
     assert prior.known_packages == {"demo", "unpack"}
     assert prior.versions_for(target) == {}
     assert prior.summary_versions() == {"demo": Version("1"), "unpack": Version("3")}
+
     local.write_bytes(b"changed")
     with pytest.raises(ValueError, match="local artifact changed"):
         check_saved_lock(
@@ -235,6 +244,7 @@ def test_target_specific_preference_and_altered_evidence(tmp_path: Path) -> None
         environments=[Marker(t.environment_marker_string) for t in (linux, windows)],
         validation_inputs=snapshot,
     )
+
     output = tmp_path / "pdm.lock"
     write_pdm_lock(
         value, toml_io.load_path(project), project_dir=tmp_path, output_path=output
@@ -274,6 +284,7 @@ def test_native_provenance_only_output(tmp_path: Path) -> None:
             "specific",
         ),
     )
+
     output = tmp_path / "pdm.lock"
     write_pdm_lock(lock, {}, project_dir=tmp_path, output_path=output)
     assert toml_io.load_path(output)["tool"]["nab"]["command-line"] == ["nab", "lock"]

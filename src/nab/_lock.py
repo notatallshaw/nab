@@ -1158,6 +1158,7 @@ def _existing_lock_preferences(run: _LockRun) -> SavedPreferences | None:
     """Read an explicitly requested prior model under highest resolution."""
     if run.lock_policy is LockPolicy.RESOLVE:
         return None
+
     return read_lock_preferences(
         _check_target_path(run),
         exclude=run.upgrade_packages,
