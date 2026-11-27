@@ -353,6 +353,25 @@ def test_import_off_the_supported_path_is_reported(
     )
 
 
+def test_catalogue_import_must_use_its_advertised_subpackage(
+    workspace: FakeWorkspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workspace.add(
+        "pkg-a",
+        docstring=SUPPORTED_TABLE.replace("pkg_a.api", "pkg_a.catalogue.api"),
+        old="from .catalogue.api import Thing\n",
+    )
+    catalogue = workspace.root / "pkg-a/src/pkg_a/catalogue"
+    catalogue.mkdir()
+    (catalogue / "__init__.py").write_text("", encoding="utf-8")
+    (catalogue / "api.py").write_text(THING, encoding="utf-8")
+    workspace.publishes_supported_paths("pkg_a")
+    workspace.add("pkg-b", requires=("pkg-a",), use="from pkg_a.old import Thing\n")
+
+    assert check_boundaries.main() == 1
+    assert "supports Thing at pkg_a.catalogue.api" in capsys.readouterr().err
+
+
 def test_supported_path_row_naming_a_missing_module_is_reported(
     workspace: FakeWorkspace, capsys: pytest.CaptureFixture[str]
 ) -> None:

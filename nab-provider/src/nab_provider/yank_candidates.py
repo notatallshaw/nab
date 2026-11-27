@@ -15,7 +15,7 @@ __lazy_modules__ = (
 )
 
 from types import MappingProxyType
-from typing import TYPE_CHECKING, ClassVar, Final
+from typing import TYPE_CHECKING
 
 from packaging.ranges import VersionRange
 from packaging.utils import canonicalize_name
@@ -26,13 +26,23 @@ from ._compat import override
 from ._provider.extras import version_provides_extra
 from ._provider.listing_diagnosis import MetadataBlock
 from ._provider.metadata_resolver import classify_requirement, dists_at_version
+from .catalogue.versions import VersionCandidate, VersionCatalogue, is_pin
 from .errors import MetadataError, MissingExtraError
 from .extra_keys import split_extra
 from .metadata import intern_version
 from .policy import DistPolicy, ExtrasMode, MetadataPolicy
 from .preference import UnavailableMetadataError
 from .records import SdistFile, WheelFile
-from .value import HashableRecord, Record, field_names
+from .value import Record, field_names
+
+__all__ = [
+    "Candidate",
+    "CandidateData",
+    "YankCandidates",
+    "add_range",
+    "is_pin",
+    "merge_stats",
+]
 
 _UNRESTRICTED_RANGE = VersionRange.full()
 
@@ -45,32 +55,10 @@ if TYPE_CHECKING:
     from .provider import DistFile, Provider, ProviderStats
 
 
-class Candidate(HashableRecord):
+class Candidate(VersionCandidate):
     """A package version restricted to its yanked or non-yanked files."""
 
-    __record_fields__: ClassVar[tuple[str, ...] | None]
-
-    __slots__ = __record_fields__ = ("package", "version", "withdrawn", "label")
-
-    __record_init_fields__: ClassVar[tuple[str, ...] | None] = (
-        "package",
-        "version",
-        "withdrawn",
-    )
-
-    __match_args__ = ("package", "version", "withdrawn")
-
-    package: Final[str]
-    version: Final[Version]
-    withdrawn: Final[bool]
-    label: Final[str]
-
-    def __init__(self, package: str, version: Version, *, withdrawn: bool) -> None:
-        """Select a version's withdrawn or non-withdrawn files."""
-        self.package = package
-        self.version = version
-        self.withdrawn = withdrawn
-        self.label = str(version)
+    __slots__ = ()
 
     @override
     def _comparison_values(self) -> tuple[object, ...]:
@@ -81,6 +69,7 @@ class Candidate(HashableRecord):
         return self.package, self.version, self.withdrawn, self.label
 
     @property
+    @override
     def base(self) -> str:
         """Return the package name without an extra proxy."""
         return split_extra(self.package)[0]
@@ -164,77 +153,31 @@ class CandidateData(Record):
         self.pins = pins
 
 
-def is_pin(requirement: Requirement) -> bool:
-    """Recognize original exact equality syntax, including redundant conjuncts."""
-    return any(
-        spec.operator == "==="
-        or (spec.operator == "==" and not spec.version.endswith(".*"))
-        for spec in requirement.specifier
-    )
-
-
 def add_range(ranges: dict[str, VersionRange], name: str, value: VersionRange) -> None:
     """Intersect a requirement with the constraints already collected for its name."""
     previous = ranges.get(name)
     ranges[name] = value if previous is None else previous & value
 
 
-class YankCandidates:
+class YankCandidates(VersionCatalogue[Candidate]):
     """Cache candidates and metadata without granting permission to use yanked files."""
 
-    @staticmethod
-    def candidate_package(candidate: Candidate) -> str:
-        """Return the candidate's package."""
-        return candidate.package
+    range_type = VersionRange
 
     @staticmethod
-    def candidate_base(candidate: Candidate) -> str:
-        """Return the candidate's base."""
-        return candidate.base
-
-    @staticmethod
-    def candidate_label(candidate: Candidate) -> str:
-        """Return the candidate's label."""
-        return candidate.label
-
-    @staticmethod
-    def candidate_withdrawn(candidate: Candidate) -> bool:
-        """Return whether the candidate is yanked."""
-        return candidate.withdrawn
-
-    @staticmethod
-    def full_range() -> VersionRange:
-        """Return the identity for version-range intersection."""
-        return VersionRange.full()
-
-    @staticmethod
-    def intersect_ranges(left: VersionRange, right: VersionRange) -> VersionRange:
-        """Intersect two ranges using the native version algebra."""
-        return left & right
-
-    @staticmethod
-    def range_contains(candidate: Candidate, allowed: VersionRange) -> bool:
-        """Test a candidate version against native bounds."""
-        return candidate.version in allowed
-
-    @staticmethod
-    def pin_allows(pin: Requirement, candidate: Candidate) -> bool:
-        """Check whether an original pin permits this withdrawn candidate."""
-        return canonicalize_name(pin.name) == candidate.base and pin.specifier.contains(
-            candidate.version, prereleases=True
-        )
-
-    @staticmethod
+    @override
     def pin_project(pin: Requirement) -> str:
         """Return the normalized project named by an original pin."""
         return canonicalize_name(pin.name)
 
     @staticmethod
+    @override
     def base_name(package: str) -> str:
         """Remove an extras proxy from a package identifier."""
         return split_extra(package)[0]
 
     @staticmethod
+    @override
     def base_candidate(candidate: Candidate) -> Candidate:
         """Return the matching base identity for an extra candidate."""
         return Candidate(

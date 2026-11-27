@@ -228,6 +228,19 @@ their work budget. Terminal resolver errors retain their classification. After r
 identifies the selected input or dependency pins permitting each yank; the host constructs its own
 final result and diagnostics.
 
+## Resolve a prepared catalogue
+
+Install `nab-provider` to use `PreparedVersionCatalogue` from `nab_provider.catalogue.versions`.
+Implement its listing and metadata reads with your installer's finder. Give each file a stable
+candidate identity, including files with the same version but different dependencies. Retain the
+original exact pins alongside the dependency ranges so the provider can check yanked releases.
+
+Pass the catalogue, root ranges, input pins and constraints to
+`nab_provider.catalogue.resolution.PreparedResolution.from_catalogue`. Its `solve()` method returns
+the selected candidate for each package, the edges between packages, and the pins that permitted
+yanked releases. Start a fresh resolution when a newly discovered source replaces the set of
+candidate files.
+
 ## The supported API
 
 Import these names from the modules listed below. Import paths and APIs can change between 0.0.x

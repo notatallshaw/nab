@@ -38,6 +38,11 @@ embedding a component, pin the version you tested.
 | `nab-project`    | Fetch coordination, workspaces, PEP 517 builds, locks, downloads and resolve orchestration                   |
 | `nab`            | Configuration, CLI commands and output                                                                       |
 
+An installer that already finds files and prepares metadata can supply its candidates to
+`nab_provider.catalogue`. The catalogue distinguishes files with equal versions, checks when an
+exact pin permits a yanked file, and returns the selected candidates and their dependency edges. The
+installer supplies file order and keeps the metadata it reads for one resolution.
+
 `nab-project` reads project files and PEP 723 script metadata into the declaration view used by
 resolution and saved-lock validation. The CLI selects the input format and applies configuration
 layers, including a script's inline `[tool.nab]`. Script parsing never imports the script, and

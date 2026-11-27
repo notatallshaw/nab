@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from packaging.ranges import VersionRange
 from packaging.requirements import Requirement
-
-from nab_resolver.resolver import ResolverStats
 
 from ._compat import override
 from .preference import (
@@ -60,25 +58,12 @@ class YankPreference(PreferenceSearch[Candidate, VersionRange, Requirement]):
         )
 
         self._catalogue = catalogue
-        self.stats: ResolverStats[Any] = ResolverStats()
 
     @property
     @override
     def catalogue(self) -> YankCandidates:
         """Return the native catalogue used for preparation and adoption."""
         return self._catalogue
-
-    @override
-    def record_solver_stats(self, stats: ResolverStats[Any]) -> None:
-        """Accumulate every scalar and package counter before a query is discarded."""
-        for name in ResolverStats.__slots__:
-            value = getattr(stats, name)
-            if isinstance(value, int):
-                setattr(self.stats, name, getattr(self.stats, name) + value)
-            else:
-                target = getattr(self.stats, name)
-                for package, count in value.items():
-                    target[package] += count
 
     def adopt(
         self, selected: Mapping[str, Candidate]

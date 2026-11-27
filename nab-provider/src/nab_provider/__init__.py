@@ -2,6 +2,10 @@
 
 Supported imports:
 
+    nab_provider.catalogue.resolution  PreparedResolution, PreparedSolution
+    nab_provider.catalogue.provider  PreferenceProvider
+    nab_provider.catalogue.versions  PreparedVersionCatalogue, VersionCandidate,
+                                   VersionCandidateData
     nab_provider.diagnostics  Diagnostic, ResolutionMessage
     nab_provider.priority  compute_tier
     nab_provider.ranges  VersionRange
