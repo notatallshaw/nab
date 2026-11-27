@@ -18,6 +18,7 @@ from nab_provider.requirements_file import (
 )
 
 from ..conflicts import ConflictPolicy
+from ..lockfile import drop_workspace_pins
 from ..paths import relative_lock_path
 from ..pyproject_files import (
     build_system_requires,
@@ -31,12 +32,12 @@ from .native_saved import uv_project_identity, write_native_document
 from .pylock import LockValidationError, project_packages
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
 
     from packaging.pylock import Package, PackageArchive, PackageSdist, PackageWheel
     from packaging.requirements import Requirement
 
-    from ..lockfile import LockInput
+    from ..lockfile import LockInput, TargetLock
     from .pylock import ProjectedPackage
 
 
@@ -167,10 +168,28 @@ def _requirement(req: Requirement) -> dict[str, Any]:
     return data
 
 
+def _requests(
+    target: TargetLock, parent: str
+) -> Iterator[tuple[str, tuple[str, ...], tuple[str, ...]]]:
+    """Yield child names, requested child extras and activating parent extras."""
+    by_parent = target.dependency_requirements
+    declarations = by_parent.get(parent) if by_parent is not None else None
+
+    for child in target.dependencies.get(parent, ()):
+        records = declarations.get(child, ()) if declarations is not None else ()
+        if not records:
+            yield child, (), ()
+        for record in records:
+            yield child, record.dependency_extras, record.required_for_parent_extras
+
+
 class _PackageGraph:
     """Index each resolved row by target, retaining distinct sources of one name."""
 
-    def __init__(self, lock: LockInput, directory: Path, project: str) -> None:
+    def __init__(
+        self, lock: LockInput, directory: Path, project: str, excluded: frozenset[str]
+    ) -> None:
+        self.excluded = excluded
         self.regions: dict[frozenset[str], str | None] = {}
         self.lock = lock
         self.project = project
@@ -240,22 +259,47 @@ class _PackageGraph:
         self.regions[key] = marker
         return marker
 
+    def endpoints(
+        self, label: str, child: str, extras: tuple[str, ...]
+    ) -> Iterator[tuple[int, tuple[str, ...]]]:
+        """Follow omitted members until an edge reaches an installed distribution."""
+        if child not in self.excluded:
+            yield self.by_target[label, child], extras
+            return
+
+        # A workspace cycle can revisit a member with a different requested extra.
+        pending = [(child, extras)]
+        seen: set[tuple[str, tuple[str, ...]]] = set()
+        target = self.lock.targets[label]
+        while pending:
+            name, requested = pending.pop()
+            if (name, requested) in seen:
+                continue
+
+            seen.add((name, requested))
+
+            if name not in self.excluded:
+                yield self.by_target[label, name], requested
+                continue
+
+            # Only forward edges enabled by the incoming request.
+            for dependency, dep_extras, parent_extras in _requests(target, name):
+                if not parent_extras or not set(parent_extras).isdisjoint(requested):
+                    pending.append((dependency, dep_extras))
+
     def attach_edges(self, parent: ProjectedPackage, row: dict[str, Any]) -> None:
+        """Collect the dependency edges active in each target and parent extra."""
         by_extra: dict[str, dict[tuple[int, tuple[str, ...]], set[str]]] = defaultdict(
             lambda: defaultdict(set)
         )
         # Group identical edges before constructing their environment marker.
         for label in parent.labels:
-            target = self.lock.targets[label]
-            declarations = (target.dependency_requirements or {}).get(parent.name, {})
-            for name in target.dependencies.get(parent.name, ()):
-                index = self.by_target[label, name]
-                records = declarations.get(name, ())
-                if not records:
-                    by_extra[""][index, ()].add(label)
-                for record in records:
-                    for extra in record.required_for_parent_extras or ("",):
-                        by_extra[extra][index, record.dependency_extras].add(label)
+            for name, requested, parent_extras in _requests(
+                self.lock.targets[label], parent.name
+            ):
+                for key in self.endpoints(label, name, requested):
+                    for extra in parent_extras or ("",):
+                        by_extra[extra][key].add(label)
 
         all_labels = set(parent.labels)
         for extra, edges in sorted(by_extra.items()):
@@ -268,17 +312,33 @@ class _PackageGraph:
             else:
                 row["dependencies"] = refs
 
+    def _root_choices(
+        self, requirement: Requirement
+    ) -> dict[tuple[int, tuple[str, ...]], set[str]]:
+        """Find the installed endpoints of a project requirement in each target."""
+        choices: dict[tuple[int, tuple[str, ...]], set[str]] = defaultdict(set)
+        requested = tuple(sorted(requirement.extras))
+        for index in self.by_name.get(canonicalize_name(requirement.name), ()):
+            package = self.packages[index]
+            if not requirement.specifier.contains(package.version, prereleases=True):
+                continue
+
+            if package.name not in self.excluded:
+                choices[index, requested].update(package.labels)
+                continue
+
+            for label in package.labels:
+                for key in self.endpoints(label, package.name, requested):
+                    choices[key].add(label)
+        return choices
+
     def root_edges(self, requirements: Sequence[Requirement]) -> list[dict[str, Any]]:
         edges: dict[tuple[int, tuple[str, ...], str | None], dict[str, Any]] = {}
         all_labels = set(self.lock.targets)
 
         for requirement in requirements:
-            for index in self.by_name.get(canonicalize_name(requirement.name), ()):
-                pkg = self.packages[index]
-                if not requirement.specifier.contains(pkg.version, prereleases=True):
-                    continue
-
-                guard = self.environment(set(pkg.labels), all_labels)
+            for (index, requested), labels in self._root_choices(requirement).items():
+                guard = self.environment(labels, all_labels)
                 if requirement.marker:
                     marker = MarkerSet.from_marker(requirement.marker)
                     if guard is not None:
@@ -288,7 +348,7 @@ class _PackageGraph:
 
                     guard = marker.to_marker_string()
 
-                key = (index, tuple(sorted(requirement.extras)), guard)
+                key = (index, requested, guard)
                 if key not in edges:
                     edges[key] = self.reference(*key)
         return list(edges.values())
@@ -383,11 +443,12 @@ def write_uv_lock(
     reproduce: bool = False,
     script: bool = False,
     build_requirements: bool = False,
+    excluded_workspace: frozenset[str] = frozenset(),
 ) -> str:
     """Write a uv project or script lock with dependency edges and artifact hashes."""
     name = canonicalize_name(project_name(document) or project_dir.resolve().name)
     directory = output_path.parent if output_path else project_dir
-    graph = _PackageGraph(lock_input, directory, name)
+    graph = _PackageGraph(lock_input, directory, name, excluded_workspace)
 
     project = document.get("project", {})
     requires_python = lock_input.requires_python or project.get("requires-python") or ""
@@ -414,7 +475,12 @@ def write_uv_lock(
         result["conflicts"] = conflicts
 
     with intractable_as_error():
+        retained: list[dict[str, Any]] = []
         for package, row in zip(graph.packages, graph.rows, strict=True):
+            if package.name in excluded_workspace:
+                continue
+
+            retained.append(row)
             graph.attach_edges(package, row)
             if len(graph.by_name[package.name]) > 1:
                 row["resolution-markers"] = sorted(
@@ -430,14 +496,12 @@ def write_uv_lock(
         if script:
             result["manifest"] = {"requirements": [_requirement(req) for req in main]}
         else:
-            graph.rows.append(_project_root(graph, document, main))
+            retained.append(_project_root(graph, document, main))
 
-    result["package"] = sorted(
-        graph.rows, key=lambda row: (row["name"], row["version"])
-    )
+    result["package"] = sorted(retained, key=lambda row: (row["name"], row["version"]))
     return write_native_document(
         result,
-        lock_input,
+        drop_workspace_pins(lock_input, excluded_workspace),
         format_name="uv",
         project_identity=uv_project_identity(document),
         output_path=output_path,

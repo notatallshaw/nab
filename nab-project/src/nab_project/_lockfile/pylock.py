@@ -747,6 +747,24 @@ def project_packages(
         _, packages = _prepare_pylock(
             lock_input, lock_dir=project_dir, package_output=_project_pin
         )
+    # Native readers identify an index release without its environment marker.
+    releases: set[tuple[str, Version, str]] = set()
+    for package in packages:
+        index = package.source.index
+        if index is None:
+            continue
+
+        key = (package.name, package.version, index)
+        if key in releases:
+            msg = (
+                f"{package.name}=={package.version} needs different artifacts "
+                f"from {index} "
+                "across targets; write separate native lock plans"
+            )
+            raise LockValidationError(msg)
+
+        releases.add(key)
+
     return packages
 
 

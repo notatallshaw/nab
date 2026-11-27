@@ -614,7 +614,7 @@ def _lock_one(
         offline=settings.offline,
         build_requirements=settings.build_requirements,
         workspace_discovery=settings.workspace_discovery,
-        no_emit_workspace=settings.no_emit_workspace,
+        excluded_workspace=workspace_to_drop,
         cli_overrides=overrides,
         upgrade=actions.upgrade,
         input_format=input_format,
@@ -682,15 +682,12 @@ def _lock_one(
         max_concurrency=settings.max_concurrency,
     )
 
-    lock_input = drop_workspace_pins(
-        build_lock_input(
-            result,
-            inputs=inputs,
-            extras=selected_extras,
-            dependency_groups=selected_groups,
-        ),
-        workspace_to_drop,
+    lock_input = build_lock_input(
+        result, inputs=inputs, extras=selected_extras, dependency_groups=selected_groups
     )
+    # uv follows dependency edges, so its writer needs the omitted members' edges.
+    if settings.format != "uv":
+        lock_input = drop_workspace_pins(lock_input, workspace_to_drop)
     lock_input.provenance = provenance
     _attach_validation_inputs(
         lock_input,
@@ -960,7 +957,7 @@ class _LockRun(Record):
         "offline",
         "build_requirements",
         "workspace_discovery",
-        "no_emit_workspace",
+        "excluded_workspace",
         "cli_overrides",
         "upgrade",
         "input_format",
@@ -980,7 +977,7 @@ class _LockRun(Record):
     offline: bool | None
     build_requirements: bool
     workspace_discovery: bool
-    no_emit_workspace: bool
+    excluded_workspace: frozenset[str]
     cli_overrides: Mapping[str, object]
     upgrade: bool
     input_format: InputFormat
@@ -1002,7 +999,7 @@ class _LockRun(Record):
         offline: bool | None,
         build_requirements: bool,
         workspace_discovery: bool,
-        no_emit_workspace: bool,
+        excluded_workspace: frozenset[str],
         cli_overrides: Mapping[str, object],
         upgrade: bool,
         lock_policy: LockPolicy,
@@ -1021,7 +1018,7 @@ class _LockRun(Record):
         self.offline = offline
         self.build_requirements = build_requirements
         self.workspace_discovery = workspace_discovery
-        self.no_emit_workspace = no_emit_workspace
+        self.excluded_workspace = excluded_workspace
         self.cli_overrides = cli_overrides
         self.upgrade = upgrade
         self.input_format = input_format
@@ -1539,6 +1536,7 @@ def _emit_project_lock(
                 output_path=destination,
                 reproduce=reproduce,
                 script=run.input_format is InputFormat.SCRIPT,
+                excluded_workspace=run.excluded_workspace,
                 build_requirements=run.build_requirements,
             )
         )
@@ -1561,7 +1559,8 @@ def _emit_project_lock(
         _print_lock(text)
     else:
         prior = previous_lock.summary_versions() if previous_lock is not None else None
-        printer().done(f"Wrote {destination} ({summarize_lock(lock_input, prior)})")
+        summary = summarize_lock(lock_input, prior, exclude=run.excluded_workspace)
+        printer().done(f"Wrote {destination} ({summary})")
 
 
 def _emit_pylock(

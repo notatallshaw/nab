@@ -159,7 +159,10 @@ def _registry_source(
 
 
 def _selection(
-    package: ProjectedPackage, groups: tuple[str, ...], extras: tuple[str, ...]
+    package: ProjectedPackage,
+    groups: tuple[str, ...],
+    extras: tuple[str, ...],
+    coverage: MarkerSet,
 ) -> dict[str, Any]:
     """Translate the package's reachability into one marker per Poetry group."""
     markers: dict[str, MarkerSet] = {}
@@ -168,9 +171,9 @@ def _selection(
         package.marker, base=groups[0], groups=groups, extras=extras
     ):
         region = (
-            MarkerSet.from_marker(condition)
+            coverage & MarkerSet.from_marker(condition)
             if condition is not None
-            else MarkerSet.full()
+            else coverage
         )
         # Poetry represents project extras as markers within its main group.
         if kind == "extra":
@@ -215,13 +218,20 @@ def write_poetry_lock(
     packages = project_packages(replace(lock_input, base_group=base), directory)
     rows = []
     with intractable_as_error():
+        # Poetry has package markers but no lock-wide supported environment list.
+        coverage = MarkerSet.full()
+        if lock_input.environments:
+            coverage = MarkerSet.empty()
+            for marker in lock_input.environments:
+                coverage |= MarkerSet.from_marker(marker)
+
         for package in packages:
             row = {
                 "name": package.name,
                 "version": str(package.version),
                 "description": "",
                 "python-versions": str(package.source.requires_python or "*"),
-                **_selection(package, groups, lock_input.extras),
+                **_selection(package, groups, lock_input.extras, coverage),
                 **_source(package.source, repositories, directory),
             }
             if package.source.dependencies is not None:

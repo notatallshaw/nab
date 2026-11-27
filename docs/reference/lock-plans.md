@@ -49,9 +49,8 @@ build inputs. Project default groups apply to ordinary locks. To change a named 
 edit the plan.
 
 Declare plans in `[tool.nab.plans.NAME]` in `pyproject.toml`, or `[plans.NAME]` in `nab.toml`. The
-default output is `pylock.NAME.toml` or `NAME.requirements.txt` for a requirements format. Set
-`output` to choose a path relative to the project file. Inspect the plans with
-`nab config get plans`.
+plan name and [format](formats.md#--output) determine the default output filename. Set `output` to
+choose a path relative to the project file. Inspect the plans with `nab config get plans`.
 
 A plan can choose its own output format. For example, this plan writes `deploy.requirements.txt`
 alongside the other plan's `pylock.ci.toml`:

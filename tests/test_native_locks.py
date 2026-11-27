@@ -208,3 +208,63 @@ def test_uv_selects_each_conflicting_extra(
             timeout=60,
         )
     assert output.read_bytes() == saved
+
+
+@pytest.mark.parametrize("format_name", ["uv"])
+def test_uv_installs_dependencies_of_omitted_workspace_members(
+    native_project: Path, format_name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uv = shutil.which(format_name)
+    if uv is None:
+        pytest.skip("requires the uv consumer executable")
+
+    project = native_project.parent
+    member = project / "member"
+    member.mkdir()
+    (member / "pyproject.toml").write_text(
+        '[project]\nname="member"\nversion="1"\ndependencies=["nativeleaf"]\n',
+        encoding="utf-8",
+    )
+    native_project.write_text(
+        '[project]\nname="app"\nversion="1"\nrequires-python=">=3.10"\n'
+        'dependencies=["member"]\n[tool.nab.workspace]\nmembers=["member"]\n'
+        f'[[tool.nab.indexes]]\nname="local"\nurl="{(project / "wheels").as_uri()}"\n',
+        encoding="utf-8",
+    )
+
+    output = project / "uv.lock"
+    args = (
+        "lock",
+        str(native_project),
+        "--format",
+        "uv",
+        "--no-emit-workspace",
+        "--output",
+        str(output),
+    )
+    assert run(args) == 0
+    assert run((*args, "--locked")) == 0
+    assert run((*args, "--reproduce")) == 0
+
+    monkeypatch.setenv("UV_CACHE_DIR", str(project / "cache"))
+    monkeypatch.setenv("UV_PYTHON_DOWNLOADS", "never")
+    subprocess.run(  # noqa: S603 - frozen install of the fixture and its dependency.
+        [
+            uv,
+            "run",
+            "--frozen",
+            "--offline",
+            "--python",
+            sys.executable,
+            "python",
+            "-c",
+            (
+                "from importlib.metadata import distributions, version; "
+                "assert version('nativeleaf') == '1'; "
+                "assert 'member' not in {d.metadata['Name'] for d in distributions()}"
+            ),
+        ],
+        cwd=project,
+        check=True,
+        timeout=60,
+    )

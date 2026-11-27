@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 import tomli
+from packaging.markers import Marker
 
 from nab_project.lockfile import (
     BASE_MEMBER,
@@ -20,6 +21,7 @@ from nab_project.lockfile import (
     WheelArtifact,
 )
 from nab_project.native_lock import write_poetry_lock
+from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 
 if TYPE_CHECKING:
@@ -219,3 +221,21 @@ def test_freshness_matches_poetry(project: dict, expected: str, tmp_path: Path) 
     doc = tomli.loads(write_poetry_lock(value, project, project_dir=tmp_path))
     assert doc["metadata"]["content-hash"] == expected
     assert doc["package"][0]["source"] == {"type": "directory", "url": "demo"}
+
+
+def test_poetry_package_markers_respect_the_resolved_targets(tmp_path: Path) -> None:
+    target = ResolveTarget.for_declared(
+        python_version="3.12", spec=PlatformSpec("windows_amd64")
+    )
+    other = ResolveTarget.for_declared(
+        python_version="3.12", spec=PlatformSpec("linux_x86_64")
+    )
+    pin = LocalPin("demo", "1", str(tmp_path / "demo"))
+    lock = LockInput(
+        targets={target.label: TargetLock(target, {"demo": pin})},
+        environments=[Marker(target.environment_marker_string)],
+    )
+    (row,) = tomli.loads(write_poetry_lock(lock, {}, project_dir=tmp_path))["package"]
+    marker = Marker(row["markers"]["main"])
+    assert marker.evaluate(target.marker_env)
+    assert not marker.evaluate(other.marker_env)

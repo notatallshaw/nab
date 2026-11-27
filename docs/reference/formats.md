@@ -27,9 +27,15 @@ Choose the file type with `--format`:
 
 ## `--output`
 
-For project inputs, `--output` defaults to `pylock.toml` for `pylock` and `requirements.txt` for the
-requirements formats. With `--build-requirements`, the defaults are `pylock.build.toml` and
-`build-requirements.txt`. Pass `--output -` for stdout.
+| Format                     | Project            | Build requirements       | Named plan              |
+| -------------------------- | ------------------ | ------------------------ | ----------------------- |
+| `pylock`                   | `pylock.toml`      | `pylock.build.toml`      | `pylock.NAME.toml`      |
+| `pdm`                      | `pdm.lock`         | `build.pdm.lock`         | `NAME.pdm.lock`         |
+| `poetry`                   | `poetry.lock`      | `build.poetry.lock`      | `NAME.poetry.lock`      |
+| `uv`                       | `uv.lock`          | `build.uv.lock`          | `NAME.uv.lock`          |
+| Either requirements format | `requirements.txt` | `build-requirements.txt` | `NAME.requirements.txt` |
+
+Pass `--output -` for stdout.
 
 With `--script path/to/example.py`, the default lockfile is `path/to/pylock.example.toml`. For a
 single target, the default requirements file is `path/to/example.py.requirements.txt`.
@@ -80,6 +86,14 @@ Universal mode (`[tool.nab].mode = "universal"`) is supported for each format:
 
 - When either requirements format prints multiple targets together, each target's pins follow a
   `# label` header. Use an output template to create separate requirements files for pip.
+
+- `uv` records supported environments and selects dependency edges by target.
+
+- `poetry` records the supported environments on the package markers for each group.
+
+Install within the targets you resolved. If two targets admit different files for the same version
+from one index, use a separate native lock plan for each. PDM also needs a separate plan when a
+package has different environment markers for different groups.
 
 If any target fails, nab writes no lock or requirements output. The report goes to stderr and the
 command exits `1`; see [Resolution failures](diagnostics.md).

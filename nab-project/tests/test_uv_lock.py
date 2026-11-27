@@ -383,3 +383,103 @@ def test_at_least_one_does_not_exclude_a_joint_uv_selection(tmp_path: Path) -> N
     document = tomli.loads(write_uv_lock(lock, project, project_dir=tmp_path))
     assert "conflicts" not in document
     assert document["package"][0]["metadata"]["provides-extras"] == ["cpu", "gpu"]
+
+
+def test_omitted_members_forward_only_activated_dependency_edges(
+    tmp_path: Path,
+) -> None:
+    target = ResolveTarget.for_host()
+    names = ("parent", "first", "second", "leaf", "fast")
+    pins = {name: LocalPin(name, "1", str(tmp_path / name)) for name in names}
+    extra = DependencyDeclaration(
+        "fast[feature]",
+        "",
+        parent_name="second",
+        dependency_name="fast",
+        dependency_extras=("feature",),
+        required_for_parent_extras=("speed",),
+    )
+    activate = DependencyDeclaration(
+        "second[speed]",
+        "",
+        parent_name="first",
+        dependency_name="second",
+        dependency_extras=("speed",),
+        required_for_parent_extras=("speed",),
+    )
+    target_lock = TargetLock(
+        target,
+        pins,
+        {
+            "parent": ("first",),
+            "first": ("second",),
+            "second": ("first", "leaf", "fast"),
+        },
+        dependency_requirements={
+            "first": {
+                "second": (
+                    activate,
+                    DependencyDeclaration(
+                        "second", "", parent_name="first", dependency_name="second"
+                    ),
+                )
+            },
+            "second": {"fast": (extra,)},
+        },
+    )
+    lock = LockInput(targets={target.label: target_lock})
+    doc = {"project": {"name": "app", "dependencies": ["parent", "first[speed]"]}}
+    output = tomli.loads(
+        write_uv_lock(
+            lock,
+            doc,
+            project_dir=tmp_path,
+            excluded_workspace=frozenset({"first", "second"}),
+        )
+    )
+    rows = {row["name"]: row for row in output["package"]}
+    assert set(rows) == {"app", "parent", "leaf", "fast"}
+    assert rows["parent"]["dependencies"] == [{"name": "leaf"}]
+    assert {edge["name"] for edge in rows["app"]["dependencies"]} == {
+        "parent",
+        "leaf",
+        "fast",
+    }
+    assert {"name": "fast", "extra": ["feature"]} in rows["app"]["dependencies"]
+
+
+def test_target_specific_artifact_policy_cannot_overwrite_an_index_row(
+    tmp_path: Path,
+) -> None:
+    targets = {}
+    environments = []
+    for platform in ("linux_x86_64", "windows_amd64"):
+        target = ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec(platform)
+        )
+        wheel = WheelArtifact(
+            "demo-1-py3-none-any.whl", "https://example.org/demo-1.whl", _HASH
+        )
+        sdist = SdistArtifact(
+            "demo-1.tar.gz", "https://example.org/demo-1.tar.gz", _HASH
+        )
+        pin = IndexPin(
+            "demo",
+            "1",
+            "https://pypi.org/simple",
+            wheels=(wheel,) if platform.startswith("linux") else (),
+            sdist=None if platform.startswith("linux") else sdist,
+        )
+        targets[target.label] = TargetLock(target, {"demo": pin})
+        environments.append(Marker(target.environment_marker_string))
+
+    output = tmp_path / "uv.lock"
+    output.write_text("existing")
+    with pytest.raises(LockValidationError, match="different artifacts"):
+        write_uv_lock(
+            LockInput(targets=targets, environments=environments),
+            {"project": {"name": "app"}},
+            project_dir=tmp_path,
+            output_path=output,
+        )
+    assert output.read_text() == "existing"
