@@ -111,6 +111,7 @@ _PAGES = (
     ("output", "reference/cli.md"),
     ("python", "reference/cli.md"),
     ("upgrade", "reference/cli.md"),
+    ("upgrade-packages", "reference/cli.md"),
     ("locked", "reference/cli.md"),
     ("reproduce", "reference/cli.md"),
     ("settings", "reference/configuration-sources.md"),
@@ -194,8 +195,8 @@ class TestTheDeclaredTable:
         command = [row for row in ALL if row.commands and not row.is_global]
         file_only = [row for row in ALL if not row.commands]
 
-        assert (len(root), len(command), len(file_only)) == (7, 55, 15)
-        assert len(root) + len(command) + len(file_only) == len(ALL) == 77
+        assert (len(root), len(command), len(file_only)) == (7, 56, 15)
+        assert len(root) + len(command) + len(file_only) == len(ALL) == 78
 
         keyed = [row for row in ALL if row.key]
 

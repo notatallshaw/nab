@@ -84,7 +84,7 @@ def _config_command() -> None:
 
 
 def _lock() -> None:
-    """``nab lock``: 48 parameters."""
+    """``nab lock``: 49 parameters."""
     lock(
         ConfigWords.path,
         project_resolution=ProjectKeys.resolution,
@@ -131,6 +131,7 @@ def _lock() -> None:
         all_plans=RunFlags.all_plans,
         python=RunFlags.python,
         upgrade=RunFlags.upgrade,
+        upgrade_package=RunFlags.upgrade_packages,
         locked=RunFlags.locked,
         reproduce=RunFlags.reproduce,
         setting=RunFlags.settings,

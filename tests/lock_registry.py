@@ -33,6 +33,7 @@ class Registry:
         self.domain = "https://current.example"
         self.digest = "b" * 64
         self.upload_time: str | None = None
+        self.upload_times: dict[tuple[str, str], str] = {}
         self.coordinators: list[FakeFetchPort] = []
         self.project.write_text(
             '[project]\nname="example"\nversion="1"\nrequires-python=">=3.12,<3.13"\n'
@@ -56,7 +57,9 @@ class Registry:
                     package=wheel_name,
                     url=f"{self.domain}/{filename}",
                     hashes=(("sha256", self.digest),),
-                    upload_time=self.upload_time,
+                    upload_time=self.upload_times.get(
+                        (package, version), self.upload_time
+                    ),
                 )
                 assert wheel.metadata_url is not None
                 metadata[wheel.metadata_url] = make_metadata(

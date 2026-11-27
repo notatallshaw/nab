@@ -946,11 +946,13 @@ class TestTheShippedTable:
     def test_a_positive_typo_is_never_offered_the_negation_of_what_it_meant(
         self,
     ) -> None:
-        """The similarity filter leaves one matching form before the cap."""
+        """Both upgrade suggestions retain the user's positive prefix."""
         with pytest.raises(UsageError) as caught:
             _shipped(["lock", "--upgrad"])
 
-        assert "try: use '--upgrade'" in diagnose(caught.value)
+        assert "try: use one of '--upgrade', '--upgrade-package'" in diagnose(
+            caught.value
+        )
 
     def test_a_half_typed_option_is_offered_two_spellings_at_most(self) -> None:
         with pytest.raises(UsageError) as caught:

@@ -39,6 +39,7 @@ __lazy_modules__ = (
     "nab_provider.target",
     "nab_resolver.diagnostics",
     "os",
+    "packaging.utils",
     "stat",
     "string",
 )
@@ -56,6 +57,7 @@ from string import Formatter
 from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
 
 import tomli
+from packaging.utils import InvalidName, canonicalize_name
 
 from nab_index.atomic import create_staging_file, default_file_mode
 from nab_project import toml_io
@@ -260,6 +262,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     project_environment_platform: tuple[str, ...] = (),
     project_environment_implementation: ImplementationFlag | None = None,
     upgrade: bool = False,
+    upgrade_package: tuple[str, ...] = (),
     locked: bool = False,
     reproduce: bool = False,
     lock_policy: LockPolicyFlag | None = None,
@@ -292,6 +295,20 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     ``--locked`` checks the saved solution without resolving or writing.
     ``--reproduce`` resolves afresh and checks that the output is identical.
     """
+    if upgrade_package:
+        if locked or reproduce:
+            printer().error(
+                "--upgrade-package cannot be combined with --locked or --reproduce."
+            )
+            raise SystemExit(1)
+        try:
+            upgrade_package = tuple(
+                canonicalize_name(name, validate=True) for name in upgrade_package
+            )
+        except InvalidName as exc:
+            printer().error(exc, prefix="--upgrade-package: ")
+            raise SystemExit(1) from None
+
     path, input_format = select_input(path, script)
     require_pyproject_file(path, input_format=input_format)
 
@@ -369,7 +386,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
             printer().error(exc, prefix="input error: ")
             raise SystemExit(1) from None
 
-    actions = _LockActions(python, upgrade, locked, reproduce)
+    actions = _LockActions(python, upgrade, locked, reproduce, upgrade_package)
     for declaration in plans:
         _lock_one(
             path,
@@ -396,6 +413,7 @@ class _LockActions(NamedTuple):
     upgrade: bool
     locked: bool
     reproduce: bool
+    upgrade_packages: tuple[str, ...]
 
 
 class _LockConfiguration(NamedTuple):
@@ -520,6 +538,9 @@ def _lock_one(
     output = source.output
     _reject_python_flag_in_universal(ladder, actions.python)
     settings = _layered_run_settings_or_exit(ladder)
+    if actions.upgrade_packages:
+        settings = replace(settings, lock_policy=LockPolicy.PREFER_EXISTING)
+
     output = _lock_output(
         path,
         input_format,
@@ -595,6 +616,7 @@ def _lock_one(
         lock_policy=settings.lock_policy,
         project_input=project_input,
         plan_name=plan.name if plan is not None else None,
+        upgrade_packages=actions.upgrade_packages,
     )
 
     provenance = _build_provenance(
@@ -898,6 +920,7 @@ class _LockRun(Record):
         "lock_policy",
         "project_input",
         "plan_name",
+        "upgrade_packages",
     )
 
     path: Path
@@ -916,6 +939,7 @@ class _LockRun(Record):
     lock_policy: LockPolicy
     project_input: PreparedProjectInput | None
     plan_name: str | None
+    upgrade_packages: tuple[str, ...]
 
     def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
@@ -936,6 +960,7 @@ class _LockRun(Record):
         input_format: InputFormat = InputFormat.PROJECT,
         project_input: PreparedProjectInput | None = None,
         plan_name: str | None = None,
+        upgrade_packages: tuple[str, ...] = (),
     ) -> None:
         self.path = path
         self.output = output
@@ -953,6 +978,7 @@ class _LockRun(Record):
         self.lock_policy = lock_policy
         self.project_input = project_input
         self.plan_name = plan_name
+        self.upgrade_packages = upgrade_packages
 
     def refresh_command(self) -> str:
         """Render this run without ``--locked``, ready to paste into a shell."""
@@ -993,6 +1019,8 @@ class _LockRun(Record):
         arguments = config_override_arguments(overrides)
         if self.upgrade:
             arguments.append("--upgrade")
+        for name in self.upgrade_packages:
+            arguments.extend(("--upgrade-package", name))
         return arguments
 
 
@@ -1073,7 +1101,7 @@ def _existing_lock_preferences(run: _LockRun) -> LockPreferences | None:
     """Read an explicitly requested prior model under highest resolution."""
     if run.lock_policy is LockPolicy.RESOLVE:
         return None
-    return read_lock_preferences(_check_target_path(run))
+    return read_lock_preferences(_check_target_path(run), exclude=run.upgrade_packages)
 
 
 def _check_target_path(run: _LockRun) -> Path:

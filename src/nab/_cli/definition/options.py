@@ -799,6 +799,12 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
         action=True,
     )
 
+    upgrade_packages = Many[str](
+        help="resolve a package afresh while preferring other saved versions",
+        on=("lock",),
+        action=True,
+    )
+
     locked = Switch(
         default=False,
         negatable=True,

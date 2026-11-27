@@ -450,6 +450,28 @@ def test_batch_provenance_replays_each_individual_plan(
     assert arguments[arguments.index("--plan") + 1] == "build"
 
 
+def test_plan_records_and_replays_the_selected_upgrade(named: Registry) -> None:
+    assert command(named, "--plan", "dev") == 0
+    named.add_release()
+    named.declarations["a"]["2"] = ("b>=1",)
+
+    assert command(named, "--plan", "dev", "--upgrade-package", "a") == 0
+
+    output = named.project.with_name("pylock.dev.toml")
+    document = toml_io.load_path(output)
+    assert {p["name"]: p["version"] for p in document["packages"]} == {
+        "a": "2",
+        "b": "1",
+    }
+    named.declarations["a"]["3"] = ("b>=1",)
+    assert run(tuple(document["tool"]["nab"]["command-line"][1:])) == 0
+    document = toml_io.load_path(output)
+    assert {p["name"]: p["version"] for p in document["packages"]} == {
+        "a": "3",
+        "b": "1",
+    }
+
+
 @pytest.mark.parametrize("output", ['"-"', "3"])
 def test_batch_refuses_outputs_that_are_not_files(named: Registry, output: str) -> None:
     named.project.write_text(
