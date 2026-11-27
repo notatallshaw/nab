@@ -17,7 +17,6 @@ __lazy_modules__ = (
     "nab_project._lockfile.builder",
     "nab_project._lockfile.disjointness",
     "nab_project._lockfile.groups",
-    "nab_project._lockfile.pdm",
     "nab_project._lockfile.pylock",
     "nab_project._lockfile.requirements",
     "nab_project._lockfile.validate",
@@ -56,7 +55,6 @@ from ._lockfile.builder import (
 )
 from ._lockfile.disjointness import DisjointnessError
 from ._lockfile.groups import BASE_MEMBER
-from ._lockfile.pdm import write_pdm_lock
 from ._lockfile.pylock import (
     DivergentBaseDependencyError,
     LockValidationError,
@@ -133,7 +131,6 @@ __all__ = [
     "strip_userinfo",
     "summarize_lock",
     "write_lock",
-    "write_pdm_lock",
     "write_requirements_with_hashes",
     "write_requirements_without_hashes",
 ]

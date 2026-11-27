@@ -92,7 +92,6 @@ from nab_project.lockfile import (
     render_lock,
     summarize_lock,
     write_lock,
-    write_pdm_lock,
     write_requirements_with_hashes,
     write_requirements_without_hashes,
 )
@@ -1466,6 +1465,8 @@ def _emit_pdm(
     lock_input: LockInput, path: Path, target: Path, *, input_format: InputFormat
 ) -> None:
     """Write the native file with the content hash PDM checks against the project."""
+    from nab_project.native_lock import write_pdm_lock  # noqa: PLC0415 - native output only
+
     document = read_input_document(path, input_format=input_format)
     destination = None if _is_stdout(target) else target
     text = _render_or_exit(

@@ -20,8 +20,8 @@ from nab_project.lockfile import (
     TargetLock,
     VcsPin,
     WheelArtifact,
-    write_pdm_lock,
 )
+from nab_project.native_lock import write_pdm_lock
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 
