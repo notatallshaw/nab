@@ -49,6 +49,16 @@ stable decision order when comparing resolves. Requires pylock output to a file.
 Reset a relative upload cutoff (`P<n>D`) to the current time instead of reusing the existing lock's
 timestamp.
 
+### `--upgrade-package NAME`
+
+Resolve the named package without its saved version preference, while preferring saved versions for
+other packages. Repeat the flag for multiple names. This uses the `prefer-existing` lock policy for
+the run. Requirements and source policies still apply, and resolving the named packages may require
+changing other versions. With no saved lock, nab resolves afresh.
+
+Add `--upgrade` to move a relative upload cutoff forward. Selective upgrades require highest
+resolution and pylock output to a file. Use `--locked` and `--reproduce` in separate invocations.
+
 ### `--lock-policy {resolve,prefer-existing,reuse}`
 
 Set `lock-policy` in a project, user or system `nab.toml`, or through `NAB_LOCK_POLICY`. The CLI

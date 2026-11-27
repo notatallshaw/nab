@@ -81,6 +81,85 @@ def test_default_still_selects_new_highest_releases(registry: Registry) -> None:
     assert registry.versions() == {"a": "2", "b": "2"}
 
 
+def test_upgrade_packages_keep_other_saved_versions(registry: Registry) -> None:
+    registry.declarations["a"]["1"] = ("b>=1", "c")
+    registry.declarations["c"] = {"1": ()}
+    assert registry.command() == 0
+    registry.add_release()
+    registry.declarations["c"]["2"] = ()
+
+    assert (
+        registry.command(
+            "--lock-policy", "reuse", "--upgrade-package", "B", "--upgrade-package", "c"
+        )
+        == 0
+    )
+
+    assert registry.versions() == {"a": "1", "b": "2", "c": "2"}
+    assert registry.command("--locked") == 0
+
+
+def test_upgrade_package_changes_a_dependency_when_required(registry: Registry) -> None:
+    assert registry.command() == 0
+    registry.add_release()
+
+    assert registry.command("--upgrade-package", "a") == 0
+
+    assert registry.versions() == {"a": "2", "b": "2"}
+
+
+def test_upgrade_package_respects_the_existing_upload_window(
+    registry: Registry,
+) -> None:
+    registry.upload_time = "2000-01-01T00:00:00Z"
+    registry.project.write_text(
+        registry.project.read_text().replace(
+            "[tool.nab]\n", '[tool.nab]\nuploaded-prior-to="P7D"\n'
+        )
+    )
+    assert registry.command() == 0
+    document = toml_io.load_path(registry.output)
+    document["tool"]["nab"]["created-at"] = datetime(2000, 1, 10, tzinfo=timezone.utc)
+    registry.output.write_text(toml_writer.dumps(document))
+    registry.add_release()
+    registry.declarations["a"]["2"] = ("b>=1",)
+    registry.upload_times["a", "2"] = "2000-01-04T00:00:00Z"
+
+    assert registry.command("--upgrade-package", "a") == 0
+    assert registry.versions() == {"a": "1", "b": "1"}
+
+    assert registry.command("--upgrade", "--upgrade-package", "a") == 0
+    assert registry.versions() == {"a": "2", "b": "1"}
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ("--locked",),
+        ("--reproduce",),
+        ("--output", "-"),
+        ("--format", "requirements"),
+        ("--project-resolution", "lowest"),
+    ],
+)
+def test_upgrade_package_rejects_incompatible_modes(
+    registry: Registry, arguments: tuple[str, ...]
+) -> None:
+    assert registry.command("--upgrade-package", "a", *arguments) == 1
+
+    assert not registry.coordinators
+    assert not registry.output.exists()
+
+
+def test_upgrade_package_requires_a_package_name(
+    registry: Registry, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert registry.command("--upgrade-package", "a>=2") == 1
+
+    assert "--upgrade-package" in capsys.readouterr().err
+    assert not registry.coordinators
+
+
 @pytest.mark.parametrize("source", ["system", "user", "project", "environment"])
 @pytest.mark.parametrize("policy", ["prefer-existing", "reuse"])
 def test_file_and_environment_lock_policy_use_saved_versions(

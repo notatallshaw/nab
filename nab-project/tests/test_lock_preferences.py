@@ -92,6 +92,42 @@ def test_conditional_versions_are_selected_per_actual_target() -> None:
     assert preferences.summary_versions() is None
 
 
+def test_resolve_excludes_names_from_each_targets_saved_preferences() -> None:
+    preferences = LockPreferences(
+        prior(
+            wheel_package("update_me", "1", marker='sys_platform == "linux"'),
+            wheel_package("update_me", "2", marker='sys_platform == "win32"'),
+            wheel_package("keep_me"),
+        ),
+        exclude={"Update_Me"},
+    )
+    port = make_coordinator(
+        listings={
+            "update-me": [
+                make_wheel(version, package="update-me") for version in ("1", "2", "3")
+            ],
+            "keep-me": [
+                make_wheel(version, package="keep-me") for version in ("1", "2")
+            ],
+        },
+        auto_metadata=True,
+    )
+
+    result = resolve_with_coordinator(
+        port,
+        [target(), target("windows_amd64")],
+        [Requirement("update-me"), Requirement("keep-me")],
+        inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+        lock_preferences=preferences,
+    )
+    result.raise_for_failure()
+
+    assert [item.pins for item in result.target_results] == [
+        {"update-me": Version("3"), "keep-me": Version("1")},
+        {"update-me": Version("3"), "keep-me": Version("1")},
+    ]
+
+
 def test_conditional_rows_with_the_same_version_can_be_compared() -> None:
     lock = prior(
         wheel_package(version="1", marker='sys_platform == "linux"'),
@@ -137,6 +173,15 @@ def test_ambiguity_is_not_hidden_by_one_incompatible_artifact() -> None:
     )
 
     assert preferences.versions_for(target()) == {}
+
+
+def test_excluded_pins_cannot_invalidate_other_preferences() -> None:
+    lock = prior(wheel_package(tag="cp312-cp312-win_amd64"), wheel_package("b"))
+
+    assert LockPreferences(lock).versions_for(target()) == {}
+    assert LockPreferences(lock, exclude={"a"}).versions_for(target()) == {
+        "b": Version("1")
+    }
 
 
 def test_old_artifact_priority_cannot_change_the_package_version() -> None:
@@ -248,6 +293,12 @@ def test_valid_prior_read_shares_registry_summary_without_local_versions(
     assert preferences is not None
     assert preferences.summary_versions() == {"a": Version("1")}
     assert preferences.versions_for(target()) == {"a": Version("1")}
+
+    excluded = read_lock_preferences(path, exclude={"a"})
+
+    assert excluded is not None
+    assert excluded.versions_for(target()) == {}
+    assert excluded.summary_versions() == {"a": Version("1")}
 
 
 def test_soft_and_checked_preferences_are_mutually_exclusive() -> None:

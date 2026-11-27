@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from packaging.pylock import (
@@ -32,10 +33,10 @@ __all__ = ["LockPreferences", "read_lock_preferences", "read_lockfile_packages"]
 class LockPreferences:
     """Project a validated lock's versions into current resolution contexts."""
 
-    __slots__ = ("_lock", "_tags", "known_packages")
+    __slots__ = ("_lock", "_selection_lock", "_tags", "known_packages")
 
-    def __init__(self, lock: Pylock) -> None:
-        """Collect the old lock's advertised tags once."""
+    def __init__(self, lock: Pylock, *, exclude: Collection[str] = ()) -> None:
+        """Collect tags and exempt selected names from prior version preferences."""
         self._lock = lock
         self.known_packages = frozenset(
             str(package.name)
@@ -43,8 +44,19 @@ class LockPreferences:
             if package.version is not None
         )
 
+        self._selection_lock = lock
+        if exclude:
+            excluded = {canonicalize_name(name) for name in exclude}
+            # An exempt package's old artifact can no longer veto the selection.
+            self._selection_lock = replace(
+                lock,
+                packages=tuple(
+                    package for package in lock.packages if package.name not in excluded
+                ),
+            )
+
         advertised: set[Tag] = set()
-        for package in lock.packages:
+        for package in self._selection_lock.packages:
             for wheel in package.wheels or ():
                 advertised.update(parse_wheel_tag_set(wheel.filename) or ())
         self._tags = tuple((tag, frozenset((tag,))) for tag in advertised)
@@ -83,7 +95,7 @@ class LockPreferences:
         # Only advertised tags matter to version hints; their preference order does not.
         compatible = tuple(tag for tag, group in self._tags if tags.accepts_tags(group))
         try:
-            selected = self._lock.select(
+            selected = self._selection_lock.select(
                 environment=marker_environment(target.marker_env),
                 tags=compatible,
                 extras=extras,
@@ -129,10 +141,12 @@ def _read_prior_lock(path: Path) -> Pylock | None:
         return None
 
 
-def read_lock_preferences(path: Path) -> LockPreferences | None:
+def read_lock_preferences(
+    path: Path, *, exclude: Collection[str] = ()
+) -> LockPreferences | None:
     """Read optional prior version hints, refusing an unreadable or invalid lock."""
     lock = _read_prior_lock(path)
-    return LockPreferences(lock) if lock is not None else None
+    return LockPreferences(lock, exclude=exclude) if lock is not None else None
 
 
 def read_lockfile_packages(path: Path) -> dict[str, Version] | None:

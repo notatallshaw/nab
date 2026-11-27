@@ -321,10 +321,13 @@ class Many(Row, Generic[_ArgumentValue]):
         docs: str = "",
         on: tuple[str, ...] = (),
         key: Layer[Any] | None = None,
+        action: bool = False,
         alias: str = "",
     ) -> None:
         """Record one row; the table names it and fills its defaults."""
-        super().__init__(help=help, docs=docs, on=on, key=key, default=(), alias=alias)
+        super().__init__(
+            help=help, docs=docs, on=on, key=key, default=(), action=action, alias=alias
+        )
 
 
 class Star(Row, Generic[_ArgumentValue]):

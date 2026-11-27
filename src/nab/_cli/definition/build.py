@@ -129,7 +129,7 @@ def _check_surface(
         return
 
     if row.action:
-        if row.kind != "flag" and _read(row).vtype != "path":
+        if row.kind not in {"flag", "append"} and _read(row).vtype != "path":
             msg = (
                 f"{row.name} is a configurable value, "
                 "not an input/output path or action flag"
