@@ -13,6 +13,14 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
 
     from packaging.markers import Marker
+    from packaging.pylock import Package, PackageSdist, PackageWheel
+
+
+def distribution_files(package: Package) -> Iterator[PackageWheel | PackageSdist]:
+    """Yield the wheels and source archive available for an index release."""
+    yield from package.wheels or ()
+    if package.sdist is not None:
+        yield package.sdist
 
 
 def file_digest(name: str, hashes: Mapping[str, str]) -> str:
@@ -21,6 +29,7 @@ def file_digest(name: str, hashes: Mapping[str, str]) -> str:
     if digest is None:
         msg = f"{name} needs a SHA-256, SHA-384 or SHA-512 digest"
         raise LockValidationError(msg)
+
     algorithm, value = digest
     return f"{algorithm}:{value}"
 
@@ -48,6 +57,8 @@ def install_contexts(
                 "dependency_groups": frozenset[str](),
             }
             selection[variable] = frozenset((name,))
+
+            # Keep the environment condition after binding the selector.
             residual = condition.restrict(selection)
             if not residual.is_empty():
                 yield kind, name, residual.to_marker_string()

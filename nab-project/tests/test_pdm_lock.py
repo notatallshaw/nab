@@ -42,6 +42,7 @@ def test_source_files_and_groups(tmp_path: Path) -> None:
         local_path=tmp_path / "demo-1-py3-none-any.whl",
     )
     sdist = SdistArtifact("demo-1.tar.gz", "https://example.org/demo-1.tar.gz", _DIGEST)
+
     pins = {
         "demo": IndexPin(
             "demo",
@@ -75,6 +76,7 @@ def test_source_files_and_groups(tmp_path: Path) -> None:
             "archive", "3", "https://example.org/archive.zip", _DIGEST
         ),
     }
+
     lock = TargetLock(
         target,
         pins,
@@ -90,6 +92,7 @@ def test_source_files_and_groups(tmp_path: Path) -> None:
         targets={target.label: lock}, dependency_groups=("test",), extras=("docs",)
     )
     destination = tmp_path / "pdm.lock"
+
     write_pdm_lock(
         inputs,
         {
@@ -108,12 +111,14 @@ def test_source_files_and_groups(tmp_path: Path) -> None:
     assert rows["app"]["subdirectory"] == "pkg"
     assert rows["app"]["dependencies"] == ["demo"]
     assert rows["app"]["version"] == "1"
+
     assert rows["demo"]["groups"] == ["default", "test"]
     assert rows["demo"]["requires_python"] == ">=3.10"
     assert {f["url"] for f in rows["demo"]["files"]} == {
         (tmp_path / wheel.filename).as_uri(),
         sdist.url,
     }
+
     assert rows["source"]["groups"] == ["docs"]
     assert rows["source"]["git"] == "https://example.org/repo"
     assert rows["source"]["ref"] == "v2"
@@ -121,6 +126,7 @@ def test_source_files_and_groups(tmp_path: Path) -> None:
     assert rows["archive"]["files"] == [
         {"url": "https://example.org/archive.zip", "hash": "sha256:" + "ab" * 32}
     ]
+
     assert doc["metadata"]["targets"] == [
         {
             "requires_python": "==3.12.*",
@@ -238,10 +244,20 @@ def test_refuse_group_specific_environment_disagreement(tmp_path: Path) -> None:
         write_pdm_lock(lock, {}, project_dir=tmp_path)
 
 
-def test_index_file_must_have_a_download_location(tmp_path: Path) -> None:
+def test_wheel_only_index_release_requires_a_download_location(tmp_path: Path) -> None:
     target = ResolveTarget.for_host()
     wheel = WheelArtifact("demo-1-py3-none-any.whl", "", _DIGEST)
     package = IndexPin("demo", "1", "https://example.org/simple", wheels=(wheel,))
     lock = LockInput(targets={target.label: TargetLock(target, {"demo": package})})
     with pytest.raises(LockValidationError, match="no download URL"):
         write_pdm_lock(lock, {}, project_dir=tmp_path)
+
+    url = "https://example.org/demo-1-py3-none-any.whl"
+    wheel = WheelArtifact("demo-1-py3-none-any.whl", url, _DIGEST)
+    wheel_only = IndexPin("demo", "1", "https://example.org/simple", wheels=(wheel,))
+    complete = LockInput(
+        targets={target.label: TargetLock(target, {"demo": wheel_only})}
+    )
+    (row,) = tomli.loads(write_pdm_lock(complete, {}, project_dir=tmp_path))["package"]
+
+    assert row["files"] == [{"url": url, "hash": "sha256:" + "ab" * 32}]

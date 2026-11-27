@@ -15,7 +15,7 @@ from nab_provider.marker_holds import intractable_as_error
 from nab_provider.value import replace
 
 from .. import toml_writer
-from .native import file_digest, install_contexts
+from .native import distribution_files, file_digest, install_contexts
 from .pylock import LockValidationError, project_packages
 
 if TYPE_CHECKING:
@@ -34,6 +34,8 @@ def _content_hash(document: Mapping[str, Any]) -> str:
     """Match the project inputs that PDM hashes for its native lock format."""
     project = document.get("project", {})
     settings = document.get("tool", {}).get("pdm", {})
+
+    # PDM combines PEP 735 groups and its legacy dev-dependencies before hashing.
     groups = {
         canonicalize_name(key): list(values)
         for key, values in document.get("dependency-groups", {}).items()
@@ -49,6 +51,7 @@ def _content_hash(document: Mapping[str, Any]) -> str:
         "requires-python": project.get("requires-python", ""),
         "resolution": settings.get("resolution", {}),
     }
+
     digest = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
     return f"sha256:{digest}"
 
@@ -65,7 +68,7 @@ def _source(package: Package, project_dir: Path) -> dict[str, Any]:
     elif package.vcs is not None:
         vcs = package.vcs
         result = {vcs.type: vcs.url, "revision": vcs.commit_id}
-        if vcs.requested_revision:
+        if vcs.requested_revision is not None:
             result["ref"] = vcs.requested_revision
         subdirectory = vcs.subdirectory
     elif package.archive is not None and package.archive.url is not None:
@@ -82,28 +85,27 @@ def _source(package: Package, project_dir: Path) -> dict[str, Any]:
         subdirectory = archive.subdirectory
     else:
         files = []
-        artifacts = [
-            *(package.wheels or ()),
-            *((package.sdist,) if package.sdist else ()),
-        ]
-        for artifact in artifacts:
+        # Static URLs let PDM fetch the exact files chosen by nab.
+        for artifact in distribution_files(package):
             url = (
                 (project_dir / artifact.path).resolve().as_uri()
                 if artifact.path is not None
                 else artifact.url
             )
-            if not url:
+            if url is None or url == "":
                 msg = f"{artifact.filename} has no download URL or path"
                 raise LockValidationError(msg)
+
             files.append(
                 {"url": url, "hash": file_digest(artifact.filename, artifact.hashes)}
             )
+
         result = {"files": files}
-        if package.requires_python:
+        if package.requires_python is not None:
             result["requires_python"] = str(package.requires_python)
         return result
 
-    if subdirectory:
+    if subdirectory is not None:
         result["subdirectory"] = subdirectory
     return result
 
@@ -118,9 +120,11 @@ def _membership(
     membership = {name for _, name, _ in contexts}
     markers = {marker for _, _, marker in contexts}
 
+    # PDM applies a package's environment marker to every group listed on that row.
     if len(markers) != 1:
         msg = f"PDM cannot express distinct group environments for {package.name}"
         raise LockValidationError(msg)
+
     marker = markers.pop()
     result: dict[str, Any] = {"groups": sorted(membership)}
     if marker is not None:
@@ -144,6 +148,7 @@ def _pdm_target(target: ResolveTarget) -> dict[str, str | bool]:
                 ),
                 platform,
             )
+
         platform = platform.replace("macosx_", "macos_").replace("win_", "windows_")
         if platform == "win32":
             platform = "windows_x86"
@@ -153,6 +158,7 @@ def _pdm_target(target: ResolveTarget) -> dict[str, str | bool]:
         if platform.startswith("linux_"):
             arch = platform.removeprefix("linux_")
             family = "musllinux" if spec.libc == "musl" else "manylinux"
+            # A missing deployment version admits the whole libc major series.
             major, minor = spec.runs_on_libc or (
                 (1, 0) if spec.libc == "musl" else (2, 0)
             )
@@ -184,6 +190,7 @@ def write_pdm_lock(
     output_path: Path | None = None,
 ) -> str:
     """Render a PDM lock from resolved pins and the consuming pyproject."""
+    # Keep runtime dependencies addressable by PDM's default group.
     base_group = lock_input.base_group or "default"
     groups = tuple(dict.fromkeys((base_group, *lock_input.active_groups)))
     if set(groups).intersection(lock_input.extras):
@@ -200,12 +207,13 @@ def write_pdm_lock(
                 **_source(package.source, project_dir),
                 **_membership(package, groups, lock_input.extras),
             }
-            if package.source.dependencies:
+            if package.source.dependencies is not None:
                 row["dependencies"] = sorted(
                     {dep["name"] for dep in package.source.dependencies}
                 )
             rows.append(row)
 
+    # Conflict forks can share a single PDM target declaration.
     targets = {}
     for lock in lock_input.targets.values():
         target = _pdm_target(lock.target)
