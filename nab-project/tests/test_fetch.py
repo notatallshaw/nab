@@ -50,8 +50,8 @@ from nab_project.fetch import (
     IndexRoute,
     InMemoryIndex,
     WarmSyncStats,
-    _builds_remote_sdists,
     _resolve_routes,
+    builds_remote_sdists,
 )
 from nab_project.inputs import ResolveInputs
 from nab_provider.errors import IndexAccessError
@@ -3930,7 +3930,7 @@ class TestSdistArchiveHolding:
     def test_build_remote_anywhere_in_the_config_holds(
         self, config: ResolveInputs | None, holds: bool
     ) -> None:
-        assert _builds_remote_sdists(config) is holds
+        assert builds_remote_sdists(config) is holds
 
     def _fetched_with_pyproject(
         self, pyproject: str | None, config: ResolveInputs | None

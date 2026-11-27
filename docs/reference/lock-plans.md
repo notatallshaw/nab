@@ -104,6 +104,12 @@ nab lock --plan uv-test
 uv sync --frozen
 ```
 
+Plans with the same selections and settings can write different formats from one resolve. Each
+output keeps its own refresh command and saved-lock checks. Different saved version preferences or
+upload cutoffs can require separate resolves. Plans that resolve separately still share index
+listings and package metadata when the index routes and build settings allow it. This sharing lasts
+for one invocation and also works with `--no-cache`.
+
 Use `nab lock --all-plans` to refresh every declared plan and `nab lock --all-plans --locked` to
 check the files. A batch checks the option names and values in every plan’s `settings` table,
 verifies that its input sources are declared and checks for duplicate output paths before writing

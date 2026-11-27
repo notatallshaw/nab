@@ -50,7 +50,13 @@ import logging
 import tempfile
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager, suppress
+from contextlib import (
+    AbstractContextManager,
+    ExitStack,
+    contextmanager,
+    nullcontext,
+    suppress,
+)
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
@@ -89,6 +95,7 @@ from nab_provider.value import (
 from nab_resolver.errors import ResolutionError
 
 from . import pyproject_files
+from ._compat import override
 from ._resolve.engine import (
     EnvSignature,
     InstallContexts,
@@ -112,6 +119,7 @@ from .conflicts import (
 from .fetch import (
     DEFAULT_MAX_CONCURRENCY,
     FetchCoordinator,
+    builds_remote_sdists,
     index_cache_floors,
     index_routes,
 )
@@ -137,6 +145,7 @@ if TYPE_CHECKING:
 __all__ = [
     "InstallContexts",
     "ProgressSink",
+    "ResolveBatch",
     "ResolveFork",
     "ResolveResult",
     "TargetResult",
@@ -152,9 +161,60 @@ __all__ = [
 _logger = logging.getLogger(__name__)
 
 
+class ResolveBatch(AbstractContextManager["ResolveBatch"]):
+    """Share index data between sequential resolutions on one HTTP backend.
+
+    Keep one coordinator open while its routing and build policy are compatible.
+    Switching policy or leaving the batch closes its transport and worker.
+    """
+
+    def __init__(self, transport_factory: Callable[[], AsyncHttpTransport]) -> None:
+        """Create transports on demand, after validating a plan's inputs."""
+        self.transport_factory = transport_factory
+        self._stack = ExitStack()
+        self._active: tuple[tuple[object, ...], FetchCoordinator] | None = None
+
+    def close(self) -> None:
+        """Release the active index and its transport."""
+        self._active = None
+        self._stack.close()
+
+    @override
+    def __exit__(self, *args: object) -> None:
+        """Close the active coordinator even if a later plan failed."""
+        self.close()
+
+    def coordinator(
+        self,
+        scope: tuple[object, ...],
+        factory: Callable[[AsyncHttpTransport], FetchCoordinator],
+    ) -> FetchCoordinator:
+        """Reuse the active fetcher while all its source and build settings match."""
+        if self._active is not None and self._active[0] == scope:
+            return self._active[1]
+
+        self.close()
+        transport = self.transport_factory()
+        try:
+            context = factory(transport)
+        except BaseException:
+            _close_transport(transport)
+            raise
+
+        coordinator = self._stack.enter_context(context)
+        self._active = (scope, coordinator)
+        return coordinator
+
+
+def _close_transport(transport: AsyncHttpTransport) -> None:
+    """Close an unclaimed transport outside any event loop on this thread."""
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(asyncio.run, transport.aclose()).result()
+
+
 def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     path: Path,
-    transport: AsyncHttpTransport,
+    transport: AsyncHttpTransport | ResolveBatch,
     *,
     targets: Sequence[ResolveTarget],
     inputs: ResolveInputs | None = None,
@@ -178,7 +238,8 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
 
     ``targets`` are the environments the host chose to resolve for and
     ``inputs`` the settings it read out of the project.
-    This call owns ``transport`` and closes it even when preparation fails.
+    This call owns a supplied transport and closes it even when preparation fails.
+    Pass a ResolveBatch to share fetches across sequential calls on one backend.
     ``cache_dir`` and ``offline`` are runtime overrides from the CLI.
     ``prefetch_settings`` overrides the transport's recommended metadata windows.
     ``build_transport_factory`` creates fresh clients for build dependencies;
@@ -220,24 +281,51 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
             project_input=project_input,
         )
 
-        coordinator_context = FetchCoordinator(
-            transport,
-            indexes=list(inputs.indexes),
-            cache_dir=cache_dir,
-            offline=offline,
-            start_on_demand=True,
-            index_routes=index_routes(inputs),
-            index_cache_floors=index_cache_floors(inputs),
-            on_fetch=progress.on_fetch if progress is not None else None,
-            build_config=inputs,
-            build_transport_factory=build_transport_factory,
-            max_concurrency=max_concurrency,
-            prefetch_settings=prefetch_settings,
-        )
+        routes = index_routes(inputs)
+        floors = index_cache_floors(inputs)
+
+        def make_coordinator(client: AsyncHttpTransport) -> FetchCoordinator:
+            return FetchCoordinator(
+                client,
+                indexes=list(inputs.indexes),
+                cache_dir=cache_dir,
+                offline=offline,
+                start_on_demand=True,
+                index_routes=routes,
+                index_cache_floors=floors,
+                on_fetch=progress.on_fetch if progress is not None else None,
+                build_config=inputs,
+                build_transport_factory=build_transport_factory,
+                max_concurrency=max_concurrency,
+                prefetch_settings=prefetch_settings,
+            )
+
+        coordinator_context: AbstractContextManager[FetchCoordinator]
+        if isinstance(transport, ResolveBatch):
+            # Index evidence follows its route and freshness policy. A remote
+            # or local backend build can resolve its own dependencies.
+            scope = (
+                inputs.indexes,
+                routes,
+                floors,
+                cache_dir,
+                offline,
+                max_concurrency,
+                prefetch_settings,
+                progress,
+                (inputs, build_transport_factory)
+                if inputs.local_sources or builds_remote_sdists(inputs)
+                else None,
+            )
+            coordinator_context = nullcontext(
+                transport.coordinator(scope, make_coordinator)
+            )
+        else:
+            coordinator_context = make_coordinator(transport)
     except BaseException:
         # The caller may already be running an event loop on this thread.
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            executor.submit(asyncio.run, transport.aclose()).result()
+        if not isinstance(transport, ResolveBatch):
+            _close_transport(transport)
         raise
 
     with coordinator_context as coordinator:
@@ -252,7 +340,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
             lock_preferences=lock_preferences,
             reconcile_build_variants=reconcile_build_variants,
             progress=progress,
-            release_refused_wheels=True,
+            release_refused_wheels=not isinstance(transport, ResolveBatch),
             include_dependency_requirements=include_dependency_requirements,
         )
 

@@ -83,19 +83,22 @@ class LockPlan(NamedTuple):
             format_name,
         )
 
+    def effective_format(self, setting: EffectiveValue) -> str:
+        """Apply the plan format between file settings and environment/CLI overrides."""
+        if self.format is not None and setting.origin.kind not in (
+            SourceKind.CLI,
+            SourceKind.ENV,
+        ):
+            return self.format
+
+        return str(setting.value)
+
     def output_name(self, format_setting: EffectiveValue) -> str:
         """Choose the file for the effective format after overrides."""
         if self.output is not None:
             return self.output
 
-        # Batch preflight runs before the plan enters the configuration ladder.
-        format_name = format_setting.value
-        if self.format is not None and format_setting.origin.kind not in (
-            SourceKind.CLI,
-            SourceKind.ENV,
-        ):
-            format_name = self.format
-
+        format_name = self.effective_format(format_setting)
         if format_name == "pylock":
             return f"pylock.{self.name}.toml"
 

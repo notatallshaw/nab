@@ -180,6 +180,7 @@ if TYPE_CHECKING:
     from ._run import RunSettings
     from .config.ladder import EffectiveValue, Layer
     from .config.lock_plans import LockPlan
+    from .lock_inputs import LockPlanBatch, PlanOutputs
 
 
 _DEFAULT_PROJECT_PATH = Path("pyproject.toml")
@@ -372,33 +373,58 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         printer().error("--all-plans needs declared plans and cannot use --output")
         raise SystemExit(1)
 
-    plans: tuple[LockPlan | None, ...] = (None,)
-    if all_plans or selected_plan is not None:
-        from .config.lock_plans import read_lock_plans  # noqa: PLC0415
-
-        try:
-            plans = read_lock_plans(
-                path,
-                ladder["plans"].value,
-                ladder["input-sources"].value,
-                ladder["format"],
-                selected=None if all_plans else selected_plan,
-            )
-        except (OSError, ValueError, TypeError) as exc:
-            printer().error(exc, prefix="input error: ")
-            raise SystemExit(1) from None
-
+    plans = _selected_plans(path, ladder, selected_plan, all_plans=all_plans)
     actions = _LockActions(python, upgrade, locked, reproduce, upgrade_package)
-    for declaration in plans:
-        _lock_one(
+    with contextlib.ExitStack() as stack:
+        batch = None
+        if len(plans) > 1:
+            from .lock_inputs import LockPlanBatch  # noqa: PLC0415 - batch locks only
+
+            batch = LockPlanBatch(
+                plans,
+                ladder["format"],
+                stack,
+                lambda: _make_resolve_transport(settings.http_backend),
+                ProgressReporter(printer()),
+            )
+
+        for declaration in plans or (None,):
+            _lock_one(
+                path,
+                overrides,
+                actions,
+                output=output,
+                input_format=input_format,
+                plan=declaration,
+                initial_ladder=ladder,
+                batch=batch,
+            )
+
+
+def _selected_plans(
+    path: Path,
+    ladder: dict[str, EffectiveValue],
+    selected: str | None,
+    *,
+    all_plans: bool,
+) -> tuple[LockPlan, ...]:
+    """Validate the requested declarations before starting a batch."""
+    if not all_plans and selected is None:
+        return ()
+
+    from .config.lock_plans import read_lock_plans  # noqa: PLC0415 - named plans only
+
+    try:
+        return read_lock_plans(
             path,
-            overrides,
-            actions,
-            output=output,
-            input_format=input_format,
-            plan=declaration,
-            initial_ladder=ladder,
+            ladder["plans"].value,
+            ladder["input-sources"].value,
+            ladder["format"],
+            selected=None if all_plans else selected,
         )
+    except (OSError, ValueError, TypeError) as exc:
+        printer().error(exc, prefix="input error: ")
+        raise SystemExit(1) from None
 
 
 def _checked_ladder(ladder: ConfigLadder) -> dict[str, EffectiveValue]:
@@ -441,6 +467,7 @@ def _prepare_lock_configuration(
     output: Path | None,
     plan: LockPlan | None,
     ladder: dict[str, EffectiveValue],
+    peers: PlanOutputs | None = None,
 ) -> _LockConfiguration:
     """Prepare configured sources before entering the ordinary resolution phases."""
     if plan is None:
@@ -468,23 +495,30 @@ def _prepare_lock_configuration(
             "edit the plan or lock without --plan"
         )
         raise ValueError(msg)
-    settings = _layered_run_settings(ladder)
-    reader = DependencySourceReader(
-        path.parent,
-        _resolve_effective_cache_dir(settings.cache_dir, cache=settings.cache),
-        lambda url: _download_input(url, settings.http_backend),
-        offline=settings.offline,
-    )
-    document = read_input_document(path)
-    prepared = prepare_lock_input(
-        path,
-        document,
-        plan,
-        sources=ladder["input-sources"].value,
-        reader=reader,
-        workspace_discovery=settings.workspace_discovery,
-        project_overrides=project_config_overrides(overrides),
-    )
+    if peers is not None and peers.prepared is not None:
+        original = peers.prepared
+        prepared = original.with_identity({**original.identity, "plan": plan.name})
+    else:
+        settings = _layered_run_settings(ladder)
+        reader = DependencySourceReader(
+            path.parent,
+            _resolve_effective_cache_dir(settings.cache_dir, cache=settings.cache),
+            lambda url: _download_input(url, settings.http_backend),
+            offline=settings.offline,
+        )
+        document = read_input_document(path)
+        prepared = prepare_lock_input(
+            path,
+            document,
+            plan,
+            sources=ladder["input-sources"].value,
+            reader=reader,
+            workspace_discovery=settings.workspace_discovery,
+            project_overrides=project_config_overrides(overrides),
+        )
+        if peers is not None:
+            peers.prepared = prepared
+
     layer = plan.settings_layer(path)
     effective = {
         **overrides,
@@ -514,10 +548,16 @@ def _lock_one(
     input_format: InputFormat,
     plan: LockPlan | None,
     initial_ladder: dict[str, EffectiveValue],
+    batch: LockPlanBatch | None = None,
 ) -> None:
     """Run one effective project selection using the normal resolver and writer."""
     _project_cli_overrides_or_exit(project_config_overrides(overrides))
 
+    peers = (
+        batch.outputs.pop(plan.name, None)
+        if batch is not None and plan is not None
+        else None
+    )
     try:
         source = _prepare_lock_configuration(
             path,
@@ -525,6 +565,7 @@ def _lock_one(
             output=output,
             plan=plan,
             ladder=initial_ladder,
+            peers=peers,
         )
     except (
         OSError,
@@ -562,6 +603,7 @@ def _lock_one(
         output_format=settings.format,
         build_requirements=settings.build_requirements,
         upgrade=actions.upgrade,
+        now=batch.now if batch is not None else None,
     )
 
     config = _load_config(
@@ -579,10 +621,6 @@ def _lock_one(
         inputs = inputs_for_build_requirements(inputs)
 
     _check_targets_or_exit(config)
-    effective_cache_dir = _resolve_effective_cache_dir(
-        settings.cache_dir, cache=settings.cache
-    )
-
     selected_groups = resolve_group_selection(
         path,
         groups=settings.groups,
@@ -647,7 +685,8 @@ def _lock_one(
 
     validation = (
         _lock_snapshot(run, config, inputs, workspace_to_drop)
-        if settings.format in _PROJECT_LOCK_FORMATS and not actions.reproduce
+        if peers is not None
+        or (settings.format in _PROJECT_LOCK_FORMATS and not actions.reproduce)
         else None
     )
 
@@ -660,35 +699,21 @@ def _lock_one(
     del validation
 
     previous_lock = _existing_lock_preferences(run)
-    transport = _make_resolve_transport(settings.http_backend)
-    result = _resolve(
-        path,
-        config=config,
-        cache_dir=effective_cache_dir,
-        offline=settings.offline,
-        transport=transport,
-        http_backend=settings.http_backend,
-        failure_prefix="cannot lock",
-        groups=selected_groups,
-        extras=selected_extras,
-        build_requirements=settings.build_requirements,
-        input_format=input_format,
-        project_input=project_input,
-        resolution_strategy=settings.resolution,
-        lock_preferences=previous_lock,
-        reconcile_build_variants=settings.format in _PROJECT_LOCK_FORMATS,
-        include_dependency_requirements=settings.format == "uv",
-        progress=ProgressReporter(printer()),
-        max_concurrency=settings.max_concurrency,
+    lock_input = _resolved_lock_input(
+        run,
+        config,
+        settings,
+        inputs,
+        previous_lock=previous_lock,
+        batch=batch,
+        peers=peers,
+        validation=validation_inputs,
     )
 
-    lock_input = build_lock_input(
-        result, inputs=inputs, extras=selected_extras, dependency_groups=selected_groups
-    )
     # uv follows dependency edges, so its writer needs the omitted members' edges.
     if settings.format != "uv":
         lock_input = drop_workspace_pins(lock_input, workspace_to_drop)
-    lock_input.provenance = provenance
+    lock_input = replace(lock_input, provenance=provenance)
     _attach_validation_inputs(
         lock_input,
         validation_inputs,
@@ -707,6 +732,65 @@ def _lock_one(
             reproduce=actions.reproduce,
         )
     )
+
+
+def _resolved_lock_input(
+    run: _LockRun,
+    config: NabProjectConfig,
+    settings: RunSettings,
+    inputs: ResolveInputs,
+    *,
+    previous_lock: SavedPreferences | None,
+    batch: LockPlanBatch | None,
+    peers: PlanOutputs | None,
+    validation: Mapping[str, Any] | None,
+) -> LockInput:
+    """Resolve the prepared selection once for all compatible output writers."""
+    reconcile = settings.format in _PROJECT_LOCK_FORMATS
+
+    def solve() -> LockInput:
+        transport = (
+            batch.fetch
+            if batch is not None
+            else _make_resolve_transport(settings.http_backend)
+        )
+        result = _resolve(
+            run.path,
+            config=config,
+            cache_dir=_resolve_effective_cache_dir(
+                settings.cache_dir, cache=settings.cache
+            ),
+            offline=settings.offline,
+            transport=transport,
+            http_backend=settings.http_backend,
+            failure_prefix="cannot lock",
+            groups=run.groups,
+            extras=run.extras,
+            build_requirements=settings.build_requirements,
+            input_format=run.input_format,
+            project_input=run.project_input,
+            resolution_strategy=settings.resolution,
+            lock_preferences=previous_lock,
+            reconcile_build_variants=reconcile,
+            include_dependency_requirements=settings.format == "uv"
+            or (peers is not None and peers.needs_edges),
+            progress=batch.progress
+            if batch is not None
+            else ProgressReporter(printer()),
+            max_concurrency=settings.max_concurrency,
+        )
+
+        return build_lock_input(
+            result,
+            inputs=inputs,
+            extras=run.extras,
+            dependency_groups=run.groups,
+        )
+
+    if peers is not None and validation is not None and previous_lock is None:
+        return peers.resolve(inputs, validation, solve, reconcile=reconcile)
+
+    return solve()
 
 
 def _finish_lock(
@@ -2031,6 +2115,7 @@ def _determine_lock_anchor(
     output_format: str,
     build_requirements: bool = False,
     upgrade: bool,
+    now: datetime | None = None,
 ) -> datetime:
     """Pick the ``P<n>D`` anchor for ``nab lock``.
 
@@ -2048,7 +2133,7 @@ def _determine_lock_anchor(
         build_requirements=build_requirements,
     )
     if upgrade:
-        fresh = datetime.now(timezone.utc)
+        fresh = now if now is not None else datetime.now(timezone.utc)
         if prior is not None:
             printer().note(
                 "--upgrade re-anchored the resolve window to"
@@ -2057,7 +2142,10 @@ def _determine_lock_anchor(
             )
         return fresh
     reused = absolute if absolute is not None else prior
-    return reused if reused is not None else datetime.now(timezone.utc)
+    if reused is not None:
+        return reused
+
+    return now if now is not None else datetime.now(timezone.utc)
 
 
 def _validate_pylock_output_name(

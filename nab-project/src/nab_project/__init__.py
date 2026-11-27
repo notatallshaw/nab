@@ -20,7 +20,7 @@ Supported imports:
         write_poetry_lock, write_uv_lock
     nab_project.download  run_download
     nab_project.inputs  ResolveInputs
-    nab_project.resolve  ResolveResult, TargetResult, resolve_for_targets,
+    nab_project.resolve  ResolveBatch, ResolveResult, TargetResult, resolve_for_targets,
         plan_project_inputs, complete_project_requirements
     nab_project.dependency_inputs  dependency_input_requirements
     nab_project.dependency_sources  DependencySourceReader
