@@ -665,6 +665,26 @@ class TestSnapshots:
         assert snapshot["foo"] == 3
         assert "baz" not in snapshot
 
+    def test_detached_snapshots_release_later_package_keys(self) -> None:
+        class Package:
+            pass
+
+        solution: PartialSolution[Package, int] = PartialSolution()
+        original = Package()
+        solution.decide(original, 1)
+        decisions = solution.decisions()
+        ranges = solution.positive_ranges()
+        solution.backtrack(0)
+
+        later = Package()
+        reference = ref(later)
+        solution.decide(later, 2)
+        del later, solution
+        gc.collect()
+
+        assert reference() is None
+        assert list(decisions) == list(ranges) == [original]
+
     def test_a_released_snapshot_drops_out_of_the_register(self) -> None:
         """Freezing, detaching and taking all step over a dead reference."""
         ps = PartialSolution()
