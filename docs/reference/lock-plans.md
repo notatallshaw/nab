@@ -53,6 +53,16 @@ default output is `pylock.NAME.toml` or `NAME.requirements.txt` for a requiremen
 `output` to choose a path relative to the project file. Inspect the plans with
 `nab config get plans`.
 
+A plan can choose its own output format. For example, this plan writes `deploy.requirements.txt`
+alongside the other plan's `pylock.ci.toml`:
+
+```toml
+[tool.nab.plans.deploy]
+format = "requirements"
+```
+
+`--format` and `NAB_FORMAT` override the format for every selected plan.
+
 Use `nab lock --all-plans` to refresh every declared plan and `nab lock --all-plans --locked` to
 check the files. A batch checks the option names and values in every plan’s `settings` table,
 verifies that its input sources are declared and checks for duplicate output paths before writing

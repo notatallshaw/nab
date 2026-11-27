@@ -806,3 +806,35 @@ def test_unknown_input_leaves_existing_lock_in_place(named: Registry) -> None:
         file.write('[tool.nab.plans.dev.inputs.missing]\ngroups=["test"]\n')
     assert command(named, "--plan", "dev") == 1
     assert path.read_bytes() == saved
+
+
+def test_batch_uses_each_plans_format(
+    named: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with named.project.open("a") as stream:
+        stream.write('format="requirements-without-hashes"\n')
+
+    assert command(named, "--all-plans") == 0
+    build = named.project.with_name("build.requirements.txt")
+    assert build.read_text().splitlines() == ["b==1"]
+    assert toml_io.load_path(named.project.with_name("pylock.dev.toml"))["packages"]
+
+    monkeypatch.setenv("NAB_FORMAT", "requirements")
+    assert command(named, "--all-plans") == 0
+    assert "--hash=" in build.read_text()
+
+    assert command(named, "--all-plans", "--format", "pylock") == 0
+    assert toml_io.load_path(named.project.with_name("pylock.build.toml"))["packages"]
+
+
+def test_declared_format_collision_is_checked_before_resolution(
+    named: Registry,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    named.project.write_text(
+        '[tool.nab.plans.dev]\nformat="requirements"\n'
+        '[tool.nab.plans.build]\noutput="dev.requirements.txt"\n'
+    )
+    assert command(named, "--all-plans") == 1
+    assert not named.coordinators
+    assert "both write" in capsys.readouterr().err

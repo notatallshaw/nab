@@ -379,7 +379,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
                 path,
                 ladder["plans"].value,
                 ladder["input-sources"].value,
-                settings.format,
+                ladder["format"],
                 selected=None if all_plans else selected_plan,
             )
         except (OSError, ValueError, TypeError) as exc:
@@ -496,7 +496,10 @@ def _prepare_lock_configuration(
         read_config_ladder(path, effective, project_input=prepared, plan_settings=layer)
     )
     return _LockConfiguration(
-        ladder, prepared, plan, output or path.parent / plan.output
+        ladder,
+        prepared,
+        plan,
+        output or path.parent / plan.output_name(ladder["format"]),
     )
 
 
