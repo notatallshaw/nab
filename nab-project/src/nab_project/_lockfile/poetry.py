@@ -15,7 +15,7 @@ from nab_provider.value import replace
 
 from .. import toml_writer
 from ..pyproject_files import project_name, project_optional_dependencies
-from .native import file_digest, install_contexts
+from .native import distribution_files, file_digest, install_contexts
 from .pylock import LockValidationError, project_packages
 
 if TYPE_CHECKING:
@@ -37,9 +37,12 @@ def _content_hash(document: Mapping[str, Any]) -> str:
         if key in project
     }
     groups = document.get("dependency-groups", {})
+
     poetry = document.get("tool", {}).get("poetry", {})
     legacy = ("dependencies", "source", "extras", "dev-dependencies")
     settings = {key: poetry[key] for key in (*legacy, "group") if key in poetry}
+
+    # Poetry hashes legacy-only dependencies without a containing tool.poetry table.
     if relevant or groups:
         content: dict[str, Any] = {"tool": {"poetry": settings}}
         if relevant:
@@ -48,6 +51,7 @@ def _content_hash(document: Mapping[str, Any]) -> str:
             content["dependency-groups"] = groups
     else:
         content = {**dict.fromkeys(legacy), **settings}
+
     return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
 
 
@@ -63,9 +67,10 @@ def _source(package: Package, repositories: Mapping[str, str]) -> dict[str, Any]
         if vcs.type != "git":
             msg = f"Poetry cannot install {package.name} from {vcs.type}"
             raise LockValidationError(msg)
-        if not vcs.url:
+        if vcs.url is None or vcs.url == "":
             msg = f"Poetry needs a Git repository URL for {package.name}"
             raise LockValidationError(msg)
+
         source = {
             "type": "git",
             "url": vcs.url,
@@ -85,11 +90,10 @@ def _source(package: Package, repositories: Mapping[str, str]) -> dict[str, Any]
                 {"file": filename, "hash": file_digest(filename, archive.hashes)}
             ],
         }
-
     else:
         return _registry_source(package, repositories)
 
-    if subdirectory:
+    if subdirectory is not None:
         source["subdirectory"] = subdirectory
     return {**fields, "source": source}
 
@@ -98,7 +102,7 @@ def _registry_source(
     package: Package, repositories: Mapping[str, str]
 ) -> dict[str, Any]:
     """Select the configured Poetry repository or the only available artifact."""
-    artifacts = [*(package.wheels or ()), *((package.sdist,) if package.sdist else ())]
+    artifacts = list(distribution_files(package))
     result: dict[str, Any] = {
         "files": [
             {
@@ -108,6 +112,7 @@ def _registry_source(
             for artifact in artifacts
         ]
     }
+
     index = (package.index or "").rstrip("/")
     if index in repositories:
         result["source"] = {
@@ -119,10 +124,12 @@ def _registry_source(
         if len(artifacts) != 1:
             msg = f"declare {index!r} in tool.poetry.source for {package.name}"
             raise LockValidationError(msg)
+
+        # A single artifact can be installed without a named Poetry repository.
         artifact = artifacts[0]
         result["source"] = (
             {"type": "file", "url": artifact.path}
-            if artifact.path
+            if artifact.path is not None
             else {"type": "url", "url": artifact.url}
         )
     return result
@@ -137,14 +144,21 @@ def _selection(
     for kind, name, condition in install_contexts(
         package.marker, base=groups[0], groups=groups, extras=extras
     ):
-        region = MarkerSet.from_marker(condition) if condition else MarkerSet.full()
+        region = (
+            MarkerSet.from_marker(condition)
+            if condition is not None
+            else MarkerSet.full()
+        )
+        # Poetry represents project extras as markers within its main group.
         if kind == "extra":
             group = "main"
             region &= MarkerSet.from_marker(f'extra == "{name}"')
         else:
             optional = False
             group = name
+
         markers[group] = markers[group] | region if group in markers else region
+
     result: dict[str, Any] = {"optional": optional, "groups": sorted(markers)}
     conditions = {
         group: text
@@ -166,11 +180,13 @@ def write_poetry_lock(
     """Write Poetry 2.1 installation groups, source references and input hash."""
     base = lock_input.base_group or "main"
     groups = tuple(dict.fromkeys((base, *lock_input.active_groups)))
+
     repositories = {
         source["url"].rstrip("/"): source["name"]
         for source in document.get("tool", {}).get("poetry", {}).get("source", ())
         if "url" in source
     }
+
     directory = output_path.parent if output_path else project_dir
     packages = project_packages(replace(lock_input, base_group=base), directory)
     rows = []
@@ -184,7 +200,7 @@ def write_poetry_lock(
                 **_selection(package, groups, lock_input.extras),
                 **_source(package.source, repositories),
             }
-            if package.source.dependencies:
+            if package.source.dependencies is not None:
                 row["dependencies"] = {
                     dep["name"]: "*" for dep in package.source.dependencies
                 }
@@ -198,20 +214,19 @@ def write_poetry_lock(
             "content-hash": _content_hash(document),
         },
     }
+
     if lock_input.extras:
         optional = project_optional_dependencies(document)
         name = project_name(document)
-        data["extras"] = {
-            extra: sorted(
-                {
-                    requirement.name
-                    for requirement in expand_extra_requirements(
-                        optional, name, [extra]
-                    )
-                }
+        # Poetry validates requested extras against the names in this table.
+        extra_roots = {}
+        for extra in lock_input.extras:
+            requirements = expand_extra_requirements(optional, name, [extra])
+            extra_roots[extra] = sorted(
+                {requirement.name for requirement in requirements}
             )
-            for extra in lock_input.extras
-        }
+        data["extras"] = extra_roots
+
     text = toml_writer.dumps(data)
     if output_path is not None:
         atomic_write_text(output_path, text)

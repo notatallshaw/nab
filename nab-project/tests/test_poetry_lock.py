@@ -54,8 +54,10 @@ def test_poetry_qualified_sources_and_optional_selections(tmp_path: Path) -> Non
         wheels=(wheel,),
         requires_python=">=3.11",
     )
+
     target = ResolveTarget.for_host()
     pins = {p.name: p for p in (archive, git, directory, dep)}
+
     selectors = {
         "dep": (BASE_MEMBER, ("extra", "fast")),
         "archive": (("extra", "fast"),),
@@ -66,6 +68,7 @@ def test_poetry_qualified_sources_and_optional_selections(tmp_path: Path) -> Non
     inputs = LockInput(
         targets={target.label: lock}, extras=("fast",), dependency_groups=("dev",)
     )
+
     project = {
         "project": {"name": "app", "optional-dependencies": {"fast": ["archive"]}},
         "dependency-groups": {"dev": ["gitdep"]},
@@ -75,6 +78,7 @@ def test_poetry_qualified_sources_and_optional_selections(tmp_path: Path) -> Non
             }
         },
     }
+
     output = tmp_path / "poetry.lock"
     write_poetry_lock(inputs, project, project_dir=tmp_path, output_path=output)
     document = tomli.loads(output.read_text())
@@ -87,13 +91,16 @@ def test_poetry_qualified_sources_and_optional_selections(tmp_path: Path) -> Non
     }
     assert packages["dep"]["python-versions"] == ">=3.11"
     assert not packages["dep"]["optional"]
+
     assert packages["archive"]["optional"]
     assert packages["archive"]["markers"]["main"] == 'extra == "fast"'
     assert packages["archive"]["source"]["subdirectory"] == "lib"
     assert document["extras"] == {"fast": ["archive"]}
+
     assert packages["gitdep"]["source"]["resolved_reference"] == "b" * 40
     assert packages["gitdep"]["source"]["subdirectory"] == "pkg"
     assert packages["gitdep"]["groups"] == ["dev"]
+
     assert packages["app"]["source"] == {
         "type": "directory",
         "url": "src",
@@ -112,6 +119,7 @@ def test_poetry_registry_and_direct_files(tmp_path: Path) -> None:
     target = ResolveTarget.for_host()
 
     def lock(pin: IndexPin) -> dict:
+        """Render one release against the project's configured package sources."""
         inputs = LockInput(targets={target.label: TargetLock(target, {pin.name: pin})})
         return tomli.loads(write_poetry_lock(inputs, {}, project_dir=tmp_path))[
             "package"
