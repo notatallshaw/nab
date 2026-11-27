@@ -75,7 +75,10 @@ def _distribution(package: Package, directory: Path) -> dict[str, Any]:
     if package.vcs:
         vcs = package.vcs
         if vcs.type != "git":
-            msg = f"uv cannot install {package.name} from {vcs.type}"
+            msg = (
+                f"uv cannot install {package.name} from {vcs.type}. "
+                "Use --format pdm or a Git source."
+            )
             raise LockValidationError(msg)
 
         # uv stores the requested revision in the query and the commit in the fragment.
@@ -105,14 +108,21 @@ def _archive(archive: PackageArchive, name: str, directory: Path) -> dict[str, A
     filename = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
     artifact = {"hash": file_digest(name, archive.hashes)}
     if is_file_url(url):
+        if archive.subdirectory is not None and Path(archive.subdirectory).parts:
+            msg = (
+                f"uv builds {name} from the archive root for a path source and cannot "
+                f"select local archive subdirectory {archive.subdirectory!r}. "
+                "Serve the archive over HTTPS or use --format pdm."
+            )
+            raise LockValidationError(msg)
+
         source = {"path": relative_lock_path(parse_file_url(url), directory)}
         artifact["filename"] = filename
     else:
         source = {"url": url}
         artifact["url"] = url
-
-    if archive.subdirectory is not None:
-        source["subdirectory"] = archive.subdirectory
+        if archive.subdirectory is not None:
+            source["subdirectory"] = archive.subdirectory
 
     if filename.endswith(".whl"):
         return {"source": source, "wheels": [artifact]}

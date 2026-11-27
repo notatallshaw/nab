@@ -55,7 +55,7 @@ def test_uv_sources_and_root_inputs(tmp_path: Path) -> None:
         "archive", "1", "https://example.org/archive.zip", _HASH, "pkg"
     )
     path = wheel_dir / "localwheel-1-py3-none-any.whl"
-    wheel = ArchivePin("localwheel", "1", path.as_uri(), _HASH)
+    wheel = ArchivePin("localwheel", "1", path.as_uri(), _HASH, subdirectory="./")
 
     sdist = SdistArtifact(
         "lib-1.tar.gz", "https://example.org/lib-1.tar.gz", _HASH, size=123
@@ -118,6 +118,16 @@ def test_uv_sources_and_root_inputs(tmp_path: Path) -> None:
         "archive",
     ]
     assert root["metadata"]["provides-extras"] == ["fast"]
+
+
+def test_uv_refuses_a_subdirectory_in_a_local_archive(tmp_path: Path) -> None:
+    url = (tmp_path / "source.tar.gz").as_uri()
+    pin = ArchivePin("demo", "1", url, _HASH, subdirectory="lib")
+    target = ResolveTarget.for_host()
+    lock = LockInput(targets={target.label: TargetLock(target, {"demo": pin})})
+
+    with pytest.raises(LockValidationError, match="local archive subdirectory"):
+        write_uv_lock(lock, {}, project_dir=tmp_path)
 
 
 def test_uv_forked_edges_keep_exact_child_identity(tmp_path: Path) -> None:
