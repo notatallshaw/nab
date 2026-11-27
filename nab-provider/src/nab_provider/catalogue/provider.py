@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Hashable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 
 from nab_resolver.errors import (
     ResolutionError,
@@ -21,7 +21,6 @@ from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 from .._compat import override
 from ..preference import (
-    CataloguePreference,
     DependencyData,
     IncompletePreferenceError,
     PreferenceCatalogue,
@@ -33,17 +32,85 @@ from ..preference import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
+    from collections.abc import Set as AbstractSet
 
     from nab_resolver.resolver import ResolverProvider
     from nab_resolver.types import RangeProtocol
 
-__all__ = ["MetadataProxy", "Package", "PermissionProxy", "PreferenceProvider"]
+__all__ = [
+    "CataloguePreference",
+    "MetadataProxy",
+    "Package",
+    "PermissionProxy",
+    "PreferenceProvider",
+    "PreparedCatalogue",
+]
 
 CandidateType = TypeVar("CandidateType", bound=Hashable)
 RangeType = TypeVar("RangeType")
 PinnedRequirementType = TypeVar("PinnedRequirementType")
 ProjectedVersionType = TypeVar("ProjectedVersionType", bound=Hashable)
 ClausePackageType = TypeVar("ClausePackageType", bound=Hashable)
+
+
+class PreparedCatalogue(
+    PreferenceCatalogue[CandidateType, RangeType, PinnedRequirementType],
+    Protocol[CandidateType, RangeType, PinnedRequirementType],
+):
+    """A preference catalogue that can prepare a selected candidate's metadata."""
+
+    @property
+    def unavailable(self) -> AbstractSet[CandidateType]:
+        """Candidate metadata whose absence has not been established."""
+        ...
+
+    @property
+    def unavailable_reason(self) -> str:
+        """Describe the latest listing or metadata uncertainty."""
+        ...
+
+    def prepare(
+        self, candidate: CandidateType
+    ) -> DependencyData[RangeType, PinnedRequirementType] | None:
+        """Prepare metadata only after the provider has established admission."""
+        ...
+
+
+class CataloguePreference(
+    PreferenceSearch[CandidateType, RangeType, PinnedRequirementType]
+):
+    """Run scoped preference proofs against a supplied candidate catalogue."""
+
+    def __init__(
+        self,
+        catalogue: PreparedCatalogue[CandidateType, RangeType, PinnedRequirementType],
+        roots: Mapping[str, RangeType],
+        input_pins: Sequence[PinnedRequirementType],
+        constraints: Mapping[str, RangeType],
+        *,
+        max_steps: int = 100_000,
+        refresh_incomplete: bool = False,
+        exact_dependencies: Callable[[CandidateType], Sequence[CandidateType]]
+        | None = None,
+    ) -> None:
+        """Keep one host snapshot and a shared budget for its preference proofs."""
+        super().__init__(
+            roots,
+            input_pins,
+            constraints,
+            max_steps=max_steps,
+            refresh_incomplete=refresh_incomplete,
+            exact_dependencies=exact_dependencies,
+        )
+        self._catalogue = catalogue
+
+    @property
+    @override
+    def catalogue(
+        self,
+    ) -> PreparedCatalogue[CandidateType, RangeType, PinnedRequirementType]:
+        """Return the catalogue whose immutable facts the search shares."""
+        return self._catalogue
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +139,9 @@ class PreferenceProvider(
 
     def __init__(
         self,
-        preference: PreferenceSearch[CandidateType, RangeType, PinnedRequirementType],
+        preference: CataloguePreference[
+            CandidateType, RangeType, PinnedRequirementType
+        ],
         *,
         scope: PreferenceScope[CandidateType] | None = None,
         metadata_is_admitted: Callable[
@@ -126,7 +195,7 @@ class PreferenceProvider(
 
     @staticmethod
     def from_catalogue(  # noqa: PLR0913 - preserve independent public host hooks
-        catalogue: PreferenceCatalogue[CandidateType, RangeType, PinnedRequirementType],
+        catalogue: PreparedCatalogue[CandidateType, RangeType, PinnedRequirementType],
         roots: Mapping[str, RangeType],
         input_pins: Sequence[PinnedRequirementType],
         constraints: Mapping[str, RangeType],
@@ -369,6 +438,7 @@ class PreferenceProvider(
             data = self.catalogue.facts.get(self.items[token])
             if data is None:
                 continue
+
             support = admitted[token] | {token}
             for child in data.dependencies:
                 if child not in demand:
@@ -385,6 +455,7 @@ class PreferenceProvider(
         """Combine the parents requiring a candidate with those supplying its pin."""
         if not self.catalogue.candidate_withdrawn(candidate):
             return demand
+
         for requirement, support in pins:
             if self.catalogue.pin_allows(requirement, candidate):
                 return demand | support
@@ -641,10 +712,12 @@ class PreferenceProvider(
                 self.catalogue.candidate_package(self.items[i]): Range.singleton(i)
                 for i in support
             }
+
         token = package.candidate
         cached = self._metadata_dependencies.get(token)
         if cached is not None:
             return cached.copy()
+
         data = self.prepared_data(token)
         dependencies = encode_dependencies(
             self.catalogue,

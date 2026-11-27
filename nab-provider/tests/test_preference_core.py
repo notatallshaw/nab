@@ -10,6 +10,7 @@ import pytest
 
 from nab_provider._compat import override
 from nab_provider.catalogue.provider import (
+    CataloguePreference,
     MetadataProxy,
     Package,
     PermissionProxy,
@@ -17,7 +18,6 @@ from nab_provider.catalogue.provider import (
 )
 from nab_provider.catalogue.resolution import PreparedResolution
 from nab_provider.preference import (
-    CataloguePreference,
     IncompletePreferenceError,
     PreferenceScope,
     PreferenceSearch,

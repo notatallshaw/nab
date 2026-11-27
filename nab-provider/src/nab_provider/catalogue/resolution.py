@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from nab_resolver.resolver import ResolverProvider, ResolverStats
     from nab_resolver.types import RangeProtocol
 
-    from ..preference import PreferenceCatalogue, PreferenceSearch
+    from .provider import CataloguePreference, PreparedCatalogue
 
 __all__ = ["PreparedResolution", "PreparedSolution"]
 
@@ -76,7 +76,7 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
     @classmethod
     def from_catalogue(  # noqa: PLR0913 - preserve independent public host hooks
         cls,
-        catalogue: PreferenceCatalogue[CandidateType, RangeType, PinnedRequirementType],
+        catalogue: PreparedCatalogue[CandidateType, RangeType, PinnedRequirementType],
         roots: Mapping[str, RangeType],
         input_pins: Sequence[PinnedRequirementType],
         constraints: Mapping[str, RangeType],
@@ -180,6 +180,7 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
 
         if selected is None:
             return None
+
         return {
             package: trial.items[token]
             for package, token in selected.items()
@@ -221,6 +222,7 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
         }
         if trial.incomplete:
             return None
+
         admission = self.metadata_admission
         if admission is not None:
             subjects: Iterable[CandidateType] = selected.values()
@@ -272,7 +274,9 @@ class _LiveProvider(
 
     def __init__(
         self,
-        preference: PreferenceSearch[CandidateType, RangeType, PinnedRequirementType],
+        preference: CataloguePreference[
+            CandidateType, RangeType, PinnedRequirementType
+        ],
         *,
         preferred_candidate: Callable[[str], CandidateType | None] | None,
         on_candidate_considered: Callable[[CandidateType], None] | None,
@@ -327,7 +331,7 @@ class _SelectedAdmission(Generic[CandidateType, RangeType, PinnedRequirementType
 
     def __init__(
         self,
-        catalogue: PreferenceCatalogue[CandidateType, RangeType, PinnedRequirementType],
+        catalogue: PreparedCatalogue[CandidateType, RangeType, PinnedRequirementType],
         roots: Mapping[str, RangeType],
         selection_is_admitted: Callable[[Mapping[str, CandidateType]], bool],
     ) -> None:
@@ -366,7 +370,9 @@ class _PreferredProvider(
 
     def __init__(
         self,
-        preference: PreferenceSearch[CandidateType, RangeType, PinnedRequirementType],
+        preference: CataloguePreference[
+            CandidateType, RangeType, PinnedRequirementType
+        ],
         preferred: Callable[[str], CandidateType | None],
         *,
         metadata_is_admitted: Callable[
@@ -416,6 +422,7 @@ class _PreferredProvider(
     ) -> int | None:
         if not isinstance(package, str):
             return super().choose_version(package, version_range)
+
         candidate = self.preferred(package)
         if candidate is None:
             return None

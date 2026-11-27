@@ -109,9 +109,10 @@ class VersionCatalogue(ABC, Generic[CandidateType]):
 
     range_type: ClassVar[type[VersionRange]]
 
-    def full_range(self) -> VersionRange:
+    @classmethod
+    def full_range(cls) -> VersionRange:
         """Return unconstrained bounds in the host range namespace."""
-        return self.range_type.full()
+        return cls.range_type.full()
 
     @staticmethod
     def intersect_ranges(left: VersionRange, right: VersionRange) -> VersionRange:
@@ -123,9 +124,10 @@ class VersionCatalogue(ABC, Generic[CandidateType]):
         """Test the candidate against the host range."""
         return candidate.version in allowed
 
-    def pin_allows(self, pin: Requirement, candidate: CandidateType) -> bool:
+    @classmethod
+    def pin_allows(cls, pin: Requirement, candidate: CandidateType) -> bool:
         """Match the original pin against the candidate in its host namespace."""
-        return self.pin_project(pin) == candidate.base and pin.specifier.contains(
+        return cls.pin_project(pin) == candidate.base and pin.specifier.contains(
             candidate.version, prereleases=True
         )
 

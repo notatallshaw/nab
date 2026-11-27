@@ -5,9 +5,8 @@ from __future__ import annotations
 import pytest
 
 from nab_provider._compat import override
-from nab_provider.catalogue.provider import PreferenceProvider
+from nab_provider.catalogue.provider import CataloguePreference, PreferenceProvider
 from nab_provider.catalogue.resolution import PreparedResolution
-from nab_provider.preference import CataloguePreference
 from nab_resolver.errors import ResolutionInvariantError, ResolutionLimitError
 from nab_resolver.ranges import Range
 

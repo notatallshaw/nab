@@ -3,6 +3,7 @@ from collections.abc import Mapping
 import pytest
 
 from nab_provider.catalogue.provider import (
+    CataloguePreference,
     MetadataProxy,
     PermissionProxy,
     PreferenceProvider,
@@ -14,7 +15,6 @@ from nab_provider.catalogue.resolution import (
     _SelectedAdmission,
 )
 from nab_provider.preference import (
-    CataloguePreference,
     IncompletePreferenceError,
     PreferenceScope,
 )
