@@ -8,7 +8,12 @@ import pytest
 import tomli
 from packaging.markers import Marker
 
-from nab_project.conflicts import ConflictKind, ConflictMember, ConflictSet
+from nab_project.conflicts import (
+    ConflictKind,
+    ConflictMember,
+    ConflictPolicy,
+    ConflictSet,
+)
 from nab_project.declarations import DependencyDeclaration
 from nab_project.lockfile import (
     ArchivePin,
@@ -51,6 +56,7 @@ def test_uv_sources_and_root_inputs(tmp_path: Path) -> None:
     )
     path = wheel_dir / "localwheel-1-py3-none-any.whl"
     wheel = ArchivePin("localwheel", "1", path.as_uri(), _HASH)
+
     sdist = SdistArtifact(
         "lib-1.tar.gz", "https://example.org/lib-1.tar.gz", _HASH, size=123
     )
@@ -66,11 +72,13 @@ def test_uv_sources_and_root_inputs(tmp_path: Path) -> None:
         ),
     )
     pins = {p.name: p for p in (git, editable, archive, wheel, lib)}
+
     locks = LockInput(
         targets={target.label: TargetLock(target, pins, {"local": ("lib",)})},
         extras=("fast",),
         dependency_groups=("test",),
     )
+
     project = {
         "project": {
             "name": "example",
@@ -85,11 +93,14 @@ def test_uv_sources_and_root_inputs(tmp_path: Path) -> None:
         },
         "build-system": {"requires": ["lib"]},
     }
+
     destination = tmp_path / "uv.lock"
     write_uv_lock(locks, project, project_dir=tmp_path, output_path=destination)
+
     rows = {p["name"]: p for p in tomli.loads(destination.read_text())["package"]}
     assert rows["local"]["source"] == {"editable": "member/sub"}
     assert rows["local"]["dependencies"] == [{"name": "lib"}]
+
     assert rows["localwheel"]["source"] == {"path": "files/" + path.name}
     assert rows["localwheel"]["wheels"][0]["filename"] == path.name
     assert rows["archive"]["source"]["subdirectory"] == "pkg"
@@ -98,6 +109,7 @@ def test_uv_sources_and_root_inputs(tmp_path: Path) -> None:
         == "https://example.org/vcs?rev=release%2F2&subdirectory=pkg#" + "a" * 40
     )
     assert rows["lib"]["sdist"]["size"] == 123
+
     root = rows["example"]
     assert root["source"] == {"editable": "."}
     assert root["optional-dependencies"]["fast"][0]["extra"] == ["speed"]
@@ -120,6 +132,7 @@ def test_uv_forked_edges_keep_exact_child_identity(tmp_path: Path) -> None:
         leaf = ArchivePin(
             "leaf", version, f"https://example.org/leaf-{version}.zip", _HASH
         )
+
         declaration = DependencyDeclaration(
             "leaf[fast]",
             "",
@@ -134,7 +147,14 @@ def test_uv_forked_edges_keep_exact_child_identity(tmp_path: Path) -> None:
             {"driver": ("leaf",)},
             dependency_requirements={"driver": {"leaf": (declaration,)}},
         )
-    inputs = LockInput(targets=targets, environments=envs)
+
+    declarations = {
+        label: result.target.environment_marker_string
+        for label, result in targets.items()
+    }
+    inputs = LockInput(
+        targets=targets, environments=envs, target_environments=declarations
+    )
     document = {
         "project": {
             "name": "app",
@@ -149,6 +169,7 @@ def test_uv_forked_edges_keep_exact_child_identity(tmp_path: Path) -> None:
     edges = next(row for row in rows if row["name"] == "driver")[
         "optional-dependencies"
     ]["speed"]
+
     for lock in targets.values():
         chosen = [
             edge
@@ -179,6 +200,7 @@ def test_uv_named_root_and_build_groups(tmp_path: Path) -> None:
             ),
         ),
     )
+
     project = {
         "project": {"name": "app", "dependencies": ["runtime"]},
         "build-system": {"requires": ["backend"]},
@@ -228,6 +250,7 @@ def test_uv_empty_project_and_minimal_registry_rows(tmp_path: Path) -> None:
     root = tomli.loads(
         write_uv_lock(lock, {"project": {"name": "app"}}, project_dir=tmp_path)
     )["package"][0]
+
     assert root == {"name": "app", "version": "0", "source": {"virtual": "."}}
 
 
@@ -252,6 +275,7 @@ def test_uv_registry_paths_use_the_serving_index(tmp_path: Path) -> None:
         ),
     }
     lock = LockInput(targets={target.label: TargetLock(target, pins)})
+
     project = {
         "project": {"name": "app", "dependencies": ["foo", "foo>=1", "bar", "repo"]}
     }
@@ -286,6 +310,7 @@ def test_uv_encodes_conflict_members_in_forked_edges(tmp_path: Path) -> None:
         )
     )
     lock = LockInput(targets=targets, extras=("cpu", "gpu"), conflicts=(conflict,))
+
     project = {
         "project": {
             "name": "app",
@@ -298,3 +323,23 @@ def test_uv_encodes_conflict_members_in_forked_edges(tmp_path: Path) -> None:
         (edge,) = root["optional-dependencies"][name]
         assert edge["version"] == version
         assert "extra-3-app-" + name in edge["marker"]
+
+
+def test_at_least_one_does_not_exclude_a_joint_uv_selection(tmp_path: Path) -> None:
+    target = ResolveTarget.for_host()
+    members = (
+        ConflictMember(ConflictKind.EXTRA, "cpu"),
+        ConflictMember(ConflictKind.EXTRA, "gpu"),
+    )
+    lock = LockInput(
+        targets={target.label: TargetLock(target, {})},
+        extras=("cpu", "gpu"),
+        conflicts=(ConflictSet(members, ConflictPolicy.AT_LEAST_ONE),),
+    )
+    project = {
+        "project": {"name": "app", "optional-dependencies": {"cpu": [], "gpu": []}}
+    }
+
+    document = tomli.loads(write_uv_lock(lock, project, project_dir=tmp_path))
+    assert "conflicts" not in document
+    assert document["package"][0]["metadata"]["provides-extras"] == ["cpu", "gpu"]

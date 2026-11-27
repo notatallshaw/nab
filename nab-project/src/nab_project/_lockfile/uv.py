@@ -19,6 +19,7 @@ from nab_provider.requirements_file import (
 )
 
 from .. import toml_writer
+from ..conflicts import ConflictPolicy
 from ..paths import relative_lock_path
 from ..pyproject_files import (
     build_system_requires,
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
 def _artifact(
     file: PackageWheel | PackageSdist, directory: Path, registry_path: Path | None
 ) -> dict[str, Any]:
+    """Preserve the artifact location relative to its serving index."""
     data: dict[str, str | int | None]
     if file.path is None:
         data = {"url": file.url}
@@ -50,6 +52,7 @@ def _artifact(
         data = {"path": relative_lock_path(directory / file.path, registry_path)}
     else:
         data = {"url": (directory / file.path).resolve().as_uri()}
+
     data["hash"] = file_digest(file.filename, file.hashes)
     if file.size is not None:
         data["size"] = file.size
@@ -61,10 +64,12 @@ def _distribution(package: Package, directory: Path) -> dict[str, Any]:
     if package.directory:
         local = package.directory
         path = Path(local.path)
-        if local.subdirectory:
+        if local.subdirectory is not None:
             path /= local.subdirectory
         return {
-            "source": {"editable" if local.editable else "directory": path.as_posix()}
+            "source": {
+                "editable" if local.editable is True else "directory": path.as_posix()
+            }
         }
 
     if package.vcs:
@@ -72,11 +77,14 @@ def _distribution(package: Package, directory: Path) -> dict[str, Any]:
         if vcs.type != "git":
             msg = f"uv cannot install {package.name} from {vcs.type}"
             raise LockValidationError(msg)
+
+        # uv stores the requested revision in the query and the commit in the fragment.
         parameters = {}
-        if vcs.requested_revision:
+        if vcs.requested_revision is not None:
             parameters["rev"] = vcs.requested_revision
-        if vcs.subdirectory:
+        if vcs.subdirectory is not None:
             parameters["subdirectory"] = vcs.subdirectory
+
         parsed = urlsplit(vcs.url or "")
         query = "&".join(filter(None, (parsed.query, urlencode(parameters))))
         return {
@@ -87,6 +95,7 @@ def _distribution(package: Package, directory: Path) -> dict[str, Any]:
 
     if package.archive:
         return _archive(package.archive, package.name, directory)
+
     return _registry(package, directory)
 
 
@@ -101,10 +110,13 @@ def _archive(archive: PackageArchive, name: str, directory: Path) -> dict[str, A
     else:
         source = {"url": url}
         artifact["url"] = url
-    if archive.subdirectory:
+
+    if archive.subdirectory is not None:
         source["subdirectory"] = archive.subdirectory
+
     if filename.endswith(".whl"):
         return {"source": source, "wheels": [artifact]}
+
     return {"source": source, "sdist": artifact}
 
 
@@ -117,10 +129,11 @@ def _registry(package: Package, directory: Path) -> dict[str, Any]:
         if registry_path is not None
         else index.rstrip("/")
     )
+
     data: dict[str, Any] = {"source": {"registry": registry}}
     if package.sdist:
         data["sdist"] = _artifact(package.sdist, directory, registry_path)
-    if package.wheels:
+    if package.wheels is not None:
         data["wheels"] = [
             _artifact(wheel, directory, registry_path) for wheel in package.wheels
         ]
@@ -132,11 +145,12 @@ def _requirement(req: Requirement) -> dict[str, Any]:
     data: dict[str, Any] = {"name": canonicalize_name(req.name)}
     if req.specifier:
         data["specifier"] = str(req.specifier)
-    if req.url:
+    if req.url is not None:
         if is_file_url(req.url):
             data["path"] = parse_file_url(req.url).as_posix()
         else:
             data["url"] = req.url
+
     if req.extras:
         data["extras"] = sorted(req.extras)
     if req.marker:
@@ -151,6 +165,7 @@ class _PackageGraph:
         self.regions: dict[frozenset[str], str | None] = {}
         self.lock = lock
         self.project = project
+
         self.packages = project_packages(lock, directory)
         self.rows = [
             {
@@ -160,6 +175,8 @@ class _PackageGraph:
             }
             for p in self.packages
         ]
+
+        # A name can resolve to a different source or version on each target.
         self.by_target: dict[tuple[str, str], int] = {}
         self.by_name: dict[str, list[int]] = defaultdict(list)
         for i, package in enumerate(self.packages):
@@ -170,21 +187,28 @@ class _PackageGraph:
     def reference(
         self, index: int, extras: tuple[str, ...], marker: str | None
     ) -> dict[str, Any]:
+        """Qualify references only when the name identifies more than one row."""
         row = self.rows[index]
         ref = {"name": row["name"]}
         if len(self.by_name[row["name"]]) > 1:
             ref.update(version=row["version"], source=row["source"])
+
         if extras:
             ref["extra"] = list(extras)
-        if marker:
+        if marker is not None:
             ref["marker"] = marker
         return ref
 
     def target_marker(self, label: str) -> str:
         """Include the uv conflict member when two forks share a platform."""
         target = self.lock.targets[label].target
-        declarations = self.lock.target_environments or {}
-        text = declarations.get(label) or target.environment_marker_string
+        declarations = self.lock.target_environments
+        if declarations is not None and label in declarations:
+            text = declarations[label]
+        else:
+            text = target.environment_marker_string
+
+        # uv encodes a selected conflict member in the extra marker variable.
         for kind, member in target.selection:
             token = f"{kind}-{len(self.project)}-{self.project}-{member}"
             text = f'({text}) and extra == "{token}"'
@@ -194,6 +218,7 @@ class _PackageGraph:
         """Choose the resolved environments in which an edge is traversable."""
         if labels == all_labels:
             return None
+
         key = frozenset(labels)
         if key in self.regions:
             return self.regions[key]
@@ -201,6 +226,7 @@ class _PackageGraph:
         regions = MarkerSet.empty()
         for label in sorted(labels):
             regions |= MarkerSet.from_marker(self.target_marker(label))
+
         marker = regions.to_marker_string()
         self.regions[key] = marker
         return marker
@@ -209,6 +235,7 @@ class _PackageGraph:
         by_extra: dict[str, dict[tuple[int, tuple[str, ...]], set[str]]] = defaultdict(
             lambda: defaultdict(set)
         )
+        # Group identical edges before constructing their environment marker.
         for label in parent.labels:
             target = self.lock.targets[label]
             declarations = (target.dependency_requirements or {}).get(parent.name, {})
@@ -220,11 +247,11 @@ class _PackageGraph:
                 for record in records:
                     for extra in record.required_for_parent_extras or ("",):
                         by_extra[extra][index, record.dependency_extras].add(label)
+
+        all_labels = set(parent.labels)
         for extra, edges in sorted(by_extra.items()):
             refs = [
-                self.reference(
-                    i, requested, self.environment(labels, set(parent.labels))
-                )
+                self.reference(i, requested, self.environment(labels, all_labels))
                 for (i, requested), labels in sorted(edges.items())
             ]
             if extra:
@@ -235,19 +262,23 @@ class _PackageGraph:
     def root_edges(self, requirements: Sequence[Requirement]) -> list[dict[str, Any]]:
         edges: dict[tuple[int, tuple[str, ...], str | None], dict[str, Any]] = {}
         all_labels = set(self.lock.targets)
+
         for requirement in requirements:
             for index in self.by_name.get(canonicalize_name(requirement.name), ()):
                 pkg = self.packages[index]
                 if not requirement.specifier.contains(pkg.version, prereleases=True):
                     continue
+
                 guard = self.environment(set(pkg.labels), all_labels)
                 if requirement.marker:
                     marker = MarkerSet.from_marker(requirement.marker)
-                    if guard:
+                    if guard is not None:
                         marker &= MarkerSet.from_marker(guard)
                     if marker.is_empty():
                         continue
+
                     guard = marker.to_marker_string()
+
                 key = (index, tuple(sorted(requirement.extras)), guard)
                 if key not in edges:
                     edges[key] = self.reference(*key)
@@ -263,6 +294,7 @@ def _group_inputs(
     selected = tuple(
         name for name in lock.active_groups if canonicalize_name(name) in declared
     )
+
     result = dict(iter_group_requirements(groups, selected))
     if lock.base_group is not None:
         result[lock.base_group] = list(main)
@@ -284,6 +316,8 @@ def _project_root(
     }
     if graph.lock.base_group is None and (refs := graph.root_edges(main)):
         root["dependencies"] = refs
+
+    # uv uses declared requirements to check freshness and resolved edges to install.
     metadata: dict[str, Any] = {}
     declarations = [_requirement(req) for req in main]
     optional = project_optional_dependencies(document)
@@ -298,15 +332,18 @@ def _project_root(
             if req.marker:
                 marker &= MarkerSet.from_marker(req.marker)
             declarations.append({**value, "marker": marker.to_marker_string()})
+
     if declarations:
         metadata["requires-dist"] = declarations
     if graph.lock.extras:
         metadata["provides-extras"] = list(graph.lock.extras)
+
     for group, reqs in _group_inputs(graph.lock, document, main).items():
         root.setdefault("dev-dependencies", {})[group] = graph.root_edges(reqs)
         metadata.setdefault("requires-dev", {})[group] = [
             _requirement(req) for req in reqs
         ]
+
     if metadata:
         root["metadata"] = metadata
     return root
@@ -325,6 +362,7 @@ def write_uv_lock(
     name = canonicalize_name(project_name(document) or project_dir.resolve().name)
     directory = output_path.parent if output_path else project_dir
     graph = _PackageGraph(lock_input, directory, name)
+
     project = document.get("project", {})
     requires_python = lock_input.requires_python or project.get("requires-python") or ""
     result: dict[str, Any] = {
@@ -337,12 +375,14 @@ def write_uv_lock(
             str(marker) for marker in lock_input.environments
         ]
 
+    # uv can exclude a pair of extras, but a minimum selection permits both.
     conflicts = [
         [
             {"package": name, member.kind.value: member.name}
             for member in conflict.members
         ]
         for conflict in lock_input.conflicts
+        if conflict.policy is not ConflictPolicy.AT_LEAST_ONE
     ]
     if conflicts:
         result["conflicts"] = conflicts
@@ -354,6 +394,8 @@ def write_uv_lock(
                 row["resolution-markers"] = sorted(
                     {graph.target_marker(label) for label in package.labels}
                 )
+
+        # A script has manifest requirements instead of a root distribution.
         main = (
             build_system_requires(document, project_dir / "pyproject.toml")
             if build_requirements

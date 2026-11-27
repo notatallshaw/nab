@@ -183,8 +183,11 @@ def test_uv_selects_each_conflicting_extra(
         == 0
     )
     saved = output.read_bytes()
+
     monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv("UV_PYTHON_DOWNLOADS", "never")
+
+    # Both runs must select from the same unmodified lock.
     for extra, version in (("cpu", "1"), ("gpu", "2")):
         subprocess.run(  # noqa: S603 - install and inspect the fixture selected by the named extra.
             [

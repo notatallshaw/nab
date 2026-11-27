@@ -278,27 +278,19 @@ def _fields(row: Opt, index: int, indent: str) -> list[str]:
     const = row.kind in _CONST_KINDS or None
     default = None if row.default is UNSET else row.default
 
-    fields = (
-        flag,
-        row.short,
-        _kind(row),
-        row.dest,
-        vtype,
-        row.choices,
-        const,
-        default,
-        row.required,
-        index,
-    )
-    result = [_literal(field) for field in fields]
-    choices = row.choices
-    if len(choices) > 1 and len(indent + _literal(choices) + ",") > _WIDTH:
-        # Let the row wrap between choices when the tuple no longer fits on one line.
-        entries = [_literal(choice) for choice in choices]
-        entries[0] = "(" + entries[0]
-        entries[-1] += ")"
-        result[5:6] = entries
-    return result
+    leading = (flag, row.short, _kind(row), row.dest, vtype)
+    trailing = (const, default, row.required, index)
+    choices = _literal(row.choices)
+
+    # Split a long choices tuple where the row formatter can insert a line break.
+    if len(row.choices) > 1 and len(indent + choices + ",") > _WIDTH:
+        choice_fields = [_literal(choice) for choice in row.choices]
+        choice_fields[0] = "(" + choice_fields[0]
+        choice_fields[-1] += ")"
+    else:
+        choice_fields = [choices]
+
+    return [*map(_literal, leading), *choice_fields, *map(_literal, trailing)]
 
 
 def _negation(row: Opt, index: int) -> list[str]:
