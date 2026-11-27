@@ -219,7 +219,7 @@ Nab also publishes components for other tools.
 
 - `nab-resolver`: a generic PubGrub dependency resolver.
 - `nab-markersets`: PEP 508 marker algebra.
-- `nab-candidates`: resolve package files and prepared dependency metadata.
+- `nab-candidates`: choose compatible package files from the candidates your installer supplies.
 - `nab-provider`: Python packaging policy and resolution logic without I/O.
 - `nab-index`: package-index and source clients with caching.
 - `nab-project`: resolve orchestration, lockfiles and downloads.

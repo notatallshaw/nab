@@ -32,17 +32,17 @@ embedding a component, pin the version you tested.
 | ---------------- | ------------------------------------------------------------------------------------------------------------ |
 | `nab-resolver`   | Generic PubGrub solving over abstract versions and ranges; standard library only                             |
 | `nab-markersets` | Marker parsing, algebra and bounded conversion reuse; callers own reuse lifetimes                            |
-| `nab-candidates` | File identities, prepared dependency facts, preference proofs and selection within a shared query budget     |
+| `nab-candidates` | Chooses compatible package files and identifies the exact pin permitting each selected yanked file           |
 | `nab-provider`   | Candidate/dependency selection, targets, tags, extras, metadata parsing, policies and result storage; no I/O |
 | `nab-index`      | Simple API, HTTP cache, wheel range reads, archive/VCS fetches and local indexes                             |
 | `nab-project`    | Fetch coordination, workspaces, PEP 517 builds, locks, downloads and resolve orchestration                   |
 | `nab`            | Configuration, CLI commands and output                                                                       |
 
-Nab's provider implements the catalogue in `nab-candidates` for an index and target environment.
-When a dependency may require a yanked file, it uses that catalogue to prepare eligible candidates
-and establish which pins permit the selected files. It retains control of prerelease ordering,
-metadata errors and the files included in the lock. A host with its own finder can install the same
-candidate library and supply its own listing and metadata reads.
+When a lock may need a yanked file, `nab-provider` lists candidates for the target Python and
+platform and reads their dependencies. `nab-candidates` checks which choices work together and which
+exact pin permits each yanked file it selects. The provider applies nab's prerelease rules and
+reports metadata errors. An installer with its own finder can supply the same inputs directly to
+`nab-candidates`.
 
 `nab-project` reads project files and PEP 723 script metadata into the declaration view used by
 resolution and saved-lock validation. The CLI selects the input format and applies configuration
@@ -120,8 +120,8 @@ rendering. Policy decisions stay with their owning packages. Candidate rejection
 for terminal-error reporting.
 
 The CLI owns verbosity and output lifetime. Each command prints an identical suggestion once while
-retaining every cause. Library hosts can use their own emission state or render errors
-independently.
+retaining every cause. Applications using the library can decide how to display repeated
+suggestions.
 
 ## Prefetch windows
 

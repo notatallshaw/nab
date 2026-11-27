@@ -1,4 +1,4 @@
-"""Solver-round budgets survive arbitrary host interruptions and new sessions."""
+"""Solver round limits across interrupted metadata reads and new sessions."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from .catalogue_fixtures import Catalogue, Choice, Data
 
 
 class DomainChangedError(Exception):
-    """A host observed a different candidate domain."""
+    """The available candidates changed during the search."""
 
 
 class InterruptedCatalogue(Catalogue):

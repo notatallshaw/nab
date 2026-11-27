@@ -1,4 +1,4 @@
-"""Small host catalogue of ordered integer releases and immutable prepared facts."""
+"""In-memory catalogue with integer versions and fixed dependency metadata."""
 
 from __future__ import annotations
 

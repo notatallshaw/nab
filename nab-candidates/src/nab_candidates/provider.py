@@ -79,7 +79,7 @@ class PreparedCatalogue(
 class CataloguePreference(
     PreferenceSearch[CandidateType, RangeType, PinnedRequirementType]
 ):
-    """Run scoped preference proofs against a supplied candidate catalogue."""
+    """Check non-yanked alternatives using the same catalogue for each query."""
 
     def __init__(
         self,
@@ -93,7 +93,7 @@ class CataloguePreference(
         exact_dependencies: Callable[[CandidateType], Sequence[CandidateType]]
         | None = None,
     ) -> None:
-        """Keep one host snapshot and a shared budget for its preference proofs."""
+        """Share the catalogue and the solver round limit across queries."""
         super().__init__(
             roots,
             input_pins,
@@ -177,7 +177,7 @@ class PreferenceProvider(
     BaseProvider[Package, int],
     Generic[CandidateType, RangeType, PinnedRequirementType],
 ):
-    """Resolve a host catalogue with grounded admission and scoped preference proofs."""
+    """Choose compatible candidates and check the pins that permit yanked files."""
 
     def __init__(
         self,
@@ -199,7 +199,7 @@ class PreferenceProvider(
         preferred_candidate: Callable[[str], CandidateType | None] | None = None,
         on_candidate_considered: Callable[[CandidateType], None] | None = None,
     ) -> None:
-        """Retain one search and the host's metadata and completeness policies."""
+        """Configure the metadata checks and candidate preferences for this query."""
         self._bound_preference = preference
         self._bound_catalogue = preference.catalogue
         self.roots = preference.roots
@@ -250,7 +250,7 @@ class PreferenceProvider(
         return self._bound_catalogue
 
     @staticmethod
-    def from_catalogue(  # noqa: PLR0913 - preserve independent public host hooks
+    def from_catalogue(  # noqa: PLR0913 - preserve independent catalogue callbacks
         catalogue: PreparedCatalogue[CandidateType, RangeType, PinnedRequirementType],
         roots: Mapping[str, RangeType],
         input_pins: Sequence[PinnedRequirementType],
@@ -336,7 +336,7 @@ class PreferenceProvider(
         range_type: type[RangeProtocol[ProjectedVersionType]],
         left_first: bool = True,
     ) -> list[Incompatibility[object, ProjectedVersionType]]:
-        """Decode original request clauses into the host's candidate version domain."""
+        """Recover the original package version requirements from a conflict."""
         projected: list[Incompatibility[object, ProjectedVersionType]] = []
         for clause in external_clauses(derivation, left_first=left_first):
             if clause.cause not in {
@@ -574,7 +574,7 @@ class PreferenceProvider(
         return self.matching_counts[key]
 
     def _preferred_token(self, package: str) -> int | None:
-        """Find an already registered host preference without preparing it."""
+        """Look up the preferred candidate's token without reading its metadata."""
         preferred = (
             None
             if self.preferred_candidate is None
@@ -708,7 +708,7 @@ class PreferenceProvider(
     def prepare_candidate(
         self, package: MetadataProxy, version_range: RangeProtocol[int]
     ) -> int | None:
-        """Prepare admitted metadata and apply the host's selected-plan policy."""
+        """Read permitted metadata, then validate the current selection."""
         token = package.candidate
         candidate = self.items[token]
         if self.catalogue.candidate_withdrawn(candidate):
@@ -813,7 +813,7 @@ class PreferenceProvider(
     def new_query(
         self, scope: PreferenceScope[CandidateType]
     ) -> PreferenceProvider[CandidateType, RangeType, PinnedRequirementType]:
-        """Share candidate identities and host policies with a scoped query."""
+        """Reuse the candidates and selection rules for a new set of restrictions."""
         query = PreferenceProvider(
             self.preference,
             scope=scope,
@@ -853,7 +853,7 @@ class PreferenceProvider(
         except ResolutionTerminatedError:
             raise
         except ResolutionError as exc:
-            # A dependency conflict raised by the host does not prove this query failed.
+            # A failure to read root candidates leaves the search inconclusive.
             raise _incomplete_query(str(exc)) from exc
 
         try:

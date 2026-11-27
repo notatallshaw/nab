@@ -1,4 +1,4 @@
-"""Resolve stable file identities and prepared Python dependency metadata.
+"""Select compatible Python package files and explain why a yanked file was chosen.
 
 Supported imports:
 

@@ -26,8 +26,6 @@ The workspace distributions release together at one version (lockstep).
 
 ## Notes
 
-- Before its first release, configure the PyPI trusted publisher for `nab-candidates` with the same
-  repository, release workflow and `pypi` environment as the other distributions.
 - Prereleases work: `hatch run release:make 0.0.3rc1`.
 - The changelog is the generated GitHub release notes (a list of merged PRs).
 - The workflow runs `tasks/release.py check` and `tasks/build_dists.py`, and installs the release

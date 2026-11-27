@@ -1,4 +1,4 @@
-"""Coordinate grounded withdrawn-candidate preference over a host catalogue."""
+"""Check whether selected requirements permit using a yanked package file."""
 
 from __future__ import annotations
 
@@ -254,7 +254,7 @@ def _requested_by(
 
 
 class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementType]):
-    """Schedule scoped preference proofs against one catalogue snapshot."""
+    """Check non-yanked alternatives while keeping earlier choices fixed."""
 
     def __init__(
         self,
@@ -289,7 +289,7 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
             raise ResolutionLimitError(message)
 
     def require_remaining_rounds(self) -> None:
-        """Stop before consulting the host for another solver query."""
+        """Stop before querying the catalogue if the search has used its last round."""
         if self.remaining <= 0:
             message = "live preference analysis is incomplete: search limit reached"
             raise ResolutionLimitError(message)
@@ -299,7 +299,7 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
     def catalogue(
         self,
     ) -> PreferenceCatalogue[CandidateType, RangeType, PinnedRequirementType]:
-        """Return the host catalogue retained for this search."""
+        """Return the candidate catalogue used throughout the search."""
         ...
 
     def record_solver_stats(self, stats: ResolverStats[StatisticsPackageType]) -> None:

@@ -1,7 +1,7 @@
 [project]
 name = "nab-candidates"
 version = "0.0.32.dev0"
-description = "Resolve Python package candidates with prepared dependency metadata"
+description = "Choose compatible Python package files using metadata from your installer"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

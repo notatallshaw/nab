@@ -1,4 +1,4 @@
-"""Preference search interfaces for hosts supplying immutable candidate facts."""
+"""Preference search interfaces re-exported from nab_candidates.preference."""
 
 from nab_candidates.preference import (
     DependencyData,

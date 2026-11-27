@@ -1,4 +1,4 @@
-"""Metadata and permission proofs use the host's chosen identity fields."""
+"""Proxy subclasses choose which fields identify a candidate."""
 
 from typing import Final
 

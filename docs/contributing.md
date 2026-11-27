@@ -342,8 +342,8 @@ The full local suite under `coverage run -m pytest` checks all distributions tog
 them per workspace in CI and runs each suite once, appending to one coverage data file. Its result
 includes the workspace's own suites plus every suite run before it.
 
-The `candidates` workspace checks `nab_candidates` with only the generic solver and its public
-dependencies installed.
+The `candidates` workspace tests `nab-candidates` with `nab-resolver` and `packaging` before
+installing `nab-provider`.
 
 `nab_index` and `nab_provider` are checked in the `project` workspace; reaching every line of both
 takes `nab-project/tests` as well as `nab-provider/tests`. The `provider` workspace runs
