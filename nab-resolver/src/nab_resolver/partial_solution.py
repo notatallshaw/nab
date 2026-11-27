@@ -16,6 +16,7 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "collections",
+    "itertools",
     "nab_resolver.errors",
     "operator",
     "weakref",
@@ -25,6 +26,7 @@ import operator
 from collections import defaultdict
 from collections.abc import Mapping
 from enum import Enum, auto
+from itertools import islice
 from typing import TYPE_CHECKING, Any, Final, Generic, TypeVar, cast, overload
 from weakref import ref
 
@@ -78,10 +80,11 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
     which records the value this view has to keep.
     """
 
-    __slots__ = ("__weakref__", "_live", "_shadow")
+    __slots__ = ("__weakref__", "_live", "_shadow", "_size")
 
     def __init__(self, live: dict[PackageType, _ValueType]) -> None:
         self._live: dict[PackageType, _ValueType] = live
+        self._size = len(live)
         self._shadow: dict[
             PackageType, _ValueType | Literal[_SnapshotState.ABSENT]
         ] = {}
@@ -148,30 +151,14 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
 
     @override
     def __iter__(self) -> Iterator[PackageType]:
-        """Yield the snapshot's packages, in the order the live map holds them.
-
-        Freezing leaves a package where it is, and the only path that removes
-        one is ``backtrack``, which detaches first, so the live map still holds
-        every key of the snapshot in the order it arrived.
-        """
-        shadow = self._shadow
-        for package in self._live:
-            if shadow.get(package, _UNSET) is not _ABSENT:
-                yield package
+        """Iterate over the keys present when the snapshot was taken."""
+        # New keys are appended until backtracking detaches the map. Copy its
+        # original prefix so the iterator can outlive the next assignment.
+        return iter(tuple(islice(self._live, self._size)))
 
     @override
     def __len__(self) -> int:
-        return sum(1 for _ in self)
-
-    def __bool__(self) -> bool:
-        """Return whether the snapshot contains any packages."""
-        shadow = self._shadow
-        if not shadow:
-            return bool(self._live)
-        for package in self._live:
-            if shadow.get(package, _UNSET) is not _ABSENT:
-                return True
-        return False
+        return self._size
 
 
 def _take_snapshot(
