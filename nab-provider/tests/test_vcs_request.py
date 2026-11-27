@@ -4,7 +4,33 @@ from __future__ import annotations
 
 import pytest
 
-from nab_provider.vcs_request import VcsCloneError, VcsRequest
+from nab_provider.vcs_request import VcsCloneError, VcsRequest, mercurial_transport
+
+
+@pytest.mark.parametrize(
+    "repo",
+    [
+        "https://example.com:70000/demo",
+        "https://example.com/demo/%FF",
+        "https://name:secret@example.com/demo",
+        "https://exa%6dple.com/demo",
+        "https:///demo",
+        "https://example.com/demo?option=value",
+        "https://example.com/demo/%2e%2e/other",
+        "https://example.com/demo/%5cother",
+        "https://example.com/demo/%0aother",
+        "https://example.com/demo/%252e%252e",
+        "https://example.com/demo//other",
+        "https://exa\x00mple.com/demo",
+        "file://host/demo",
+        "file:////host/demo",
+    ],
+)
+def test_mercurial_refuses_ambiguous_repository_locations(repo: str) -> None:
+    with pytest.raises(VcsCloneError, match="Mercurial requires") as error:
+        mercurial_transport(repo)
+
+    assert "secret" not in str(error.value)
 
 
 class TestVcsRequestParse:
@@ -50,9 +76,16 @@ class TestVcsRequestParse:
         with pytest.raises(VcsCloneError, match="not a recognised"):
             VcsRequest.parse("https://example.com/not-vcs")
 
-    def test_hg_scheme_refused(self) -> None:
-        with pytest.raises(VcsCloneError, match="not a recognised"):
-            VcsRequest.parse("hg+https://hg.example.com/repo@v1.0")
+    def test_mercurial_url_parses_repository_node_and_subdirectory(self) -> None:
+        node = "a" * 40
+        req = VcsRequest.parse(
+            f"hg+https://hg.example.com/repo@{node}#subdirectory=packages/demo"
+        )
+
+        assert req.scheme == "hg"
+        assert req.repo_url == "https://hg.example.com/repo"
+        assert req.ref == node
+        assert req.subdirectory == "packages/demo"
 
     def test_svn_scheme_refused(self) -> None:
         with pytest.raises(VcsCloneError, match="not a recognised"):
@@ -63,7 +96,7 @@ class TestVcsRequestParse:
             VcsRequest.parse("bzr+https://bzr.example.com/repo")
 
     def test_vcs_prefix_refused(self) -> None:
-        """``vcs+`` is not a scheme: ``git+`` is the only prefix stripped."""
+        """The prefix identifies the VCS backend."""
         with pytest.raises(VcsCloneError, match="not a recognised"):
             VcsRequest.parse("vcs+https://example.com/repo.git")
 

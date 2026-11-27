@@ -31,11 +31,10 @@ _SOURCE_TREES = {
 
 # nab decides what it does from one module; the help renderer reads COLUMNS,
 # a width rather than a decision, and must not pull nab/env.py onto the
-# --help path.  The other two build a subprocess's environment, which the
-# package spawning it owns.
+# --help path. Library readers build the environment for their own subprocesses.
 _ENVIRONMENT_READERS = {
     "nab": {"nab/env.py", "nab/_cli/render.py"},
-    "nab_index": {"nab_index/vcs.py"},
+    "nab_index": {"nab_index/_mercurial.py", "nab_index/vcs.py"},
     "nab_markersets": set[str](),
     "nab_project": {"nab_project/_build/env.py"},
     "nab_provider": set[str](),

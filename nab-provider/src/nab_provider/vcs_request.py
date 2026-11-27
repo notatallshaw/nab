@@ -1,4 +1,4 @@
-"""Parsing and vocabulary for a ``git+https://repo.git@ref#...`` requirement.
+"""Parsing and vocabulary for a VCS requirement.
 
 Running the clone belongs to :mod:`nab_index.vcs`, admitting a URL at all to
 :func:`nab_provider.vcs_admission.admit_vcs_url`, and both need this
@@ -7,10 +7,11 @@ vocabulary.
 
 from __future__ import annotations
 
-__lazy_modules__ = ("nab_provider.subdir",)
+__lazy_modules__ = ("nab_provider.subdir", "urllib.parse")
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
+from urllib.parse import unquote, urlsplit
 
 from .subdir import decode_subdirectory
 from .value import SlottedValue
@@ -27,7 +28,48 @@ __all__ = [
 
 # Exported so VCS admission and clone-time validation share one definition.
 FULL_GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
-_VCS_PREFIX_RE = re.compile(r"^git\+")
+_VCS_PREFIX_RE = re.compile(r"^(git|hg)\+")
+_ASCII_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def is_mercurial_node(ref: str) -> bool:
+    """Return whether a ref identifies a complete, non-null changeset."""
+    return bool(FULL_GIT_SHA_RE.fullmatch(ref)) and ref != "0" * 40
+
+
+def mercurial_transport(repo_url: str) -> Literal["https", "file"]:
+    """Accept an unambiguous HTTPS or local file repository location."""
+    msg = "Mercurial requires an HTTPS or absolute local file URL without credentials"
+    try:
+        parts = urlsplit(repo_url)
+        # Access the property to reject invalid or out-of-range ports.
+        port = parts.port
+        path = unquote(parts.path, errors="strict")
+    except ValueError:
+        raise VcsCloneError(msg) from None
+
+    if (
+        any(char.isspace() for char in repo_url)
+        or _ASCII_CONTROL.search(repo_url)
+        or _ASCII_CONTROL.search(path)
+        or any(char in repo_url for char in "?#\\")
+        or any(char in path for char in "?#\\%")
+        or not path.startswith("/")
+        or not path.strip("/")
+        or "//" in path
+        or any(part in {".", ".."} for part in path.split("/"))
+    ):
+        raise VcsCloneError(msg)
+
+    if (
+        repo_url.startswith("https://")
+        and parts.hostname is not None
+        and not any(char in parts.netloc for char in "@%")
+    ):
+        return "https"
+    if repo_url.startswith("file:///") and not parts.netloc and port is None:
+        return "file"
+    raise VcsCloneError(msg)
 
 
 class VcsCloneError(Exception):
@@ -96,11 +138,16 @@ class VcsRequest(SlottedValue):
             msg = f"unsafe VCS subdirectory {subdirectory!r} in {url!r}"
             raise VcsCloneError(msg) from exc
 
-        return cls(scheme="git", repo_url=repo, ref=ref, subdirectory=subdirectory)
+        return cls(
+            scheme=match.group(1),
+            repo_url=repo,
+            ref=ref,
+            subdirectory=subdirectory,
+        )
 
 
 def _split_repo_ref(inner: str) -> tuple[str, str]:
-    """Split ``inner`` (no ``git+`` prefix, no fragment) into ``(repo, ref)``.
+    """Split the transport URL and ref after removing the VCS prefix and fragment.
 
     For URL forms (``scheme://...``), the ref is everything after the
     last ``@`` that appears in the path component (after the netloc),
