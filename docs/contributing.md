@@ -136,9 +136,9 @@ before reporting:
 
 ### Test native lockfiles
 
-The Ubuntu CPython 3.14 job installs PDM, Poetry and uv from the separate plans in
-`.github/requirements/native-locks/pyproject.toml`. To run the same tests on Linux x86-64 with
-Python 3.14 and pip 26.3 or newer:
+The root `pyproject.toml` declares a dependency group and a lock plan for each native reader. The
+Ubuntu CPython 3.14 job installs PDM, Poetry and uv from their generated locks. To run the same
+tests on Linux x86-64 with Python 3.14 and pip 26.3 or newer:
 
 ```bash
 export LOCKFILE_CONSUMER_ENVS="$(mktemp -d)"
@@ -146,11 +146,11 @@ python tasks/install_lock_consumers.py "$LOCKFILE_CONSUMER_ENVS"
 python -m pytest tests/test_native_locks.py
 ```
 
-The weekly lock update refreshes these three environments with the repository's seven-day upload
-cutoff. To update only the consumers, run:
+The development lock omits the three consumer groups. The weekly lock update refreshes their
+environments with the repository's seven-day upload cutoff. To update only the consumers, run:
 
 ```console
-nab lock .github/requirements/native-locks/pyproject.toml --all-plans --upgrade
+nab lock --all-plans --upgrade
 ```
 
 ### Check one workspace

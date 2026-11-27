@@ -33,7 +33,15 @@ def _workspace(root: Path) -> None:
     declaration = (
         '[build-system]\nrequires=["backend"]\nbuild-backend="backend.build"\n'
     )
-    (root / "pyproject.toml").write_text(declaration)
+    groups = (
+        '[dependency-groups]\ntests=["pytest"]\nlint=["ruff"]\n'
+        'reader-pdm=["pdm"]\nreader-poetry=["poetry"]\nreader-uv=["uv"]\n'
+        '[tool.nab.plans.pdm]\ngroups=["reader-pdm"]\n'
+        '[tool.nab.plans.poetry]\ngroups=["reader-poetry"]\n'
+        '[tool.nab.plans.uv]\ngroups=["reader-uv"]\n'
+    )
+    (root / "pyproject.toml").write_text(declaration + groups)
+
     child = root / "nab-child"
     child.mkdir()
     (child / "pyproject.toml").write_text(declaration)
@@ -108,15 +116,11 @@ def test_generation_uses_the_active_python_and_preserves_failure(
     assert task.main(["--locked"], tmp_path) == exit_code
     assert len(calls) == (3 if exit_code == 0 else 1)
     assert calls[0][:4] == (sys.executable, "-m", "nab", "lock")
-    assert "--all-groups" in calls[0]
+    assert calls[0][4:8] == ("--groups", "tests", "lint", "--no-emit-workspace")
     assert calls[0][-1] == "--locked"
     if exit_code == 0:
         assert "--build-requirements" in calls[1]
-        assert calls[2][4:] == (
-            ".github/requirements/native-locks/pyproject.toml",
-            "--all-plans",
-            "--locked",
-        )
+        assert calls[2][4:] == ("--all-plans", "--locked")
 
 
 def test_shared_version_mismatch_is_refused(
