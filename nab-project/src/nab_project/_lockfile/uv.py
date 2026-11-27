@@ -315,6 +315,22 @@ def _group_inputs(
     return result
 
 
+def _root_source(document: Mapping[str, Any]) -> dict[str, str]:
+    """Honor uv's package setting before inferring it from the build system."""
+    tool = document.get("tool", {})
+    settings = tool.get("uv", {}) if isinstance(tool, dict) else None
+    if not isinstance(settings, dict):
+        msg = "Declare uv settings in a [tool.uv] table."
+        raise LockValidationError(msg)
+
+    package = settings.get("package", "build-system" in document)
+    if not isinstance(package, bool):
+        msg = "Set tool.uv.package to true to install the project or false to skip it."
+        raise LockValidationError(msg)
+
+    return {"editable" if package else "virtual": "."}
+
+
 def _project_root(
     graph: _PackageGraph, document: Mapping[str, Any], main: Sequence[Requirement]
 ) -> dict[str, Any]:
@@ -322,7 +338,7 @@ def _project_root(
     root: dict[str, Any] = {
         "name": graph.project,
         "version": document.get("project", {}).get("version", "0"),
-        "source": {"editable" if "build-system" in document else "virtual": "."},
+        "source": _root_source(document),
     }
     if graph.lock.base_group is None and (refs := graph.root_edges(main)):
         root["dependencies"] = refs

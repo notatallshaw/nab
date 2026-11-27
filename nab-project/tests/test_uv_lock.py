@@ -120,6 +120,36 @@ def test_uv_sources_and_root_inputs(tmp_path: Path) -> None:
     assert root["metadata"]["provides-extras"] == ["fast"]
 
 
+@pytest.mark.parametrize(
+    ("settings", "expected"),
+    [
+        (
+            {"tool": {"uv": {"package": False}}, "build-system": {"requires": []}},
+            "virtual",
+        ),
+        ({"tool": {"uv": {"package": True}}}, "editable"),
+    ],
+)
+def test_uv_package_setting_overrides_build_system(
+    tmp_path: Path, settings: dict[str, object], expected: str
+) -> None:
+    project = {"project": {"name": "app"}, **settings}
+    text = write_uv_lock(LockInput(), project, project_dir=tmp_path)
+    (root,) = tomli.loads(text)["package"]
+
+    assert root["source"] == {expected: "."}
+
+
+@pytest.mark.parametrize(
+    "tool", [False, {"uv": "invalid"}, {"uv": {"package": "false"}}]
+)
+def test_uv_rejects_invalid_package_settings(tmp_path: Path, tool: object) -> None:
+    project = {"project": {"name": "app"}, "tool": tool}
+
+    with pytest.raises(LockValidationError, match="tool.uv"):
+        write_uv_lock(LockInput(), project, project_dir=tmp_path)
+
+
 def test_uv_refuses_a_subdirectory_in_a_local_archive(tmp_path: Path) -> None:
     url = (tmp_path / "source.tar.gz").as_uri()
     pin = ArchivePin("demo", "1", url, _HASH, subdirectory="lib")
