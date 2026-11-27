@@ -1,52 +1,47 @@
 # Lock policies
 
-`lock-policy` controls what `nab lock` does when its output file already exists.
+Suppose your project requires `demo>=1`. You locked version 1.0 last week, and 2.0 is now on the
+index. The next `nab lock` can keep 1.0 or pick up 2.0.
 
-- `resolve` (default) resolves from scratch using current package information. With the default
-  highest-version preference, this can pick up newer releases.
-- `prefer-existing` tries the locked versions first. Nab checks them against current index listings,
-  dependency metadata and artifact rules. If the saved dependencies no longer fit, it resolves again
-  with the old versions as preferences.
-- `reuse` checks the saved solution against the current project inputs. If it still fits and its
-  sources support reuse, nab leaves the file unchanged without consulting the index. Otherwise it
-  falls back to `prefer-existing`.
+- `resolve` (the default) starts from scratch. With the default settings, nab picks 2.0 if it meets
+  your requirements.
+- `prefer-existing` checks whether 1.0 is still on the index and whether its files and dependencies
+  still meet your requirements. If so, nab keeps 1.0. If that release has been removed, nab looks
+  for another version while still preferring the locked versions of other packages.
+- `reuse` checks the lockfile against your project. If the lock still works and its packages come
+  from a supported index, nab leaves it alone. Nab won't see if the index has removed or yanked 1.0
+  or changed its metadata. If nab can't reuse the file, it falls back to `prefer-existing`.
 
-For example, suppose your project requires `demo>=1` and the lock contains `demo==1.0`. When 2.0
-appears on the index, `prefer-existing` checks 1.0 and keeps it if it still qualifies. If the index
-later removes 1.0, `prefer-existing` finds another eligible version. With the same project inputs,
-`reuse` can keep the lock at 1.0 even after the files disappear. It also skips checks for newly
-yanked files and changed remote metadata.
+Without a usable lockfile, all three policies start from scratch.
 
 ## Set the policy
 
-For one run, pass the policy on the command line:
-
-```bash
-nab lock --lock-policy prefer-existing
-```
-
-To use it for the project, put the setting at the top level of `nab.toml` beside `pyproject.toml`:
+For a single run, use `nab lock --lock-policy prefer-existing`. To make that the project default,
+add this to `nab.toml` beside `pyproject.toml`:
 
 ```toml
 lock-policy = "prefer-existing"
 ```
 
-You can also set a user or system default in `nab.toml`. The `NAB_LOCK_POLICY` environment variable
-overrides file settings, and the command-line flag overrides both. See
+You can also set the policy in your user or system `nab.toml`. The `NAB_LOCK_POLICY` environment
+variable overrides the file setting, and the command-line flag overrides both. See
 [Configuration sources](configuration-sources.md).
 
-## When nab needs to resolve
+## When can nab reuse the lockfile?
 
-With no usable saved lock, all three policies resolve from scratch. A compatible change to a
-dependency bound can still allow `reuse` to keep the entire file, including its timestamp. Reuse
-supports project and script inputs with HTTP(S) index artifacts. File indexes, local dependencies,
-workspace members, VCS sources and direct archives require live resolution.
+You can change a version bound and still reuse the file. For example, narrowing `demo>=1` to
+`demo>=1,<2` still allows the locked version, 1.0. Reusing the lockfile preserves its timestamp.
 
-Both `prefer-existing` and `reuse` require highest-version resolution and pylock output to a file.
-Neither can be combined with `--locked`. Use
-[`nab lock --locked`](reproducibility.md#checking-the-lock-in-ci) to fail when the saved lock needs
-updating. The `reuse` policy also conflicts with `--reproduce`.
+Nab can reuse locks for projects and scripts whose packages come from HTTP or HTTPS indexes. File
+indexes, local dependencies, workspace members, VCS sources and direct archives all require a new
+resolve.
 
-With `reuse`, `--upgrade` runs the `prefer-existing` checks so nab can record a new timestamp for a
-relative upload cutoff. To update one package while preferring the other locked versions, use
-[`--upgrade-package NAME`](cli.md#--upgrade-package-name).
+## Related options
+
+Both `prefer-existing` and `reuse` require `resolution = "highest"` and pylock output to a file. To
+check the lockfile in CI, run [`nab lock --locked`](reproducibility.md#checking-the-lock-in-ci) with
+the default `resolve` policy. You can use `--reproduce` with `resolve` or `prefer-existing`.
+
+Use [`--upgrade-package NAME`](cli.md#--upgrade-package-name) to update one package while keeping
+other locked versions where possible. With `reuse`, `--upgrade` switches to `prefer-existing` for
+that run and resets the timestamp for a relative upload cutoff.

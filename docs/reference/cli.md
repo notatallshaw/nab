@@ -61,8 +61,8 @@ resolution and pylock output to a file. Use `--locked` and `--reproduce` in sepa
 
 ### `--lock-policy {resolve,prefer-existing,reuse}`
 
-Choose how `nab lock` uses an existing lockfile. The default is `resolve`. See
-[Lock policies](lock-policy.md) for when to use each policy and which flags work with it.
+Choose how `nab lock` uses an existing lockfile. See [Lock policies](lock-policy.md) for examples.
+The default is `resolve`.
 
 ### `--build-requirements`
 

@@ -152,16 +152,16 @@ See
 Nab checks each target's wheel metadata and honors Python upper bounds by default. These checks can
 catch incompatible dependencies that uv's [optimizations](#soundness) may miss.
 
-Nab resolves afresh to check for package changes. Decision order defaults to `stable`, so HTTP
-response timing does not steer pin choices.
+By default, nab checks for package changes each time you lock. It uses `stable` decision order, so
+the versions it picks don't depend on which index request finishes first.
 
 Configure these options in `nab.toml` beside `pyproject.toml`:
 
 | Option                              | Behavior and tradeoff                                                          |
 | ----------------------------------- | ------------------------------------------------------------------------------ |
-| `lock-policy = "resolve"` (default) | Resolve afresh using current package information.                              |
-| `lock-policy = "prefer-existing"`   | Check current index data and keep locked versions when they still fit.         |
-| `lock-policy = "reuse"`             | Keep a lock that still fits the project without consulting the index.          |
+| `lock-policy = "resolve"` (default) | Resolve from scratch using current package information.                        |
+| `lock-policy = "prefer-existing"`   | Check the index and keep locked versions that still meet the requirements.     |
+| `lock-policy = "reuse"`             | If the lockfile still matches the project, keep it without checking the index. |
 | `decision-order = "arrival"`        | Reduce HTTP waits by processing listings as they arrive; pin choices may vary. |
 | `assume-consistent-metadata = true` | Reuse wheel metadata across targets, assuming a release's wheels agree.        |
 
