@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import pytest
 import tomli
@@ -261,3 +262,28 @@ def test_wheel_only_index_release_requires_a_download_location(tmp_path: Path) -
     (row,) = tomli.loads(write_pdm_lock(complete, {}, project_dir=tmp_path))["package"]
 
     assert row["files"] == [{"url": url, "hash": "sha256:" + "ab" * 32}]
+
+
+@pytest.mark.parametrize("kind", ["git", "hg"])
+def test_local_vcs_url_records_localhost_and_the_changeset(
+    tmp_path: Path, kind: str
+) -> None:
+    repository = (tmp_path / "release source").as_uri()
+    revision = "a" * 40
+    pin = VcsPin(
+        "demo",
+        "1",
+        f"{kind}+{repository}@{revision}",
+        repository,
+        revision,
+        None,
+        vcs_type=kind,
+    )
+    target = ResolveTarget.for_host()
+    inputs = LockInput(targets={target.label: TargetLock(target, {"demo": pin})})
+
+    (row,) = tomli.loads(write_pdm_lock(inputs, {}, project_dir=tmp_path))["package"]
+    url = urlsplit(row[kind])
+    assert url.hostname == "localhost"
+    assert url.path == urlsplit(repository).path
+    assert row["revision"] == revision

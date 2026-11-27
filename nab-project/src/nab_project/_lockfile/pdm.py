@@ -66,7 +66,12 @@ def _source(package: Package, project_dir: Path) -> dict[str, Any]:
         subdirectory = source.subdirectory
     elif package.vcs is not None:
         vcs = package.vcs
-        result = {vcs.type: vcs.url, "revision": vcs.commit_id}
+        repository = vcs.url
+        if repository is not None and repository.startswith("file:///"):
+            # PDM otherwise rewrites hg+file:///path as hg+file:/path.
+            repository = repository.replace("file:///", "file://localhost/", 1)
+
+        result = {vcs.type: repository, "revision": vcs.commit_id}
         if vcs.requested_revision is not None:
             result["ref"] = vcs.requested_revision
         subdirectory = vcs.subdirectory
