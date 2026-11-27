@@ -764,6 +764,7 @@ def graph_search(
     roots: Sequence[str],
     *,
     extras_mode: ExtrasMode = ExtrasMode.BACKTRACK,
+    preferences: dict[str, Version] | None = None,
 ) -> YankProxyProvider:
     """Create a real provider search for admission-proof and metadata-boundary tests."""
     port = make_release_coordinator(releases)
@@ -782,6 +783,7 @@ def graph_search(
         root_requirements=prepared.ranges,
         defer_yanked=True,
         extras_mode=extras_mode,
+        preferences=preferences or {},
     )
     return YankProxyProvider(
         factory(),
@@ -789,8 +791,68 @@ def graph_search(
         prepared.roots,
         requirements,
         ProxyConstraints({}),
-        preferences={},
+        preferences=preferences or {},
     )
+
+
+def test_direct_candidate_selection_cannot_read_with_an_exhausted_budget() -> None:
+    search = graph_search([("dep", "1", False, [])], ["dep"])
+    search.preference.remaining = 0
+
+    with pytest.raises(ResolutionLimitError):
+        search.select()
+
+    assert not search.catalogue.candidates
+    assert not search.catalogue.facts
+
+
+def test_exhausted_preferred_trial_does_not_expand_file_listings() -> None:
+    search = graph_search(
+        [
+            ("app", "1", False, ["dep>=2"]),
+            ("dep", "1", False, []),
+            ("dep", "2", False, []),
+        ],
+        ["app"],
+        preferences={"app": Version("1"), "dep": Version("1")},
+    )
+    for name in ("app", "dep"):
+        search.catalogue.provider.fetch_versions(name)
+    search.preference.remaining = 1
+
+    with pytest.raises(ResolutionLimitError):
+        search.resolve()
+
+    assert search.preference.remaining == 0
+    assert not search.catalogue.candidates
+
+
+def test_cached_lock_preference_avoids_expanding_other_file_choices() -> None:
+    search = graph_search(
+        [("dep", "2", False, []), ("dep", "1", False, [])],
+        ["dep"],
+        preferences={"dep": Version("1")},
+    )
+    search.catalogue.provider.fetch_versions("dep")
+
+    pins, _ = search.resolve()
+
+    assert pins == {"dep": Version("1")}
+    assert not search.catalogue.candidates
+    assert {candidate.version for candidate in search.catalogue.facts} == {Version("1")}
+
+
+def test_saved_prerelease_uses_the_native_admission_policy() -> None:
+    search = graph_search(
+        [("dep", "2rc1", False, []), ("dep", "1", False, [])],
+        ["dep"],
+        preferences={"dep": Version("2rc1")},
+    )
+    search.catalogue.provider.fetch_versions("dep")
+
+    pins, _ = search.resolve()
+
+    assert pins == {"dep": Version("1")}
 
 
 def test_requested_metadata_proxy_requires_a_prepared_candidate() -> None:

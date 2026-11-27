@@ -241,6 +241,10 @@ the selected candidate for each package, the edges between packages, and the pin
 yanked releases. Start a fresh resolution when a newly discovered source replaces the set of
 candidate files.
 
+A host that builds its own dependency graph can call `select()` for the package-to-candidate
+mapping. Nab uses this entry point when checking file-level yanked admission. It retains its native
+prerelease order and adopts the chosen files into the target lock.
+
 ## The supported API
 
 Import these names from the modules listed below. Import paths and APIs can change between 0.0.x

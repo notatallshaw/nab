@@ -11,29 +11,28 @@ __lazy_modules__ = (
     "nab_resolver.errors",
     "nab_resolver.ranges",
     "nab_resolver.types",
-    "packaging.utils",
 )
 
-from typing import TYPE_CHECKING, Final
-
-from packaging.utils import canonicalize_name
+from typing import TYPE_CHECKING
 
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 from nab_resolver.priority import compute_tier
 from nab_resolver.ranges import IntegerRangeMembership, Range
-from nab_resolver.resolver import (
-    DEFAULT_MAX_ITERATIONS,
-    BaseProvider,
-    Resolver,
-)
+from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 from ._compat import override
 from ._provider.listing_diagnosis import MetadataBlock, metadata_diagnostic
+from .catalogue.provider import (
+    MetadataProxy,
+    Package,
+    PermissionProxy,
+    PreferenceProvider,
+)
+from .catalogue.resolution import PreparedResolution
 from .diagnostics import ResolutionMessage
 from .extra_keys import split_extra
 from .ranges import VersionRange, require_version_range
-from .value import HashableRecord
 from .yank_candidates import Candidate, YankCandidates, add_range, is_pin, merge_stats
 from .yank_preference import (
     IncompletePreferenceError,
@@ -53,88 +52,16 @@ if TYPE_CHECKING:
     from .diagnostics import Diagnostic
     from .provider import Provider
 
-__all__ = ["YankProxyProvider"]
+__all__ = ["MetadataProxy", "PermissionProxy", "YankProxyProvider"]
 _MAX_SOLVER_ROUNDS = DEFAULT_MAX_ITERATIONS
 _ROOT_SCOPE = PreferenceScope()
-
-
-def _incomplete_query(detail: str) -> IncompletePreferenceError:
-    """Keep the reason a query stopped without a usable proof."""
-    message = "yanked dependency resolution is incomplete"
-    if detail:
-        message += f": {detail}"
-    return IncompletePreferenceError(message)
-
-
-def _query_roots(query: YankProxyProvider) -> dict[Package, Range[int]]:
-    """Encode root candidates before asking the solver to prove anything."""
-    try:
-        return {
-            name: query.encode_range(name, allowed)
-            for name, allowed in query.roots.items()
-        }
-    except ResolutionTerminatedError:
-        raise
-    except ResolutionError as exc:
-        # A proof from the host's own lookup does not describe this query.
-        raise _incomplete_query(str(exc)) from exc
 
 
 class _AdmissionRequiredError(Exception):
     """An encountered exact pin requires the admission search."""
 
 
-class PermissionProxy(HashableRecord):
-    """Choose selected parents that permit a yanked candidate."""
-
-    __slots__ = __match_args__ = ("candidate",)
-
-    candidate: Final[int]
-
-    def __init__(self, candidate: int) -> None:
-        self.candidate = candidate
-
-    @override
-    def _comparison_values(self) -> tuple[object, ...]:
-        """Return fixed identity fields, honoring subclass comparison declarations."""
-        if type(self) is not PermissionProxy:
-            return super()._comparison_values()
-
-        return (self.candidate,)
-
-
-class MetadataProxy(HashableRecord):
-    """Expose a candidate's dependencies after establishing permission."""
-
-    __slots__ = __match_args__ = ("candidate",)
-
-    candidate: Final[int]
-
-    def __init__(self, candidate: int) -> None:
-        self.candidate = candidate
-
-    @override
-    def __hash__(self) -> int:
-        """Hash the candidate tuple, retaining subclass comparison overrides."""
-        if type(self) is not MetadataProxy:
-            return super().__hash__()
-
-        return hash((self.candidate,))
-
-    @override
-    def _comparison_values(self) -> tuple[object, ...]:
-        """Return fixed identity fields, honoring subclass comparison declarations."""
-        if type(self) is not MetadataProxy:
-            return super()._comparison_values()
-
-        return (self.candidate,)
-
-
-Package = str | PermissionProxy | MetadataProxy
-Support = frozenset[int]
-
-
-class YankProxyProvider(BaseProvider[Package, int]):
+class YankProxyProvider(PreferenceProvider["Candidate", "VersionRange", "Requirement"]):
     """Use internal packages to enforce yank permission in PubGrub."""
 
     def __init__(
@@ -165,39 +92,29 @@ class YankProxyProvider(BaseProvider[Package, int]):
                 constraint_ranges,
                 max_steps=_MAX_SOLVER_ROUNDS,
             )
-        self.preference = preference
-        self.catalogue = preference.catalogue
-        self.roots = preference.roots
-        self.constraints = preference.constraints
-        self.input_pins = preference.input_pins
-        self.scope = scope
-        self.fixed = {candidate.package: candidate for candidate in scope.fixed}
-        self.items: dict[int, Candidate] = {}
+        self._native_preference = preference
+        super().__init__(preference, scope=scope)
         self._mixed_release_packages: set[str] = set()
-        self.identities: dict[Candidate, int] = {}
-        self.proofs: dict[PermissionProxy, dict[Support, int]] = {}
-        self.supports: dict[int, Support] = {}
-        self.decisions: Mapping[Package, int] = {}
         self._dependency_parents: dict[str, set[str]] = {}
-        self.positive: Mapping[Package, RangeProtocol[int]] = {}
-        self.pending: list[Incompatibility[Package, int]] = []
-        self.incomplete = False
         self.live_trial = False
         self._trial_pins = self.input_pins
         self._full_version_range = VersionRange.full()
         self._full_integer_range: Range[int] = Range.full()
         self._integer_membership = IntegerRangeMembership()
-        self.stats = preference.stats
 
-    def identify(self, candidate: Candidate) -> int:
-        """Assign a stable identity without relying on the size of the catalogue."""
-        token = self.identities.get(candidate)
-        if token is None:
-            token = len(self.items) + 1
-            self.identities[candidate] = token
-            self.items[token] = candidate
-        return token
+    @property
+    @override
+    def preference(self) -> YankPreference:
+        """The scoped search whose selected files the native provider can adopt."""
+        return self._native_preference
 
+    @property
+    @override
+    def catalogue(self) -> YankCandidates:
+        """The native catalogue retaining fetched candidate metadata."""
+        return self.preference.catalogue
+
+    @override
     def encode_range(self, package: str, allowed: VersionRange) -> Range[int]:
         """Translate a version constraint into distinct candidate choices."""
         self.catalogue.choices(package)
@@ -218,6 +135,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
             if self.eligible(candidate)
         )
 
+    @override
     def receive_decision_scan_hint(
         self,
         positive_ranges: Mapping[Package, RangeProtocol[int]],
@@ -235,64 +153,6 @@ class YankProxyProvider(BaseProvider[Package, int]):
                 if support not in proofs:
                     proofs[support] = len(proofs) + 1
 
-    def ground(self) -> dict[int, Support]:
-        """Derive permission from input pins and already-permitted parents."""
-        demand: dict[str, Support] = {name: frozenset() for name in self.roots}
-        pins: list[tuple[Requirement, Support]] = [
-            (req, frozenset()) for req in self.input_pins
-        ]
-        admitted: dict[int, Support] = {}
-        expanded: set[int] = set()
-        while True:
-            changed = False
-            for package, demand_support in tuple(demand.items()):
-                token = self.decisions.get(package)
-                if token is None:
-                    continue
-                candidate = self.items[token]
-                if token not in admitted:
-                    support = self.admission_support(candidate, demand_support, pins)
-                    if support is None:
-                        continue
-                    admitted[token] = support
-                    changed = True
-                data = self.catalogue.facts.get(candidate)
-                if token in expanded or data is None:
-                    continue
-                expanded.add(token)
-                support = admitted[token] | {token}
-                for child in data.dependencies:
-                    if child not in demand:
-                        demand[child] = support
-                        changed = True
-                pins.extend((req, support) for req in data.pins)
-                changed |= bool(data.pins)
-            if not changed:
-                return admitted
-
-    @staticmethod
-    def admission_support(
-        candidate: Candidate,
-        demand: Support,
-        pins: Sequence[tuple[Requirement, Support]],
-    ) -> Support | None:
-        """Combine the parents requiring a candidate with those supplying its pin."""
-        if not candidate.withdrawn:
-            return demand
-        for requirement, support in pins:
-            if canonicalize_name(
-                requirement.name
-            ) == candidate.base and requirement.specifier.contains(
-                candidate.version, prereleases=True
-            ):
-                return demand | support
-        return None
-
-    @override
-    def begin_decision_scan(self) -> Callable[[Package], bool]:
-        """Permission readiness can change when another package is decided."""
-        return lambda _package: True
-
     @override
     def is_ready(self, package: Package) -> bool:
         """Wait for an exact-pin reason before preparing yanked metadata."""
@@ -307,6 +167,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
             return any(v in allowed for v in self.proofs.get(package, {}).values())
         return True
 
+    @override
     def prioritize(
         self,
         package: Package,
@@ -328,6 +189,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
             return (2 if package in self._mixed_release_packages else 0, tier)
         return (1 if isinstance(package, MetadataProxy) else 3, 0)
 
+    @override
     def block_context(self, package: Package) -> None:
         """Reject selected choices without excluding a candidate globally."""
         terms: list[Term[Package, int]] = [
@@ -343,12 +205,6 @@ class YankProxyProvider(BaseProvider[Package, int]):
         )
 
     @override
-    def consume_pending_clauses(self) -> list[Incompatibility[Package, int]]:
-        """Return incompatibilities that depend on the selected candidates."""
-        pending = self.pending
-        self.pending = []
-        return pending
-
     def eligible(self, candidate: Candidate) -> bool:
         """Apply this check's parent versions and non-yanked restrictions."""
         if candidate.withdrawn:
@@ -365,6 +221,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
         fixed = self.fixed.get(candidate.package)
         return fixed is None or fixed == candidate
 
+    @override
     def choose_version(
         self, package: Package, version_range: RangeProtocol[int]
     ) -> int | None:
@@ -434,12 +291,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
         # metadata read can tell us how to rank it before its clause is active.
         yield constraint
 
-    def has_satisfying_version(
-        self, package: Package, version_range: RangeProtocol[int]
-    ) -> bool:
-        """Probe the same domain used by candidate selection."""
-        return self.choose_version(package, version_range) is not None
-
+    @override
     def get_dependencies(
         self, package: Package, version: int
     ) -> dict[Package, Range[int]]:
@@ -477,10 +329,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
         finally:
             self._trial_pins = self.input_pins
 
-    def widen_decision(self, package: Package, version: int) -> None:
-        """Keep incompatibilities specific to a candidate or permission reason."""
-        del package, version
-
+    @override
     def new_query(self, scope: PreferenceScope) -> YankProxyProvider:
         """Share cached metadata and candidate identities with a new provider."""
         query = YankProxyProvider(
@@ -495,59 +344,18 @@ class YankProxyProvider(BaseProvider[Package, int]):
         )
         query.items = self.items
         query.identities = self.identities
+        query.package_tokens = self.package_tokens
         query._integer_membership = self._integer_membership
         return query
 
+    @override
     def run_query(
         self, scope: PreferenceScope, *, live_trial: bool = False
     ) -> dict[str, Candidate]:
         """Resolve under one set of restrictions with the shared work budget."""
         query = self.new_query(scope)
         query.live_trial = live_trial
-        roots = _query_roots(query)
-        solver: Resolver[Package, int] = Resolver(
-            query, max_iterations=self.preference.remaining
-        )
-        try:
-            selected = solver.resolve(roots)
-        except ResolutionTerminatedError:
-            raise
-        except ResolutionError as exc:
-            if not query.incomplete and exc.incompatibility is not None:
-                raise
-            detail = self.catalogue.unavailable_reason if query.incomplete else str(exc)
-            raise _incomplete_query(detail) from exc
-        finally:
-            self.preference.record_solver_stats(solver.stats)
-            self.preference.spend(solver.stats.rounds)
-        return {
-            name: self.items[token]
-            for name, token in selected.items()
-            if isinstance(name, str)
-        }
-
-    def _empty_requirements(
-        self, node: Incompatibility[Package, int]
-    ) -> Iterator[tuple[str, VersionRange]]:
-        """Recover version constraints from empty encoded dependency domains."""
-        if node.cause not in (
-            IncompatibilityCause.ROOT,
-            IncompatibilityCause.DEPENDENCY,
-        ):
-            return
-        parent = node.terms[0].package
-        for term in node.terms[1:]:
-            if not isinstance(term.package, str) or not term.constraint.is_empty:
-                continue
-            if isinstance(parent, MetadataProxy):
-                data = self.catalogue.prepared_data(self.items[parent.candidate])
-                allowed = data.dependencies[term.package]
-            else:
-                allowed = self.roots[term.package]
-            yield (
-                term.package,
-                allowed & self.constraints.get(term.package, self._full_version_range),
-            )
+        return query.solve_query()
 
     def _failure_diagnostics(
         self, incompatibility: Incompatibility[Package, int]
@@ -556,7 +364,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
         failures: dict[str, VersionRange] = {}
         rejections: dict[str, dict[Candidate, MetadataBlock]] = {}
         for node in incompatibility.walk():
-            for package, allowed in self._empty_requirements(node):
+            for package, allowed in self.empty_requirements(node):
                 failures[package] = (
                     failures.get(package, VersionRange.empty()) | allowed
                 )
@@ -591,19 +399,43 @@ class YankProxyProvider(BaseProvider[Package, int]):
         )
         return tuple(entries)
 
-    def _select(self) -> dict[str, Candidate]:
-        """Try live choices before entering scoped withdrawal proofs."""
-        if self.preference.remaining > 0:
-            try:
-                return self.run_query(_ROOT_SCOPE, live_trial=True)
-            except _AdmissionRequiredError:
-                pass
-        return self.preference.run(self.run_query)
+    def _preferred_candidate(self, package: str) -> Candidate | None:
+        """Offer cached live preferences without reading another listing."""
+        catalogue = self.catalogue
+        base = catalogue.base_name(package)
+        version = catalogue.preferences.get(base)
+        versions = catalogue.provider.versions_cache.get(base)
+        if (
+            version is None
+            or version.is_prerelease
+            or versions is None
+            or catalogue.provider.wants_lowest(base)
+        ):
+            return None
+
+        candidate = Candidate(package, version, withdrawn=False)
+        if not any(
+            value == version and str(value) == candidate.label and not file.yanked
+            for value, file in versions
+        ):
+            return None
+
+        return (
+            candidate
+            if catalogue.installable(candidate, versions, assume_sorted=True)
+            else None
+        )
 
     def resolve(self) -> tuple[dict[str, Version], Provider]:
         """Check non-yanked alternatives before adopting the selected candidates."""
+        session = _NativeResolution(
+            self,
+            preferred_candidate=self._preferred_candidate
+            if self.catalogue.preferences
+            else None,
+        )
         try:
-            selected = self._select()
+            selected = session.select()
         except ResolutionError as exc:
             proof = exc.incompatibility
             if proof is None or isinstance(
@@ -621,3 +453,24 @@ class YankProxyProvider(BaseProvider[Package, int]):
 
             merge_stats(self.catalogue.provider.stats, self.catalogue.child_stats)
         return self.preference.adopt(selected)
+
+
+class _NativeResolution(PreparedResolution["Candidate", "VersionRange", "Requirement"]):
+    """Use target-specific prerelease order during the shared live-file trial."""
+
+    def __init__(
+        self,
+        query: YankProxyProvider,
+        *,
+        preferred_candidate: Callable[[str], Candidate | None] | None,
+    ) -> None:
+        super().__init__(query, preferred_candidate=preferred_candidate, try_live=True)
+        self._query = query
+
+    @override
+    def try_live_candidates(self) -> dict[str, Candidate] | None:
+        try:
+            return self._query.run_query(_ROOT_SCOPE, live_trial=True)
+        except _AdmissionRequiredError:
+            # A matching pin makes the full admission proof relevant.
+            return None

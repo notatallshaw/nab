@@ -8,9 +8,9 @@ from packaging.ranges import VersionRange
 from packaging.requirements import Requirement
 
 from ._compat import override
+from .catalogue.provider import CataloguePreference
 from .preference import (
     IncompletePreferenceError,
-    PreferenceSearch,
     PreparationStatus,
 )
 from .preference import (
@@ -36,7 +36,7 @@ __all__ = [
 PreferenceScope = CoreScope[Candidate]
 
 
-class YankPreference(PreferenceSearch[Candidate, VersionRange, Requirement]):
+class YankPreference(CataloguePreference[Candidate, VersionRange, Requirement]):
     """Retain native adoption and diagnostic statistics around the shared search."""
 
     def __init__(
@@ -49,7 +49,9 @@ class YankPreference(PreferenceSearch[Candidate, VersionRange, Requirement]):
         max_steps: int = 100_000,
     ) -> None:
         """Retain native adoption and the provider-specific incomplete-query policy."""
+        self._native_catalogue = catalogue
         super().__init__(
+            catalogue,
             roots,
             input_pins,
             constraints,
@@ -57,13 +59,11 @@ class YankPreference(PreferenceSearch[Candidate, VersionRange, Requirement]):
             refresh_incomplete=False,
         )
 
-        self._catalogue = catalogue
-
     @property
     @override
     def catalogue(self) -> YankCandidates:
         """Return the native catalogue used for preparation and adoption."""
-        return self._catalogue
+        return self._native_catalogue
 
     def adopt(
         self, selected: Mapping[str, Candidate]
