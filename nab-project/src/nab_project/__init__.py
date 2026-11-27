@@ -13,9 +13,11 @@ Supported imports:
         content_digest, make_validation_record, validation_digest, VALIDATION_VERSION
     nab_project.lock_check  check_saved_lock, can_reuse_saved_lock, LockConsistencyError
     nab_project.lock_policy  LockPolicy
-    nab_project.lock_preferences  LockPreferences, read_lock_preferences
+    nab_project.lock_preferences  LockPreferences, SavedPreferences,
+        read_lock_preferences
     nab_project.lockfile  resolve_dependency_references
-    nab_project.native_lock  write_pdm_lock, write_poetry_lock, write_uv_lock
+    nab_project.native_lock  native_project_identity, write_pdm_lock,
+        write_poetry_lock, write_uv_lock
     nab_project.download  run_download
     nab_project.inputs  ResolveInputs
     nab_project.resolve  ResolveResult, TargetResult, resolve_for_targets,

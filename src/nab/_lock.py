@@ -173,7 +173,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 
     from nab_project.inputs import ResolveInputs
-    from nab_project.lock_preferences import LockPreferences
+    from nab_project.lock_preferences import SavedPreferences
     from nab_project.prepared_input import PreparedProjectInput
     from nab_provider.target import ResolveTarget
 
@@ -183,6 +183,8 @@ if TYPE_CHECKING:
 
 
 _DEFAULT_PROJECT_PATH = Path("pyproject.toml")
+_NATIVE_FORMATS = frozenset(("pdm", "poetry", "uv"))
+_PROJECT_LOCK_FORMATS = _NATIVE_FORMATS | {"pylock"}
 
 TUPLE_TEMPLATE_VARS = ("{python_version}", "{platform_id}", "{selection}")
 
@@ -620,6 +622,7 @@ def _lock_one(
         project_input=project_input,
         plan_name=plan.name if plan is not None else None,
         upgrade_packages=actions.upgrade_packages,
+        native_format=settings.format if settings.format in _NATIVE_FORMATS else None,
     )
 
     provenance = _build_provenance(
@@ -637,14 +640,14 @@ def _lock_one(
         _check_saved(run, config=config, inputs=inputs, exclude=workspace_to_drop)
         return
 
-    if actions.reproduce:
+    if actions.reproduce and run.native_format is None:
         _fast_fail_reproduction(
             run, config=config, inputs=inputs, workspace_to_drop=workspace_to_drop
         )
 
     validation = (
         _lock_snapshot(run, config, inputs, workspace_to_drop)
-        if settings.format == "pylock" and not actions.reproduce
+        if settings.format in _PROJECT_LOCK_FORMATS and not actions.reproduce
         else None
     )
 
@@ -673,7 +676,7 @@ def _lock_one(
         project_input=project_input,
         resolution_strategy=settings.resolution,
         lock_preferences=previous_lock,
-        reconcile_build_variants=settings.format in ("pylock", "pdm", "poetry", "uv"),
+        reconcile_build_variants=settings.format in _PROJECT_LOCK_FORMATS,
         include_dependency_requirements=settings.format == "uv",
         progress=ProgressReporter(printer()),
         max_concurrency=settings.max_concurrency,
@@ -698,22 +701,45 @@ def _lock_one(
         exclude=workspace_to_drop,
     )
 
-    if actions.reproduce:
-        _check_reproduction(lock_input, run=run)
-        return
-
     _emit_or_exit(
-        lambda: _emit(
+        lambda: _finish_lock(
             lock_input,
+            run,
             output_format=settings.format,
-            output=output,
-            project_path=path,
-            project_input=project_input,
-            script=path if input_format is InputFormat.SCRIPT else None,
-            build_requirements=settings.build_requirements,
             previous_lock=previous_lock,
+            reproduce=actions.reproduce,
         )
     )
+
+
+def _finish_lock(
+    lock_input: LockInput,
+    run: _LockRun,
+    *,
+    output_format: str,
+    previous_lock: SavedPreferences | None,
+    reproduce: bool,
+) -> None:
+    """Compare or write the resolved output using this plan's file and declarations."""
+    if run.native_format is not None:
+        _emit_project_lock(
+            lock_input,
+            run,
+            run.native_format,
+            previous_lock=previous_lock,
+            reproduce=reproduce,
+        )
+    elif reproduce:
+        _check_reproduction(lock_input, run=run)
+    else:
+        _emit(
+            lock_input,
+            output_format=output_format,
+            output=run.output,
+            script=run.path if run.input_format is InputFormat.SCRIPT else None,
+            build_requirements=run.build_requirements,
+            previous_lock=previous_lock,
+        )
 
 
 def _download_input(url: str, backend: str) -> bytes:
@@ -757,6 +783,15 @@ def _lock_output(
     ):
         output = _script_pylock_path(path)
 
+    if output is None and settings.format in _NATIVE_FORMATS:
+        if input_format is InputFormat.SCRIPT:
+            suffix = ".lock" if settings.format == "uv" else f".{settings.format}.lock"
+            output = path.with_name(path.name + suffix)
+        else:
+            output = _default_output_path(
+                settings.format, build_requirements=settings.build_requirements
+            )
+
     _validate_pylock_output_name(output=output, output_format=settings.format)
     _validate_lock_mode(
         output=output,
@@ -789,11 +824,9 @@ def _emit(
     *,
     output_format: str,
     output: Path | None,
-    project_path: Path = _DEFAULT_PROJECT_PATH,
-    project_input: PreparedProjectInput | None = None,
     script: Path | None = None,
     build_requirements: bool = False,
-    previous_lock: LockPreferences | None = None,
+    previous_lock: SavedPreferences | None = None,
 ) -> None:
     """Write the resolved lock in the requested format."""
     default_output = _default_output_path(
@@ -805,20 +838,6 @@ def _emit(
             output=output,
             default_output=default_output,
             previous_lock=previous_lock,
-        )
-    elif output_format in ("pdm", "poetry", "uv"):
-        target = output or default_output
-        if output is None and script is not None:
-            suffix = ".lock" if output_format == "uv" else f".{output_format}.lock"
-            target = script.with_name(script.name + suffix)
-        _emit_project_lock(
-            lock_input,
-            project_path,
-            target,
-            output_format=output_format,
-            input_format=InputFormat.SCRIPT if script else InputFormat.PROJECT,
-            project_input=project_input,
-            build_requirements=build_requirements,
         )
     else:
         if script is not None:
@@ -949,6 +968,7 @@ class _LockRun(Record):
         "project_input",
         "plan_name",
         "upgrade_packages",
+        "native_format",
     )
 
     path: Path
@@ -968,6 +988,7 @@ class _LockRun(Record):
     project_input: PreparedProjectInput | None
     plan_name: str | None
     upgrade_packages: tuple[str, ...]
+    native_format: str | None
 
     def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
@@ -989,6 +1010,7 @@ class _LockRun(Record):
         project_input: PreparedProjectInput | None = None,
         plan_name: str | None = None,
         upgrade_packages: tuple[str, ...] = (),
+        native_format: str | None = None,
     ) -> None:
         self.path = path
         self.output = output
@@ -1007,6 +1029,7 @@ class _LockRun(Record):
         self.project_input = project_input
         self.plan_name = plan_name
         self.upgrade_packages = upgrade_packages
+        self.native_format = native_format
 
     def refresh_command(self) -> str:
         """Render this run without ``--locked``, ready to paste into a shell."""
@@ -1071,17 +1094,22 @@ def _validate_lock_mode(
         sys.exit(1)
 
     if lock_policy is not LockPolicy.RESOLVE and (
-        output_format != "pylock" or _is_stdout(output)
+        output_format not in _PROJECT_LOCK_FORMATS or _is_stdout(output)
     ):
-        printer().error("nondefault --lock-policy requires pylock output to a file.")
+        printer().error("nondefault --lock-policy requires a project lockfile on disk.")
         sys.exit(1)
 
     if lock_policy is LockPolicy.REUSE and reproduce:
         printer().error("--lock-policy reuse cannot be combined with --reproduce.")
         sys.exit(1)
 
-    if (locked or reproduce) and (output_format != "pylock" or _is_stdout(output)):
-        printer().error("lock checks are only supported for pylock output to a file.")
+    if (locked or reproduce) and (
+        output_format not in _PROJECT_LOCK_FORMATS or _is_stdout(output)
+    ):
+        printer().error(
+            "lock checks are only supported for pylock, uv, Poetry or PDM "
+            "output to a file."
+        )
         sys.exit(1)
 
 
@@ -1118,6 +1146,7 @@ def _reuse_consistent_lock(
         build_requirements=run.build_requirements,
         input_format=run.input_format,
         project_input=run.project_input,
+        native_format=run.native_format,
     ):
         return False
 
@@ -1125,11 +1154,15 @@ def _reuse_consistent_lock(
     return True
 
 
-def _existing_lock_preferences(run: _LockRun) -> LockPreferences | None:
+def _existing_lock_preferences(run: _LockRun) -> SavedPreferences | None:
     """Read an explicitly requested prior model under highest resolution."""
     if run.lock_policy is LockPolicy.RESOLVE:
         return None
-    return read_lock_preferences(_check_target_path(run), exclude=run.upgrade_packages)
+    return read_lock_preferences(
+        _check_target_path(run),
+        exclude=run.upgrade_packages,
+        native_format=run.native_format,
+    )
 
 
 def _check_target_path(run: _LockRun) -> Path:
@@ -1172,6 +1205,7 @@ def _check_saved(
             build_requirements=run.build_requirements,
             input_format=run.input_format,
             project_input=run.project_input,
+            native_format=run.native_format,
         )
     except (
         OSError,
@@ -1474,13 +1508,11 @@ def _check_reproduction(lock_input: LockInput, *, run: _LockRun) -> None:
 
 def _emit_project_lock(
     lock_input: LockInput,
-    path: Path,
-    target: Path,
-    *,
+    run: _LockRun,
     output_format: str,
-    input_format: InputFormat,
-    project_input: PreparedProjectInput | None,
-    build_requirements: bool,
+    *,
+    previous_lock: SavedPreferences | None,
+    reproduce: bool,
 ) -> None:
     """Write the native file against the consuming project declarations."""
     from nab_project.native_lock import (  # noqa: PLC0415 - native output only
@@ -1489,10 +1521,14 @@ def _emit_project_lock(
         write_uv_lock,
     )
 
+    path = run.path
+    target = _check_target_path(run)
     destination = None if _is_stdout(target) else target
+    if destination is not None and previous_lock is None and not reproduce:
+        previous_lock = read_lock_preferences(destination, native_format=output_format)
     if output_format == "uv":
         document = read_input_document(
-            path, input_format=input_format, project_input=project_input
+            path, input_format=run.input_format, project_input=run.project_input
         )
         text = _render_or_exit(
             lambda: write_uv_lock(
@@ -1500,23 +1536,31 @@ def _emit_project_lock(
                 document,
                 project_dir=path.parent,
                 output_path=destination,
-                script=input_format is InputFormat.SCRIPT,
-                build_requirements=build_requirements,
+                reproduce=reproduce,
+                script=run.input_format is InputFormat.SCRIPT,
+                build_requirements=run.build_requirements,
             )
         )
     else:
         # Poetry and PDM check their content hash against the on-disk project.
-        document = read_input_document(path, input_format=input_format)
+        document = read_input_document(path, input_format=run.input_format)
         write = write_pdm_lock if output_format == "pdm" else write_poetry_lock
         text = _render_or_exit(
             lambda: write(
-                lock_input, document, project_dir=path.parent, output_path=destination
+                lock_input,
+                document,
+                project_dir=path.parent,
+                output_path=destination,
+                reproduce=reproduce,
             )
         )
-    if destination is None:
+    if reproduce:
+        printer().done(f"Lockfile {destination} is up to date.")
+    elif destination is None:
         _print_lock(text)
     else:
-        printer().done(f"Wrote {destination} ({summarize_lock(lock_input, None)})")
+        prior = previous_lock.summary_versions() if previous_lock is not None else None
+        printer().done(f"Wrote {destination} ({summarize_lock(lock_input, prior)})")
 
 
 def _emit_pylock(
@@ -1524,7 +1568,7 @@ def _emit_pylock(
     *,
     output: Path | None,
     default_output: Path,
-    previous_lock: LockPreferences | None = None,
+    previous_lock: SavedPreferences | None = None,
 ) -> None:
     """Write the PEP 751 lock to a file, or print it."""
     if _is_stdout(output):
@@ -1974,7 +2018,7 @@ def _reused_lock_anchor(
     absolute = lock_anchor(ladder)
     if absolute is not None:
         return absolute, None
-    if _is_stdout(output) or output_format != "pylock":
+    if _is_stdout(output) or output_format not in _PROJECT_LOCK_FORMATS:
         return None, None
     target = _default_output_path(output_format, build_requirements=build_requirements)
     return None, read_lockfile_anchor(output if output is not None else target)

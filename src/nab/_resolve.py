@@ -93,7 +93,7 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport, HttpResponse
     from nab_project.declarations import DependencyDeclaration
-    from nab_project.lock_preferences import LockPreferences
+    from nab_project.lock_preferences import SavedPreferences
     from nab_project.prepared_input import PreparedProjectInput
     from nab_project.resolve import ResolveResult
     from nab_provider.provider import ResolutionStrategy
@@ -324,7 +324,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     build_requirements: bool = False,
     input_format: InputFormat = InputFormat.PROJECT,
     resolution_strategy: ResolutionStrategy | None = None,
-    lock_preferences: LockPreferences | None = None,
+    lock_preferences: SavedPreferences | None = None,
     reconcile_build_variants: bool = False,
     include_dependency_requirements: bool = False,
     progress: ProgressReporter | None = None,

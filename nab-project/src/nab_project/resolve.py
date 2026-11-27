@@ -130,7 +130,7 @@ if TYPE_CHECKING:
     from nab_provider.provider import ResolutionStrategy
     from nab_provider.resolver_inputs import MarkerHolds
 
-    from .lock_preferences import LockPreferences
+    from .lock_preferences import SavedPreferences
     from .prepared_input import PreparedProjectInput
 
 
@@ -166,7 +166,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     build_requirements: bool = False,
     include_dependency_requirements: bool = False,
     resolution_strategy: ResolutionStrategy | None = None,
-    lock_preferences: LockPreferences | None = None,
+    lock_preferences: SavedPreferences | None = None,
     reconcile_build_variants: bool = False,
     progress: ProgressSink | None = None,
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
@@ -316,7 +316,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     forks: Sequence[ResolveFork] | None = None,
     base_requirements: Sequence[Requirement] | None = None,
     resolution_strategy: ResolutionStrategy | None = None,
-    lock_preferences: LockPreferences | None = None,
+    lock_preferences: SavedPreferences | None = None,
     align_across_targets: bool = True,
     reconcile_build_variants: bool = False,
     preferences: Mapping[str, Version] | None = None,

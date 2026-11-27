@@ -10,12 +10,11 @@ from typing import TYPE_CHECKING, Any
 from packaging.tags import sys_tags
 from packaging.utils import canonicalize_name
 
-from nab_index.atomic import atomic_write_text
 from nab_provider.marker_holds import intractable_as_error
 from nab_provider.value import replace
 
-from .. import toml_writer
 from .native import distribution_files, file_digest, install_contexts
+from .native_saved import write_native_document
 from .pylock import LockValidationError, project_packages
 
 if TYPE_CHECKING:
@@ -30,7 +29,7 @@ if TYPE_CHECKING:
     from .pylock import ProjectedPackage
 
 
-def _content_hash(document: Mapping[str, Any]) -> str:
+def pdm_content_hash(document: Mapping[str, Any]) -> str:
     """Match the project inputs that PDM hashes for its native lock format."""
     project = document.get("project", {})
     settings = document.get("tool", {}).get("pdm", {})
@@ -188,6 +187,7 @@ def write_pdm_lock(
     *,
     project_dir: Path,
     output_path: Path | None = None,
+    reproduce: bool = False,
 ) -> str:
     """Render a PDM lock from resolved pins and the consuming pyproject."""
     # Keep runtime dependencies addressable by PDM's default group.
@@ -219,14 +219,19 @@ def write_pdm_lock(
         target = _pdm_target(lock.target)
         targets[tuple(target.items())] = target
 
+    content_hash = pdm_content_hash(document)
     metadata = {
         "groups": sorted({"default", *groups, *lock_input.extras}),
         "strategy": ["inherit_metadata", "static_urls"],
         "lock_version": "4.5.1",
-        "content_hash": _content_hash(document),
+        "content_hash": content_hash,
         "targets": list(targets.values()),
     }
-    text = toml_writer.dumps({"metadata": metadata, "package": rows})
-    if output_path is not None:
-        atomic_write_text(output_path, text)
-    return text
+    return write_native_document(
+        {"metadata": metadata, "package": rows},
+        lock_input,
+        format_name="pdm",
+        project_identity=content_hash,
+        output_path=output_path,
+        reproduce=reproduce,
+    )

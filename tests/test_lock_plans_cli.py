@@ -857,4 +857,61 @@ def test_project_lock_plan_default_name_and_stdout(
     capsys.readouterr()
 
     assert command(named, "--plan", "build", "--output", "-") == 0
-    assert toml_io.loads(capsys.readouterr().out) == document
+    stdout = toml_io.loads(capsys.readouterr().out)
+    # Each invocation records its own command line and timestamp.
+    assert (
+        stdout.pop("tool")["nab"]["solution"] == document.pop("tool")["nab"]["solution"]
+    )
+    assert stdout == document
+
+
+@pytest.mark.parametrize("format_name", ["pdm", "poetry", "uv"])
+def test_native_saved_plan_checks_reuse_and_upgrades(
+    named: Registry, format_name: str
+) -> None:
+    with named.project.open("a") as stream:
+        stream.write(f'format="{format_name}"\n')
+    args = ("--plan", "build")
+    output = named.project.with_name(f"build.{format_name}.lock")
+    assert command(named, *args) == 0
+    saved = output.read_bytes()
+    fetches = len(named.coordinators)
+    assert command(named, *args, "--locked") == 0
+    assert command(named, *args, "--lock-policy", "reuse") == 0
+    assert len(named.coordinators) == fetches
+    assert command(named, *args, "--reproduce") == 0
+    assert output.read_bytes() == saved
+
+    named.add_release()
+    assert command(named, *args, "--reproduce") == 1
+    assert output.read_bytes() == saved
+    assert command(named, *args, "--lock-policy", "prefer-existing") == 0
+
+    def pin() -> str:
+        return next(
+            row["version"]
+            for row in toml_io.load_path(output)["package"]
+            if row["name"] == "b"
+        )
+
+    assert pin() == "1"
+    assert command(named, *args, "--upgrade-package", "b") == 0
+    assert pin() == "2"
+    assert command(named, *args, "--locked") == 0
+
+    output.write_text(output.read_text().replace('version = "2"', 'version = "3"', 1))
+    assert command(named, *args, "--locked") == 1
+
+
+@pytest.mark.parametrize("format_name", ["uv", "poetry", "pdm"])
+def test_native_default_project_path_checks_the_same_lock(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch, format_name: str
+) -> None:
+    monkeypatch.chdir(registry.project.parent)
+    args = ("--format", format_name)
+    assert command(registry, *args) == 0
+    path = registry.project.with_name(f"{format_name}.lock")
+    previous = path.read_bytes()
+    assert command(registry, *args, "--locked") == 0
+    assert command(registry, *args, "--reproduce") == 0
+    assert path.read_bytes() == previous

@@ -35,14 +35,14 @@ beside a script. For a single target, requirements go to `requirements.txt` or
 ### `--locked`
 
 Check the saved solution without resolving or writing. New releases do not invalidate it. Exit `1`
-if the lock is missing or cannot satisfy or verify the current inputs. Requires pylock output to a
-file; cannot combine with `--upgrade` or `--reproduce`. See
+if the lock is missing or cannot satisfy or verify the current inputs. Use a saved pylock, uv,
+Poetry or PDM file. This check cannot combine with `--upgrade` or `--reproduce`. See
 [Checking a lock](reproducibility.md#checking-the-lock-in-ci).
 
 ### `--reproduce`
 
 Resolve afresh and compare with the saved lock without writing. Exit `1` if the result differs. Use
-stable decision order when comparing resolves. Requires pylock output to a file.
+stable decision order when comparing resolves. Use a saved pylock, uv, Poetry or PDM file.
 
 ### `--upgrade`
 
@@ -57,7 +57,7 @@ the run. Requirements and source policies still apply, and resolving the named p
 changing other versions. With no saved lock, nab resolves afresh.
 
 Add `--upgrade` to move a relative upload cutoff forward. Selective upgrades require highest
-resolution and pylock output to a file. Use `--locked` and `--reproduce` in separate invocations.
+resolution and a saved project lockfile. Use `--locked` and `--reproduce` in separate invocations.
 
 ### `--lock-policy {resolve,prefer-existing,reuse}`
 

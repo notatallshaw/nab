@@ -9,7 +9,6 @@ from urllib.parse import unquote, urlencode, urlsplit
 
 from packaging.utils import canonicalize_name
 
-from nab_index.atomic import atomic_write_text
 from nab_index.file_urls import is_file_url, parse_file_url
 from nab_markersets.markersets import MarkerSet
 from nab_provider.marker_holds import intractable_as_error
@@ -18,7 +17,6 @@ from nab_provider.requirements_file import (
     iter_group_requirements,
 )
 
-from .. import toml_writer
 from ..conflicts import ConflictPolicy
 from ..paths import relative_lock_path
 from ..pyproject_files import (
@@ -29,6 +27,7 @@ from ..pyproject_files import (
     project_optional_dependencies,
 )
 from .native import file_digest
+from .native_saved import uv_project_identity, write_native_document
 from .pylock import LockValidationError, project_packages
 
 if TYPE_CHECKING:
@@ -381,6 +380,7 @@ def write_uv_lock(
     *,
     project_dir: Path,
     output_path: Path | None = None,
+    reproduce: bool = False,
     script: bool = False,
     build_requirements: bool = False,
 ) -> str:
@@ -435,7 +435,11 @@ def write_uv_lock(
     result["package"] = sorted(
         graph.rows, key=lambda row: (row["name"], row["version"])
     )
-    text = toml_writer.dumps(result)
-    if output_path is not None:
-        atomic_write_text(output_path, text)
-    return text
+    return write_native_document(
+        result,
+        lock_input,
+        format_name="uv",
+        project_identity=uv_project_identity(document),
+        output_path=output_path,
+        reproduce=reproduce,
+    )

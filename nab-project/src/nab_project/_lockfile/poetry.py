@@ -8,17 +8,16 @@ from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlsplit
 
-from nab_index.atomic import atomic_write_text
 from nab_index.file_urls import is_file_url, parse_file_url
 from nab_markersets.markersets import MarkerSet
 from nab_provider.marker_holds import intractable_as_error
 from nab_provider.requirements_file import expand_extra_requirements
 from nab_provider.value import replace
 
-from .. import toml_writer
 from ..paths import relative_lock_path
 from ..pyproject_files import project_name, project_optional_dependencies
 from .native import distribution_files, file_digest, install_contexts
+from .native_saved import write_native_document
 from .pylock import LockValidationError, project_packages
 
 if TYPE_CHECKING:
@@ -31,7 +30,7 @@ if TYPE_CHECKING:
     from .pylock import ProjectedPackage
 
 
-def _content_hash(document: Mapping[str, Any]) -> str:
+def poetry_content_hash(document: Mapping[str, Any]) -> str:
     """Compute Poetry's freshness hash, including legacy Poetry declarations."""
     project = document.get("project", {})
     relevant = {
@@ -200,6 +199,7 @@ def write_poetry_lock(
     *,
     project_dir: Path,
     output_path: Path | None = None,
+    reproduce: bool = False,
 ) -> str:
     """Write Poetry 2.1 installation groups, source references and input hash."""
     base = lock_input.base_group or "main"
@@ -235,7 +235,7 @@ def write_poetry_lock(
         "metadata": {
             "lock-version": "2.1",
             "python-versions": lock_input.requires_python or "*",
-            "content-hash": _content_hash(document),
+            "content-hash": poetry_content_hash(document),
         },
     }
 
@@ -251,7 +251,11 @@ def write_poetry_lock(
             )
         data["extras"] = extra_roots
 
-    text = toml_writer.dumps(data)
-    if output_path is not None:
-        atomic_write_text(output_path, text)
-    return text
+    return write_native_document(
+        data,
+        lock_input,
+        format_name="poetry",
+        project_identity=data["metadata"]["content-hash"],
+        output_path=output_path,
+        reproduce=reproduce,
+    )

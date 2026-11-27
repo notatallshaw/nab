@@ -52,6 +52,19 @@ Wrote req-3.12-extra-gpu.txt (14 packages, tuple py312-linux_x86_64-extra-gpu)
 nab rejects a template when two targets would write to the same path. The error lists any template
 variables that distinguish them. If the templates cannot distinguish the targets, use pylock output.
 
+## Check and update a native lock
+
+Locks written by nab retain the target and input information needed by `--locked`, `--reproduce`,
+`--lock-policy` and `--upgrade-package`. For example:
+
+```console
+nab lock --format poetry --locked
+nab lock --format poetry --upgrade-package urllib3
+```
+
+`--locked` checks local artifact hashes and the project metadata used by the native consumer. Use
+`--reproduce` to compare a fresh resolve with the saved installer fields.
+
 ## Universal output
 
 Universal mode (`[tool.nab].mode = "universal"`) is supported for each format:
