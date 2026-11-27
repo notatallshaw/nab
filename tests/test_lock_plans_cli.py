@@ -814,8 +814,8 @@ def test_batch_uses_each_plans_format(
     with named.project.open("a") as stream:
         stream.write('format="requirements-without-hashes"\n')
 
-    assert command(named, "--all-plans") == 0
     build = named.project.with_name("build.requirements.txt")
+    assert command(named, "--all-plans") == 0
     assert build.read_text().splitlines() == ["b==1"]
     assert toml_io.load_path(named.project.with_name("pylock.dev.toml"))["packages"]
 
@@ -835,6 +835,7 @@ def test_declared_format_collision_is_checked_before_resolution(
         '[tool.nab.plans.dev]\nformat="requirements"\n'
         '[tool.nab.plans.build]\noutput="dev.requirements.txt"\n'
     )
+
     assert command(named, "--all-plans") == 1
     assert not named.coordinators
     assert "both write" in capsys.readouterr().err

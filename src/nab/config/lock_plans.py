@@ -57,17 +57,20 @@ class LockPlan(NamedTuple):
         if not isinstance(build, bool) or not isinstance(dependencies, bool):
             msg = f"{where}: build-requirements and dependencies must be booleans"
             raise TypeError(msg)
+
         format_name = (
             parse_lock_format(table["format"], f"{where}: format")
             if "format" in table
             else None
         )
+
         output = table.get("output")
         if output is not None and (
             not isinstance(output, str) or not output or output == "-"
         ):
             msg = f"{where}: output must be a file path"
             raise ValueError(msg)
+
         return cls(
             name,
             tuple(require_string_list(table.get("groups", []), f"{where} groups")),
@@ -95,6 +98,7 @@ class LockPlan(NamedTuple):
 
         if format_name == "pylock":
             return f"pylock.{self.name}.toml"
+
         return f"{self.name}.requirements.txt"
 
     def settings_layer(self, path: Path, *, check_conflicts: bool = False) -> Layer:
@@ -108,9 +112,11 @@ class LockPlan(NamedTuple):
         }
         if self.format is not None:
             values["format"] = self.format
+
         if not check_conflicts:
             # The project planner has already checked the selected groups and extras.
             values["conflicts"] = ()
+
         return Layer(layer.origin, values, layer.raw)
 
 
@@ -126,6 +132,7 @@ def read_lock_plans(
     names = declarations if selected is None else (selected,)
     plans = []
     destinations: dict[Path, str] = {}
+
     for name in names:
         plan = LockPlan.read(name, declarations)
         for source in plan.imports:
@@ -136,10 +143,14 @@ def read_lock_plans(
         if selected is None:
             # A later plan's settings can be checked without reading its source files.
             plan_settings_layer(name, plan.settings, path.parent)
+
+            # Compare resolved paths so aliases cannot overwrite an earlier plan.
             destination = (path.parent / plan.output_name(format_setting)).resolve()
             if (previous := destinations.get(destination)) is not None:
                 msg = f"lock plans {previous!r} and {name!r} both write {destination}"
                 raise ValueError(msg)
             destinations[destination] = name
+
         plans.append(plan)
+
     return tuple(plans)
