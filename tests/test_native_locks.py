@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def native_project(tmp_path: Path) -> Path:
+def native_project(tmp_path: Path, format_name: str) -> Path:
     """Publish two installable local wheels with a transitive dependency."""
     wheels = tmp_path / "wheels"
     for name, requirements in (("nativeleaf", ()), ("nativeroot", ("nativeleaf==1",))):
@@ -34,23 +34,26 @@ def native_project(tmp_path: Path) -> Path:
         '[project]\nname="app"\nversion="1"\nrequires-python=">=3.10"\n'
         'dependencies=[]\n[dependency-groups]\ntools=["nativeroot"]\n'
         f'[[tool.nab.indexes]]\nname="local"\nurl="{wheels.as_uri()}"\n'
-        '[tool.nab.plans.install]\ngroups=["tools"]\nformat="pdm"\noutput="pdm.lock"\n'
+        '[tool.nab.plans.install]\ngroups=["tools"]\n'
+        f'format="{format_name}"\noutput="{format_name}.lock"\n'
     )
     return project
 
 
-def test_pdm_installs_plan_and_transitive_dependency(
-    native_project: Path, tmp_path: Path
+@pytest.mark.parametrize("format_name", ["pdm", "poetry"])
+def test_native_tool_installs_plan_and_transitive_dependency(
+    native_project: Path, tmp_path: Path, format_name: str
 ) -> None:
-    pdm = shutil.which("pdm")
-    if pdm is None:
-        pytest.skip("requires the PDM consumer executable")
+    executable = shutil.which(format_name)
+    if executable is None:
+        pytest.skip(f"requires the {format_name} consumer executable")
 
     assert run(("lock", str(native_project), "--plan", "install", "--no-cache")) == 0
-    output = tmp_path / "pdm.lock"
+    output = tmp_path / f"{format_name}.lock"
     saved = output.read_bytes()
     env = {
         **os.environ,
+        "POETRY_VIRTUALENVS_IN_PROJECT": "true",
         "PDM_CHECK_UPDATE": "false",
         "PDM_IGNORE_ACTIVE_VENV": "1",
         "XDG_STATE_HOME": str(tmp_path / "state"),
@@ -61,16 +64,22 @@ def test_pdm_installs_plan_and_transitive_dependency(
 
     def consume(*args: str) -> None:
         """Run the installed consumer in the isolated project."""
-        subprocess.run(  # noqa: S603 - fixed PDM commands in the temporary project.
-            [pdm, *args], cwd=tmp_path, env=env, check=True, timeout=60
+        subprocess.run(  # noqa: S603 - fixed consumer commands in the temporary project.
+            [executable, *args], cwd=tmp_path, env=env, check=True, timeout=60
         )
 
     environment = tmp_path / ".venv"
     venv.EnvBuilder(symlinks=os.name != "nt").create(environment)
     python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    consume("use", "-f", str(python))
-    consume("lock", "--check")
-    consume("sync", "--no-self")
+    if format_name == "pdm":
+        consume("use", "-f", str(python))
+        consume("lock", "--check")
+        consume("sync", "--no-self")
+    else:
+        env["VIRTUAL_ENV"] = str(environment)
+        consume("check", "--lock")
+        consume("sync", "--no-root")
+
     subprocess.run(  # noqa: S603 - verify fixture wheels in their own interpreter.
         [
             python,

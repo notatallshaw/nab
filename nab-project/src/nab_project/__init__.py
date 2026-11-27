@@ -15,7 +15,7 @@ Supported imports:
     nab_project.lock_policy  LockPolicy
     nab_project.lock_preferences  LockPreferences, read_lock_preferences
     nab_project.lockfile  resolve_dependency_references
-    nab_project.native_lock  write_pdm_lock
+    nab_project.native_lock  write_pdm_lock, write_poetry_lock
     nab_project.download  run_download
     nab_project.inputs  ResolveInputs
     nab_project.resolve  ResolveResult, TargetResult, resolve_for_targets,

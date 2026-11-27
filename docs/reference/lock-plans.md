@@ -77,6 +77,20 @@ nab lock --plan pdm-test
 pdm sync --no-self
 ```
 
+To write the same test selection for Poetry, declare a second plan:
+
+```toml
+[tool.nab.plans.poetry-test]
+groups = ["test"]
+format = "poetry"
+output = "poetry.lock"
+```
+
+```console
+nab lock --all-plans
+poetry sync --no-root
+```
+
 Use `nab lock --all-plans` to refresh every declared plan and `nab lock --all-plans --locked` to
 check the files. A batch checks the option names and values in every plan’s `settings` table,
 verifies that its input sources are declared and checks for duplicate output paths before writing

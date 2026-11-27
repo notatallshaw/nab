@@ -673,7 +673,7 @@ def _lock_one(
         project_input=project_input,
         resolution_strategy=settings.resolution,
         lock_preferences=previous_lock,
-        reconcile_build_variants=settings.format in ("pylock", "pdm"),
+        reconcile_build_variants=settings.format in ("pylock", "pdm", "poetry"),
         progress=ProgressReporter(printer()),
         max_concurrency=settings.max_concurrency,
     )
@@ -803,14 +803,17 @@ def _emit(
             default_output=default_output,
             previous_lock=previous_lock,
         )
-    elif output_format == "pdm":
+    elif output_format in ("pdm", "poetry"):
         target = output or (
-            script.with_name(script.name + ".pdm.lock") if script else default_output
+            script.with_name(f"{script.name}.{output_format}.lock")
+            if script
+            else default_output
         )
-        _emit_pdm(
+        _emit_project_lock(
             lock_input,
             project_path,
             target,
+            output_format=output_format,
             input_format=InputFormat.SCRIPT if script else InputFormat.PROJECT,
         )
     else:
@@ -840,6 +843,7 @@ def _packages_only(text: str) -> dict[str, Any]:
 _DEFAULT_OUTPUT: dict[str, str] = {
     "pylock": "pylock.toml",
     "pdm": "pdm.lock",
+    "poetry": "poetry.lock",
     "requirements": "requirements.txt",
     "requirements-without-hashes": "requirements.txt",
 }
@@ -847,6 +851,7 @@ _DEFAULT_OUTPUT: dict[str, str] = {
 _BUILD_DEFAULT_OUTPUT: dict[str, str] = {
     "pylock": "pylock.build.toml",
     "pdm": "build.pdm.lock",
+    "poetry": "build.poetry.lock",
     "requirements": "build-requirements.txt",
     "requirements-without-hashes": "build-requirements.txt",
 }
@@ -1461,16 +1466,25 @@ def _check_reproduction(lock_input: LockInput, *, run: _LockRun) -> None:
     sys.exit(1)
 
 
-def _emit_pdm(
-    lock_input: LockInput, path: Path, target: Path, *, input_format: InputFormat
+def _emit_project_lock(
+    lock_input: LockInput,
+    path: Path,
+    target: Path,
+    *,
+    output_format: str,
+    input_format: InputFormat,
 ) -> None:
-    """Write the native file with the content hash PDM checks against the project."""
-    from nab_project.native_lock import write_pdm_lock  # noqa: PLC0415 - native output only
+    """Write the native file against the consuming project declarations."""
+    from nab_project.native_lock import (  # noqa: PLC0415 - native output only
+        write_pdm_lock,
+        write_poetry_lock,
+    )
 
     document = read_input_document(path, input_format=input_format)
     destination = None if _is_stdout(target) else target
+    write = write_pdm_lock if output_format == "pdm" else write_poetry_lock
     text = _render_or_exit(
-        lambda: write_pdm_lock(
+        lambda: write(
             lock_input, document, project_dir=path.parent, output_path=destination
         )
     )

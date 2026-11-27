@@ -11,6 +11,8 @@ Choose the file type with `--format`:
 - `--format pylock` (default) writes a [PEP 751] `pylock.toml`.
 - `--format pdm` writes `pdm.lock` for `pdm sync`. Pass the same groups and extras to nab that you
   want available to PDM.
+- `--format poetry` writes `poetry.lock` for `poetry sync`. Configure custom package indexes in both
+  nab and Poetry when Poetry needs to choose between distribution files.
 - `--format requirements` writes a pip-compatible `requirements.txt`, sorted by name. An index pin
   is `name==version` with recorded `--hash` lines; local, VCS, and archive pins render as URLs.
 - `--format requirements-without-hashes` writes the same output without separate `--hash` lines. An

@@ -99,8 +99,8 @@ class LockPlan(NamedTuple):
         if format_name == "pylock":
             return f"pylock.{self.name}.toml"
 
-        if format_name == "pdm":
-            return f"{self.name}.pdm.lock"
+        if format_name in ("pdm", "poetry"):
+            return f"{self.name}.{format_name}.lock"
 
         return f"{self.name}.requirements.txt"
 
