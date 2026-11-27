@@ -18,6 +18,7 @@ variables.
 
 - [Select extras and groups](selection.md).
 - [Choose versions and constrain dependencies](resolution-settings.md).
+- [Choose how to use an existing lock](lock-policy.md).
 - [Configure lockfile groups](lockfile-groups.md).
 
 ## Target environments
@@ -39,6 +40,7 @@ variables.
 hidden:
 ---
 resolution-settings
+lock-policy
 target-environment
 target-matrix
 platform-tags

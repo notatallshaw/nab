@@ -160,8 +160,8 @@ Configure these options in `nab.toml` beside `pyproject.toml`:
 | Option                              | Behavior and tradeoff                                                          |
 | ----------------------------------- | ------------------------------------------------------------------------------ |
 | `lock-policy = "resolve"` (default) | Resolve afresh using current package information.                              |
-| `lock-policy = "prefer-existing"`   | Prefer saved versions when still valid; may keep older releases.               |
-| `lock-policy = "reuse"`             | Reuse a valid saved lock without checking for remote updates.                  |
+| `lock-policy = "prefer-existing"`   | Check current index data and keep locked versions when they still fit.         |
+| `lock-policy = "reuse"`             | Keep a lock that still fits the project without consulting the index.          |
 | `decision-order = "arrival"`        | Reduce HTTP waits by processing listings as they arrive; pin choices may vary. |
 | `assume-consistent-metadata = true` | Reuse wheel metadata across targets, assuming a release's wheels agree.        |
 
@@ -170,7 +170,7 @@ Configure these options in `nab.toml` beside `pyproject.toml`:
 keep the existing lock without looking for package updates.
 
 See [distribution policies](docs/reference/distribution-policy.md) and
-[lock policies](docs/reference/cli.md) for configuration and restrictions.
+[lock policies](docs/reference/lock-policy.md) for configuration and restrictions.
 
 ## Universal lock benchmark
 
