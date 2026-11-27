@@ -417,8 +417,18 @@ class PartialSolution(Generic[PackageType, VersionType]):
         self._range_op_operands.append(right)
         return result
 
-    def get(self, package: PackageType) -> RangeProtocol[VersionType] | None:
-        """Get the combined allowed range for a package, or None if unassigned.
+    @overload
+    def get(
+        self, package: PackageType, default: None = None
+    ) -> RangeProtocol[VersionType] | None: ...
+    @overload
+    def get(
+        self, package: PackageType, default: RangeProtocol[VersionType]
+    ) -> RangeProtocol[VersionType]: ...
+    def get(
+        self, package: PackageType, default: RangeProtocol[VersionType] | None = None
+    ) -> RangeProtocol[VersionType] | None:
+        """Get the combined allowed range for a package, or the default if unassigned.
 
         Computes ``positive - negative``, cached per package.
         """
@@ -429,7 +439,8 @@ class PartialSolution(Generic[PackageType, VersionType]):
         # Backtracking invalidates the cache but retains the surviving trail prefix.
         entries = self._assignments_by_package.get(package)
         if not entries:
-            return None
+            return default
+
         effective = self._range_at(entries[-1])
         self._effective_range_cache[package] = effective
         return effective
