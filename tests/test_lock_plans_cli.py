@@ -841,7 +841,7 @@ def test_declared_format_collision_is_checked_before_resolution(
     assert "both write" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("format_name", ["pdm", "poetry"])
+@pytest.mark.parametrize("format_name", ["pdm", "poetry", "uv"])
 def test_project_lock_plan_default_name_and_stdout(
     named: Registry, capsys: pytest.CaptureFixture[str], format_name: str
 ) -> None:
@@ -851,7 +851,9 @@ def test_project_lock_plan_default_name_and_stdout(
     assert command(named, "--plan", "build") == 0
     output = named.project.with_name(f"build.{format_name}.lock")
     document = toml_io.load_path(output)
-    assert [p["name"] for p in document["package"]] == ["b"]
+    assert {p["name"] for p in document["package"]} == (
+        {"app", "b"} if format_name == "uv" else {"b"}
+    )
     capsys.readouterr()
 
     assert command(named, "--plan", "build", "--output", "-") == 0

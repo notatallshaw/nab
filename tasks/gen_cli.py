@@ -262,13 +262,13 @@ def _table_lines(rows: list[Opt], texts: list[str], indent: str) -> list[str]:
     lines: list[str] = []
     for row in rows:
         index = _intern(texts, row.help)
-        lines.extend(_wrapped("(", _fields(row, index), "),", indent))
+        lines.extend(_wrapped("(", _fields(row, index, indent), "),", indent))
         if row.negatable:
             lines.extend(_wrapped("(", _negation(row, index), "),", indent))
     return lines
 
 
-def _fields(row: Opt, index: int) -> list[str]:
+def _fields(row: Opt, index: int, indent: str) -> list[str]:
     """Write one declared row as the ten literals the walk reads."""
     flag = row.cli_flag or ""
     vtype = "" if row.vtype is None else row.vtype.value
@@ -290,7 +290,15 @@ def _fields(row: Opt, index: int) -> list[str]:
         row.required,
         index,
     )
-    return [_literal(field) for field in fields]
+    result = [_literal(field) for field in fields]
+    choices = row.choices
+    if len(choices) > 1 and len(indent + _literal(choices) + ",") > _WIDTH:
+        # Let the row wrap between choices when the tuple no longer fits on one line.
+        entries = [_literal(choice) for choice in choices]
+        entries[0] = "(" + entries[0]
+        entries[-1] += ")"
+        result[5:6] = entries
+    return result
 
 
 def _negation(row: Opt, index: int) -> list[str]:

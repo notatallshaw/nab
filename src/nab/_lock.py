@@ -673,7 +673,8 @@ def _lock_one(
         project_input=project_input,
         resolution_strategy=settings.resolution,
         lock_preferences=previous_lock,
-        reconcile_build_variants=settings.format in ("pylock", "pdm", "poetry"),
+        reconcile_build_variants=settings.format in ("pylock", "pdm", "poetry", "uv"),
+        include_dependency_requirements=settings.format == "uv",
         progress=ProgressReporter(printer()),
         max_concurrency=settings.max_concurrency,
     )
@@ -707,6 +708,7 @@ def _lock_one(
             output_format=settings.format,
             output=output,
             project_path=path,
+            project_input=project_input,
             script=path if input_format is InputFormat.SCRIPT else None,
             build_requirements=settings.build_requirements,
             previous_lock=previous_lock,
@@ -788,6 +790,7 @@ def _emit(
     output_format: str,
     output: Path | None,
     project_path: Path = _DEFAULT_PROJECT_PATH,
+    project_input: PreparedProjectInput | None = None,
     script: Path | None = None,
     build_requirements: bool = False,
     previous_lock: LockPreferences | None = None,
@@ -803,18 +806,19 @@ def _emit(
             default_output=default_output,
             previous_lock=previous_lock,
         )
-    elif output_format in ("pdm", "poetry"):
-        target = output or (
-            script.with_name(f"{script.name}.{output_format}.lock")
-            if script
-            else default_output
-        )
+    elif output_format in ("pdm", "poetry", "uv"):
+        target = output or default_output
+        if output is None and script is not None:
+            suffix = ".lock" if output_format == "uv" else f".{output_format}.lock"
+            target = script.with_name(script.name + suffix)
         _emit_project_lock(
             lock_input,
             project_path,
             target,
             output_format=output_format,
             input_format=InputFormat.SCRIPT if script else InputFormat.PROJECT,
+            project_input=project_input,
+            build_requirements=build_requirements,
         )
     else:
         if script is not None:
@@ -844,6 +848,7 @@ _DEFAULT_OUTPUT: dict[str, str] = {
     "pylock": "pylock.toml",
     "pdm": "pdm.lock",
     "poetry": "poetry.lock",
+    "uv": "uv.lock",
     "requirements": "requirements.txt",
     "requirements-without-hashes": "requirements.txt",
 }
@@ -852,6 +857,7 @@ _BUILD_DEFAULT_OUTPUT: dict[str, str] = {
     "pylock": "pylock.build.toml",
     "pdm": "build.pdm.lock",
     "poetry": "build.poetry.lock",
+    "uv": "build.uv.lock",
     "requirements": "build-requirements.txt",
     "requirements-without-hashes": "build-requirements.txt",
 }
@@ -1473,21 +1479,40 @@ def _emit_project_lock(
     *,
     output_format: str,
     input_format: InputFormat,
+    project_input: PreparedProjectInput | None,
+    build_requirements: bool,
 ) -> None:
     """Write the native file against the consuming project declarations."""
     from nab_project.native_lock import (  # noqa: PLC0415 - native output only
         write_pdm_lock,
         write_poetry_lock,
+        write_uv_lock,
     )
 
-    document = read_input_document(path, input_format=input_format)
     destination = None if _is_stdout(target) else target
-    write = write_pdm_lock if output_format == "pdm" else write_poetry_lock
-    text = _render_or_exit(
-        lambda: write(
-            lock_input, document, project_dir=path.parent, output_path=destination
+    if output_format == "uv":
+        document = read_input_document(
+            path, input_format=input_format, project_input=project_input
         )
-    )
+        text = _render_or_exit(
+            lambda: write_uv_lock(
+                lock_input,
+                document,
+                project_dir=path.parent,
+                output_path=destination,
+                script=input_format is InputFormat.SCRIPT,
+                build_requirements=build_requirements,
+            )
+        )
+    else:
+        # Poetry and PDM check their content hash against the on-disk project.
+        document = read_input_document(path, input_format=input_format)
+        write = write_pdm_lock if output_format == "pdm" else write_poetry_lock
+        text = _render_or_exit(
+            lambda: write(
+                lock_input, document, project_dir=path.parent, output_path=destination
+            )
+        )
     if destination is None:
         _print_lock(text)
     else:

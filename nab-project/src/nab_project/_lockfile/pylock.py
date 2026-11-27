@@ -149,6 +149,7 @@ if TYPE_CHECKING:
             marker: Marker | None = None,
             *,
             lock_dir: Path,
+            _labels: Sequence[str] = (),
             dependencies: list[dict[str, str]] | None = None,
         ) -> _CovariantLockedPackage: ...
 
@@ -713,6 +714,7 @@ class ProjectedPackage(NamedTuple):
 
     source: Package
     version: Version
+    labels: Sequence[str]
 
     @property
     def name(self) -> NormalizedName:
@@ -728,11 +730,12 @@ def _project_pin(
     marker: Marker | None = None,
     *,
     lock_dir: Path,
+    _labels: Sequence[str] = (),
     dependencies: list[dict[str, str]] | None = None,
 ) -> ProjectedPackage:
     source = _pin_to_package(pin, marker, lock_dir=lock_dir, dependencies=dependencies)
     # Native project locks also record versions for VCS and directory pins.
-    return ProjectedPackage(source, Version(pin.version))
+    return ProjectedPackage(source, Version(pin.version), _labels)
 
 
 def project_packages(
@@ -992,6 +995,7 @@ def _pin_to_package(
     marker: Marker | None = None,
     *,
     lock_dir: Path,
+    _labels: Sequence[str] = (),
     dependencies: list[dict[str, str]] | None = None,
 ) -> Package:
     from ..lockfile import ArchivePin, IndexPin, LocalPin, VcsPin
@@ -1158,6 +1162,7 @@ def _pin_to_document(
     marker: Marker | None = None,
     *,
     lock_dir: Path,
+    _labels: Sequence[str] = (),
     dependencies: list[dict[str, str]] | None = None,
 ) -> _DocumentPackage:
     """Build the admitted index output without allocating native artifact models."""
@@ -1429,6 +1434,7 @@ def _build_packages(
                     pin,
                     marker,
                     lock_dir=lock_dir,
+                    _labels=labels,
                     dependencies=dependencies,
                 )
             )

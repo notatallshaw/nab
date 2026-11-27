@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import venv
 from typing import TYPE_CHECKING
 
@@ -40,7 +41,7 @@ def native_project(tmp_path: Path, format_name: str) -> Path:
     return project
 
 
-@pytest.mark.parametrize("format_name", ["pdm", "poetry"])
+@pytest.mark.parametrize("format_name", ["pdm", "poetry", "uv"])
 def test_native_tool_installs_plan_and_transitive_dependency(
     native_project: Path, tmp_path: Path, format_name: str
 ) -> None:
@@ -53,6 +54,8 @@ def test_native_tool_installs_plan_and_transitive_dependency(
     saved = output.read_bytes()
     env = {
         **os.environ,
+        "UV_CACHE_DIR": str(tmp_path / "cache" / "uv"),
+        "UV_PYTHON_DOWNLOADS": "never",
         "POETRY_VIRTUALENVS_IN_PROJECT": "true",
         "PDM_CHECK_UPDATE": "false",
         "PDM_IGNORE_ACTIVE_VENV": "1",
@@ -75,6 +78,8 @@ def test_native_tool_installs_plan_and_transitive_dependency(
         consume("use", "-f", str(python))
         consume("lock", "--check")
         consume("sync", "--no-self")
+    elif format_name == "uv":
+        consume("sync", "--frozen", "--offline", "--python", str(python))
     else:
         env["VIRTUAL_ENV"] = str(environment)
         consume("check", "--lock")
@@ -94,4 +99,109 @@ def test_native_tool_installs_plan_and_transitive_dependency(
         check=True,
         timeout=10,
     )
+    assert output.read_bytes() == saved
+
+
+@pytest.mark.parametrize("format_name", ["uv"])
+def test_uv_runs_a_script_from_nabs_lock(
+    native_project: Path, format_name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = shutil.which(format_name)
+    if executable is None:
+        pytest.skip("requires the uv consumer executable")
+
+    project_dir = native_project.parent
+    script = project_dir / "demo.py"
+    script.write_text(
+        '# /// script\n# requires-python = ">=3.10"\n# dependencies = ["nativeroot"]\n'
+        f'# [[tool.nab.indexes]]\n# name = "local"\n# url = "{(project_dir / "wheels").as_uri()}"\n# ///\n'
+        "import nativeroot, nativeleaf\n"
+        "assert nativeroot.__version__ == nativeleaf.__version__ == '1'\n"
+    )
+    assert run(("lock", "--script", str(script), "--format", "uv", "--no-cache")) == 0
+    lockfile = script.with_name("demo.py.lock")
+    saved = lockfile.read_bytes()
+    monkeypatch.setenv("UV_CACHE_DIR", str(project_dir / "uv-cache"))
+    monkeypatch.setenv("UV_PYTHON_DOWNLOADS", "never")
+    subprocess.run(  # noqa: S603 - the script imports the two test wheels.
+        [
+            executable,
+            "run",
+            "--frozen",
+            "--offline",
+            "--python",
+            sys.executable,
+            "--script",
+            str(script),
+        ],
+        cwd=project_dir,
+        check=True,
+        timeout=60,
+    )
+    assert lockfile.read_bytes() == saved
+
+
+def test_uv_selects_each_conflicting_extra(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uv = shutil.which("uv")
+    if uv is None:
+        pytest.skip("requires the uv consumer executable")
+    wheels = tmp_path / "wheels"
+    files = {}
+    for version in ("1", "2"):
+        filename = f"nativechoice-{version}-py3-none-any.whl"
+        files[filename] = make_wheel_archive(
+            "nativechoice",
+            version,
+            make_metadata("nativechoice", version),
+            "py3-none-any",
+        )
+    publish_artifacts(wheels, "nativechoice", files)
+
+    project = tmp_path / "pyproject.toml"
+    project.write_text(
+        '[project]\nname="app"\nversion="1"\nrequires-python=">=3.10"\n'
+        '[project.optional-dependencies]\ncpu=["nativechoice==1"]\ngpu=["nativechoice==2"]\n'
+        '[tool.nab]\nconflicts=[[{extra="cpu"}, {extra="gpu"}]]\n'
+        f'[[tool.nab.indexes]]\nname="local"\nurl="{wheels.as_uri()}"\n'
+    )
+    output = tmp_path / "uv.lock"
+    assert (
+        run(
+            (
+                "lock",
+                str(project),
+                "--format",
+                "uv",
+                "--all-extras",
+                "--no-cache",
+                "--output",
+                str(output),
+            )
+        )
+        == 0
+    )
+    saved = output.read_bytes()
+    monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("UV_PYTHON_DOWNLOADS", "never")
+    for extra, version in (("cpu", "1"), ("gpu", "2")):
+        subprocess.run(  # noqa: S603 - install and inspect the fixture selected by the named extra.
+            [
+                uv,
+                "run",
+                "--frozen",
+                "--offline",
+                "--python",
+                sys.executable,
+                "--extra",
+                extra,
+                "python",
+                "-c",
+                f"import nativechoice; assert nativechoice.__version__ == '{version}'",
+            ],
+            cwd=tmp_path,
+            check=True,
+            timeout=60,
+        )
     assert output.read_bytes() == saved

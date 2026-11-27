@@ -9,6 +9,8 @@ represents its targets. See the [CLI](cli.md) for the command and
 Choose the file type with `--format`:
 
 - `--format pylock` (default) writes a [PEP 751] `pylock.toml`.
+- `--format uv` writes `uv.lock` for `uv sync --frozen`. For a script, nab writes `SCRIPT.lock`
+  beside the script, ready for `uv run --frozen --script SCRIPT`.
 - `--format pdm` writes `pdm.lock` for `pdm sync`. Pass the same groups and extras to nab that you
   want available to PDM.
 - `--format poetry` writes `poetry.lock` for `poetry sync`. Configure custom package indexes in both

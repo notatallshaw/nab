@@ -9,7 +9,7 @@ ConfigAction = Literal["list", "get", "explain"]
 HttpBackend = Literal["urllib3", "httpx", "httpx2"]
 LockPolicyFlag = Literal["resolve", "prefer-existing", "reuse"]
 LockFormat = Literal[
-    "pylock", "pdm", "poetry", "requirements", "requirements-without-hashes"
+    "pylock", "pdm", "poetry", "uv", "requirements", "requirements-without-hashes"
 ]
 ResolutionFlag = Literal["highest", "lowest", "lowest-direct"]
 ModeFlag = Literal["specific", "universal"]

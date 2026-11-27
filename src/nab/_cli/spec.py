@@ -48,8 +48,8 @@ HELP: tuple[str, ...] = (
     "how many fetches may be in flight at once",
     "resolve, check existing choices, or reuse a consistent saved lock",
     (
-        "emit pylock, pdm.lock, poetry.lock, requirements with index-pin hash lines, "
-        "or requirements without them"
+        "emit pylock, uv.lock, poetry.lock, pdm.lock, requirements with index-pin hash "
+        "lines, or requirements without them"
     ),
     "read and write the on-disk cache",
     "the dependency groups to select",
@@ -181,9 +181,8 @@ COMMANDS: dict[
         False, 36),
         ("--lock-policy", "", "value", "lock_policy", "choice?",
         ("resolve", "prefer-existing", "reuse"), None, None, False, 37),
-        ("--format", "", "value", "format", "choice?",
-        ("pylock", "pdm", "poetry", "requirements", "requirements-without-hashes"),
-        None, None, False, 38),
+        ("--format", "", "value", "format", "choice?", ("pylock", "pdm", "poetry",
+        "uv", "requirements", "requirements-without-hashes"), None, None, False, 38),
         ("--cache", "", "flag", "cache", "bool?", (), True, None, False, 39),
         ("--no-cache", "", "neg", "cache", "", (), False, None, False, 39),
         ("--groups", "", "star", "groups", "str", (), None, (), False, 40),
@@ -279,9 +278,8 @@ COMMANDS: dict[
         ("urllib3", "httpx", "httpx2"), None, None, False, 35),
         ("--lock-policy", "", "value", "lock_policy", "choice?",
         ("resolve", "prefer-existing", "reuse"), None, None, False, 37),
-        ("--format", "", "value", "format", "choice?",
-        ("pylock", "pdm", "poetry", "requirements", "requirements-without-hashes"),
-        None, None, False, 38),
+        ("--format", "", "value", "format", "choice?", ("pylock", "pdm", "poetry",
+        "uv", "requirements", "requirements-without-hashes"), None, None, False, 38),
         ("--cache", "", "flag", "cache", "bool?", (), True, None, False, 39),
         ("--no-cache", "", "neg", "cache", "", (), False, None, False, 39),
         ("--plan", "", "value", "plan", "str?", (), None, None, False, 53),

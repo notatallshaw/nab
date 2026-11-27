@@ -1,0 +1,373 @@
+"""Render the project graph consumed by uv sync and uv run."""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote, urlencode, urlsplit
+
+from packaging.utils import canonicalize_name
+
+from nab_index.atomic import atomic_write_text
+from nab_index.file_urls import is_file_url, parse_file_url
+from nab_markersets.markersets import MarkerSet
+from nab_provider.marker_holds import intractable_as_error
+from nab_provider.requirements_file import (
+    expand_extra_requirements,
+    iter_group_requirements,
+)
+
+from .. import toml_writer
+from ..paths import relative_lock_path
+from ..pyproject_files import (
+    build_system_requires,
+    dependency_groups,
+    project_dependencies,
+    project_name,
+    project_optional_dependencies,
+)
+from .native import file_digest
+from .pylock import LockValidationError, project_packages
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+    from packaging.pylock import Package, PackageArchive, PackageSdist, PackageWheel
+    from packaging.requirements import Requirement
+
+    from ..lockfile import LockInput
+    from .pylock import ProjectedPackage
+
+
+def _artifact(
+    file: PackageWheel | PackageSdist, directory: Path, registry_path: Path | None
+) -> dict[str, Any]:
+    data: dict[str, str | int | None]
+    if file.path is None:
+        data = {"url": file.url}
+    elif registry_path is not None:
+        data = {"path": relative_lock_path(directory / file.path, registry_path)}
+    else:
+        data = {"url": (directory / file.path).resolve().as_uri()}
+    data["hash"] = file_digest(file.filename, file.hashes)
+    if file.size is not None:
+        data["size"] = file.size
+    return data
+
+
+def _distribution(package: Package, directory: Path) -> dict[str, Any]:
+    """Encode the resolved source and the files available from that source."""
+    if package.directory:
+        local = package.directory
+        path = Path(local.path)
+        if local.subdirectory:
+            path /= local.subdirectory
+        return {
+            "source": {"editable" if local.editable else "directory": path.as_posix()}
+        }
+
+    if package.vcs:
+        vcs = package.vcs
+        if vcs.type != "git":
+            msg = f"uv cannot install {package.name} from {vcs.type}"
+            raise LockValidationError(msg)
+        parameters = {}
+        if vcs.requested_revision:
+            parameters["rev"] = vcs.requested_revision
+        if vcs.subdirectory:
+            parameters["subdirectory"] = vcs.subdirectory
+        parsed = urlsplit(vcs.url or "")
+        query = "&".join(filter(None, (parsed.query, urlencode(parameters))))
+        return {
+            "source": {
+                "git": parsed._replace(query=query, fragment=vcs.commit_id).geturl()
+            }
+        }
+
+    if package.archive:
+        return _archive(package.archive, package.name, directory)
+    return _registry(package, directory)
+
+
+def _archive(archive: PackageArchive, name: str, directory: Path) -> dict[str, Any]:
+    """Uv locates path archives at their source, and registry files at their index."""
+    url = archive.url or ""
+    filename = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
+    artifact = {"hash": file_digest(name, archive.hashes)}
+    if is_file_url(url):
+        source = {"path": relative_lock_path(parse_file_url(url), directory)}
+        artifact["filename"] = filename
+    else:
+        source = {"url": url}
+        artifact["url"] = url
+    if archive.subdirectory:
+        source["subdirectory"] = archive.subdirectory
+    if filename.endswith(".whl"):
+        return {"source": source, "wheels": [artifact]}
+    return {"source": source, "sdist": artifact}
+
+
+def _registry(package: Package, directory: Path) -> dict[str, Any]:
+    """Store wheel and sdist paths relative to the index that serves them."""
+    index = package.index or ""
+    registry_path = parse_file_url(index) if is_file_url(index) else None
+    registry = (
+        relative_lock_path(registry_path, directory)
+        if registry_path is not None
+        else index.rstrip("/")
+    )
+    data: dict[str, Any] = {"source": {"registry": registry}}
+    if package.sdist:
+        data["sdist"] = _artifact(package.sdist, directory, registry_path)
+    if package.wheels:
+        data["wheels"] = [
+            _artifact(wheel, directory, registry_path) for wheel in package.wheels
+        ]
+    return data
+
+
+def _requirement(req: Requirement) -> dict[str, Any]:
+    """Record the root input uv compares with the manifest during a lock check."""
+    data: dict[str, Any] = {"name": canonicalize_name(req.name)}
+    if req.specifier:
+        data["specifier"] = str(req.specifier)
+    if req.url:
+        if is_file_url(req.url):
+            data["path"] = parse_file_url(req.url).as_posix()
+        else:
+            data["url"] = req.url
+    if req.extras:
+        data["extras"] = sorted(req.extras)
+    if req.marker:
+        data["marker"] = str(req.marker)
+    return data
+
+
+class _PackageGraph:
+    """Index each resolved row by target, retaining distinct sources of one name."""
+
+    def __init__(self, lock: LockInput, directory: Path, project: str) -> None:
+        self.regions: dict[frozenset[str], str | None] = {}
+        self.lock = lock
+        self.project = project
+        self.packages = project_packages(lock, directory)
+        self.rows = [
+            {
+                "name": p.name,
+                "version": str(p.version),
+                **_distribution(p.source, directory),
+            }
+            for p in self.packages
+        ]
+        self.by_target: dict[tuple[str, str], int] = {}
+        self.by_name: dict[str, list[int]] = defaultdict(list)
+        for i, package in enumerate(self.packages):
+            self.by_name[package.name].append(i)
+            for label in package.labels:
+                self.by_target[label, package.name] = i
+
+    def reference(
+        self, index: int, extras: tuple[str, ...], marker: str | None
+    ) -> dict[str, Any]:
+        row = self.rows[index]
+        ref = {"name": row["name"]}
+        if len(self.by_name[row["name"]]) > 1:
+            ref.update(version=row["version"], source=row["source"])
+        if extras:
+            ref["extra"] = list(extras)
+        if marker:
+            ref["marker"] = marker
+        return ref
+
+    def target_marker(self, label: str) -> str:
+        """Include the uv conflict member when two forks share a platform."""
+        target = self.lock.targets[label].target
+        declarations = self.lock.target_environments or {}
+        text = declarations.get(label) or target.environment_marker_string
+        for kind, member in target.selection:
+            token = f"{kind}-{len(self.project)}-{self.project}-{member}"
+            text = f'({text}) and extra == "{token}"'
+        return text
+
+    def environment(self, labels: set[str], all_labels: set[str]) -> str | None:
+        """Choose the resolved environments in which an edge is traversable."""
+        if labels == all_labels:
+            return None
+        key = frozenset(labels)
+        if key in self.regions:
+            return self.regions[key]
+
+        regions = MarkerSet.empty()
+        for label in sorted(labels):
+            regions |= MarkerSet.from_marker(self.target_marker(label))
+        marker = regions.to_marker_string()
+        self.regions[key] = marker
+        return marker
+
+    def attach_edges(self, parent: ProjectedPackage, row: dict[str, Any]) -> None:
+        by_extra: dict[str, dict[tuple[int, tuple[str, ...]], set[str]]] = defaultdict(
+            lambda: defaultdict(set)
+        )
+        for label in parent.labels:
+            target = self.lock.targets[label]
+            declarations = (target.dependency_requirements or {}).get(parent.name, {})
+            for name in target.dependencies.get(parent.name, ()):
+                index = self.by_target[label, name]
+                records = declarations.get(name, ())
+                if not records:
+                    by_extra[""][index, ()].add(label)
+                for record in records:
+                    for extra in record.required_for_parent_extras or ("",):
+                        by_extra[extra][index, record.dependency_extras].add(label)
+        for extra, edges in sorted(by_extra.items()):
+            refs = [
+                self.reference(
+                    i, requested, self.environment(labels, set(parent.labels))
+                )
+                for (i, requested), labels in sorted(edges.items())
+            ]
+            if extra:
+                row.setdefault("optional-dependencies", {})[extra] = refs
+            else:
+                row["dependencies"] = refs
+
+    def root_edges(self, requirements: Sequence[Requirement]) -> list[dict[str, Any]]:
+        edges: dict[tuple[int, tuple[str, ...], str | None], dict[str, Any]] = {}
+        all_labels = set(self.lock.targets)
+        for requirement in requirements:
+            for index in self.by_name.get(canonicalize_name(requirement.name), ()):
+                pkg = self.packages[index]
+                if not requirement.specifier.contains(pkg.version, prereleases=True):
+                    continue
+                guard = self.environment(set(pkg.labels), all_labels)
+                if requirement.marker:
+                    marker = MarkerSet.from_marker(requirement.marker)
+                    if guard:
+                        marker &= MarkerSet.from_marker(guard)
+                    if marker.is_empty():
+                        continue
+                    guard = marker.to_marker_string()
+                key = (index, tuple(sorted(requirement.extras)), guard)
+                if key not in edges:
+                    edges[key] = self.reference(*key)
+        return list(edges.values())
+
+
+def _group_inputs(
+    lock: LockInput, document: Mapping[str, Any], main: Sequence[Requirement]
+) -> dict[str, list[Requirement]]:
+    """Collect named groups, including configured runtime and build roots."""
+    groups = dependency_groups(document)
+    declared = {canonicalize_name(name) for name in groups}
+    selected = tuple(
+        name for name in lock.active_groups if canonicalize_name(name) in declared
+    )
+    result = dict(iter_group_requirements(groups, selected))
+    if lock.base_group is not None:
+        result[lock.base_group] = list(main)
+    if lock.build_group is not None:
+        result[lock.build_group] = build_system_requires(
+            document, Path("pyproject.toml")
+        )
+    return result
+
+
+def _project_root(
+    graph: _PackageGraph, document: Mapping[str, Any], main: Sequence[Requirement]
+) -> dict[str, Any]:
+    """Record runtime, optional and development requirements on the root project."""
+    root: dict[str, Any] = {
+        "name": graph.project,
+        "version": document.get("project", {}).get("version", "0"),
+        "source": {"editable" if "build-system" in document else "virtual": "."},
+    }
+    if graph.lock.base_group is None and (refs := graph.root_edges(main)):
+        root["dependencies"] = refs
+    metadata: dict[str, Any] = {}
+    declarations = [_requirement(req) for req in main]
+    optional = project_optional_dependencies(document)
+    for extra in graph.lock.extras:
+        reqs = expand_extra_requirements(
+            optional, graph.project, [extra], bind_extra_markers=True
+        )
+        root.setdefault("optional-dependencies", {})[extra] = graph.root_edges(reqs)
+        for req in reqs:
+            value = _requirement(req)
+            marker = MarkerSet.from_marker(f'extra == "{extra}"')
+            if req.marker:
+                marker &= MarkerSet.from_marker(req.marker)
+            declarations.append({**value, "marker": marker.to_marker_string()})
+    if declarations:
+        metadata["requires-dist"] = declarations
+    if graph.lock.extras:
+        metadata["provides-extras"] = list(graph.lock.extras)
+    for group, reqs in _group_inputs(graph.lock, document, main).items():
+        root.setdefault("dev-dependencies", {})[group] = graph.root_edges(reqs)
+        metadata.setdefault("requires-dev", {})[group] = [
+            _requirement(req) for req in reqs
+        ]
+    if metadata:
+        root["metadata"] = metadata
+    return root
+
+
+def write_uv_lock(
+    lock_input: LockInput,
+    document: Mapping[str, Any],
+    *,
+    project_dir: Path,
+    output_path: Path | None = None,
+    script: bool = False,
+    build_requirements: bool = False,
+) -> str:
+    """Write a uv project or script lock with dependency edges and artifact hashes."""
+    name = canonicalize_name(project_name(document) or project_dir.resolve().name)
+    directory = output_path.parent if output_path else project_dir
+    graph = _PackageGraph(lock_input, directory, name)
+    project = document.get("project", {})
+    requires_python = lock_input.requires_python or project.get("requires-python") or ""
+    result: dict[str, Any] = {
+        "version": 1,
+        "revision": 5,
+        "requires-python": requires_python,
+    }
+    if lock_input.environments:
+        result["supported-markers"] = [
+            str(marker) for marker in lock_input.environments
+        ]
+
+    conflicts = [
+        [
+            {"package": name, member.kind.value: member.name}
+            for member in conflict.members
+        ]
+        for conflict in lock_input.conflicts
+    ]
+    if conflicts:
+        result["conflicts"] = conflicts
+
+    with intractable_as_error():
+        for package, row in zip(graph.packages, graph.rows, strict=True):
+            graph.attach_edges(package, row)
+            if len(graph.by_name[package.name]) > 1:
+                row["resolution-markers"] = sorted(
+                    {graph.target_marker(label) for label in package.labels}
+                )
+        main = (
+            build_system_requires(document, project_dir / "pyproject.toml")
+            if build_requirements
+            else project_dependencies(document)
+        )
+        if script:
+            result["manifest"] = {"requirements": [_requirement(req) for req in main]}
+        else:
+            graph.rows.append(_project_root(graph, document, main))
+
+    result["package"] = sorted(
+        graph.rows, key=lambda row: (row["name"], row["version"])
+    )
+    text = toml_writer.dumps(result)
+    if output_path is not None:
+        atomic_write_text(output_path, text)
+    return text

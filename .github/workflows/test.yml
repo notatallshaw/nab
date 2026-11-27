@@ -89,6 +89,7 @@ jobs:
         run: |
           pipx install pdm==2.29.7
           pipx install poetry==2.5.2
+          pipx install uv==0.13.10
 
       - name: Test affected workspaces on Python ${{ matrix.python }}
         run: &test-workspaces |

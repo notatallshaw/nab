@@ -91,6 +91,20 @@ nab lock --all-plans
 poetry sync --no-root
 ```
 
+For uv, choose the dependencies to install in the plan and sync its frozen lock:
+
+```toml
+[tool.nab.plans.uv-test]
+groups = ["test"]
+format = "uv"
+output = "uv.lock"
+```
+
+```console
+nab lock --plan uv-test
+uv sync --frozen
+```
+
 Use `nab lock --all-plans` to refresh every declared plan and `nab lock --all-plans --locked` to
 check the files. A batch checks the option names and values in every plan’s `settings` table,
 verifies that its input sources are declared and checks for duplicate output paths before writing
