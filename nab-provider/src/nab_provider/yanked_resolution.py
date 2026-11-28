@@ -399,38 +399,11 @@ class YankProxyProvider(PreferenceProvider["Candidate", "VersionRange", "Require
         )
         return tuple(entries)
 
-    def _preferred_candidate(self, package: str) -> Candidate | None:
-        """Offer cached live preferences without reading another listing."""
-        catalogue = self.catalogue
-        base = catalogue.base_name(package)
-        version = catalogue.preferences.get(base)
-        versions = catalogue.provider.versions_cache.get(base)
-        if (
-            version is None
-            or version.is_prerelease
-            or versions is None
-            or catalogue.provider.wants_lowest(base)
-        ):
-            return None
-
-        candidate = Candidate(package, version, withdrawn=False)
-        if not any(
-            value == version and str(value) == candidate.label and not file.yanked
-            for value, file in versions
-        ):
-            return None
-
-        return (
-            candidate
-            if catalogue.installable(candidate, versions, assume_sorted=True)
-            else None
-        )
-
     def resolve(self) -> tuple[dict[str, Version], Provider]:
         """Check non-yanked alternatives before adopting the selected candidates."""
         session = _NativeResolution(
             self,
-            preferred_candidate=self._preferred_candidate
+            preferred_candidate=self.catalogue.preferred_candidate
             if self.catalogue.preferences
             else None,
         )
