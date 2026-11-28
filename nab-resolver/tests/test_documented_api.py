@@ -56,6 +56,7 @@ SUPPORTED_API = {
     "nab_resolver.types": {
         "Incompatibility",
         "IncompatibilityCause",
+        "RangeFactory",
         "RangeProtocol",
         "RootRequirement",
         "Term",

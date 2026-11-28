@@ -26,6 +26,7 @@ from nab_provider import yanked_resolution
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.overrides import PackageOverride
 from nab_provider.policy import BuildPolicy, DistPolicy, ExtrasMode, MetadataPolicy
+from nab_provider.preference import PreferenceScope
 from nab_provider.priority import CONFLICT_THRESHOLD, CULPRIT_DEMOTE_THRESHOLD
 from nab_provider.provider import Provider, ResolutionStrategy
 from nab_provider.records import SdistFile
@@ -791,6 +792,16 @@ def graph_search(
         ProxyConstraints({}),
         preferences={},
     )
+
+
+def test_using_compact_tokens_keeps_the_public_metadata_dependency_exact() -> None:
+    search = graph_search([("app", "1", False, [])], ["app"])
+    selected = search.run_query(PreferenceScope(), live_trial=True)
+    token = search.identify(selected["app"])
+
+    dependencies = search.get_dependencies("app", token)
+
+    assert dependencies[MetadataProxy(token)] == Range.singleton(0)
 
 
 def test_requested_metadata_proxy_requires_a_prepared_candidate() -> None:

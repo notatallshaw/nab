@@ -36,6 +36,7 @@ from nab_resolver.resolver import (
 from nab_resolver.types import (
     Incompatibility,
     IncompatibilityCause,
+    RangeFactory,
     RangeProtocol,
     Term,
 )
@@ -485,7 +486,7 @@ def _graph_dependencies(package: Any) -> Mapping[Any, RangeProtocol[int]]:
 class _SnapshotCountingSolution(PartialSolution[Any, Any]):
     """A real partial solution that counts the snapshots it hands out."""
 
-    def __init__(self, range_type: type[RangeProtocol[Any]]) -> None:
+    def __init__(self, range_type: type[RangeFactory[Any]]) -> None:
         super().__init__(range_type=range_type)
         self.snapshots_taken = 0
 

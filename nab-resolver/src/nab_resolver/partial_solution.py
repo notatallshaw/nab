@@ -33,7 +33,7 @@ from weakref import ref
 from ._compat import override
 from .errors import ResolutionInvariantError
 from .ranges import Range
-from .types import PackageType, RangeProtocol, VersionType
+from .types import PackageType, RangeFactory, RangeProtocol, VersionType
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -307,7 +307,7 @@ class PartialSolution(Generic[PackageType, VersionType]):
 
     def __init__(
         self,
-        range_type: type[RangeProtocol[VersionType]] = Range,
+        range_type: type[RangeFactory[VersionType]] = Range,
         *,
         contradiction_epoch: int = 0,
     ) -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 __lazy_modules__ = (
     "collections",
     "nab_provider._provider.listing_diagnosis",
+    "nab_provider.candidate_tokens",
     "nab_provider.diagnostics",
     "nab_provider.extra_keys",
     "nab_provider.ranges",
@@ -33,6 +34,7 @@ from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 from ._compat import override
 from ._provider.listing_diagnosis import MetadataBlock, metadata_diagnostic
+from .candidate_tokens import CandidateTokenRange
 from .diagnostics import ResolutionMessage
 from .extra_keys import split_extra
 from .ranges import VersionRange, require_version_range
@@ -189,7 +191,8 @@ class YankProxyProvider(BaseProvider[Package, int]):
         self._trial_pins = self.input_pins
         self._full_version_range = VersionRange.full()
         self._full_integer_range: Range[int] = Range.full()
-        self._metadata_version = Range.singleton(0)
+        self._token_ranges: type[Range[int]] = Range
+        self._metadata_version = self._token_ranges.singleton(0)
         self._integer_membership = IntegerRangeMembership()
         self.stats: ResolverStats[Package] = preference.stats
 
@@ -216,7 +219,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
                 for choice in choices
             ):
                 self._mixed_release_packages.add(package)
-        encoded = Range[int].from_versions(
+        encoded = self._token_ranges.from_versions(
             self.identify(candidate)
             for candidate in choices
             if self.eligible(candidate)
@@ -390,7 +393,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
             Term(package, self._full_integer_range, positive=True)
         ]
         terms.extend(
-            Term(name, Range.singleton(value), positive=True)
+            Term(name, self._token_ranges.singleton(value), positive=True)
             for name, value in self.decisions.items()
             if isinstance(name, str)
         )
@@ -512,11 +515,14 @@ class YankProxyProvider(BaseProvider[Package, int]):
                 underlying = Candidate(
                     base, candidate.version, withdrawn=candidate.withdrawn
                 )
-                result[base] = Range.singleton(self.identify(underlying))
+                result[base] = self._token_ranges.singleton(self.identify(underlying))
             return result
         if isinstance(package, PermissionProxy):
             support = next(s for s, v in self.proofs[package].items() if v == version)
-            return {self.items[i].package: Range.singleton(i) for i in support}
+            return {
+                self.items[i].package: self._token_ranges.singleton(i) for i in support
+            }
+
         token = package.candidate
         parent = self.items[token]
         data = self.catalogue.prepared_data(parent)
@@ -558,11 +564,17 @@ class YankProxyProvider(BaseProvider[Package, int]):
         self, scope: PreferenceScope, *, live_trial: bool = False
     ) -> dict[str, Candidate]:
         """Resolve under one set of restrictions with the shared work budget."""
-        query = self.new_query(scope)
+        query: YankProxyProvider = self.new_query(scope)
+        # The public provider exposes exact points. Only this solver and its
+        # private query exchange half-open cells, including the metadata token.
+        query._token_ranges = CandidateTokenRange
+        query._metadata_version = CandidateTokenRange.singleton(0)
         query.live_trial = live_trial
         roots = _query_roots(query)
         solver: Resolver[Package, int] = Resolver(
-            query, max_iterations=self.preference.remaining
+            query,
+            range_type=CandidateTokenRange,
+            max_iterations=self.preference.remaining,
         )
         try:
             selected = solver.resolve(roots)
