@@ -619,6 +619,23 @@ class TestSnapshots:
         assert dict(first) == {"foo": 3}
         assert dict(second) == {"foo": 3, "bar": 1}
 
+    @pytest.mark.parametrize("backtrack", [False, True])
+    def test_decision_iterator_survives_later_decisions(
+        self, *, backtrack: bool
+    ) -> None:
+        solution: PartialSolution[str, int] = PartialSolution()
+        solution.decide("first", 1)
+        solution.decide("second", 2)
+
+        keys = iter(solution.decisions())
+        assert next(keys) == "first"
+
+        if backtrack:
+            solution.backtrack(0)
+        solution.decide("third", 3)
+
+        assert list(keys) == ["second"]
+
     def test_a_frozen_package_keeps_its_place_in_the_order(self) -> None:
         ps = PartialSolution()
         ps.decide("foo", 3)
