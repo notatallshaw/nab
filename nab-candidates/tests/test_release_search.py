@@ -412,3 +412,49 @@ def test_constraint_can_hide_every_live_release() -> None:
 
     assert failure.value.incompatibility is not None
     assert not host.reads
+
+
+def test_unread_extra_files_share_the_same_base_version_conflict() -> None:
+    base = File("app", "1")
+    extra = File("app[x]", "1")
+    blocked = File("app[x]", "2")
+    sibling = File("app[x]", "2", "sdist")
+    roots = {"app[x]": VersionRange.full(), "app": VersionRange.singleton(base.version)}
+
+    def resolve(*files: File) -> int:
+        host = Wheels(base, extra, *files)
+        session = PreparedVersionResolution.from_catalogue(
+            host, roots, (), {}, try_live=True
+        )
+
+        assert session.solve().candidates == {"app": base, "app[x]": extra}
+        assert host.reads == [base, extra]
+        return session.stats.rounds
+
+    # Neither file at version 2 can change the exact version its extra requires.
+    assert resolve(blocked, sibling) == resolve(blocked)
+
+
+@pytest.mark.parametrize("base_rejected", [False, True])
+def test_an_extra_alternative_requires_its_own_base_file(
+    *, base_rejected: bool
+) -> None:
+    newer, older = File("app", "2"), File("app", "1")
+    extra, live = File("app[x]", "2"), File("app[x]", "1")
+    source = File("app", "2", "sdist")
+    sibling = File("app[x]", "2", "sdist")
+    host = Wheels(newer, older, extra, live, source, sibling)
+    if base_rejected:
+        host.facts[source] = None
+    host.metadata[extra] = VersionCandidateData({"missing": VersionRange.full()}, ())
+
+    result = PreparedVersionResolution.from_catalogue(
+        host, {"app[x]": VersionRange.full()}, (), {}, try_live=True
+    ).solve()
+
+    if base_rejected:
+        assert result.candidates == {"app": older, "app[x]": live}
+        assert sibling not in host.reads
+    else:
+        assert result.candidates == {"app": source, "app[x]": sibling}
+        assert sibling in host.reads
