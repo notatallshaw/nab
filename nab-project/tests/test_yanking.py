@@ -23,6 +23,7 @@ from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import IndexPin, build_pylock
 from nab_project.resolve import build_lock_input, resolve_with_coordinator
 from nab_provider import yanked_resolution
+from nab_provider.errors import MissingExtraError
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.overrides import PackageOverride
 from nab_provider.policy import BuildPolicy, DistPolicy, ExtrasMode, MetadataPolicy
@@ -408,12 +409,41 @@ def test_inactive_constraint_does_not_admit() -> None:
     assert not results[0].success
 
 
+def test_unpinned_yank_keeps_the_requested_extra_error() -> None:
+    releases: list[ReleaseRow] = [
+        ("gate", "2", True, []),
+        ("gate", "1", False, []),
+        ("library", "1", False, []),
+        ("library", "2", False, []),
+        ("library", "3", False, []),
+    ]
+
+    with pytest.raises(MissingExtraError, match="does not provide extra 'absent'"):
+        run_graph(releases, ["gate", "library[absent]"])
+
+
+def test_live_file_at_a_mixed_release_keeps_its_normal_preference() -> None:
+    (result,), port = run_graph(
+        [
+            ("app", "3", True, []),
+            ("app", "2", False, []),
+            ("app", "2", True, ["missing"]),
+            ("app", "1", False, []),
+        ],
+        ["app"],
+    )
+
+    assert result.success, result.error
+    assert result.pins == {"app": Version("2")}
+    assert not _requested_metadata(port, "app", "3")
+
+
 def test_search_limit_does_not_authorize_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(yanked_resolution, "_MAX_SOLVER_ROUNDS", 1)
     results, port = run_graph(
-        [("dep", "2+z", True, []), ("dep", "2+a", False, [])], ["dep==2"]
+        [("dep", "2+z", True, []), ("dep", "2+a", False, [])], ["dep==2+z"]
     )
     assert not results[0].success
     assert isinstance(results[0].error, ResolutionLimitError)
