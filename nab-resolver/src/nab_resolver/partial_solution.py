@@ -184,6 +184,9 @@ def _detach_snapshots(
         if snapshot is not None:
             snapshot.detach()
 
+    # Detached snapshots own their maps and need no further updates.
+    holders.clear()
+
 
 # Every field in declaration order.  ``__slots__`` holds the same names sorted,
 # so equality, the repr and ``__match_args__`` read this one instead.
