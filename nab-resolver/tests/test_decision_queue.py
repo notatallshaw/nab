@@ -24,10 +24,11 @@ from collections.abc import Set as AbstractSet
 from typing import Any
 
 from nab_resolver._compat import override
+from nab_resolver.decide import choose_package_to_decide
 from nab_resolver.decision_queue import DecisionQueue
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver
-from nab_resolver.types import RangeProtocol
+from nab_resolver.types import Incompatibility, IncompatibilityCause, RangeProtocol
 
 from .property.providers import FuzzProvider
 
@@ -85,6 +86,23 @@ def test_deciding_a_package_does_not_rescan_the_remaining_packages() -> None:
     queue: DecisionQueue[str] = DecisionQueue()
     assert queue.pick({"a", "b", "c"}, book.sort_key, {"a", "b", "c"}, 0) == "a"
     assert queue.pick(Remaining({"b", "c"}), book.sort_key, {"a"}, 0) == "b"
+
+
+def test_refresh_uses_the_restored_package_after_backtracking() -> None:
+    class Package(str):
+        __slots__ = ()
+
+    required = Package("lib")
+    decided = Package("lib")
+    resolver = Resolver(FuzzProvider({required: {1: {}}}))
+    cause: Incompatibility[str, int] = Incompatibility([], IncompatibilityCause.ROOT)
+    resolver.solution.derive(required, Range.full(), positive=True, cause=cause)
+    resolver.solution.decide(decided, 1)
+
+    resolver.solution.backtrack(0)
+    (restored,) = resolver.solution.undecided_packages()
+
+    assert choose_package_to_decide(resolver) is restored
 
 
 def test_a_changed_package_takes_the_lead_on_its_new_key() -> None:
@@ -289,6 +307,7 @@ class RecheckingDecisionQueue(DecisionQueue[str]):
         changed: set[str],
         epoch: int,
         key_inputs_arrived: Callable[[str], bool] | None = None,
+        last_required_package: str | None = None,
     ) -> str:
         """Pick as usual, then check the cached keys against a fresh scan."""
         evaluated: set[str] = set()
@@ -298,7 +317,14 @@ class RecheckingDecisionQueue(DecisionQueue[str]):
             evaluated.add(package)
             return sort_key(package)
 
-        picked = super().pick(undecided, watched, changed, epoch, key_inputs_arrived)
+        picked = super().pick(
+            undecided,
+            watched,
+            changed,
+            epoch,
+            key_inputs_arrived,
+            last_required_package,
+        )
 
         if self._unready:
             self.unready_picks += 1

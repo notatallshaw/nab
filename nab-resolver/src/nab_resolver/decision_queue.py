@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Generic
 from .types import PackageType
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
     from collections.abc import Set as AbstractSet
 
 __all__ = ["DecisionQueue"]
@@ -62,6 +62,7 @@ class DecisionQueue(Generic[PackageType]):
         changed: set[PackageType],
         epoch: int,
         key_inputs_arrived: Callable[[PackageType], bool] | None = None,
+        last_required_package: PackageType | None = None,
     ) -> PackageType:
         """Return the undecided package with the smallest sort key.
 
@@ -71,6 +72,10 @@ class DecisionQueue(Generic[PackageType]):
         range or decided state the partial solution moved since the previous
         scan; a new ``epoch`` stands for a move in the counts every key reads,
         so it re-evaluates all of them.
+
+        The caller may supply the actual member it last added to the undecided
+        set as ``last_required_package``. Drop this hint if that member could
+        have been replaced by a distinct but equal package.
 
         ``sort_key`` must lead with the ready penalty: a truthy first field
         keeps the package on the re-evaluate list until it clears.
@@ -86,7 +91,18 @@ class DecisionQueue(Generic[PackageType]):
 
         stale = self._stale_packages(undecided, changed, epoch)
         if stale:
-            self._refresh(undecided, stale, sort_key, changed, probe)
+            # Only the undecided set supplies the representative of equal keys.
+            # A caller that just inserted the sole stale package already has it.
+            packages: Iterable[PackageType]
+            if (
+                last_required_package is not None
+                and len(stale) == 1
+                and last_required_package in stale
+            ):
+                packages = (last_required_package,)
+            else:
+                packages = undecided
+            self._refresh(packages, stale, sort_key, changed, probe)
         self._compact()
         return self._live_top()
 
@@ -110,7 +126,7 @@ class DecisionQueue(Generic[PackageType]):
 
     def _refresh(
         self,
-        undecided: AbstractSet[PackageType],
+        packages: Iterable[PackageType],
         stale: AbstractSet[PackageType],
         sort_key: Callable[[PackageType], tuple[Any, ...]],
         changed: set[PackageType],
@@ -118,7 +134,7 @@ class DecisionQueue(Generic[PackageType]):
     ) -> None:
         """Re-evaluate the stale keys, pushing an entry for each one that moved.
 
-        Walks ``undecided`` rather than ``stale`` so which packages are stale
+        Walks multiple stale keys in ``undecided`` order so the stale set
         cannot change the order ``sort_key`` is called in, since a provider can
         fetch while answering one.
 
@@ -132,7 +148,7 @@ class DecisionQueue(Generic[PackageType]):
         unready = self._unready
         pushes = self._pushes
 
-        for package in undecided:
+        for package in packages:
             if package not in stale:
                 continue
 

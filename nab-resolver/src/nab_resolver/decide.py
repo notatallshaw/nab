@@ -93,6 +93,7 @@ def choose_package_to_decide(
         resolver.solution.take_changed_packages(),
         resolver.priority_epoch,
         key_inputs_arrived,
+        resolver.solution.last_required_package,
     )
 
 

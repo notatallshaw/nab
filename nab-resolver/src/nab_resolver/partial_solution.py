@@ -327,6 +327,8 @@ class PartialSolution(Generic[PackageType, VersionType]):
 
         # Incrementally maintained as set(positive) - set(decided).
         self._undecided: set[PackageType] = set()
+        # The decision queue can visit this member directly on a one-key refresh.
+        self.last_required_package: PackageType | None = None
 
         # Packages whose effective range or decided state moved since the last
         # drain.
@@ -520,8 +522,9 @@ class PartialSolution(Generic[PackageType, VersionType]):
             )
             self._freeze_ranges(package)
             self._positive_ranges[package] = new_range
-            if package not in self._decided_versions:
+            if current is None:
                 self._undecided.add(package)
+                self.last_required_package = package
         else:
             # Negative derivation accumulates excluded versions.
             excluded = self._negative_ranges.get(package)
@@ -555,6 +558,7 @@ class PartialSolution(Generic[PackageType, VersionType]):
         See: https://github.com/dart-lang/pub/blob/master/doc/solver.md#conflict-resolution
         """
         self._contradiction_epoch += 1
+        self.last_required_package = None
         _detach_snapshots(self._range_snapshots)
         _detach_snapshots(self._decision_snapshots)
 
