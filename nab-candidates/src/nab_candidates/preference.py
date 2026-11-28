@@ -460,30 +460,30 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         if not self.catalogue.range_contains(candidate, allowed):
             return PreparationStatus.IMPOSSIBLE
 
+        base = self.catalogue.candidate_base(candidate)
         exact_parent = self._has_exact_parent(candidate, parents)
         # A fixed exact edge needs the scoped proof, without an unrelated listing.
         if not exact_parent and not any(
             not self.catalogue.candidate_withdrawn(choice)
-            for choice in self.catalogue.ordered(
-                self.catalogue.candidate_base(candidate), allowed
-            )
+            for choice in self.catalogue.ordered(base, allowed)
         ):
-            return PreparationStatus.ALLOWED
+            # A cached file can survive a failed listing of its alternatives.
+            return (
+                PreparationStatus.INCOMPLETE
+                if base in self.catalogue.missing_listings
+                else PreparationStatus.ALLOWED
+            )
 
         live = (
             scope.live
-            | {self.catalogue.candidate_base(candidate)}
+            | {base}
             | {
                 self.catalogue.candidate_base(value)
                 for value in selected.values()
                 if not self.catalogue.candidate_withdrawn(value)
             }
         )
-        query = PreferenceScope(
-            parents,
-            frozenset(live),
-            self.catalogue.candidate_base(candidate),
-        )
+        query = PreferenceScope(parents, frozenset(live), base)
 
         # Append-only fact counts identify the revision behind each proof.
         outcome = self.outcomes.get(query)

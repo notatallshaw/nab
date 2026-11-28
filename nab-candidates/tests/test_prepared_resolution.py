@@ -166,6 +166,25 @@ def test_live_trial_keeps_newer_parents_whose_pins_admit_a_withdrawn_child() -> 
     assert older not in catalogue.facts
 
 
+def test_missing_listing_cannot_establish_that_only_yanked_files_exist() -> None:
+    cached = Choice("dep", 1, withdrawn=True)
+
+    class OfflineCatalogue(Catalogue):
+        def choices(self, package: str) -> tuple[Choice, ...]:
+            self.missing_listings.add(package)
+            return super().choices(package)
+
+    catalogue = OfflineCatalogue((cached,))
+    session = PreparedResolution.from_catalogue(
+        catalogue, {"dep": Range.singleton(1)}, (Pin("dep", 1),), {}, try_live=True
+    )
+
+    with pytest.raises(IncompletePreferenceError):
+        session.solve()
+
+    assert cached not in catalogue.facts
+
+
 def test_live_trial_retains_input_pin_permission() -> None:
     withdrawn = Choice("dep", 2, withdrawn=True)
     catalogue = Catalogue((withdrawn,))
