@@ -230,6 +230,33 @@ class YankCandidates(PreparedVersionCatalogue[Candidate, CandidateData]):
             if self.installable(candidate, versions, assume_sorted=True)
         )
 
+    def preferred_candidate(self, package: str) -> Candidate | None:
+        """Offer cached live preferences without reading another listing."""
+        base = self.base_name(package)
+        version = self.preferences.get(base)
+        versions = self.provider.versions_cache.get(base)
+        if (
+            version is None
+            or version.is_prerelease
+            or versions is None
+            or self.provider.wants_lowest(base)
+        ):
+            return None
+
+        candidate = Candidate(package, version, withdrawn=False)
+        # Equal versions share a listing key but can have separately yanked files.
+        if not any(
+            not file.yanked and str(intern_version(file.version)) == candidate.label
+            for file in dists_at_version(versions, version)
+        ):
+            return None
+
+        return (
+            candidate
+            if self.installable(candidate, versions, assume_sorted=True)
+            else None
+        )
+
     def installable(
         self,
         candidate: Candidate,

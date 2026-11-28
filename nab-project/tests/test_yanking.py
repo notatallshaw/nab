@@ -842,6 +842,24 @@ def test_cached_lock_preference_avoids_expanding_other_file_choices() -> None:
     assert {candidate.version for candidate in search.catalogue.facts} == {Version("1")}
 
 
+@pytest.mark.parametrize("preferred", ["1", "1.0"])
+def test_cached_preference_reads_the_live_file_label(preferred: str) -> None:
+    search = graph_search(
+        [("dep", "1", True, []), ("dep", "1.0", False, [])],
+        ["dep"],
+        preferences={"dep": Version(preferred)},
+    )
+    search.catalogue.provider.fetch_versions("dep")
+    # A single live file needs three rounds, including its metadata decision.
+    search.preference.remaining = 3
+
+    pins, _ = search.resolve()
+
+    assert str(pins["dep"]) == "1.0"
+    if preferred == "1.0":
+        assert not search.catalogue.candidates
+
+
 def test_saved_prerelease_uses_the_native_admission_policy() -> None:
     search = graph_search(
         [("dep", "2rc1", False, []), ("dep", "1", False, [])],
