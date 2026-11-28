@@ -20,10 +20,10 @@ __lazy_modules__ = (
 
 from typing import TYPE_CHECKING, Any
 
-from .errors import ResolutionError, ResolutionInvariantError, ResolutionStalledError
+from .errors import ResolutionInvariantError, ResolutionStalledError
 from .incompat_index import add_incompatibility
 from .partial_solution import PartialSolution
-from .report import format_error
+from .report import explain_failure
 from .root import ROOT
 from .types import Incompatibility, IncompatibilityCause
 
@@ -93,13 +93,10 @@ def conflict_resolution(
 
     for _ in range(step_budget):
         if is_terminal_incompatibility(current_incompatibility):
-            raise ResolutionError(
-                format_error(
-                    current_incompatibility,
-                    narrow=resolver.provider.narrow_for_display,
-                    format_range=resolver.format_range,
-                ),
-                incompatibility=current_incompatibility,
+            raise explain_failure(
+                current_incompatibility,
+                resolver.provider.narrow_for_display,
+                resolver.format_range,
             )
 
         satisfier_result = find_most_recent_satisfier(
@@ -156,13 +153,10 @@ def conflict_resolution(
             backjump_target = max(backjump_target, 0)
 
             if backjump_target == 0:
-                raise ResolutionError(
-                    format_error(
-                        current_incompatibility,
-                        narrow=resolver.provider.narrow_for_display,
-                        format_range=resolver.format_range,
-                    ),
-                    incompatibility=current_incompatibility,
+                raise explain_failure(
+                    current_incompatibility,
+                    resolver.provider.narrow_for_display,
+                    resolver.format_range,
                 )
 
             from_level = resolver.solution.decision_level

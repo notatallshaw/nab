@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .diagnostics import DiagnosticMessage
-    from .types import Incompatibility
+    from .types import Incompatibility, RangeProtocol
 
 __all__ = [
     "ResolutionError",
@@ -36,6 +36,9 @@ class ResolutionError(Exception):
     Its incompatibility, when present, is diagnostic rather than a proof
     that the requirements are unsatisfiable.
 
+    The ``unavailable_ranges`` mapping holds additional listing gaps stated when
+    the provider narrows the displayed proof onto known releases.
+
     ``verbose_message`` is the same report at more depth, set by whatever
     augments the error with what the resolve knows beyond the derivation.
     With no augmentation, it is None. ``str(error)`` returns the base
@@ -48,10 +51,15 @@ class ResolutionError(Exception):
         self,
         message: str | DiagnosticMessage,
         incompatibility: Incompatibility[Any, Any] | None = None,
+        *,
+        unavailable_ranges: dict[Any, RangeProtocol[Any]] | None = None,
     ) -> None:
         """Create a resolution error with an optional incompatibility proof."""
         super().__init__(message)
         self.incompatibility = incompatibility
+        self.unavailable_ranges = (
+            {} if unavailable_ranges is None else unavailable_ranges
+        )
         self.verbose_message: str | None = None
 
 

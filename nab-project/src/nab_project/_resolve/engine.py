@@ -1518,7 +1518,7 @@ def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
     """Attach short and verbose no-versions diagnostics to exc.
 
     Combine repeated packages' ranges before filtering permanent bans.
-    Listing causes use only availability clauses when present.
+    Listing causes include the gaps named when the proof was rendered.
     """
     if isinstance(exc, ResolutionTerminatedError) or exc.incompatibility is None:
         return
@@ -1528,7 +1528,11 @@ def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
         earlier = failed.get(package)
         failed[package] = clause_range if earlier is None else earlier | clause_range
 
-    unavailable: dict[str, RangeProtocol[Version]] = {}
+    unavailable: dict[str, RangeProtocol[Version]] = {
+        package: gap
+        for package, gap in exc.unavailable_ranges.items()
+        if isinstance(package, str)
+    }
     for package, clause_range in _walk_no_versions_packages(
         exc.incompatibility, include_dependencies=False
     ):

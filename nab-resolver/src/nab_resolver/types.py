@@ -495,3 +495,24 @@ class Incompatibility(Generic[PackageType, VersionType]):
         """Return a debug representation."""
         terms_str = ", ".join(repr(term) for term in self.terms)
         return f"Incompatibility([{terms_str}], {self.cause.name.lower()})"
+
+
+class SelfDependency(Incompatibility[PackageType, VersionType]):
+    """A self-rejection whose dependency was observed at a particular version."""
+
+    __slots__ = ("version",)
+
+    def __init__(
+        self,
+        package: PackageType,
+        version: VersionType,
+        excluded: RangeProtocol[VersionType],
+        required: RangeProtocol[VersionType],
+    ) -> None:
+        """Keep the observed version for explanations of a widened rejection."""
+        super().__init__(
+            [Term(package, excluded, positive=True)],
+            cause=IncompatibilityCause.DEPENDENCY,
+            dependency_range=required,
+        )
+        self.version = version

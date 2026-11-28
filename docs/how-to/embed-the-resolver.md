@@ -179,6 +179,10 @@ That report has already been through the provider's `narrow_for_display` and the
 `format_range`, so re-rendering from `error.incompatibility` means supplying both again. Walk its
 `cause_left` and `cause_right` when you want the proof as a tree rather than as text.
 
+When narrowing a proof adds a line about unavailable versions, `error.unavailable_ranges` records
+the package and range from that line. Applications can use these ranges alongside the availability
+clauses to explain why a release was filtered.
+
 Catch `ResolutionTerminatedError` before `ResolutionError` to handle limits and resolver faults
 separately from conflicts. `ResolutionLimitError` reports an exhausted work budget;
 `ResolutionInvariantError` reports inconsistent provider or solver state, including a

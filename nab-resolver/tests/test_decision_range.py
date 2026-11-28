@@ -6,7 +6,9 @@ from typing import Any
 
 import pytest
 
+from nab_resolver.errors import ResolutionError
 from nab_resolver.ranges import Range
+from nab_resolver.report import format_error
 from nab_resolver.resolver import Resolver
 
 from .solver_fixtures import DictProvider, FlaggedRange
@@ -43,12 +45,11 @@ def test_decision_constructs_one_singleton(
     assert constructions.count(2) == 1
 
 
-def test_rejected_self_dependency_keeps_the_exact_parent(
+def test_self_dependency_rules_out_the_incompatible_part_of_the_span(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider = DictProvider({"foo": {2: {"foo": Range.less_than(2)}, 1: {}}})
-    # Only version 2 has dependencies. Widening must not make its self-conflict
-    # rule out version 1, which is still a valid solution.
+    versions = {v: {"foo": Range.less_than(2)} for v in (1, 2, 3)}
+    provider = DictProvider({"foo": versions})
     monkeypatch.setattr(provider, "widen_decision", lambda *_args: Range.full())
     resolver = Resolver(provider, root_version=0)
     singleton = Range.singleton
@@ -61,6 +62,26 @@ def test_rejected_self_dependency_keeps_the_exact_parent(
     monkeypatch.setattr(Range, "singleton", classmethod(record_singleton))
 
     assert resolver.resolve({"foo": Range.full()}) == {"foo": 1}
-    assert resolver.stats.backjumps > 0
-    assert constructions.count(2) == 1
+    assert resolver.stats.conflicts == 1
+    assert constructions.count(3) == 1
+    assert 2 not in constructions
     assert constructions.count(1) == 1
+
+
+def test_widened_self_dependency_reports_the_observed_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = DictProvider({"foo": {3: {"foo": Range.at_most(1)}}})
+    monkeypatch.setattr(
+        provider, "widen_decision", lambda *_args: Range.greater_than(1)
+    )
+    resolver = Resolver(provider)
+
+    with pytest.raises(ResolutionError) as failure:
+        resolver.resolve({"foo": Range.full()})
+
+    assert "foo 3 depends on foo (-inf, 1]" in str(failure.value)
+    assert "all selectable releases in foo (1, +inf)" in str(failure.value)
+    proof = failure.value.incompatibility
+    assert proof is not None
+    assert "foo 3 depends on foo (-inf, 1]" in format_error(proof)
