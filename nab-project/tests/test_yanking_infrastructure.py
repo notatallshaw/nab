@@ -16,7 +16,7 @@ from nab_project.lockfile import IndexPin, LocalPin, LockValidationError, Target
 from nab_project.resolve import resolve_with_coordinator
 from nab_provider._provider.listing import parse_prefetched_metadata
 from nab_provider._provider.metadata_resolver import fetch_sdist_metadata
-from nab_provider.errors import YankAdmissionRequiredError
+from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
 from nab_provider.policy import DistPolicy, ExtrasMode, MetadataPolicy
 from nab_provider.provider import Provider, ResolutionStrategy
 from nab_provider.records import SdistFile
@@ -38,6 +38,54 @@ def catalogue(releases: list[ReleaseRow]) -> YankCandidates:
         Provider, port, defer_yanked=True, extras_mode=ExtrasMode.BACKTRACK
     )
     return YankCandidates(factory(), factory, preferences={})
+
+
+def test_absent_root_extra_is_repeatable_with_a_constrained_listing() -> None:
+    port = make_release_coordinator(
+        [("app", "1", True, []), ("app", "2", False, []), ("app", "3", False, [])],
+        {("app", "1", True): ("feature",)},
+    )
+    factory = partial(
+        Provider,
+        port,
+        defer_yanked=True,
+        root_extras={("app", "feature")},
+        constraints={"app": Requirement("app>=2").specifier.to_range()},
+    )
+    files = YankCandidates(factory(), factory, preferences={})
+    candidate = Candidate("app[feature]", Version("3"), withdrawn=False)
+
+    for _ in range(2):
+        with pytest.raises(MissingExtraError, match="does not provide extra 'feature'"):
+            files.prepare(candidate)
+
+    assert {file.version for file in files.facts} == {Version("2"), Version("3")}
+    assert not any(file.withdrawn for file in files.facts)
+
+
+@pytest.mark.parametrize("offline", [False, True])
+def test_only_a_final_rejection_can_rule_out_a_requested_extra(
+    *, offline: bool
+) -> None:
+    port = make_release_coordinator([("app", "1", False, []), ("app", "2", False, [])])
+    factory = partial(
+        Provider, port, defer_yanked=True, root_extras={("app", "feature")}
+    )
+    files = YankCandidates(factory(), factory, preferences={})
+    url = "https://example.test/app-1-False.whl.metadata"
+    candidate = Candidate("app[feature]", Version("2"), withdrawn=False)
+    older = Candidate("app", Version("1"), withdrawn=False)
+
+    if offline:
+        port.index.record_offline_metadata_miss("app", "1", url)
+        port.index.store_metadata("app", "1", None, metadata_url=url)
+        assert files.prepare(candidate) is None
+        assert older in files.unavailable
+    else:
+        port.index.store_metadata("app", "1", "invalid metadata", metadata_url=url)
+        with pytest.raises(MissingExtraError, match="does not provide extra 'feature'"):
+            files.prepare(candidate)
+        assert files.facts[older] is None
 
 
 @pytest.mark.parametrize("requirement", ["dep", "dep==2"])
