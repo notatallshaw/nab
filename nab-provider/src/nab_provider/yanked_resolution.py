@@ -25,7 +25,6 @@ from nab_resolver.resolver import (
     DEFAULT_MAX_ITERATIONS,
     BaseProvider,
     Resolver,
-    ResolverStats,
 )
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
@@ -188,7 +187,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
         self._full_version_range = VersionRange.full()
         self._full_integer_range: Range[int] = Range.full()
         self._integer_membership = IntegerRangeMembership()
-        self.stats: ResolverStats[Package] = preference.stats
+        self.stats = preference.stats
 
     def identify(self, candidate: Candidate) -> int:
         """Assign a stable identity without relying on the size of the catalogue."""

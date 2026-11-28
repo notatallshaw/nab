@@ -122,7 +122,7 @@ def _supported_paths(source: Path, module: str) -> dict[str, str]:
     """
     init = source / "__init__.py"
     docstring = ast.get_docstring(ast.parse(init.read_text("utf-8"), str(init))) or ""
-    row = re.compile(rf"^\s+({re.escape(module)}\.\w+)\s+(\S.*)$")
+    row = re.compile(rf"^\s+({re.escape(module)}(?:\.\w+)+)\s+(\S.*)$")
 
     supported: dict[str, str] = {}
     module_path = ""
