@@ -52,6 +52,13 @@ SUPPORTED_API = {
         "ResolverProvider",
         "Solution",
     },
+    "nab_resolver.proofs": {
+        "DependencyCause",
+        "dependency_terms",
+        "external_clauses",
+        "select_dependency_causes",
+    },
+    "nab_resolver.result": {"IncompleteSelectionError", "walk_selected"},
     "nab_resolver.root": {"ROOT"},
     "nab_resolver.types": {
         "Incompatibility",
@@ -64,6 +71,7 @@ SUPPORTED_API = {
 
 # Module exports beyond the supported embedding API.
 EXTRA_EXPORTS = {
+    "nab_resolver.result": {"build_solution_data"},
     "nab_resolver.ranges": {
         "NEGATIVE_INFINITY",
         "POSITIVE_INFINITY",

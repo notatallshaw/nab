@@ -23,7 +23,7 @@ __lazy_modules__ = (
 
 import operator
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import ItemsView, Mapping
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Final, Generic, TypeVar, cast, overload
 from weakref import ref
@@ -97,7 +97,7 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
         Backtracking rewrites most of the map at once, where one copy beats
         recording each package on its way out.
         """
-        frozen = dict(self._live)
+        frozen = self._live.copy()
         for package, value in self._shadow.items():
             if value is _ABSENT:
                 frozen.pop(package, None)
@@ -159,6 +159,20 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
             if shadow.get(package, _UNSET) is not _ABSENT:
                 yield package
 
+    def iter_items(self) -> Iterator[tuple[PackageType, _ValueType]]:
+        """Yield frozen entries in the snapshot's original key order."""
+        shadow = self._shadow
+        for package, live in self._live.items():
+            frozen = shadow.get(package, _UNSET)
+            if frozen is _UNSET:
+                yield package, live
+            elif frozen is not _ABSENT:
+                yield package, self[package]
+
+    @override
+    def items(self) -> ItemsView[PackageType, _ValueType]:
+        return _SnapshotItems(self)
+
     @override
     def __len__(self) -> int:
         return sum(1 for _ in self)
@@ -172,6 +186,20 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
             if shadow.get(package, _UNSET) is not _ABSENT:
                 return True
         return False
+
+
+class _SnapshotItems(ItemsView[PackageType, _ValueType]):
+    """Iterate frozen entries without a second mapping lookup per key."""
+
+    __slots__ = ("snapshot",)
+
+    def __init__(self, snapshot: _Snapshot[PackageType, _ValueType]) -> None:
+        super().__init__(snapshot)
+        self.snapshot = snapshot
+
+    @override
+    def __iter__(self) -> Iterator[tuple[PackageType, _ValueType]]:
+        return self.snapshot.iter_items()
 
 
 def _take_snapshot(

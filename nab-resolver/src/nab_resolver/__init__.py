@@ -10,8 +10,11 @@ between 0.0.x releases. Other module paths are internal.
                             ResolutionStalledError, ResolutionTerminatedError
     nab_resolver.priority   compute_tier
     nab_resolver.ranges     IntegerRangeMembership, Range
+    nab_resolver.proofs     DependencyCause, dependency_terms, external_clauses,
+                            select_dependency_causes
     nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,
                             ResolverObserver, ResolverProvider, Solution
+    nab_resolver.result     IncompleteSelectionError, walk_selected
     nab_resolver.root       ROOT
     nab_resolver.testing    ProviderConformanceError, ProviderScenario, check_provider,
                             check_provider_scenarios

@@ -150,6 +150,13 @@ edge: http -> json
 later abandoned is filtered out. Building it walks the graph back through your provider, so cache
 `get_dependencies` by package and version.
 
+### Candidates discovered during resolution
+
+When reading metadata can reveal another candidate, pass `availability_generation` to `Resolver`.
+The callback returns an integer that increases when the provider discovers new choices. The solver
+retries a missing candidate after other packages make progress. Once all queries are exhausted, the
+provider must be able to rule out that candidate whenever the same decisions and requirements hold.
+
 ## Reading a failure
 
 The requirements below pin `http` to 2 and rule out the only `json` it can use. `ResolutionError`
@@ -235,6 +242,8 @@ releases, so pin the version you tested.
 | `nab_resolver.types`       | `RootRequirement`, `Term`, `Incompatibility`, `IncompatibilityCause`, `RangeProtocol`                                        |
 | `nab_resolver.errors`      | `ResolutionError`, `ResolutionTerminatedError`, `ResolutionLimitError`, `ResolutionInvariantError`, `ResolutionStalledError` |
 | `nab_resolver.diagnostics` | `DiagnosticMessage`, `Suggestion`, `error_message`, `suggestion_lines`                                                       |
+| `nab_resolver.proofs`      | `DependencyCause`, `dependency_terms`, `external_clauses`, `select_dependency_causes`                                        |
+| `nab_resolver.result`      | `IncompleteSelectionError`, `walk_selected`                                                                                  |
 | `nab_resolver.testing`     | `ProviderScenario`, `ProviderConformanceError`, `check_provider`, `check_provider_scenarios`                                 |
 
 ## Checking a provider
