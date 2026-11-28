@@ -1091,6 +1091,7 @@ class Provider:
         ] = defaultdict(list)
 
         # Group inspected releases by the self requirement that excludes them.
+        self._deferred_self_rejections: set[str] = set()
         self.pending_self_blocks: defaultdict[
             tuple[str, VersionRange], list[Version]
         ] = defaultdict(list)
@@ -1966,7 +1967,7 @@ class Provider:
             package, base, extra, normalized, version_range
         )
         if preferred is not None:
-            self._flush_pending_blocks()
+            self._flush_selection_blocks(normalized)
             return preferred
 
         if extra is not None:
@@ -2176,7 +2177,7 @@ class Provider:
         """
         broad_rejections = 0
         if self._look_ahead_ok(normalized, first, check_decisions=True):
-            self._flush_pending_blocks()
+            self._flush_selection_blocks(normalized)
             return first
         self.stats.look_ahead_rejections += 1
         broad_rejections += 1
@@ -2190,7 +2191,7 @@ class Provider:
             first_candidate=first,
         )
         if found is not None:
-            self._flush_pending_blocks()
+            self._flush_selection_blocks(normalized)
             return found
 
         # Every candidate rejected. Flush so the resolver replaces the default
@@ -3034,6 +3035,21 @@ class Provider:
         return _lookahead.look_ahead_ok(
             self, package, version, check_decisions=check_decisions
         )
+
+    def _flush_selection_blocks(self, normalized: str) -> None:
+        """Postpone self-rejection clauses on the first successful scan."""
+        if self.pending_self_blocks and (
+            self._probing_satisfiable
+            or normalized not in self._deferred_self_rejections
+        ):
+            # Cached dependencies reproduce these rejections on a later scan.
+            # Publish them on that visit to bound repeated work during backtracking.
+            # An availability probe discards its clauses and does not count as a visit.
+            if not self._probing_satisfiable:
+                self._deferred_self_rejections.add(normalized)
+            self.pending_self_blocks.clear()
+
+        self._flush_pending_blocks()
 
     def _flush_pending_blocks(self) -> None:
         """See :func:`nab_provider._provider.lookahead.flush_pending_blocks`."""

@@ -7,8 +7,8 @@ positive-range rejection becomes a grouped binary incompatibility
 (``{candidate range, blocker range}``); a candidate blocked by a
 requirement on itself names one package on both sides, so the two terms
 merge into one and the declared range is kept on the clause.
-Version-derived terms can widen onto listing gaps. Self requirements keep
-exact releases when a gap would absorb a filtered release. The blocker
+Version-derived terms can widen onto listing gaps. Self requirements stop
+at inspected releases on either side of a filtered release. The blocker
 term widens further when every rejection in the group recorded a dependency range:
 each fired because the blocker sat outside that range, so every blocker
 version outside their union repeats the same rejections.  Groups queued
@@ -21,7 +21,9 @@ later in the resolve undoes it, so its versions are banned outright.
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "bisect",
     "collections",
+    "itertools",
     "nab_provider._provider.listing",
     "nab_provider._provider.listing_diagnosis",
     "nab_provider.errors",
@@ -30,7 +32,9 @@ __lazy_modules__ = (
     "packaging.utils",
 )
 
+from bisect import bisect_left
 from collections import defaultdict, deque
+from itertools import pairwise
 from typing import TYPE_CHECKING, NamedTuple
 
 from packaging.ranges import VersionRange
@@ -39,7 +43,7 @@ from packaging.utils import canonicalize_name
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 from ..errors import MetadataError
-from .listing import dropped_release_in_range
+from .listing import dropped_versions
 from .listing_diagnosis import MetadataBlock
 
 if TYPE_CHECKING:
@@ -221,6 +225,33 @@ def _union_ranges(parts: Iterable[RangeProtocol[Version]]) -> RangeProtocol[Vers
     return ranges[0]
 
 
+def _self_exclusions(
+    provider: Provider, package: str, versions: list[Version], required: VersionRange
+) -> RangeProtocol[Version]:
+    """Widen rejected releases without claiming a filtered release's metadata."""
+    widened = required.complement() & _candidate_union(provider, package, versions)
+
+    ordered = sorted(versions)
+    cuts: set[int] = set()
+    for dropped in dropped_versions(provider, package):
+        if dropped in widened:
+            if len(ordered) == 1:
+                return VersionRange.singleton(ordered[0])
+
+            cuts.add(bisect_left(ordered, dropped))
+
+    if not cuts:
+        return widened
+
+    # Bound each run by its inspected endpoints. Intersecting keeps releases
+    # rejected for a different requirement out of the space between them.
+    cuts.update((0, len(ordered)))
+    return widened & _union_ranges(
+        VersionRange.from_bounds(ordered[start], ordered[stop - 1])
+        for start, stop in pairwise(sorted(cuts))
+    )
+
+
 def _membership_widened(
     accumulated: DepRangeUnion, rejections: int
 ) -> VersionRange | None:
@@ -351,16 +382,7 @@ def flush_pending_blocks(provider: Provider) -> None:
     # Self-dependency rejections: the candidate is its own blocker, so the
     # two terms merge into one.
     for (candidate_pkg, dep_range), versions in provider.pending_self_blocks.items():
-        # A neighbor gap may include a release filtered before metadata was read.
-        # Keep its listing diagnosis independent of the inspected self requirements.
-        widened = dep_range.complement() & _candidate_union(
-            provider, candidate_pkg, versions
-        )
-        self_exclusions = (
-            _union_ranges(VersionRange.singleton(v) for v in versions)
-            if dropped_release_in_range(provider, candidate_pkg, widened)
-            else widened
-        )
+        self_exclusions = _self_exclusions(provider, candidate_pkg, versions, dep_range)
         merged: Term[str, Version] = Term(candidate_pkg, self_exclusions, positive=True)
         provider.pending_clauses.append(
             Incompatibility(
