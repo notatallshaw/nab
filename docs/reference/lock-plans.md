@@ -49,9 +49,66 @@ build inputs. Project default groups apply to ordinary locks. To change a named 
 edit the plan.
 
 Declare plans in `[tool.nab.plans.NAME]` in `pyproject.toml`, or `[plans.NAME]` in `nab.toml`. The
-default output is `pylock.NAME.toml` or `NAME.requirements.txt` for a requirements format. Set
-`output` to choose a path relative to the project file. Inspect the plans with
-`nab config get plans`.
+plan name and [format](formats.md#--output) determine the default output filename. Set `output` to
+choose a path relative to the project file. Inspect the plans with `nab config get plans`.
+
+A plan can choose its own output format. For example, this plan writes `deploy.requirements.txt`
+alongside the other plan's `pylock.ci.toml`:
+
+```toml
+[tool.nab.plans.deploy]
+format = "requirements"
+```
+
+`--format` and `NAB_FORMAT` override the format for every selected plan.
+
+To install a named selection with PDM, write the plan to PDM's project filename:
+
+```toml
+[tool.nab.plans.pdm-test]
+groups = ["test"]
+format = "pdm"
+output = "pdm.lock"
+```
+
+```console
+nab lock --plan pdm-test
+pdm sync --no-self
+```
+
+To write the same test selection for Poetry, declare a second plan:
+
+```toml
+[tool.nab.plans.poetry-test]
+groups = ["test"]
+format = "poetry"
+output = "poetry.lock"
+```
+
+```console
+nab lock --all-plans
+poetry sync --no-root
+```
+
+For uv, choose the dependencies to install in the plan and sync its frozen lock:
+
+```toml
+[tool.nab.plans.uv-test]
+groups = ["test"]
+format = "uv"
+output = "uv.lock"
+```
+
+```console
+nab lock --plan uv-test
+uv sync --frozen
+```
+
+Plans with the same selections and settings can write different formats from one resolve. Each
+output keeps its own refresh command and saved-lock checks. Different saved version preferences or
+upload cutoffs can require separate resolves. Plans that resolve separately still share index
+listings and package metadata when the index routes and build settings allow it. This sharing lasts
+for one invocation and also works with `--no-cache`.
 
 Use `nab lock --all-plans` to refresh every declared plan and `nab lock --all-plans --locked` to
 check the files. A batch checks the option names and values in every plan’s `settings` table,

@@ -56,7 +56,6 @@ from nab_project._lockfile.pylock import (
     _or_markers,
     _pin_discriminator,
     _pin_to_package,
-    _relativize_path,
 )
 from nab_project.conflicts import (
     ConflictKind,
@@ -97,6 +96,7 @@ from nab_project.lockfile import (
     write_requirements_with_hashes,
     write_requirements_without_hashes,
 )
+from nab_project.paths import relative_lock_path
 from nab_project.resolve import (
     ResolveResult,
     TargetResult,
@@ -5325,7 +5325,7 @@ class TestPathHelpers:
     """Unit coverage for the path-relativisation helper."""
 
     def test_relativize_path_uses_posix_separators(self, tmp_path: Path) -> None:
-        rel = _relativize_path(tmp_path / "a" / "b", tmp_path)
+        rel = relative_lock_path(tmp_path / "a" / "b", tmp_path)
         assert rel == "a/b"
         assert "\\" not in rel
 
@@ -5338,9 +5338,9 @@ class TestPathHelpers:
             msg = "path is on mount 'D:', start on mount 'C:'"
             raise ValueError(msg)
 
-        monkeypatch.setattr("nab_project._lockfile.pylock.os.path.relpath", cross_drive)
+        monkeypatch.setattr("nab_project.paths.os.path.relpath", cross_drive)
         target = tmp_path / "elsewhere"
-        assert _relativize_path(target, tmp_path) == target.as_posix()
+        assert relative_lock_path(target, tmp_path) == target.as_posix()
 
 
 @pytest.mark.parametrize(

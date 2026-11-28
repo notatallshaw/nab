@@ -173,16 +173,19 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 
     from nab_project.inputs import ResolveInputs
-    from nab_project.lock_preferences import LockPreferences
+    from nab_project.lock_preferences import SavedPreferences
     from nab_project.prepared_input import PreparedProjectInput
     from nab_provider.target import ResolveTarget
 
     from ._run import RunSettings
     from .config.ladder import EffectiveValue, Layer
     from .config.lock_plans import LockPlan
+    from .lock_inputs import LockPlanBatch, PlanOutputs
 
 
 _DEFAULT_PROJECT_PATH = Path("pyproject.toml")
+_NATIVE_FORMATS = frozenset(("pdm", "poetry", "uv"))
+_PROJECT_LOCK_FORMATS = _NATIVE_FORMATS | {"pylock"}
 
 TUPLE_TEMPLATE_VARS = ("{python_version}", "{platform_id}", "{selection}")
 
@@ -370,33 +373,58 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         printer().error("--all-plans needs declared plans and cannot use --output")
         raise SystemExit(1)
 
-    plans: tuple[LockPlan | None, ...] = (None,)
-    if all_plans or selected_plan is not None:
-        from .config.lock_plans import read_lock_plans  # noqa: PLC0415
-
-        try:
-            plans = read_lock_plans(
-                path,
-                ladder["plans"].value,
-                ladder["input-sources"].value,
-                settings.format,
-                selected=None if all_plans else selected_plan,
-            )
-        except (OSError, ValueError, TypeError) as exc:
-            printer().error(exc, prefix="input error: ")
-            raise SystemExit(1) from None
-
+    plans = _selected_plans(path, ladder, selected_plan, all_plans=all_plans)
     actions = _LockActions(python, upgrade, locked, reproduce, upgrade_package)
-    for declaration in plans:
-        _lock_one(
+    with contextlib.ExitStack() as stack:
+        batch = None
+        if len(plans) > 1:
+            from .lock_inputs import LockPlanBatch  # noqa: PLC0415 - batch locks only
+
+            batch = LockPlanBatch(
+                plans,
+                ladder["format"],
+                stack,
+                lambda: _make_resolve_transport(settings.http_backend),
+                ProgressReporter(printer()),
+            )
+
+        for declaration in plans or (None,):
+            _lock_one(
+                path,
+                overrides,
+                actions,
+                output=output,
+                input_format=input_format,
+                plan=declaration,
+                initial_ladder=ladder,
+                batch=batch,
+            )
+
+
+def _selected_plans(
+    path: Path,
+    ladder: dict[str, EffectiveValue],
+    selected: str | None,
+    *,
+    all_plans: bool,
+) -> tuple[LockPlan, ...]:
+    """Validate the requested declarations before starting a batch."""
+    if not all_plans and selected is None:
+        return ()
+
+    from .config.lock_plans import read_lock_plans  # noqa: PLC0415 - named plans only
+
+    try:
+        return read_lock_plans(
             path,
-            overrides,
-            actions,
-            output=output,
-            input_format=input_format,
-            plan=declaration,
-            initial_ladder=ladder,
+            ladder["plans"].value,
+            ladder["input-sources"].value,
+            ladder["format"],
+            selected=None if all_plans else selected,
         )
+    except (OSError, ValueError, TypeError) as exc:
+        printer().error(exc, prefix="input error: ")
+        raise SystemExit(1) from None
 
 
 def _checked_ladder(ladder: ConfigLadder) -> dict[str, EffectiveValue]:
@@ -439,6 +467,7 @@ def _prepare_lock_configuration(
     output: Path | None,
     plan: LockPlan | None,
     ladder: dict[str, EffectiveValue],
+    peers: PlanOutputs | None = None,
 ) -> _LockConfiguration:
     """Prepare configured sources before entering the ordinary resolution phases."""
     if plan is None:
@@ -466,23 +495,30 @@ def _prepare_lock_configuration(
             "edit the plan or lock without --plan"
         )
         raise ValueError(msg)
-    settings = _layered_run_settings(ladder)
-    reader = DependencySourceReader(
-        path.parent,
-        _resolve_effective_cache_dir(settings.cache_dir, cache=settings.cache),
-        lambda url: _download_input(url, settings.http_backend),
-        offline=settings.offline,
-    )
-    document = read_input_document(path)
-    prepared = prepare_lock_input(
-        path,
-        document,
-        plan,
-        sources=ladder["input-sources"].value,
-        reader=reader,
-        workspace_discovery=settings.workspace_discovery,
-        project_overrides=project_config_overrides(overrides),
-    )
+    if peers is not None and peers.prepared is not None:
+        original = peers.prepared
+        prepared = original.with_identity({**original.identity, "plan": plan.name})
+    else:
+        settings = _layered_run_settings(ladder)
+        reader = DependencySourceReader(
+            path.parent,
+            _resolve_effective_cache_dir(settings.cache_dir, cache=settings.cache),
+            lambda url: _download_input(url, settings.http_backend),
+            offline=settings.offline,
+        )
+        document = read_input_document(path)
+        prepared = prepare_lock_input(
+            path,
+            document,
+            plan,
+            sources=ladder["input-sources"].value,
+            reader=reader,
+            workspace_discovery=settings.workspace_discovery,
+            project_overrides=project_config_overrides(overrides),
+        )
+        if peers is not None:
+            peers.prepared = prepared
+
     layer = plan.settings_layer(path)
     effective = {
         **overrides,
@@ -496,7 +532,10 @@ def _prepare_lock_configuration(
         read_config_ladder(path, effective, project_input=prepared, plan_settings=layer)
     )
     return _LockConfiguration(
-        ladder, prepared, plan, output or path.parent / plan.output
+        ladder,
+        prepared,
+        plan,
+        output or path.parent / plan.output_name(ladder["format"]),
     )
 
 
@@ -509,10 +548,16 @@ def _lock_one(
     input_format: InputFormat,
     plan: LockPlan | None,
     initial_ladder: dict[str, EffectiveValue],
+    batch: LockPlanBatch | None = None,
 ) -> None:
     """Run one effective project selection using the normal resolver and writer."""
     _project_cli_overrides_or_exit(project_config_overrides(overrides))
 
+    peers = (
+        batch.outputs.pop(plan.name, None)
+        if batch is not None and plan is not None
+        else None
+    )
     try:
         source = _prepare_lock_configuration(
             path,
@@ -520,6 +565,7 @@ def _lock_one(
             output=output,
             plan=plan,
             ladder=initial_ladder,
+            peers=peers,
         )
     except (
         OSError,
@@ -557,6 +603,7 @@ def _lock_one(
         output_format=settings.format,
         build_requirements=settings.build_requirements,
         upgrade=actions.upgrade,
+        now=batch.now if batch is not None else None,
     )
 
     config = _load_config(
@@ -574,10 +621,6 @@ def _lock_one(
         inputs = inputs_for_build_requirements(inputs)
 
     _check_targets_or_exit(config)
-    effective_cache_dir = _resolve_effective_cache_dir(
-        settings.cache_dir, cache=settings.cache
-    )
-
     selected_groups = resolve_group_selection(
         path,
         groups=settings.groups,
@@ -609,7 +652,7 @@ def _lock_one(
         offline=settings.offline,
         build_requirements=settings.build_requirements,
         workspace_discovery=settings.workspace_discovery,
-        no_emit_workspace=settings.no_emit_workspace,
+        excluded_workspace=workspace_to_drop,
         cli_overrides=overrides,
         upgrade=actions.upgrade,
         input_format=input_format,
@@ -617,6 +660,7 @@ def _lock_one(
         project_input=project_input,
         plan_name=plan.name if plan is not None else None,
         upgrade_packages=actions.upgrade_packages,
+        native_format=settings.format if settings.format in _NATIVE_FORMATS else None,
     )
 
     provenance = _build_provenance(
@@ -634,14 +678,15 @@ def _lock_one(
         _check_saved(run, config=config, inputs=inputs, exclude=workspace_to_drop)
         return
 
-    if actions.reproduce:
+    if actions.reproduce and run.native_format is None:
         _fast_fail_reproduction(
             run, config=config, inputs=inputs, workspace_to_drop=workspace_to_drop
         )
 
     validation = (
         _lock_snapshot(run, config, inputs, workspace_to_drop)
-        if settings.format == "pylock" and not actions.reproduce
+        if peers is not None
+        or (settings.format in _PROJECT_LOCK_FORMATS and not actions.reproduce)
         else None
     )
 
@@ -654,37 +699,21 @@ def _lock_one(
     del validation
 
     previous_lock = _existing_lock_preferences(run)
-    transport = _make_resolve_transport(settings.http_backend)
-    result = _resolve(
-        path,
-        config=config,
-        cache_dir=effective_cache_dir,
-        offline=settings.offline,
-        transport=transport,
-        http_backend=settings.http_backend,
-        failure_prefix="cannot lock",
-        groups=selected_groups,
-        extras=selected_extras,
-        build_requirements=settings.build_requirements,
-        input_format=input_format,
-        project_input=project_input,
-        resolution_strategy=settings.resolution,
-        lock_preferences=previous_lock,
-        reconcile_build_variants=settings.format == "pylock",
-        progress=ProgressReporter(printer()),
-        max_concurrency=settings.max_concurrency,
+    lock_input = _resolved_lock_input(
+        run,
+        config,
+        settings,
+        inputs,
+        previous_lock=previous_lock,
+        batch=batch,
+        peers=peers,
+        validation=validation_inputs,
     )
 
-    lock_input = drop_workspace_pins(
-        build_lock_input(
-            result,
-            inputs=inputs,
-            extras=selected_extras,
-            dependency_groups=selected_groups,
-        ),
-        workspace_to_drop,
-    )
-    lock_input.provenance = provenance
+    # uv follows dependency edges, so its writer needs the omitted members' edges.
+    if settings.format != "uv":
+        lock_input = drop_workspace_pins(lock_input, workspace_to_drop)
+    lock_input = replace(lock_input, provenance=provenance)
     _attach_validation_inputs(
         lock_input,
         validation_inputs,
@@ -694,20 +723,104 @@ def _lock_one(
         exclude=workspace_to_drop,
     )
 
-    if actions.reproduce:
-        _check_reproduction(lock_input, run=run)
-        return
-
     _emit_or_exit(
-        lambda: _emit(
+        lambda: _finish_lock(
             lock_input,
+            run,
             output_format=settings.format,
-            output=output,
-            script=path if input_format is InputFormat.SCRIPT else None,
-            build_requirements=settings.build_requirements,
             previous_lock=previous_lock,
+            reproduce=actions.reproduce,
         )
     )
+
+
+def _resolved_lock_input(
+    run: _LockRun,
+    config: NabProjectConfig,
+    settings: RunSettings,
+    inputs: ResolveInputs,
+    *,
+    previous_lock: SavedPreferences | None,
+    batch: LockPlanBatch | None,
+    peers: PlanOutputs | None,
+    validation: Mapping[str, Any] | None,
+) -> LockInput:
+    """Resolve the prepared selection once for all compatible output writers."""
+    reconcile = settings.format in _PROJECT_LOCK_FORMATS
+
+    def solve() -> LockInput:
+        transport = (
+            batch.fetch
+            if batch is not None
+            else _make_resolve_transport(settings.http_backend)
+        )
+        result = _resolve(
+            run.path,
+            config=config,
+            cache_dir=_resolve_effective_cache_dir(
+                settings.cache_dir, cache=settings.cache
+            ),
+            offline=settings.offline,
+            transport=transport,
+            http_backend=settings.http_backend,
+            failure_prefix="cannot lock",
+            groups=run.groups,
+            extras=run.extras,
+            build_requirements=settings.build_requirements,
+            input_format=run.input_format,
+            project_input=run.project_input,
+            resolution_strategy=settings.resolution,
+            lock_preferences=previous_lock,
+            reconcile_build_variants=reconcile,
+            include_dependency_requirements=settings.format == "uv"
+            or (peers is not None and peers.needs_edges),
+            progress=batch.progress
+            if batch is not None
+            else ProgressReporter(printer()),
+            max_concurrency=settings.max_concurrency,
+        )
+
+        return build_lock_input(
+            result,
+            inputs=inputs,
+            extras=run.extras,
+            dependency_groups=run.groups,
+        )
+
+    if peers is not None and validation is not None and previous_lock is None:
+        return peers.resolve(inputs, validation, solve, reconcile=reconcile)
+
+    return solve()
+
+
+def _finish_lock(
+    lock_input: LockInput,
+    run: _LockRun,
+    *,
+    output_format: str,
+    previous_lock: SavedPreferences | None,
+    reproduce: bool,
+) -> None:
+    """Compare or write the resolved output using this plan's file and declarations."""
+    if run.native_format is not None:
+        _emit_project_lock(
+            lock_input,
+            run,
+            run.native_format,
+            previous_lock=previous_lock,
+            reproduce=reproduce,
+        )
+    elif reproduce:
+        _check_reproduction(lock_input, run=run)
+    else:
+        _emit(
+            lock_input,
+            output_format=output_format,
+            output=run.output,
+            script=run.path if run.input_format is InputFormat.SCRIPT else None,
+            build_requirements=run.build_requirements,
+            previous_lock=previous_lock,
+        )
 
 
 def _download_input(url: str, backend: str) -> bytes:
@@ -751,6 +864,15 @@ def _lock_output(
     ):
         output = _script_pylock_path(path)
 
+    if output is None and settings.format in _NATIVE_FORMATS:
+        if input_format is InputFormat.SCRIPT:
+            suffix = ".lock" if settings.format == "uv" else f".{settings.format}.lock"
+            output = path.with_name(path.name + suffix)
+        else:
+            output = _default_output_path(
+                settings.format, build_requirements=settings.build_requirements
+            )
+
     _validate_pylock_output_name(output=output, output_format=settings.format)
     _validate_lock_mode(
         output=output,
@@ -785,7 +907,7 @@ def _emit(
     output: Path | None,
     script: Path | None = None,
     build_requirements: bool = False,
-    previous_lock: LockPreferences | None = None,
+    previous_lock: SavedPreferences | None = None,
 ) -> None:
     """Write the resolved lock in the requested format."""
     default_output = _default_output_path(
@@ -824,12 +946,18 @@ def _packages_only(text: str) -> dict[str, Any]:
 
 _DEFAULT_OUTPUT: dict[str, str] = {
     "pylock": "pylock.toml",
+    "pdm": "pdm.lock",
+    "poetry": "poetry.lock",
+    "uv": "uv.lock",
     "requirements": "requirements.txt",
     "requirements-without-hashes": "requirements.txt",
 }
 
 _BUILD_DEFAULT_OUTPUT: dict[str, str] = {
     "pylock": "pylock.build.toml",
+    "pdm": "build.pdm.lock",
+    "poetry": "build.poetry.lock",
+    "uv": "build.uv.lock",
     "requirements": "build-requirements.txt",
     "requirements-without-hashes": "build-requirements.txt",
 }
@@ -913,7 +1041,7 @@ class _LockRun(Record):
         "offline",
         "build_requirements",
         "workspace_discovery",
-        "no_emit_workspace",
+        "excluded_workspace",
         "cli_overrides",
         "upgrade",
         "input_format",
@@ -921,6 +1049,7 @@ class _LockRun(Record):
         "project_input",
         "plan_name",
         "upgrade_packages",
+        "native_format",
     )
 
     path: Path
@@ -932,7 +1061,7 @@ class _LockRun(Record):
     offline: bool | None
     build_requirements: bool
     workspace_discovery: bool
-    no_emit_workspace: bool
+    excluded_workspace: frozenset[str]
     cli_overrides: Mapping[str, object]
     upgrade: bool
     input_format: InputFormat
@@ -940,6 +1069,7 @@ class _LockRun(Record):
     project_input: PreparedProjectInput | None
     plan_name: str | None
     upgrade_packages: tuple[str, ...]
+    native_format: str | None
 
     def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
@@ -953,7 +1083,7 @@ class _LockRun(Record):
         offline: bool | None,
         build_requirements: bool,
         workspace_discovery: bool,
-        no_emit_workspace: bool,
+        excluded_workspace: frozenset[str],
         cli_overrides: Mapping[str, object],
         upgrade: bool,
         lock_policy: LockPolicy,
@@ -961,6 +1091,7 @@ class _LockRun(Record):
         project_input: PreparedProjectInput | None = None,
         plan_name: str | None = None,
         upgrade_packages: tuple[str, ...] = (),
+        native_format: str | None = None,
     ) -> None:
         self.path = path
         self.output = output
@@ -971,7 +1102,7 @@ class _LockRun(Record):
         self.offline = offline
         self.build_requirements = build_requirements
         self.workspace_discovery = workspace_discovery
-        self.no_emit_workspace = no_emit_workspace
+        self.excluded_workspace = excluded_workspace
         self.cli_overrides = cli_overrides
         self.upgrade = upgrade
         self.input_format = input_format
@@ -979,6 +1110,7 @@ class _LockRun(Record):
         self.project_input = project_input
         self.plan_name = plan_name
         self.upgrade_packages = upgrade_packages
+        self.native_format = native_format
 
     def refresh_command(self) -> str:
         """Render this run without ``--locked``, ready to paste into a shell."""
@@ -1043,17 +1175,22 @@ def _validate_lock_mode(
         sys.exit(1)
 
     if lock_policy is not LockPolicy.RESOLVE and (
-        output_format != "pylock" or _is_stdout(output)
+        output_format not in _PROJECT_LOCK_FORMATS or _is_stdout(output)
     ):
-        printer().error("nondefault --lock-policy requires pylock output to a file.")
+        printer().error("nondefault --lock-policy requires a project lockfile on disk.")
         sys.exit(1)
 
     if lock_policy is LockPolicy.REUSE and reproduce:
         printer().error("--lock-policy reuse cannot be combined with --reproduce.")
         sys.exit(1)
 
-    if (locked or reproduce) and (output_format != "pylock" or _is_stdout(output)):
-        printer().error("lock checks are only supported for pylock output to a file.")
+    if (locked or reproduce) and (
+        output_format not in _PROJECT_LOCK_FORMATS or _is_stdout(output)
+    ):
+        printer().error(
+            "lock checks are only supported for pylock, uv, Poetry or PDM "
+            "output to a file."
+        )
         sys.exit(1)
 
 
@@ -1090,6 +1227,7 @@ def _reuse_consistent_lock(
         build_requirements=run.build_requirements,
         input_format=run.input_format,
         project_input=run.project_input,
+        native_format=run.native_format,
     ):
         return False
 
@@ -1097,11 +1235,16 @@ def _reuse_consistent_lock(
     return True
 
 
-def _existing_lock_preferences(run: _LockRun) -> LockPreferences | None:
+def _existing_lock_preferences(run: _LockRun) -> SavedPreferences | None:
     """Read an explicitly requested prior model under highest resolution."""
     if run.lock_policy is LockPolicy.RESOLVE:
         return None
-    return read_lock_preferences(_check_target_path(run), exclude=run.upgrade_packages)
+
+    return read_lock_preferences(
+        _check_target_path(run),
+        exclude=run.upgrade_packages,
+        native_format=run.native_format,
+    )
 
 
 def _check_target_path(run: _LockRun) -> Path:
@@ -1144,6 +1287,7 @@ def _check_saved(
             build_requirements=run.build_requirements,
             input_format=run.input_format,
             project_input=run.project_input,
+            native_format=run.native_format,
         )
     except (
         OSError,
@@ -1444,12 +1588,71 @@ def _check_reproduction(lock_input: LockInput, *, run: _LockRun) -> None:
     sys.exit(1)
 
 
+def _emit_project_lock(
+    lock_input: LockInput,
+    run: _LockRun,
+    output_format: str,
+    *,
+    previous_lock: SavedPreferences | None,
+    reproduce: bool,
+) -> None:
+    """Write the native file against the consuming project declarations."""
+    from nab_project.native_lock import (  # noqa: PLC0415 - native output only
+        write_pdm_lock,
+        write_poetry_lock,
+        write_uv_lock,
+    )
+
+    path = run.path
+    target = _check_target_path(run)
+    destination = None if _is_stdout(target) else target
+    if destination is not None and previous_lock is None and not reproduce:
+        previous_lock = read_lock_preferences(destination, native_format=output_format)
+    if output_format == "uv":
+        document = read_input_document(
+            path, input_format=run.input_format, project_input=run.project_input
+        )
+        text = _render_or_exit(
+            lambda: write_uv_lock(
+                lock_input,
+                document,
+                project_dir=path.parent,
+                output_path=destination,
+                reproduce=reproduce,
+                script=run.input_format is InputFormat.SCRIPT,
+                excluded_workspace=run.excluded_workspace,
+                build_requirements=run.build_requirements,
+            )
+        )
+    else:
+        # Poetry and PDM check their content hash against the on-disk project.
+        document = read_input_document(path, input_format=run.input_format)
+        write = write_pdm_lock if output_format == "pdm" else write_poetry_lock
+        text = _render_or_exit(
+            lambda: write(
+                lock_input,
+                document,
+                project_dir=path.parent,
+                output_path=destination,
+                reproduce=reproduce,
+            )
+        )
+    if reproduce:
+        printer().done(f"Lockfile {destination} is up to date.")
+    elif destination is None:
+        _print_lock(text)
+    else:
+        prior = previous_lock.summary_versions() if previous_lock is not None else None
+        summary = summarize_lock(lock_input, prior, exclude=run.excluded_workspace)
+        printer().done(f"Wrote {destination} ({summary})")
+
+
 def _emit_pylock(
     lock_input: LockInput,
     *,
     output: Path | None,
     default_output: Path,
-    previous_lock: LockPreferences | None = None,
+    previous_lock: SavedPreferences | None = None,
 ) -> None:
     """Write the PEP 751 lock to a file, or print it."""
     if _is_stdout(output):
@@ -1899,7 +2102,7 @@ def _reused_lock_anchor(
     absolute = lock_anchor(ladder)
     if absolute is not None:
         return absolute, None
-    if _is_stdout(output) or output_format != "pylock":
+    if _is_stdout(output) or output_format not in _PROJECT_LOCK_FORMATS:
         return None, None
     target = _default_output_path(output_format, build_requirements=build_requirements)
     return None, read_lockfile_anchor(output if output is not None else target)
@@ -1912,6 +2115,7 @@ def _determine_lock_anchor(
     output_format: str,
     build_requirements: bool = False,
     upgrade: bool,
+    now: datetime | None = None,
 ) -> datetime:
     """Pick the ``P<n>D`` anchor for ``nab lock``.
 
@@ -1929,7 +2133,7 @@ def _determine_lock_anchor(
         build_requirements=build_requirements,
     )
     if upgrade:
-        fresh = datetime.now(timezone.utc)
+        fresh = now if now is not None else datetime.now(timezone.utc)
         if prior is not None:
             printer().note(
                 "--upgrade re-anchored the resolve window to"
@@ -1938,7 +2142,10 @@ def _determine_lock_anchor(
             )
         return fresh
     reused = absolute if absolute is not None else prior
-    return reused if reused is not None else datetime.now(timezone.utc)
+    if reused is not None:
+        return reused
+
+    return now if now is not None else datetime.now(timezone.utc)
 
 
 def _validate_pylock_output_name(

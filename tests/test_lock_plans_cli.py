@@ -8,12 +8,13 @@ import io
 import tarfile
 from contextlib import nullcontext
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from packaging.pylock import Pylock
 
 from nab.cli import run
-from nab_project import toml_io, toml_writer
+from nab_project import resolve, toml_io, toml_writer
 from nab_provider.testing import FakeFetchPort
 
 from .lock_registry import Registry
@@ -806,3 +807,198 @@ def test_unknown_input_leaves_existing_lock_in_place(named: Registry) -> None:
         file.write('[tool.nab.plans.dev.inputs.missing]\ngroups=["test"]\n')
     assert command(named, "--plan", "dev") == 1
     assert path.read_bytes() == saved
+
+
+def test_batch_uses_each_plans_format(
+    named: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with named.project.open("a") as stream:
+        stream.write('format="requirements-without-hashes"\n')
+
+    build = named.project.with_name("build.requirements.txt")
+    assert command(named, "--all-plans") == 0
+    assert build.read_text().splitlines() == ["b==1"]
+    assert toml_io.load_path(named.project.with_name("pylock.dev.toml"))["packages"]
+
+    monkeypatch.setenv("NAB_FORMAT", "requirements")
+    assert command(named, "--all-plans") == 0
+    assert "--hash=" in build.read_text()
+
+    assert command(named, "--all-plans", "--format", "pylock") == 0
+    assert toml_io.load_path(named.project.with_name("pylock.build.toml"))["packages"]
+
+
+def test_declared_format_collision_is_checked_before_resolution(
+    named: Registry,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    named.project.write_text(
+        '[tool.nab.plans.dev]\nformat="requirements"\n'
+        '[tool.nab.plans.build]\noutput="dev.requirements.txt"\n'
+    )
+
+    assert command(named, "--all-plans") == 1
+    assert not named.coordinators
+    assert "both write" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("format_name", ["pdm", "poetry", "uv"])
+def test_project_lock_plan_default_name_and_stdout(
+    named: Registry, capsys: pytest.CaptureFixture[str], format_name: str
+) -> None:
+    with named.project.open("a") as file:
+        file.write(f'format="{format_name}"\n')
+
+    assert command(named, "--plan", "build") == 0
+    output = named.project.with_name(f"build.{format_name}.lock")
+    document = toml_io.load_path(output)
+    assert {p["name"] for p in document["package"]} == (
+        {"app", "b"} if format_name == "uv" else {"b"}
+    )
+    capsys.readouterr()
+
+    assert command(named, "--plan", "build", "--output", "-") == 0
+    stdout = toml_io.loads(capsys.readouterr().out)
+    # Each invocation records its own command line and timestamp.
+    assert (
+        stdout.pop("tool")["nab"]["solution"] == document.pop("tool")["nab"]["solution"]
+    )
+    assert stdout == document
+
+
+@pytest.mark.parametrize("format_name", ["pdm", "poetry", "uv"])
+def test_native_saved_plan_checks_reuse_and_upgrades(
+    named: Registry, format_name: str
+) -> None:
+    with named.project.open("a") as stream:
+        stream.write(f'format="{format_name}"\n')
+    args = ("--plan", "build")
+    output = named.project.with_name(f"build.{format_name}.lock")
+    assert command(named, *args) == 0
+    saved = output.read_bytes()
+    fetches = len(named.coordinators)
+
+    # A consistency check and a reuse hit do not open a resolver transport.
+    assert command(named, *args, "--locked") == 0
+    assert command(named, *args, "--lock-policy", "reuse") == 0
+    assert len(named.coordinators) == fetches
+    assert command(named, *args, "--reproduce") == 0
+    assert output.read_bytes() == saved
+
+    named.add_release()
+    assert command(named, *args, "--reproduce") == 1
+    assert output.read_bytes() == saved
+
+    assert command(named, *args, "--lock-policy", "prefer-existing") == 0
+
+    def pin() -> str:
+        return next(
+            row["version"]
+            for row in toml_io.load_path(output)["package"]
+            if row["name"] == "b"
+        )
+
+    assert pin() == "1"
+    assert command(named, *args, "--upgrade-package", "b") == 0
+    assert pin() == "2"
+    assert command(named, *args, "--locked") == 0
+
+    output.write_text(output.read_text().replace('version = "2"', 'version = "3"', 1))
+    assert command(named, *args, "--locked") == 1
+
+
+@pytest.mark.parametrize("format_name", ["uv", "poetry", "pdm"])
+def test_native_default_project_path_checks_the_same_lock(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch, format_name: str
+) -> None:
+    monkeypatch.chdir(registry.project.parent)
+    args = ("--format", format_name)
+    assert command(registry, *args) == 0
+    path = registry.project.with_name(f"{format_name}.lock")
+    previous = path.read_bytes()
+    assert command(registry, *args, "--locked") == 0
+    assert command(registry, *args, "--reproduce") == 0
+    assert path.read_bytes() == previous
+
+
+@pytest.mark.parametrize("first", ["uv", "pylock"])
+def test_two_formats_share_one_resolve_and_keep_separate_provenance(
+    named: Registry, first: str
+) -> None:
+    formats = (first, "uv" if first == "pylock" else "pylock")
+    document = toml_io.load_path(named.project)
+    plans = {name: {"format": name, "groups": ["test"]} for name in formats}
+    # Separate equivalent plans with a different selection to exercise batch lifetime.
+    document["tool"]["nab"]["plans"] = {
+        first: plans[first],
+        "other": {"groups": ["release"]},
+        formats[1]: plans[formats[1]],
+    }
+    named.project.write_text(toml_writer.dumps(document))
+
+    with patch.object(
+        resolve, "resolve_with_coordinator", wraps=resolve.resolve_with_coordinator
+    ) as solves:
+        assert command(named, "--all-plans", "--no-cache") == 0
+
+    assert solves.call_count == 2
+    assert len(named.coordinators) == 1
+    uv = toml_io.load_path(named.project.with_name("uv.uv.lock"))
+    pylock = toml_io.load_path(named.project.with_name("pylock.pylock.toml"))
+    (a,) = [row for row in uv["package"] if row["name"] == "a"]
+    assert a["dependencies"] == [{"name": "b"}]
+    assert {row["name"] for row in pylock["packages"]} == {"a", "b"}
+    for name, output in (("uv", uv), ("pylock", pylock)):
+        arguments = output["tool"]["nab"]["command-line"]
+        assert arguments[arguments.index("--plan") + 1] == name
+        assert command(named, "--plan", name, "--locked") == 0
+        assert command(named, "--plan", name, "--reproduce") == 0
+
+
+def test_batch_respects_each_outputs_saved_preferences(named: Registry) -> None:
+    document = toml_io.load_path(named.project)
+    document["tool"]["nab"]["plans"] = {
+        name: {"groups": ["release"], "format": fmt}
+        for name, fmt in (("first", "pylock"), ("second", "uv"))
+    }
+    named.project.write_text(toml_writer.dumps(document))
+    assert command(named, "--plan", "first") == 0
+    named.add_release()
+    assert command(named, "--plan", "second") == 0
+
+    assert command(named, "--all-plans", "--lock-policy", "prefer-existing") == 0
+
+    first = toml_io.load_path(named.project.with_name("pylock.first.toml"))
+    second = toml_io.load_path(named.project.with_name("second.uv.lock"))
+    assert first["packages"][0]["version"] == "1"
+    assert (
+        next(row["version"] for row in second["package"] if row["name"] == "b") == "2"
+    )
+
+
+def test_same_selection_respects_each_outputs_upload_cutoff(named: Registry) -> None:
+    document = toml_io.load_path(named.project)
+    document["tool"]["nab"]["uploaded-prior-to"] = "P7D"
+    document["tool"]["nab"]["plans"] = {
+        name: {"groups": ["release"], "format": fmt}
+        for name, fmt in (("first", "pylock"), ("second", "uv"))
+    }
+    named.project.write_text(toml_writer.dumps(document))
+    named.upload_time = "2020-01-01T00:00:00Z"
+    named.add_release()
+    named.upload_times["b", "2"] = "2022-01-01T00:00:00Z"
+    assert command(named, "--all-plans") == 0
+
+    # Re-lock each file with its own original seven-day window.
+    first = named.project.with_name("pylock.first.toml")
+    second = named.project.with_name("second.uv.lock")
+    for path, year in ((first, 2021), (second, 2023)):
+        saved = toml_io.load_path(path)
+        anchor = saved["tool"]["nab"]["created-at"]
+        saved["tool"]["nab"]["created-at"] = anchor.replace(year=year, month=6, day=1)
+        path.write_text(toml_writer.dumps(saved))
+
+    assert command(named, "--all-plans") == 0
+    assert toml_io.load_path(first)["packages"][0]["version"] == "1"
+    packages = toml_io.load_path(second)["package"]
+    assert next(row["version"] for row in packages if row["name"] == "b") == "2"

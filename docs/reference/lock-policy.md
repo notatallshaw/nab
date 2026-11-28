@@ -38,9 +38,10 @@ resolve.
 
 ## Related options
 
-Both `prefer-existing` and `reuse` require `resolution = "highest"` and pylock output to a file. To
-check the lockfile in CI, run [`nab lock --locked`](reproducibility.md#checking-the-lock-in-ci) with
-the default `resolve` policy. You can use `--reproduce` with `resolve` or `prefer-existing`.
+Both `prefer-existing` and `reuse` require `resolution = "highest"` and a saved pylock, uv, Poetry
+or PDM file. To check the lockfile in CI, run
+[`nab lock --locked`](reproducibility.md#checking-the-lock-in-ci) with the default `resolve` policy.
+You can use `--reproduce` with `resolve` or `prefer-existing`.
 
 Use [`--upgrade-package NAME`](cli.md#--upgrade-package-name) to update one package while keeping
 other locked versions where possible. With `reuse`, `--upgrade` switches to `prefer-existing` for

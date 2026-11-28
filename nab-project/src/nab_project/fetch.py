@@ -103,6 +103,7 @@ __all__ = [
     "InMemoryIndex",
     "IndexRoute",
     "WarmSyncStats",
+    "builds_remote_sdists",
     "index_cache_floors",
     "index_routes",
 ]
@@ -214,7 +215,7 @@ def index_cache_floors(inputs: ResolveInputs) -> dict[str, int]:
     }
 
 
-def _builds_remote_sdists(inputs: ResolveInputs | None) -> bool:
+def builds_remote_sdists(inputs: ResolveInputs | None) -> bool:
     """Whether ``inputs`` names ``build-remote`` anywhere.
 
     Coarser than :meth:`~nab_provider.provider.Provider.effective_build_policy`,
@@ -460,7 +461,7 @@ class FetchCoordinator:
         self._parsed_cache_stats = ParsedCacheStats()
 
         # Only remote builds need retained source archives.
-        self._holds_sdist_archives = _builds_remote_sdists(build_config)
+        self._holds_sdist_archives = builds_remote_sdists(build_config)
         self._sdist_archive_hold: SdistArchiveHold | None = None
 
         self._warm_sync_stats = WarmSyncStats()

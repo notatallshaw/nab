@@ -220,3 +220,21 @@ def test_complete_requirements_refuse_declared_alternatives(tmp_path: Path) -> N
             dependencies=True,
             build_requirements=False,
         )
+
+
+def test_second_identity_keeps_the_same_checked_files(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text('[project]\nname = "app"\n')
+    local = tmp_path / "requirements.txt"
+    local.write_text("foo")
+    document = toml_io.load_path(path)
+    first = PreparedProjectInput(
+        path, document, document, identity={"plan": "a"}, local_inputs={local: "foo"}
+    )
+    second = first.with_identity({"plan": "b"})
+
+    assert second.read(path) == first.read(path)
+    assert second.identity != first.identity
+    local.write_text("bar")
+    with pytest.raises(InputChangedError):
+        second.read(path)

@@ -869,7 +869,12 @@ def format_package_count(count: int) -> str:
     return "1 package" if count == 1 else f"{count} packages"
 
 
-def summarize_lock(lock_input: LockInput, prior: Mapping[str, Version] | None) -> str:
+def summarize_lock(
+    lock_input: LockInput,
+    prior: Mapping[str, Version] | None,
+    *,
+    exclude: frozenset[str] = frozenset(),
+) -> str:
     """Summarise what was written: a package diff, or the tuple count.
 
     A matrix pins a package once per tuple, and two tuples may disagree, so
@@ -884,6 +889,7 @@ def summarize_lock(lock_input: LockInput, prior: Mapping[str, Version] | None) -
         name: pin
         for lock in lock_input.targets.values()
         for name, pin in lock.pins.items()
+        if name not in exclude
     }
 
     # Index and archive pins record a version; local and VCS pins emit

@@ -8,7 +8,9 @@ CacheAction = Literal["dir", "verify", "clear"]
 ConfigAction = Literal["list", "get", "explain"]
 HttpBackend = Literal["urllib3", "httpx", "httpx2"]
 LockPolicyFlag = Literal["resolve", "prefer-existing", "reuse"]
-LockFormat = Literal["pylock", "requirements", "requirements-without-hashes"]
+LockFormat = Literal[
+    "pylock", "pdm", "poetry", "uv", "requirements", "requirements-without-hashes"
+]
 ResolutionFlag = Literal["highest", "lowest", "lowest-direct"]
 ModeFlag = Literal["specific", "universal"]
 DistPolicyFlag = Literal[

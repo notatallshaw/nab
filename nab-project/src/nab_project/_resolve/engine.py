@@ -82,7 +82,7 @@ if TYPE_CHECKING:
     from ..declarations import DependencyDeclaration
     from ..fetch import FetchCoordinator
     from ..inputs import ResolveInputs
-    from ..lock_preferences import LockPreferences
+    from ..lock_preferences import SavedPreferences
     from ..lockfile import TargetLock
 
 
@@ -677,7 +677,7 @@ class _EngineSettings(Record):
     # Lock artifacts shared by the targets of one resolve.
     artifacts: ArtifactMemo
     preferred_names: set[str]
-    lock_preferences: LockPreferences | None
+    lock_preferences: SavedPreferences | None
 
     def __init__(  # noqa: PLR0913 - One argument per record field.
         self,
@@ -697,7 +697,7 @@ class _EngineSettings(Record):
         warned_dropped_markers: set[tuple[str, str]] | FactoryDefault = FACTORY,
         artifacts: ArtifactMemo | FactoryDefault = FACTORY,
         preferred_names: set[str] | FactoryDefault = FACTORY,
-        lock_preferences: LockPreferences | None = None,
+        lock_preferences: SavedPreferences | None = None,
     ) -> None:
         self.coordinator = coordinator
         self.inputs = inputs

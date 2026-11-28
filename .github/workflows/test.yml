@@ -78,11 +78,18 @@ jobs:
           cache-dependency-path: &test-locks |
             pylock.dev.toml
             .github/requirements/pylock.build.toml
+            .github/requirements/native-locks/pylock.*.toml
 
       - name: Install nox on Python ${{ matrix.python }}
         run: &install-nox |
           python -m pip install "pip>=26.3"
           python -m pip install --group pylock.dev.toml:nox
+
+      - name: Install the native lockfile consumers
+        if: matrix.os == 'ubuntu' && matrix.python == '3.14' && contains(needs.select.outputs.workspaces, 'umbrella')
+        run: |
+          python tasks/install_lock_consumers.py "$RUNNER_TEMP/lock-consumers"
+          echo "LOCKFILE_CONSUMER_ENVS=$RUNNER_TEMP/lock-consumers" >> "$GITHUB_ENV"
 
       - name: Test affected workspaces on Python ${{ matrix.python }}
         run: &test-workspaces |

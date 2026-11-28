@@ -751,3 +751,12 @@ def test_environment_repair_updates_both_declaring_files(script_source: Path) ->
     assert config.environment is not None
     assert config.environment.implementation == "pypy"
     assert config.environment.platform is not None
+
+
+def test_pdm_script_lock_default_filename(script_source: Path) -> None:
+    assert run(("lock", "--script", str(script_source), "--format", "pdm")) == 0
+    output = script_source.with_name(script_source.name + ".pdm.lock")
+    assert {p["name"] for p in tomli.loads(output.read_text())["package"]} == {
+        "demo",
+        "child",
+    }

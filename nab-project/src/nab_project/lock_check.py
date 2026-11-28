@@ -24,7 +24,7 @@ from nab_provider.target import micro_boundaries
 
 from . import toml_io
 from .build_backend import project_metadata
-from .input_source import InputFormat
+from .input_source import InputFormat, read_input_document
 from .lock_validation import (
     VALIDATION_VERSION,
     content_digest,
@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from nab_provider.metadata import WheelMetadata
     from nab_provider.target import ResolveTarget
 
+    from ._lockfile.native_saved import NativeSolution
     from .inputs import ResolveInputs
     from .prepared_input import PreparedProjectInput
     from .resolve import ResolveFork
@@ -157,18 +158,23 @@ def _fork_selections(
 
 
 def _check_target_slices(
-    lock: Pylock, target: ResolveTarget, requirements: Sequence[Requirement]
+    lock: Pylock | NativeSolution,
+    target: ResolveTarget,
+    requirements: Sequence[Requirement],
 ) -> Iterator[ResolveTarget]:
     """Split a target at lock and requirement marker boundaries."""
-    markers = [
-        *(lock.environments or ()),
-        *(package.marker for package in lock.packages if package.marker is not None),
-        *(
-            requirement.marker
-            for requirement in requirements
-            if requirement.marker is not None
-        ),
-    ]
+    if isinstance(lock, Pylock):
+        markers = [
+            *(lock.environments or ()),
+            *(
+                package.marker
+                for package in lock.packages
+                if package.marker is not None
+            ),
+        ]
+    else:
+        markers = [marker for row in lock.targets for marker in row.markers]
+    markers.extend(req.marker for req in requirements if req.marker is not None)
     if lock.requires_python:
         markers.append(
             Marker(
@@ -285,9 +291,8 @@ def _check_constraints(
             raise LockConsistencyError(message)
 
 
-def _inputs_unchanged(document: Mapping[str, Any], current: Mapping[str, Any]) -> bool:
+def _inputs_unchanged(record: Mapping[str, Any], current: Mapping[str, Any]) -> bool:
     """Reject changed selections and check whether all inputs match."""
-    record = _record(document)
     if any(project.get("dynamic") for project in current["local"].values()):
         message = "dynamic local metadata requires a lock update"
         raise LockConsistencyError(message)
@@ -301,7 +306,7 @@ def _inputs_unchanged(document: Mapping[str, Any], current: Mapping[str, Any]) -
 
 def _check_saved_inputs(  # noqa: PLR0913 - explicit saved-lock input and selector keywords
     document: Mapping[str, Any],
-    lock: Pylock,
+    lock: Pylock | NativeSolution,
     path: Path,
     current: Mapping[str, Any],
     inputs: ResolveInputs,
@@ -314,7 +319,8 @@ def _check_saved_inputs(  # noqa: PLR0913 - explicit saved-lock input and select
     project_input: PreparedProjectInput | None = None,
 ) -> None:
     """Check input fingerprints and validate changed bounds against the saved pins."""
-    if _inputs_unchanged(document, current):
+    record = _record(document) if isinstance(lock, Pylock) else lock.validation
+    if _inputs_unchanged(record, current):
         return
 
     local = _current_local_metadata(current, inputs)
@@ -340,15 +346,18 @@ def _check_saved_inputs(  # noqa: PLR0913 - explicit saved-lock input and select
             for sliced in _check_target_slices(
                 lock, target, [*fork.requirements, *constraints, *local_requirements]
             ):
-                versions = {
-                    str(package.name): package.version
-                    for package, _ in lock.select(
-                        environment=marker_environment(sliced.marker_env),
-                        tags=sliced.tags.ordered,
-                        extras=selected_extras,
-                        dependency_groups=selected_groups,
-                    )
-                }
+                if isinstance(lock, Pylock):
+                    versions = {
+                        str(package.name): package.version
+                        for package, _ in lock.select(
+                            environment=marker_environment(sliced.marker_env),
+                            tags=sliced.tags.ordered,
+                            extras=selected_extras,
+                            dependency_groups=selected_groups,
+                        )
+                    }
+                else:
+                    versions = lock.fixed_versions(sliced, fork.selection)
                 _check_fixed_solution(
                     versions,
                     local,
@@ -357,6 +366,30 @@ def _check_saved_inputs(  # noqa: PLR0913 - explicit saved-lock input and select
                     current["excluded"],
                     sliced.marker_env,
                 )
+
+
+def _read_native(
+    document: Mapping[str, Any],
+    format_name: str,
+    path: Path,
+    input_format: InputFormat,
+    project_input: PreparedProjectInput | None,
+) -> NativeSolution:
+    """Check the native consumer's project identity before considering saved pins."""
+    from ._lockfile.native_saved import NativeSolution  # noqa: PLC0415 - native files only
+    from .native_lock import native_project_identity  # noqa: PLC0415 - native files only
+
+    lock = NativeSolution(document, format_name)
+    project = read_input_document(
+        path,
+        input_format=input_format,
+        project_input=project_input if format_name == "uv" else None,
+    )
+    if lock.project_identity != native_project_identity(format_name, project):
+        msg = "the project inputs recorded in the native lock changed; update the lock"
+        raise LockConsistencyError(msg)
+
+    return lock
 
 
 def check_saved_lock(  # noqa: PLR0913 - public keyword API for independent lock inputs and selections
@@ -371,6 +404,7 @@ def check_saved_lock(  # noqa: PLR0913 - public keyword API for independent lock
     build_requirements: bool = False,
     input_format: InputFormat = InputFormat.PROJECT,
     project_input: PreparedProjectInput | None = None,
+    native_format: str | None = None,
 ) -> None:
     """Validate saved pins without version discovery or a resolver transport."""
     if not lockfile.exists():
@@ -378,8 +412,15 @@ def check_saved_lock(  # noqa: PLR0913 - public keyword API for independent lock
         raise LockConsistencyError(message)
     document = toml_io.load_path(lockfile)
     try:
-        lock = Pylock.from_dict(document)
-        _check_local_artifacts(lock, lockfile.resolve().parent)
+        lock: Pylock | NativeSolution
+        if native_format is None:
+            lock = Pylock.from_dict(document)
+            _check_local_artifacts(lock, lockfile.resolve().parent)
+        else:
+            lock = _read_native(
+                document, native_format, path, input_format, project_input
+            )
+            lock.verify_files(lockfile.resolve().parent)
         _check_saved_inputs(
             document,
             lock,
@@ -397,6 +438,7 @@ def check_saved_lock(  # noqa: PLR0913 - public keyword API for independent lock
         PylockValidationError,
         PylockSelectError,
         KeyError,
+        IndexError,
         TypeError,
         RecursionError,
     ) as exc:
@@ -471,6 +513,7 @@ def can_reuse_saved_lock(  # noqa: PLR0913 - mirror the saved checker inputs and
     build_requirements: bool = False,
     input_format: InputFormat = InputFormat.PROJECT,
     project_input: PreparedProjectInput | None = None,
+    native_format: str | None = None,
 ) -> bool:
     """Check a saved solution without remote discovery or changing its file."""
     try:
@@ -479,9 +522,17 @@ def can_reuse_saved_lock(  # noqa: PLR0913 - mirror the saved checker inputs and
 
         # Validation format 1 cannot distinguish every file-URL source identity.
         document = toml_io.load_path(lockfile)
-        saved = Pylock.from_dict(document)
-        if not _reuse_artifacts_supported(saved):
-            return False
+        saved: Pylock | NativeSolution
+        if native_format is None:
+            saved = Pylock.from_dict(document)
+            if not _reuse_artifacts_supported(saved):
+                return False
+        else:
+            saved = _read_native(
+                document, native_format, path, input_format, project_input
+            )
+            if not saved.reusable:
+                return False
 
         _check_saved_inputs(
             document,

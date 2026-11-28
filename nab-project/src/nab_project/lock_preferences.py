@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from packaging.pylock import (
     Pylock,
@@ -27,7 +27,35 @@ if TYPE_CHECKING:
 
     from nab_provider.target import ResolveTarget
 
-__all__ = ["LockPreferences", "read_lock_preferences", "read_lockfile_packages"]
+__all__ = [
+    "LockPreferences",
+    "SavedPreferences",
+    "read_lock_preferences",
+    "read_lockfile_packages",
+]
+
+
+class SavedPreferences(Protocol):
+    """Prior version choices a fresh resolve can try under its current policy."""
+
+    @property
+    def known_packages(self) -> frozenset[str]:
+        """Package names available to selective upgrades."""
+        ...
+
+    def versions_for(
+        self,
+        target: ResolveTarget,
+        *,
+        selection: Collection[tuple[str, str]] | None = None,
+        default_groups: Collection[str] | None = None,
+    ) -> dict[str, Version]:
+        """Return candidate hints for the requested resolver target."""
+        ...
+
+    def summary_versions(self) -> dict[str, Version] | None:
+        """Return stable previous versions when each name has a unique pin."""
+        ...
 
 
 class LockPreferences:
@@ -142,9 +170,16 @@ def _read_prior_lock(path: Path) -> Pylock | None:
 
 
 def read_lock_preferences(
-    path: Path, *, exclude: Collection[str] = ()
-) -> LockPreferences | None:
+    path: Path, *, exclude: Collection[str] = (), native_format: str | None = None
+) -> SavedPreferences | None:
     """Read optional prior version hints, refusing an unreadable or invalid lock."""
+    if native_format is not None:
+        from ._lockfile.native_saved import NativeSolution  # noqa: PLC0415 - read native files on demand
+
+        try:
+            return NativeSolution(toml_io.load_path(path), native_format, exclude)
+        except (OSError, ValueError, KeyError, IndexError, TypeError, RecursionError):
+            return None
     lock = _read_prior_lock(path)
     return LockPreferences(lock, exclude=exclude) if lock is not None else None
 

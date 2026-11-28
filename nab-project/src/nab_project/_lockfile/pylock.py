@@ -27,7 +27,6 @@ __lazy_modules__ = (
     "nab_provider.conflict_kind",
     "nab_provider.marker_holds",
     "nab_provider.tags",
-    "os",
     "packaging.markers",
     "packaging.pylock",
     "packaging.specifiers",
@@ -36,14 +35,13 @@ __lazy_modules__ = (
     "pathlib",
 )
 
-import os
 import re
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from functools import cached_property, lru_cache, reduce
 from itertools import product
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, NamedTuple, TypeAlias
 
 from packaging.markers import (
     MARKERS_REQUIRING_VERSION,
@@ -75,12 +73,14 @@ from nab_provider.value import Record, replace
 from .. import toml_writer
 from ..conflicts import conflict_exclusion_groups, conflict_member_groups
 from ..lock_validation import make_validation_record
+from ..paths import relative_lock_path
 from .builder import require_artifact_hashes, validate_artifact_hashes
 from .coverage import validate_marker_coverage
 from .disjointness import validate_marker_disjointness
 from .groups import BASE_MEMBER
 
 if TYPE_CHECKING:
+    import os
     from collections.abc import Iterable, Mapping, Sequence
     from collections.abc import Set as AbstractSet
     from typing import Protocol, TypedDict, TypeVar
@@ -149,6 +149,7 @@ if TYPE_CHECKING:
             marker: Marker | None = None,
             *,
             lock_dir: Path,
+            _labels: Sequence[str] = (),
             dependencies: list[dict[str, str]] | None = None,
         ) -> _CovariantLockedPackage: ...
 
@@ -708,6 +709,65 @@ def _prepare_environment_rows(
     return rows, uses_implementation_version
 
 
+class ProjectedPackage(NamedTuple):
+    """A merged package row with its resolved source and conditional dependencies."""
+
+    source: Package
+    version: Version
+    labels: Sequence[str]
+
+    @property
+    def name(self) -> NormalizedName:
+        return self.source.name
+
+    @property
+    def marker(self) -> Marker | None:
+        return self.source.marker
+
+
+def _project_pin(
+    pin: PinShape,
+    marker: Marker | None = None,
+    *,
+    lock_dir: Path,
+    _labels: Sequence[str] = (),
+    dependencies: list[dict[str, str]] | None = None,
+) -> ProjectedPackage:
+    source = _pin_to_package(pin, marker, lock_dir=lock_dir, dependencies=dependencies)
+    # Native project locks also record versions for VCS and directory pins.
+    return ProjectedPackage(source, Version(pin.version), _labels)
+
+
+def project_packages(
+    lock_input: LockInput, project_dir: Path
+) -> list[ProjectedPackage]:
+    """Merge conditional pins with paths relative to the consuming project."""
+    require_artifact_hashes(lock_input)
+    with intractable_as_error():
+        _, packages = _prepare_pylock(
+            lock_input, lock_dir=project_dir, package_output=_project_pin
+        )
+    # Native readers identify an index release without its environment marker.
+    releases: set[tuple[str, Version, str]] = set()
+    for package in packages:
+        index = package.source.index
+        if index is None:
+            continue
+
+        key = (package.name, package.version, index)
+        if key in releases:
+            msg = (
+                f"{package.name}=={package.version} needs different artifacts "
+                f"from {index} "
+                "across targets; write separate native lock plans"
+            )
+            raise LockValidationError(msg)
+
+        releases.add(key)
+
+    return packages
+
+
 def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylock:
     """Build the native PEP 751 models with paths relative to the lock directory."""
     fields, packages = _prepare_pylock(
@@ -887,26 +947,6 @@ def _group_array(
     return _name_array([*groups, *(name for name in configured if name is not None)])
 
 
-def _relativize_path(target: str | os.PathLike[str], lock_dir: Path) -> str:
-    """Return ``target`` as a POSIX path relative to ``lock_dir``.
-
-    PEP 751 records ``packages.directory.path`` and the wheel/sdist
-    ``path`` fields relative to the lock file so the lockfile stays
-    portable between machines.  :func:`os.path.relpath` is used
-    rather than :meth:`pathlib.Path.relative_to` so a ``target``
-    outside ``lock_dir`` still resolves, to a ``../``-prefixed path.
-    The result uses POSIX separators, which the spec recommends for
-    portable relative paths.
-
-    A Windows cross-drive ValueError falls back to the absolute path.
-    """
-    try:
-        rel = os.path.relpath(target, lock_dir)
-    except ValueError:
-        rel = os.fspath(target)
-    return Path(rel).as_posix()
-
-
 def _dependency_reference(
     package: PackageIdentity,
     names: Mapping[str, int],
@@ -973,6 +1013,7 @@ def _pin_to_package(
     marker: Marker | None = None,
     *,
     lock_dir: Path,
+    _labels: Sequence[str] = (),
     dependencies: list[dict[str, str]] | None = None,
 ) -> Package:
     from ..lockfile import ArchivePin, IndexPin, LocalPin, VcsPin
@@ -993,7 +1034,7 @@ def _pin_to_package(
             marker=marker,
             dependencies=dependencies,
             directory=PackageDirectory(
-                path=_relativize_path(pin.path, lock_dir),
+                path=relative_lock_path(pin.path, lock_dir),
                 editable=pin.editable,
                 subdirectory=pin.subdirectory,
             ),
@@ -1082,7 +1123,7 @@ def _artifact_fields(
     validate_artifact_hashes(artifact.filename, artifact.hashes)
     if artifact.local_path is not None:
         name = artifact.filename
-        path = _relativize_path(artifact.local_path.resolve(), lock_dir)
+        path = relative_lock_path(artifact.local_path.resolve(), lock_dir)
         url = None
     else:
         name = artifact.filename
@@ -1139,6 +1180,7 @@ def _pin_to_document(
     marker: Marker | None = None,
     *,
     lock_dir: Path,
+    _labels: Sequence[str] = (),
     dependencies: list[dict[str, str]] | None = None,
 ) -> _DocumentPackage:
     """Build the admitted index output without allocating native artifact models."""
@@ -1410,6 +1452,7 @@ def _build_packages(
                     pin,
                     marker,
                     lock_dir=lock_dir,
+                    _labels=labels,
                     dependencies=dependencies,
                 )
             )

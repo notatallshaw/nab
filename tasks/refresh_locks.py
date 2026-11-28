@@ -1,4 +1,4 @@
-"""Refresh the development and build locks, forwarding options to ``nab lock``."""
+"""Refresh repository locks, forwarding options to ``nab lock``."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import tomli
 from packaging.pylock import Pylock
 
 from nab_markersets.markersets import MarkerSet
+from nab_project.pyproject_files import dependency_groups
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -112,28 +113,43 @@ def check_shared_pins(root: Path) -> None:
         raise ValueError(message + ", ".join(sorted(conflicts)))
 
 
+def _development_groups(root: Path) -> tuple[str, ...]:
+    """Select the development groups that share the cross-platform lock."""
+    with (root / "pyproject.toml").open("rb") as stream:
+        project = tomli.load(stream)
+
+    # Reader groups have independent pins and a single Linux target.
+    plans = project["tool"]["nab"]["plans"]
+    reader_groups: set[str] = set()
+    for name in ("pdm", "poetry", "uv"):
+        reader_groups.update(plans[name]["groups"])
+
+    return tuple(
+        name for name in dependency_groups(project) if name not in reader_groups
+    )
+
+
 def main(args: Sequence[str], root: Path = ROOT) -> int:
-    """Refresh both locks with this interpreter and the forwarded Nab options."""
+    """Refresh the repository locks with the forwarded nab options."""
     try:
         _check_build_systems(root)
-        for selection, output in (
-            (("--all-groups",), DEV_LOCK),
-            (("--build-requirements",), BUILD_LOCK),
-        ):
-            command = (
-                sys.executable,
-                "-m",
-                "nab",
-                "lock",
-                *selection,
-                "--no-emit-workspace",
-                "--output",
-                str(output),
-                *args,
-            )
+
+        groups = _development_groups(root)
+        select_groups = ("--groups", *groups) if groups else ()
+        development = (*select_groups, "--no-emit-workspace", "--output", str(DEV_LOCK))
+        build = (
+            "--build-requirements",
+            "--no-emit-workspace",
+            "--output",
+            str(BUILD_LOCK),
+        )
+
+        for selection in (development, build, ("--all-plans",)):
+            command = (sys.executable, "-m", "nab", "lock", *selection, *args)
             result = subprocess.run(command, cwd=root, check=False)
             if result.returncode:
                 return result.returncode
+
         check_shared_pins(root)
     except (OSError, TypeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)

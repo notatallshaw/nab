@@ -21,12 +21,16 @@ if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
 
 ROOT = Path(__file__).resolve().parents[1]
-LOCKS = ("pylock.dev.toml", ".github/requirements/pylock.build.toml")
-BRANCH = "ci/update-locks"
-TITLE = "Update development and build locks"
-BODY = (
-    "Refresh the development and build dependencies with the seven-day upload cutoff."
+LOCKS = (
+    "pylock.dev.toml",
+    ".github/requirements/pylock.build.toml",
+    ".github/requirements/native-locks/pylock.pdm.toml",
+    ".github/requirements/native-locks/pylock.poetry.toml",
+    ".github/requirements/native-locks/pylock.uv.toml",
 )
+BRANCH = "ci/update-locks"
+TITLE = "ci: refresh development, build and consumer locks"
+BODY = "Refresh the dependency locks with the seven-day upload cutoff."
 COMMIT = """mutation($input: CreateCommitOnBranchInput!) {
   createCommitOnBranch(input: $input) { commit { oid } }
 }"""

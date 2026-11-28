@@ -357,7 +357,7 @@ def test_refresh_command_keeps_the_previous_lock_policy(
         offline=None,
         build_requirements=False,
         workspace_discovery=True,
-        no_emit_workspace=False,
+        excluded_workspace=frozenset(),
         cli_overrides={"lock-policy": "prefer-existing"},
         upgrade=False,
         lock_policy=LockPolicy.PREFER_EXISTING,

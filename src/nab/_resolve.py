@@ -48,7 +48,7 @@ from nab_project.pyproject_files import (
     read_pyproject_groups,
     read_pyproject_optional_dependencies,
 )
-from nab_project.resolve import resolve_for_targets
+from nab_project.resolve import ResolveBatch, resolve_for_targets
 from nab_project.workspace import WorkspaceDiscoveryError
 from nab_provider.errors import (
     IndexAccessError,
@@ -93,7 +93,7 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport, HttpResponse
     from nab_project.declarations import DependencyDeclaration
-    from nab_project.lock_preferences import LockPreferences
+    from nab_project.lock_preferences import SavedPreferences
     from nab_project.prepared_input import PreparedProjectInput
     from nab_project.resolve import ResolveResult
     from nab_provider.provider import ResolutionStrategy
@@ -316,7 +316,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     config: NabProjectConfig,
     cache_dir: Path | None,
     offline: bool,
-    transport: AsyncHttpTransport,
+    transport: AsyncHttpTransport | ResolveBatch,
     failure_prefix: str,
     http_backend: str = "urllib3",
     groups: tuple[str, ...] = (),
@@ -324,8 +324,9 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     build_requirements: bool = False,
     input_format: InputFormat = InputFormat.PROJECT,
     resolution_strategy: ResolutionStrategy | None = None,
-    lock_preferences: LockPreferences | None = None,
+    lock_preferences: SavedPreferences | None = None,
     reconcile_build_variants: bool = False,
+    include_dependency_requirements: bool = False,
     progress: ProgressReporter | None = None,
     max_concurrency: int,
     project_input: PreparedProjectInput | None = None,
@@ -351,9 +352,13 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
                     inputs=config.resolve_inputs(),
                     lock_preferences=lock_preferences,
                     reconcile_build_variants=reconcile_build_variants,
-                    include_dependency_requirements=printer().verbosity
-                    >= Verbosity.DEBUG,
-                    build_transport_factory=partial(_make_transport, http_backend),
+                    include_dependency_requirements=include_dependency_requirements
+                    or printer().verbosity >= Verbosity.DEBUG,
+                    build_transport_factory=(
+                        transport.transport_factory
+                        if isinstance(transport, ResolveBatch)
+                        else partial(_make_transport, http_backend)
+                    ),
                     cache_dir=cache_dir,
                     offline=offline,
                     groups=groups,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import copy
 from typing import TYPE_CHECKING, Any
 
 from . import toml_io
@@ -32,6 +33,12 @@ class PreparedProjectInput:
         self._document = toml_io.copy_table(document)
         self.identity = toml_io.copy_table(identity)
         self._local_inputs = dict(local_inputs)
+
+    def with_identity(self, identity: Mapping[str, Any]) -> PreparedProjectInput:
+        """Use another output identity with the same checked files and declarations."""
+        prepared = copy(self)
+        prepared.identity = toml_io.copy_table(identity)
+        return prepared
 
     def read(self, path: Path) -> dict[str, Any]:
         """Refuse changed source data before returning an independent document."""

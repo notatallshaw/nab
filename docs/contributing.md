@@ -134,6 +134,25 @@ before reporting:
 .venv/bin/python -m coverage report       # fails below 100 percent
 ```
 
+### Test native lockfiles
+
+The root `pyproject.toml` declares a dependency group and a lock plan for each native reader. The
+Ubuntu CPython 3.14 job installs PDM, Poetry and uv from their generated locks. To run the same
+tests on Linux x86-64 with Python 3.14 and pip 26.3 or newer:
+
+```bash
+export LOCKFILE_CONSUMER_ENVS="$(mktemp -d)"
+python tasks/install_lock_consumers.py "$LOCKFILE_CONSUMER_ENVS"
+python -m pytest tests/test_native_locks.py
+```
+
+The development lock omits the three consumer groups. The weekly lock update refreshes their
+environments with the repository's seven-day upload cutoff. To update only the consumers, run:
+
+```console
+nab lock --all-plans --upgrade
+```
+
 ### Check one workspace
 
 CI checks each workspace's coverage from its own tests through nox (see `noxfile.py`). Reproduce a
@@ -301,7 +320,7 @@ The `docs` group in `pylock.dev.toml` supplies CI and Read the Docs. Its Sphinx 
 Python 3.12 or newer; the build environments use Python 3.13. `docs-live` also pins the preview
 server.
 
-Refresh both the development and build locks with the current checkout:
+Refresh the development, build and native lockfile consumer locks with the current checkout:
 
 ```bash
 .venv/bin/nox -s locks -- --upgrade

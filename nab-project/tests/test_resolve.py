@@ -45,6 +45,7 @@ from nab_project.pyproject_files import (
     read_pyproject_optional_dependencies,
 )
 from nab_project.resolve import (
+    ResolveBatch,
     ResolveFork,
     ResolveResult,
     _check_group_disjointness,
@@ -6773,6 +6774,87 @@ class TestProgressReporting:
         )
 
     @respx.mock
+    def test_batch_reuses_fetches_for_distinct_resolutions(
+        self, tmp_path: Path
+    ) -> None:
+        self._serve("foo", requires="Requires-Dist: shared\n")
+        self._serve("bar", requires="Requires-Dist: shared\n")
+        self._serve("shared")
+        path = tmp_path / "pyproject.toml"
+        path.write_text(
+            '[project]\nname="app"\n[dependency-groups]\none=["foo"]\ntwo=["bar"]\n'
+        )
+        with ResolveBatch(HttpxAsyncTransport) as batch:
+            one = _resolved(path, batch, groups=("one",))
+            two = _resolved(
+                path,
+                batch,
+                groups=("two",),
+                inputs=ResolveInputs(constraints=("shared<2",)),
+            )
+
+        assert set(_pins(one)) == {"foo", "shared"}
+        assert set(_pins(two)) == {"bar", "shared"}
+        requests = [str(call.request.url) for call in respx.calls]
+        assert requests.count("https://pypi.org/simple/shared/") == 1
+        assert (
+            requests.count(
+                "https://files.example.com/shared-1.0-py3-none-any.whl.metadata"
+            )
+            == 1
+        )
+
+    @respx.mock
+    def test_later_batch_target_retains_its_wheel(self, tmp_path: Path) -> None:
+        filenames = [
+            "foo-1-py3-none-manylinux_2_17_x86_64.whl",
+            "foo-2-py3-none-win_amd64.whl",
+        ]
+        files = []
+        for version, name in enumerate(filenames, 1):
+            url = f"https://files.example.com/{name}"
+            files.append({"filename": name, "url": url, "core-metadata": True})
+            respx.get(url + ".metadata").respond(
+                text=f"Metadata-Version: 2.1\nName: foo\nVersion: {version}\n"
+            )
+        listing = respx.get("https://pypi.org/simple/foo/").respond(
+            json={"meta": {"api-version": "1.0"}, "name": "foo", "files": files}
+        )
+        path = tmp_path / "pyproject.toml"
+        path.write_text('[project]\ndependencies=["foo"]\n')
+
+        with ResolveBatch(HttpxAsyncTransport) as batch:
+            for platform, expected in (("linux_x86_64", "1"), ("windows_amd64", "2")):
+                target = ResolveTarget.for_declared(
+                    python_version="3.12", spec=PlatformSpec(platform)
+                )
+                result = _resolved(path, batch, targets=[target])
+                assert _pins(result) == {"foo": Version(expected)}
+
+        assert listing.call_count == 1
+
+    @respx.mock
+    def test_batch_keeps_indexes_separate(self, tmp_path: Path) -> None:
+        self._serve("foo")
+        private = "https://private.example/simple/"
+        respx.get(private + "foo/").mock(return_value=httpx.Response(404))
+        project = tmp_path / "pyproject.toml"
+        project.write_text('[project]\ndependencies=["foo"]\n')
+        target = ResolveTarget.for_host()
+
+        with ResolveBatch(HttpxAsyncTransport) as batch:
+            public = resolve_for_targets(project, batch, targets=[target])
+            missing = resolve_for_targets(
+                project,
+                batch,
+                targets=[target],
+                inputs=ResolveInputs(indexes=(IndexConfig("private", private),)),
+            )
+
+        assert _pins(public) == {"foo": Version("1.0")}
+        assert not missing.success
+
+    @respx.mock
     def test_sink_counts_one_fetch_per_listing_and_records_pins(
         self, tmp_path: Path
     ) -> None:
@@ -6817,7 +6899,9 @@ class TestProgressReporting:
 class TestResolveTransportCleanup:
     """Setup refusals release the transport before coordinator ownership."""
 
-    @pytest.mark.parametrize("failure", ["build-selection", "duplicate-indexes"])
+    @pytest.mark.parametrize(
+        "failure", ["build-selection", "duplicate-indexes", "batch-duplicate-indexes"]
+    )
     def test_setup_failure_closes_client_inside_running_loop(
         self, tmp_path: Path, failure: str
     ) -> None:
@@ -6850,10 +6934,13 @@ class TestResolveTransportCleanup:
 
         async def attempt() -> None:
             host_loop = asyncio.get_running_loop()
-            with pytest.raises(ValueError, match=expected):
+            with (
+                ResolveBatch(lambda: transport) as batch,
+                pytest.raises(ValueError, match=expected),
+            ):
                 resolve_for_targets(
                     pyproject,
-                    transport,
+                    batch if failure == "batch-duplicate-indexes" else transport,
                     targets=(ResolveTarget.for_host(),),
                     inputs=inputs,
                     groups=("dev",) if build_requirements else (),
