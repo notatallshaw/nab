@@ -6,6 +6,7 @@ import hashlib
 from collections.abc import Callable
 
 import httpx
+import pytest
 import respx
 from packaging.ranges import VersionRange
 from packaging.specifiers import SpecifierSet
@@ -56,6 +57,26 @@ def test_root_pin_does_not_prefetch_an_excluded_release() -> None:
             result = resolver.solve(roots)
             assert result.pins == {"pkg": Version("1.0")}
 
+    assert needed.call_count == 1
+    assert not excluded.called
+
+
+@pytest.mark.parametrize("requirement", ["", ">=1.0"])
+def test_constraint_pin_bounds_single_and_batched_prefetch(requirement: str) -> None:
+    roots = {"pkg": SpecifierSet(requirement).to_range()}
+    constraints = {"pkg": SpecifierSet("==1.0").to_range()}
+    with respx.mock(assert_all_called=False) as router:
+        needed, excluded = _routes(router)
+        with FetchCoordinator(HttpxAsyncTransport()) as coordinator:
+            provider = Provider(
+                coordinator, root_requirements=roots, constraints=constraints
+            )
+            resolver = Resolver(
+                provider, range_type=VersionRange, root_version=Version("0")
+            )
+            result = resolver.solve(roots, constraints)
+
+    assert result.pins == {"pkg": Version("1.0")}
     assert needed.call_count == 1
     assert not excluded.called
 

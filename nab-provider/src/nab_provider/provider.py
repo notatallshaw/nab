@@ -694,6 +694,14 @@ def _declared_ranges(
     return recorded.declared or (recorded.union,)
 
 
+def _prefetch_filter(ranges: list[VersionRange]) -> Callable[[str], bool]:
+    """Keep each declared range's admission policy in the listing callback."""
+    if len(ranges) == 1:
+        return ranges[0].__contains__
+
+    return lambda version: all(version in bounds for bounds in ranges)
+
+
 class Provider:
     """Lazy index-backed provider for nab-resolver.
 
@@ -1172,8 +1180,7 @@ class Provider:
 
         self._configure_metadata_admission()
 
-        if self.root_requirements:
-            self._prefetch_root_listings()
+        self._prefetch_root_listings()
 
     def _configure_metadata_admission(self) -> None:
         """Publish pure target admission when the caller's policy permits it."""
@@ -1207,18 +1214,16 @@ class Provider:
             remote_roots.append((normalized, version_range))
 
         if isinstance(self.coordinator, MetadataPrefetchHints):
-            ranges: dict[str, VersionRange] = {}
+            # Constraints also apply to transitive listings when they arrive.
+            # Only roots start listing requests below.
+            bounds = {
+                name: [constraint] for name, constraint in self.constraints.items()
+            }
             for normalized, version_range in remote_roots:
-                previous = ranges.get(normalized)
-                ranges[normalized] = (
-                    version_range if previous is None else previous & version_range
-                )
-            # Keep callback lifetimes independent of provider caches.
+                bounds.setdefault(normalized, []).append(version_range)
+
             self.coordinator.set_metadata_prefetch_filters(
-                {
-                    name: version_range.__contains__
-                    for name, version_range in ranges.items()
-                }
+                {name: _prefetch_filter(ranges) for name, ranges in bounds.items()}
             )
 
         for normalized, _ in remote_roots:
@@ -1784,6 +1789,15 @@ class Provider:
         base_range = self.solution_ranges.get(normalized)
         if base_range is not None:
             version_range = version_range & base_range
+        constraint = self.constraints.get(normalized)
+        if constraint is not None:
+            try:
+                version_range &= constraint
+            except ValueError:
+                # Different configured prerelease policies cannot be combined.
+                # Demand can still fetch metadata when there is no safe guess.
+                return None
+
         ordered = self._ordered_candidates(
             normalized,
             version_range,

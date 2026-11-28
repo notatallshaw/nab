@@ -155,6 +155,34 @@ class TestSpeculativeRequestDedup:
         calls = coordinator.calls_to("request_metadata")
         assert [version for _pkg, version, _url, _hash in calls] == ["2.0", "1.0"]
 
+    def test_conflicting_prerelease_policies_defer_the_guess(self) -> None:
+        wheel = make_wheel("1.0rc1")
+        constraint = SpecifierSet(">=1.0rc1", prereleases=True).to_range()
+        provider = Provider(
+            make_coordinator([wheel], package="foo"), constraints={"foo": constraint}
+        )
+        allowed = SpecifierSet(">=1.0rc1", prereleases=False).to_range()
+
+        assert (
+            provider.first_matching_version("foo", allowed, [(V("1.0rc1"), wheel)])
+            is None
+        )
+
+    def test_custom_pick_cannot_prefetch_outside_a_constraint(self) -> None:
+        wheel = make_wheel("2.0")
+        coordinator = make_coordinator([wheel], package="foo")
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            constraints={"foo": SpecifierSet("<2").to_range()},
+        )
+        offered = [(V("2.0"), wheel)]
+
+        with patch.object(provider, "pick_best_candidate", return_value=offered[0]):
+            provider.speculative_prefetch("foo", offered)
+
+        assert not coordinator.calls_to("request_metadata")
+
     def test_metadata_requests_keep_their_first_occurrence_order(self) -> None:
         """Every candidate still reaches the coordinator, in first-occurrence order."""
         coordinator = make_coordinator(
