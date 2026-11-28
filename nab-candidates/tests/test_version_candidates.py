@@ -162,11 +162,6 @@ def test_prepared_version_catalogue_resolves_a_permitted_yanked_file() -> None:
 
             return VersionCandidateData({}, ())
 
-        def ordered(
-            self, package: str, allowed: VersionRange
-        ) -> list[VersionCandidate]:
-            return self.order_candidates(package, allowed, self.choices(package))
-
     catalogue = Wheels()
     root = Requirement("app")
     approved = Requirement("dep==1")

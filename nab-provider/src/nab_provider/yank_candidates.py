@@ -415,6 +415,7 @@ class YankCandidates(PreparedVersionCatalogue[Candidate, CandidateData]):
             self._candidate_groups[package] = _CandidateGroups(available, result)
         return result
 
+    @override
     def ordered(
         self,
         package: str,
