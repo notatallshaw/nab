@@ -597,6 +597,11 @@ def _lock_one(
         reproduce=actions.reproduce,
         upgrade=actions.upgrade,
     )
+    document_cache = (
+        toml_io.ReadCache()
+        if settings.lock_policy is LockPolicy.REUSE and not actions.upgrade
+        else None
+    )
     anchor = _determine_lock_anchor(
         ladder,
         output=output,
@@ -604,6 +609,7 @@ def _lock_one(
         build_requirements=settings.build_requirements,
         upgrade=actions.upgrade,
         now=batch.now if batch is not None else None,
+        document_cache=document_cache,
     )
 
     config = _load_config(
@@ -691,8 +697,11 @@ def _lock_one(
     )
 
     # Try saved reuse before opening any index transport.
-    if _reuse_consistent_lock(run, inputs, validation):
+    if _reuse_consistent_lock(run, inputs, validation, document_cache):
         return
+
+    # A stale lock can be large. Drop the parse before starting a fresh resolve.
+    del document_cache
 
     validation_inputs = None if validation is None else validation[0]
     # A live resolve plans its own targets; retain only the input evidence.
@@ -1208,6 +1217,7 @@ def _reuse_consistent_lock(
     run: _LockRun,
     inputs: ResolveInputs,
     snapshot: tuple[dict[str, Any], tuple[ResolveTarget, ...]] | None,
+    document_cache: toml_io.ReadCache | None = None,
 ) -> bool:
     """Report a supported saved hit before constructing a resolver transport."""
     # An upgrade must emit its new anchor even when constraints are unchanged.
@@ -1228,6 +1238,7 @@ def _reuse_consistent_lock(
         input_format=run.input_format,
         project_input=run.project_input,
         native_format=run.native_format,
+        document_cache=document_cache,
     ):
         return False
 
@@ -2088,6 +2099,7 @@ def _reused_lock_anchor(
     output: Path | None,
     output_format: str,
     build_requirements: bool = False,
+    document_cache: toml_io.ReadCache | None = None,
 ) -> tuple[datetime | None, datetime | None]:
     """Return ``(absolute_cutoff, prior_lock_anchor)`` for the re-lock anchor.
 
@@ -2105,7 +2117,9 @@ def _reused_lock_anchor(
     if _is_stdout(output) or output_format not in _PROJECT_LOCK_FORMATS:
         return None, None
     target = _default_output_path(output_format, build_requirements=build_requirements)
-    return None, read_lockfile_anchor(output if output is not None else target)
+    return None, read_lockfile_anchor(
+        output if output is not None else target, cache=document_cache
+    )
 
 
 def _determine_lock_anchor(
@@ -2116,6 +2130,7 @@ def _determine_lock_anchor(
     build_requirements: bool = False,
     upgrade: bool,
     now: datetime | None = None,
+    document_cache: toml_io.ReadCache | None = None,
 ) -> datetime:
     """Pick the ``P<n>D`` anchor for ``nab lock``.
 
@@ -2131,6 +2146,7 @@ def _determine_lock_anchor(
         output=output,
         output_format=output_format,
         build_requirements=build_requirements,
+        document_cache=document_cache,
     )
     if upgrade:
         fresh = now if now is not None else datetime.now(timezone.utc)

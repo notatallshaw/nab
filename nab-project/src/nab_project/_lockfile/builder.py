@@ -247,7 +247,9 @@ class MissingVcsCommitError(ValueError):
     """
 
 
-def read_lockfile_anchor(path: Path) -> datetime | None:
+def read_lockfile_anchor(
+    path: Path, *, cache: toml_io.ReadCache | None = None
+) -> datetime | None:
     """Return the ``[tool.nab].created-at`` timestamp from ``path`` if any.
 
     Returns ``None`` if TOML cannot be read or the timestamp is missing or invalid.
@@ -257,8 +259,7 @@ def read_lockfile_anchor(path: Path) -> datetime | None:
     if not path_state(path).should_read:
         return None
     try:
-        with path.open("rb") as f:
-            data = toml_io.load(f)
+        data = toml_io.load_path(path, cache=cache)
     except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError):
         return None
     nab = toml_io.tool_nab_section(data)

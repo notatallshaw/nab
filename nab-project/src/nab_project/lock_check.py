@@ -514,6 +514,7 @@ def can_reuse_saved_lock(  # noqa: PLR0913 - mirror the saved checker inputs and
     input_format: InputFormat = InputFormat.PROJECT,
     project_input: PreparedProjectInput | None = None,
     native_format: str | None = None,
+    document_cache: toml_io.ReadCache | None = None,
 ) -> bool:
     """Check a saved solution without remote discovery or changing its file."""
     try:
@@ -521,7 +522,7 @@ def can_reuse_saved_lock(  # noqa: PLR0913 - mirror the saved checker inputs and
             return False
 
         # Validation format 1 cannot distinguish every file-URL source identity.
-        document = toml_io.load_path(lockfile)
+        document = toml_io.load_path(lockfile, cache=document_cache)
         saved: Pylock | NativeSolution
         if native_format is None:
             saved = Pylock.from_dict(document)
