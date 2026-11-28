@@ -7,9 +7,9 @@ positive-range rejection becomes a grouped binary incompatibility
 (``{candidate range, blocker range}``); a candidate blocked by a
 requirement on itself names one package on both sides, so the two terms
 merge into one and the declared range is kept on the clause.
-Version-derived terms are widened onto the listing's gaps, which leaves
-the selectable versions they name unchanged.  The blocker term widens
-further when every rejection in the group recorded a dependency range:
+Version-derived terms can widen onto listing gaps. Self requirements keep
+exact releases when a gap would absorb a filtered release. The blocker
+term widens further when every rejection in the group recorded a dependency range:
 each fired because the blocker sat outside that range, so every blocker
 version outside their union repeats the same rejections.  Groups queued
 without ranges, such as the extras block path, keep the narrower term.
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 __lazy_modules__ = (
     "collections",
+    "nab_provider._provider.listing",
     "nab_provider._provider.listing_diagnosis",
     "nab_provider.errors",
     "nab_resolver.types",
@@ -29,7 +30,7 @@ __lazy_modules__ = (
     "packaging.utils",
 )
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import TYPE_CHECKING, NamedTuple
 
 from packaging.ranges import VersionRange
@@ -38,6 +39,7 @@ from packaging.utils import canonicalize_name
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 from ..errors import MetadataError
+from .listing import dropped_release_in_range
 from .listing_diagnosis import MetadataBlock
 
 if TYPE_CHECKING:
@@ -90,10 +92,9 @@ def look_ahead_ok(
 ) -> bool:
     """Check candidate compatibility with root reqs and decisions.
 
-    With ``check_decisions=False`` only the root-requirement check runs;
-    used for "subsequent candidate" iterations to avoid per-candidate clause
-    growth on tight version-locks.  Extras proxies are skipped (the base's
-    look-ahead is sufficient).
+    Later candidates can skip decision checks to limit clause growth on tight
+    version locks. Root requirements and self dependencies still apply. Extras
+    proxies use their base package's look-ahead.
 
     ``MetadataError`` (including ``UnsupportedSdistError``) is treated as a
     rejection so the resolver moves on; the message is recorded for the
@@ -117,6 +118,13 @@ def look_ahead_ok(
 
     for dep_name, dep_range in deps.items():
         dep_normalized = canonicalize_name(dep_name)
+
+        if dep_normalized == package:
+            if version not in dep_range:
+                provider.pending_self_blocks[(package, dep_range)].append(version)
+                return False
+
+            continue
 
         if dep_normalized in provider.root_requirements:
             root_range = provider.root_requirements[dep_normalized]
@@ -145,8 +153,7 @@ def _blocked_by_solution(
     """Whether the partial solution already rules ``dep_range`` out.
 
     Queues the rejection it finds: against the decision that contradicts the
-    range, against the positive range disjoint from it, or, when the candidate
-    named itself, under the range it declared.
+    range or against the positive range disjoint from it.
     """
     decided_version = decisions.get(dep_normalized)
     if decided_version is not None:
@@ -165,14 +172,6 @@ def _blocked_by_solution(
     positive_range = provider.solution_ranges.get(dep_normalized)
     if positive_range is None or not dep_range.is_disjoint(positive_range):
         return False
-
-    # A self-dependency is grouped by the range it declared, so the merged
-    # clause has one edge to name.
-    if dep_normalized == package:
-        provider.pending_self_blocks[(package, dep_range, positive_range)].append(
-            version
-        )
-        return True
 
     range_block_key = (package, dep_normalized, positive_range)
     provider.pending_range_blocks[range_block_key].append(version)
@@ -206,6 +205,19 @@ def _candidate_union(
     for version in versions:
         union = union | _widen_or_singleton(provider, package, version)
     return union
+
+
+def _exact_versions(versions: list[Version]) -> VersionRange:
+    """Build a union of the nonempty group's exact releases."""
+    ranges = deque(VersionRange.singleton(version) for version in versions)
+
+    # Pair the groups in rounds so no long prefix is copied at every step.
+    while len(ranges) > 1:
+        left = ranges.popleft()
+        right = ranges.popleft()
+        ranges.append(left | right)
+
+    return ranges[0]
 
 
 def _membership_widened(
@@ -337,13 +349,18 @@ def flush_pending_blocks(provider: Provider) -> None:
 
     # Self-dependency rejections: the candidate is its own blocker, so the
     # two terms merge into one.
-    for (
-        candidate_pkg,
-        dep_range,
-        _pos_range,
-    ), versions in provider.pending_self_blocks.items():
-        rejected = _candidate_union(provider, candidate_pkg, versions)
-        merged = Term(candidate_pkg, rejected & dep_range.complement(), positive=True)
+    for (candidate_pkg, dep_range), versions in provider.pending_self_blocks.items():
+        # A neighbor gap may include a release filtered before metadata was read.
+        # Keep its listing diagnosis independent of the inspected self requirements.
+        widened = dep_range.complement() & _candidate_union(
+            provider, candidate_pkg, versions
+        )
+        self_exclusions = (
+            _exact_versions(versions)
+            if dropped_release_in_range(provider, candidate_pkg, widened)
+            else widened
+        )
+        merged: Term[str, Version] = Term(candidate_pkg, self_exclusions, positive=True)
         provider.pending_clauses.append(
             Incompatibility(
                 [merged],

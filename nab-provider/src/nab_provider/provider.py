@@ -1082,12 +1082,9 @@ class Provider:
             tuple[str, str, RangeProtocol[Version]], list[Version]
         ] = defaultdict(list)
 
-        # Self-dependency rejections, keyed by (candidate, the range it
-        # declared on itself, the positive range the solution holds).  The
-        # merged clause needs only the declared range; the positive range is
-        # carried for the no-versions reason line.
+        # Group inspected releases by the self requirement that excludes them.
         self.pending_self_blocks: defaultdict[
-            tuple[str, VersionRange, RangeProtocol[Version]], list[Version]
+            tuple[str, VersionRange], list[Version]
         ] = defaultdict(list)
 
         # The dep range each rejected candidate declared for the blocker,
@@ -2558,17 +2555,23 @@ class Provider:
                 )
             )
 
-        for cand, dep_range, pos_range in self.pending_self_blocks:
+        for cand, dep_range in self.pending_self_blocks:
             if cand != normalized:
                 continue
-            out.append(
-                _diagnosis.Blocker(
-                    _diagnosis.BlockerKind.HELD,
-                    cand,
-                    (dep_range,),
-                    pos_range,
+
+            # The proof names the rejected self requirements. Leave room for
+            # a listing diagnosis if a different release could repair the edge.
+            held = self.solution_ranges.get(cand)
+            if (
+                held is not None
+                and dep_range.is_disjoint(held)
+                and not _listing.dropped_release_in_range(self, cand, held)
+            ):
+                out.append(
+                    _diagnosis.Blocker(
+                        _diagnosis.BlockerKind.HELD, cand, (dep_range,), held
+                    )
                 )
-            )
 
         for (
             cand,
