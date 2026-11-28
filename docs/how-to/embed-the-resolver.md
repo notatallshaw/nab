@@ -217,8 +217,8 @@ identities, even when they have the same package name and version.
 
 1. Subclass `PreparedVersionCatalogue` from `nab_candidates.versions`. Set `range_type` to
    `packaging.ranges.VersionRange`. Implement `base_name()` and `pin_project()` so package names and
-   exact pins refer to the same project. Use `ordered(package, allowed)` to return matching
-   candidates in preference order.
+   exact pins refer to the same project. By default the catalogue tries newer versions first within
+   each release batch. Override `order_candidate_batch()` to use your installer’s file order.
 2. Implement `read_choices(package)` to list candidates for your target and
    `read_candidate(candidate)` to read one candidate's dependency ranges and exact pins. Keep the
    original pins. A range alone cannot tell you whether the user wrote an exact pin.

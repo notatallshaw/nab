@@ -219,6 +219,12 @@ class PreparedVersionCatalogue(
             self.candidates[package] = cached
         return cached
 
+    def ordered(
+        self, package: str, allowed: VersionRange, /
+    ) -> Sequence[CandidateType]:
+        """Order the cached listing using the catalogue's release preferences."""
+        return self.order_candidates(package, allowed, self.choices(package))
+
     @abstractmethod
     def read_choices(self, package: str) -> Sequence[CandidateType]:
         """Read stable candidate identities without preparing their metadata."""
