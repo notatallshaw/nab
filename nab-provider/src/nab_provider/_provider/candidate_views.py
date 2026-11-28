@@ -41,7 +41,7 @@ class CandidateView:
 
     def __init__(
         self,
-        distributions: list[tuple[Version, DistFile]],
+        distributions: Sequence[tuple[Version, DistFile]],
         tag_exclusions: list[tuple[Version, int]],
         empty_versions: int,
     ) -> None:
@@ -141,6 +141,9 @@ class CandidatePreparation:
 
     def _project(self, accepted: tuple[bool, ...]) -> CandidateView:
         """Project original rows and retain the same diagnostic deltas."""
+        if all(accepted):
+            return CandidateView(self._rows, [], 0)
+
         # Code zero keeps sdists without consulting wheel tags.
         if isinstance(self._codes, str):
             table = {index + 1: int(value) for index, value in enumerate(accepted)}
@@ -149,9 +152,7 @@ class CandidatePreparation:
         else:
             mask = bytes(group == 0 or accepted[group - 1] for group in self._codes)
 
-        result = list(compress(self._rows, mask))
-        if not mask.count(b"\0"):
-            return CandidateView(result, [], 0)
+        result = tuple(compress(self._rows, mask))
 
         exclusions: list[tuple[Version, int]] = []
         rejected: set[Version] = set()
