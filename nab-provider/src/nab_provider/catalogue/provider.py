@@ -584,27 +584,41 @@ class PreferenceProvider(
             )
         return self.prepare_candidate(package, version_range)
 
+    def _exact_token(self, package: str, allowed: RangeProtocol[int]) -> int | None:
+        """Find a registered token when the query permits only that identity."""
+        tokens = self.package_tokens.get(package, ())
+        if isinstance(allowed, Range) and type(allowed) is Range:
+            token = allowed.single_version()
+            if token is None or type(token) is int:
+                return token if token in tokens else None
+
+        # An alternative range can define equality with the solver's point ranges.
+        return next(
+            (token for token in tokens if allowed == Range.singleton(token)), None
+        )
+
     def candidate_token(
         self, package: str, version_range: RangeProtocol[int]
     ) -> int | None:
         """Choose an identity without listing an already registered exact domain."""
         allowed = self.constraints.get(package, self.catalogue.full_range())
         if self.preference.exact_dependencies is not None:
-            for token in self.package_tokens.get(package, ()):
-                if version_range == Range.singleton(token):
-                    candidate = self.items[token]
-                    if (
-                        candidate in self.catalogue.facts
-                        and self.catalogue.facts[candidate] is None
-                    ):
-                        self._reject_candidates(package, [token])
-                        return None
-                    return (
-                        token
-                        if self.eligible(candidate)
-                        and self.catalogue.range_contains(candidate, allowed)
-                        else None
-                    )
+            token = self._exact_token(package, version_range)
+            if token is not None:
+                candidate = self.items[token]
+                if (
+                    candidate in self.catalogue.facts
+                    and self.catalogue.facts[candidate] is None
+                ):
+                    self._reject_candidates(package, [token])
+                    return None
+
+                return (
+                    token
+                    if self.eligible(candidate)
+                    and self.catalogue.range_contains(candidate, allowed)
+                    else None
+                )
 
         rejected: list[int] = []
         chosen: int | None = None

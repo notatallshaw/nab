@@ -1403,3 +1403,24 @@ def test_missing_root_listing_is_incomplete_even_when_the_domain_is_empty() -> N
     assert not provider.has_satisfying_version("dep", Range.full())
     with pytest.raises(IncompletePreferenceError, match="unavailable"):
         provider.select()
+
+
+def test_exact_token_uses_the_registered_integer_for_equivalent_ranges() -> None:
+    class PointRange(Range[int]):
+        pass
+
+    candidate = Choice("dep", 1)
+    catalogue = Catalogue((candidate,))
+    provider = PreferenceProvider.from_catalogue(
+        catalogue, {"dep": Range.full()}, (), {}, exact_dependencies=lambda _: ()
+    )
+    token = provider.identify(candidate)
+    assert token == 1
+    for allowed in (PointRange.singleton(token), Range[int].singleton(version=True)):
+        chosen = provider.choose_version("dep", allowed)
+        assert type(chosen) is int
+        assert chosen == token
+    assert provider.choose_version("dep", PointRange.singleton(7)) is None
+
+    unrelated = provider.identify(Choice("another", 1))
+    assert provider.choose_version("dep", Range.singleton(unrelated)) is None
