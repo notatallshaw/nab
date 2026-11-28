@@ -229,13 +229,24 @@ class _ReleaseProvider(BaseProvider[_Package, Version], Generic[_Choice]):
 
     def _file_rejected(self, choice: _Choice) -> bool:
         facts = self.catalogue.facts
-        return choice in facts and facts[choice] is None
+        if choice in facts and facts[choice] is None:
+            return True
+
+        # An extra always requires this particular base file.
+        if self.catalogue.candidate_base(choice) != self.catalogue.candidate_package(
+            choice
+        ):
+            base = self.catalogue.base_candidate(choice)
+            return base in facts and facts[base] is None
+        return False
 
     def has_untried_alternatives(self, selected: Mapping[str, _Choice]) -> bool:
         """Check whether a discarded release still has another eligible file."""
         discarded: dict[str, dict[Version, _Choice]] = {}
         for (package, version), choice in self.files.items():
-            if selected.get(package) != choice:
+            # An extra can lose on its required base version before its file's
+            # metadata contributes any dependency to the search.
+            if selected.get(package) != choice and choice in self.catalogue.facts:
                 discarded.setdefault(package, {})[version] = choice
 
         # A downstream conflict can eliminate the entire release without asking
