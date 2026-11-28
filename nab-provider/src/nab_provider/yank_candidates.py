@@ -20,23 +20,23 @@ from typing import TYPE_CHECKING
 from packaging.ranges import VersionRange
 from packaging.utils import canonicalize_name
 
+from nab_candidates.preference import UnavailableMetadataError
+from nab_candidates.versions import (
+    PreparedVersionCatalogue,
+    VersionCandidate,
+    VersionCandidateData,
+    is_pin,
+)
 from nab_resolver.errors import ResolutionInvariantError
 
 from ._compat import override
 from ._provider.extras import version_provides_extra
 from ._provider.listing_diagnosis import MetadataBlock
 from ._provider.metadata_resolver import classify_requirement, dists_at_version
-from .catalogue.versions import (
-    PreparedVersionCatalogue,
-    VersionCandidate,
-    VersionCandidateData,
-    is_pin,
-)
 from .errors import MetadataError, MissingExtraError
 from .extra_keys import split_extra
 from .metadata import intern_version
 from .policy import DistPolicy, ExtrasMode, MetadataPolicy
-from .preference import UnavailableMetadataError
 from .records import SdistFile, WheelFile
 from .value import field_names
 

@@ -6,16 +6,18 @@ including environment markers and build, distribution, and VCS policies.
 
 It performs no networking, file access, or subprocess calls.
 
-Package listings and metadata arrive through `nab_provider.fetch_port.FetchPort`, an interface
-implemented by the application using the provider. That application is called the host;
-`nab-project` supplies it for the nab CLI. `nab_provider.testing` supplies an in-memory
-implementation for tests.
-
 ## When to use it
 
-Use `nab-provider` to embed nab's resolution in a host that already owns its networking and caching,
-keeping [`nab-index`](https://pypi.org/project/nab-index/) out of the import graph. Most users want
-[`nab`](https://pypi.org/project/nab/) instead.
+For the command-line tool, install [`nab`](https://pypi.org/project/nab/).
+
+Use `nab-provider` if you want nab to apply Python packaging rules and your application already
+handles networking and caching. Implement `nab_provider.fetch_port.FetchPort` to supply package
+listings and metadata. In the nab CLI, `nab-project` provides that implementation.
+`nab_provider.testing` provides an in-memory version for tests.
+
+If your installer already decides which files are eligible for the target Python and platform, you
+can use `nab-candidates` directly. You supply those files and their dependencies. The library
+chooses a compatible set and explains any yanked files it selects.
 
 Use `nab_provider.ranges.VersionRange` for root constraints and as the resolver's `range_type`. Pass
 `root_version="0"` and `format_range=provider.format_range` when constructing the resolver.

@@ -1,6 +1,6 @@
-# The six distributions
+# Distribution responsibilities
 
-Installing `nab` installs all six distributions. This is how a command reaches them:
+Installing `nab` brings in the libraries used by the CLI:
 
 ```text
 nab CLI
@@ -9,15 +9,14 @@ nab CLI
 nab-project: resolve_for_targets
    |
    v
-nab-resolver <----> nab-provider ----> nab-markersets
-                         |
-                      FetchPort
-                         |
-                         v
-             nab-project: FetchCoordinator
-                         |
-                         v
-                     nab-index
+nab-provider ----> nab-markersets
+   |    |
+   |    +-------> nab-candidates ----> nab-resolver
+   |                                       ^
+   +---------------------------------------+
+   |
+   v
+FetchPort: nab-project's FetchCoordinator ----> nab-index
 ```
 
 `nab_provider.fetch_port.FetchPort` is the interface the provider uses to ask for package files and
@@ -33,15 +32,17 @@ embedding a component, pin the version you tested.
 | ---------------- | ------------------------------------------------------------------------------------------------------------ |
 | `nab-resolver`   | Generic PubGrub solving over abstract versions and ranges; standard library only                             |
 | `nab-markersets` | Marker parsing, algebra and bounded conversion reuse; callers own reuse lifetimes                            |
+| `nab-candidates` | Chooses compatible package files and identifies the exact pin permitting each selected yanked file           |
 | `nab-provider`   | Candidate/dependency selection, targets, tags, extras, metadata parsing, policies and result storage; no I/O |
 | `nab-index`      | Simple API, HTTP cache, wheel range reads, archive/VCS fetches and local indexes                             |
 | `nab-project`    | Fetch coordination, workspaces, PEP 517 builds, locks, downloads and resolve orchestration                   |
 | `nab`            | Configuration, CLI commands and output                                                                       |
 
-An installer that already finds files and prepares metadata can supply its candidates to
-`nab_provider.catalogue`. The catalogue distinguishes files with equal versions, checks when an
-exact pin permits a yanked file, and returns the selected candidates and their dependency edges. The
-installer supplies file order and keeps the metadata it reads for one resolution.
+When a lock may need a yanked file, `nab-provider` lists candidates for the target Python and
+platform and reads their dependencies. `nab-candidates` checks which choices work together and which
+exact pin permits each yanked file it selects. The provider applies nab's prerelease rules and
+reports metadata errors. An installer with its own finder can supply the same inputs directly to
+`nab-candidates`.
 
 `nab-project` reads project files and PEP 723 script metadata into the declaration view used by
 resolution and saved-lock validation. The CLI selects the input format and applies configuration
@@ -87,17 +88,18 @@ results can share a lock.
 
 ```text
 nab-resolver   ->  standard library
-nab-markersets ->  nab-resolver; packaging, or nab-provider, by extra
-nab-provider   ->  nab-markersets, nab-resolver
+nab-candidates ->  nab-resolver, packaging
+nab-markersets ->  nab-resolver, packaging
+nab-provider   ->  nab-candidates, nab-markersets, nab-resolver, packaging
 nab-index      ->  nab-provider, nab-resolver, packaging
 nab-project    ->  nab-markersets, nab-provider, nab-index, nab-resolver, packaging
 nab            ->  nab-markersets, nab-provider, nab-index, nab-project, nab-resolver
 ```
 
-This shows only internal dependencies and `packaging`, which exists in two copies. `nab-index` uses
-the provider's file records, index configuration and fetch errors. Its Simple API client uses
-`nab_resolver.diagnostics` to explain malformed index responses. `nab_provider.value` supplies
-shared record behavior; concrete record types belong to their domain package. Fixed fields use
+This shows internal dependencies and released `packaging`. `nab-index` uses the provider's file
+records, index configuration and fetch errors. Its Simple API client uses `nab_resolver.diagnostics`
+to explain malformed index responses. `nab_candidates.records` supplies comparison for candidate and
+file records. The provider keeps its record construction and copying helpers. Fixed fields use
 `Final` annotations without runtime write guards.
 
 The resolver counts discarded decisions for each package and records which earlier packages it
@@ -118,8 +120,8 @@ rendering. Policy decisions stay with their owning packages. Candidate rejection
 for terminal-error reporting.
 
 The CLI owns verbosity and output lifetime. Each command prints an identical suggestion once while
-retaining every cause. Library hosts can use their own emission state or render errors
-independently.
+retaining every cause. Applications using the library can decide how to display repeated
+suggestions.
 
 ## Prefetch windows
 

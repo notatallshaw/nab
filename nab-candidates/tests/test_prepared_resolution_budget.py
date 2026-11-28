@@ -1,20 +1,20 @@
-"""Solver-round budgets survive arbitrary host interruptions and new sessions."""
+"""Solver round limits across interrupted metadata reads and new sessions."""
 
 from __future__ import annotations
 
 import pytest
 
-from nab_provider._compat import override
-from nab_provider.catalogue.provider import CataloguePreference, PreferenceProvider
-from nab_provider.catalogue.resolution import PreparedResolution
+from nab_candidates._compat import override
+from nab_candidates.provider import CataloguePreference, PreferenceProvider
+from nab_candidates.resolution import PreparedResolution
 from nab_resolver.errors import ResolutionInvariantError, ResolutionLimitError
 from nab_resolver.ranges import Range
 
-from .test_preference_core import Catalogue, Choice, Data
+from .catalogue_fixtures import Catalogue, Choice, Data
 
 
 class DomainChangedError(Exception):
-    """A host observed a different candidate domain."""
+    """The available candidates changed during the search."""
 
 
 class InterruptedCatalogue(Catalogue):

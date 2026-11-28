@@ -5,6 +5,8 @@ knows nothing about Python packaging: package identity, version ordering and dep
 come from you, through a provider.
 
 This page builds a provider over an in-memory graph, resolves with it, and reads the failure report.
+If you already have a finder for Python packages, skip to
+[Resolve Python package files](#resolve-python-package-files).
 
 Install it with `pip install nab-resolver`.
 
@@ -41,10 +43,9 @@ distinct package/version keys for candidates with different dependencies, or sta
 `widen_decision` may return a different parent range on a later decision, provided it still
 satisfies its contract.
 
-The stability rule applies to dependency declarations, not candidate eligibility. Prerelease and
-yanked-release admission can depend on active requirements and host policy, and must be checked
-before preparing candidates. Widened ranges must remain valid for versions that may become eligible
-later in the same resolution.
+Which candidates you can use may change as the resolver selects dependencies. Check the active
+requirements and your prerelease and yanked-file rules before preparing a candidate. If you widen a
+range, it must also be valid for versions that could become eligible later in the search.
 
 ## A provider over an in-memory graph
 
@@ -197,55 +198,64 @@ diagnostic `incompatibility`, and these errors do not prove the requirements uns
 `Range` orders whatever it is handed, so integers suit a toy graph and `packaging.version.Version`
 suits a real Python one.
 
-A host with its own range algebra replaces `Range` outright: pass `Resolver` a `range_type`
-satisfying `RangeProtocol`, a `root_version` to decide the virtual root at, which
-`range_type.singleton()` has to accept, and a `format_range` unless that type's `str` already reads
-as a constraint. nab drives the resolver this way, with a PEP 440 range type.
+To use your own range type, pass it to `Resolver` as `range_type`. It must implement
+`RangeProtocol`. Pass a `root_version` that `range_type.singleton()` accepts for the virtual root.
+If the type's string representation is hard to read in a constraint, also pass `format_range`. Nab
+uses these arguments for PEP 440 version ranges.
 
 Use `left.intersect(right)` or `left.union(right)` to combine terms for the same package. Both raise
 `ValueError` if the packages differ. Intersection returns a term even when its range is empty. Union
 returns `None` if every possible selection satisfies the combined term.
 
-## Reuse scoped artifact preference
+(resolve-a-prepared-catalogue)=
 
-`nab-provider` supplies `nab_provider.preference.PreferenceSearch` for hosts that prefer working
-non-yanked artifacts before admitting a permitted yanked artifact. It shares the ancestor proofs,
-scoped queries and known-metadata checks used by nab's Python provider. The module's runtime imports
-require only the standard library and `nab-resolver`; the host retains metadata preparation and
-acquisition policy.
+## Resolve Python package files
 
-Implement `PreferenceCatalogue` for your candidate identities, dependency facts, version ranges and
-original pin declarations. Candidate listings and identities stay fixed during a search. Prepared
-facts are immutable and the cache may only gain entries. With `refresh_incomplete=True`, a larger
-cache permits rechecking an incomplete proof. Record missing listings before returning their
-queries.
+Install `nab-candidates` if your installer already finds wheels and source distributions. Each file
+is a candidate for installation. Give files with different dependencies distinct candidate
+identities, even when they have the same package name and version.
 
-Subclass `PreferenceSearch` to expose your catalogue and retain solver statistics, then call `run`
-with a callback that resolves one `PreferenceScope`. Before preparing a yanked artifact, call
-`check` with that candidate and the selected assignment. Its result either allows preparation, rules
-out that assignment, or reports an incomplete proof. `run` schedules prerequisite queries and shares
-their work budget. Terminal resolver errors retain their classification. After resolution, `explain`
-identifies the selected input or dependency pins permitting each yank; the host constructs its own
-final result and diagnostics.
+1. Subclass `PreparedVersionCatalogue` from `nab_candidates.versions`. Set `range_type` to
+   `packaging.ranges.VersionRange`. Implement `base_name()` and `pin_project()` so package names and
+   exact pins refer to the same project. Use `ordered(package, allowed)` to return matching
+   candidates in preference order.
+2. Implement `read_choices(package)` to list candidates for your target and
+   `read_candidate(candidate)` to read one candidate's dependency ranges and exact pins. Keep the
+   original pins. A range alone cannot tell you whether the user wrote an exact pin.
+3. Pass your catalogue, root requirement ranges, original input pins and constraints to
+   `nab_candidates.resolution.PreparedResolution.from_catalogue()`.
+4. Call `solve()` for the selected candidates, roots, dependency edges and the pin that permitted
+   each selected yanked file. Call `select()` if you only need the mapping from package names to
+   candidates. Nab uses `select()` when checking yanked files and records the choices in its lock.
 
-## Resolve a prepared catalogue
+Keep candidate identities and listings stable for one resolution. You can read and cache more
+metadata as the search progresses. If a new source changes which files are available, start a new
+resolution with a fresh catalogue.
 
-Install `nab-provider` to use `PreparedVersionCatalogue` from `nab_provider.catalogue.versions`.
-Implement its listing and metadata reads with your installer's finder. Give each file a stable
-candidate identity, including files with the same version but different dependencies. Retain the
-original exact pins alongside the dependency ranges so the provider can check yanked releases.
+(reuse-scoped-artifact-preference)=
 
-Pass the catalogue, root ranges, input pins and constraints to
-`nab_provider.catalogue.resolution.PreparedResolution.from_catalogue`. Its `solve()` method returns
-the selected candidate for each package, the edges between packages, and the pins that permitted
-yanked releases. Start a fresh resolution when a newly discovered source replaces the set of
-candidate files.
+### Check yanked files in your own search
 
-A host that builds its own dependency graph can call `select()` for the package-to-candidate
-mapping. Nab uses this entry point when checking file-level yanked admission. It retains its native
-prerelease order and adopts the chosen files into the target lock.
+Use the lower-level `nab_candidates.preference.PreferenceSearch` if you already run the resolver
+yourself and need to check yanked files. For example, a selected version of `app` might require
+exactly `lib==2.0`. If the file for that version of `lib` is yanked, the search can report `app`'s
+dependency as the reason it was allowed.
 
-## The supported API
+Implement `PreferenceCatalogue` to expose your candidates, their known dependencies, version ranges
+and original pins. Subclass `PreferenceSearch` to provide the catalogue. Call `run()` with a
+callback that resolves one `PreferenceScope`: the scope specifies which earlier choices must stay
+fixed and which packages need a non-yanked file. The searches share one work limit.
+
+Before reading a yanked file's metadata, call `check()` with the candidate, current selection and
+scope. It can allow the read, rule out that selection, or report that the available metadata is
+insufficient. Record missing listings in `missing_listings` before returning from the listing query.
+Keep previously cached facts unchanged. With `refresh_incomplete=True`, adding facts allows the
+search to revisit an inconclusive result. After a successful search, `explain()` returns the source
+of the pin for each selected yanked file.
+
+(the-supported-api)=
+
+## Supported nab-resolver imports
 
 Import these names from the modules listed below. Import paths and APIs can change between 0.0.x
 releases, so pin the version you tested.

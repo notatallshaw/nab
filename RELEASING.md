@@ -1,6 +1,6 @@
 # Releasing
 
-All six packages release together at one version (lockstep).
+The workspace distributions release together at one version (lockstep).
 
 ## Cut a release
 
@@ -20,8 +20,9 @@ All six packages release together at one version (lockstep).
 3. Merge it with a merge commit, not a squash, so the `0.0.3` commit and the tag stay in history.
 
 4. Draft a GitHub release for the `v0.0.3` tag, click "Generate release notes", and publish it. That
-   triggers the release workflow, which builds and validates all six packages and publishes them to
-   PyPI via trusted publishing. Approve the `pypi` deployment in the Actions tab when prompted.
+   triggers the release workflow, which builds and validates all workspace distributions and
+   publishes them to PyPI via trusted publishing. Approve the `pypi` deployment in the Actions tab
+   when prompted.
 
 ## Notes
 

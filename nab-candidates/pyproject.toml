@@ -1,0 +1,37 @@
+[project]
+name = "nab-candidates"
+version = "0.0.32.dev0"
+description = "Choose compatible Python package files using metadata from your installer"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Damian Shaw", email = "damian.peter.shaw@gmail.com" },
+]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Typing :: Typed",
+]
+dependencies = ["nab-resolver==0.0.32.dev0", "packaging>=26.4"]
+
+[project.urls]
+Homepage = "https://github.com/notatallshaw/nab"
+Documentation = "https://nab.readthedocs.io/"
+Issues = "https://github.com/notatallshaw/nab/issues"
+Source = "https://github.com/notatallshaw/nab"
+Changelog = "https://github.com/notatallshaw/nab/releases"
+
+[build-system]
+requires = ["hatchling>=1.33.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist.sources]
+"test-support" = ""

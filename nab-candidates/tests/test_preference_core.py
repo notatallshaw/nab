@@ -3,21 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Hashable, Mapping
-from dataclasses import dataclass
 from typing import TypeVar
 
 import pytest
 
-from nab_provider._compat import override
-from nab_provider.catalogue.provider import (
-    CataloguePreference,
-    MetadataProxy,
-    Package,
-    PermissionProxy,
-    PreferenceProvider,
-)
-from nab_provider.catalogue.resolution import PreparedResolution
-from nab_provider.preference import (
+from nab_candidates._compat import override
+from nab_candidates.preference import (
     IncompletePreferenceError,
     PreferenceScope,
     PreferenceSearch,
@@ -25,6 +16,14 @@ from nab_provider.preference import (
     _Context,
     _KnownFacts,
 )
+from nab_candidates.provider import (
+    CataloguePreference,
+    MetadataProxy,
+    Package,
+    PermissionProxy,
+    PreferenceProvider,
+)
+from nab_candidates.resolution import PreparedResolution
 from nab_resolver.errors import (
     ResolutionError,
     ResolutionInvariantError,
@@ -34,112 +33,9 @@ from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver, ResolverProvider, ResolverStats
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
+from .catalogue_fixtures import Catalogue, Choice, Data, Pin
+
 PackageType = TypeVar("PackageType", bound=Hashable)
-
-
-@dataclass(frozen=True, slots=True)
-class Choice:
-    """One immutable package/version/file-group identity."""
-
-    package: str
-    version: int
-    withdrawn: bool = False
-
-    @property
-    def base(self) -> str:
-        return self.package.partition("[")[0]
-
-    @property
-    def label(self) -> str:
-        return str(self.version)
-
-
-@dataclass(frozen=True, slots=True)
-class Pin:
-    package: str
-    version: int
-
-
-@dataclass(slots=True)
-class Data:
-    dependencies: dict[str, Range[int]]
-    pins: tuple[Pin, ...] = ()
-
-
-class Catalogue:
-    """A fixed integer domain with exact-pin admission and cached dependency facts."""
-
-    def __init__(self, choices: tuple[Choice, ...]) -> None:
-        self.items = choices
-        self.facts: dict[Choice, Data | None] = {}
-        self.missing_listings: set[str] = set()
-        self.unavailable: set[Choice] = set()
-        self.unavailable_reason = "metadata is unavailable"
-        self.metadata: dict[Choice, Data | None] = {}
-
-    def prepare(self, candidate: Choice) -> Data | None:
-        """Cache the declared metadata when the shared provider grants admission."""
-        if candidate in self.unavailable:
-            return None
-        if candidate not in self.facts:
-            self.facts[candidate] = self.metadata.get(candidate, Data({}))
-        return self.facts[candidate]
-
-    def choices(self, package: str) -> tuple[Choice, ...]:
-        return tuple(
-            candidate for candidate in self.items if candidate.package == package
-        )
-
-    def ordered(self, package: str, allowed: Range[int]) -> list[Choice]:
-        return [
-            candidate
-            for candidate in self.choices(package)
-            if candidate.version in allowed
-        ]
-
-    @staticmethod
-    def candidate_package(candidate: Choice) -> str:
-        return candidate.package
-
-    @staticmethod
-    def candidate_base(candidate: Choice) -> str:
-        return candidate.base
-
-    @staticmethod
-    def candidate_label(candidate: Choice) -> str:
-        return candidate.label
-
-    @staticmethod
-    def candidate_withdrawn(candidate: Choice) -> bool:
-        return candidate.withdrawn
-
-    @staticmethod
-    def full_range() -> Range[int]:
-        return Range[int].full()
-
-    @staticmethod
-    def intersect_ranges(left: Range[int], right: Range[int]) -> Range[int]:
-        return left & right
-
-    @staticmethod
-    def range_contains(candidate: Choice, allowed: Range[int]) -> bool:
-        return candidate.version in allowed
-
-    @staticmethod
-    def pin_allows(pin: Pin, candidate: Choice) -> bool:
-        return pin.package == candidate.base and pin.version == candidate.version
-
-    @staticmethod
-    def pin_project(pin: Pin) -> str:
-        return pin.package
-
-    @staticmethod
-    def base_name(package: str) -> str:
-        return package.partition("[")[0]
-
-    @staticmethod
-    def base_candidate(candidate: Choice) -> Choice:
-        return Choice(candidate.base, candidate.version, candidate.withdrawn)
 
 
 class Search(PreferenceSearch[Choice, Range[int], Pin]):
@@ -1355,6 +1251,7 @@ def test_empty_metadata_dependencies_are_cached_without_exposing_the_cache() -> 
             "dependency of the listing failed",
             Incompatibility([], cause=IncompatibilityCause.NO_VERSIONS),
         ),
+        ResolutionError(""),
         ResolutionLimitError("listing failed at the work limit"),
     ],
 )
@@ -1375,9 +1272,13 @@ def test_host_listing_failure_cannot_prove_a_prepared_query_impossible(
             session.solve()
         assert stopped.value is failure
     else:
-        with pytest.raises(IncompletePreferenceError, match="listing failed") as caught:
+        with pytest.raises(IncompletePreferenceError) as caught:
             session.solve()
         assert caught.value.__cause__ is failure
+        detail = f": {failure}" if str(failure) else ""
+        assert (
+            str(caught.value) == f"yanked dependency resolution is incomplete{detail}"
+        )
 
 
 def test_refused_metadata_cannot_supply_proxy_dependencies() -> None:

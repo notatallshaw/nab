@@ -25,6 +25,7 @@ classifiers = [
 # marker algebra, and none of nab's HTTP client, cache, or build machinery.
 dependencies = [
     "packaging>=26.4",
+    "nab-candidates==0.0.32.dev0",
     "nab-markersets==0.0.32.dev0",
     "nab-resolver==0.0.32.dev0",
     "typing_extensions>=4.6",

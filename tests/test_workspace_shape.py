@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 import tomli
 from packaging.pylock import Pylock
+from packaging.requirements import Requirement
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NOXFILE = REPO_ROOT / "noxfile.py"
@@ -37,6 +38,7 @@ CLI_OUTPUT = REPO_ROOT / "src" / "nab" / "output.py"
 # The released `packaging` each distribution declares, wherever it declares it.
 PACKAGING_REQUIREMENTS = {
     "nab": "packaging>=26.4",
+    "nab-candidates": "packaging>=26.4",
     "nab-provider": "packaging>=26.4",
     "nab-markersets": "packaging>=26.4",
     "nab-index": "packaging>=26.4",
@@ -425,7 +427,8 @@ def _workflow_arguments(job: str, executable: str, **environment: str) -> list[s
 
 
 @pytest.mark.parametrize(
-    "selected", ["resolver provider project umbrella", "project umbrella", "umbrella"]
+    "selected",
+    ["resolver candidates provider project umbrella", "project umbrella", "umbrella"],
 )
 def test_ci_passes_selected_workspaces_to_nox(selected: str) -> None:
     assert _workflow_arguments("test", "python", WORKSPACES=selected) == [
@@ -587,3 +590,14 @@ def test_version_and_classifier_checks_read_every_manifest() -> None:
 
     assert sorted(release) == MEMBERS
     assert sorted(classifiers) == MEMBERS
+
+
+def test_standalone_candidate_wheel_depends_on_the_solver_and_packaging() -> None:
+    dependencies = _toml(RELEASED_DIRS["nab-candidates"] / "pyproject.toml")["project"][
+        "dependencies"
+    ]
+
+    assert {Requirement(item).name for item in dependencies} == {
+        "nab-resolver",
+        "packaging",
+    }

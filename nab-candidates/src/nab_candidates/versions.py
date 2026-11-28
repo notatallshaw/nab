@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar, Final, Generic, TypeVar
 
-from ..value import HashableRecord, Record
+from .records import HashableRecord, Record
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -24,7 +24,7 @@ __all__ = [
 
 
 class VersionCandidate(HashableRecord):
-    """A version-text identity whose metadata may require withdrawal permission.
+    """A package choice identified by its name, version label and yanked status.
 
     Subclasses retain the ``(package, version, *, withdrawn)`` constructor.
     """
@@ -111,22 +111,22 @@ class VersionCatalogue(ABC, Generic[CandidateType]):
 
     @classmethod
     def full_range(cls) -> VersionRange:
-        """Return unconstrained bounds in the host range namespace."""
+        """Return a range that allows every version."""
         return cls.range_type.full()
 
     @staticmethod
     def intersect_ranges(left: VersionRange, right: VersionRange) -> VersionRange:
-        """Intersect bounds in the host range namespace."""
+        """Return the versions allowed by both ranges."""
         return left & right
 
     @staticmethod
     def range_contains(candidate: CandidateType, allowed: VersionRange) -> bool:
-        """Test the candidate against the host range."""
+        """Return whether the range includes the candidate's version."""
         return candidate.version in allowed
 
     @classmethod
     def pin_allows(cls, pin: Requirement, candidate: CandidateType) -> bool:
-        """Match the original pin against the candidate in its host namespace."""
+        """Check whether the pin matches the candidate's project and version."""
         return cls.pin_project(pin) == candidate.base and pin.specifier.contains(
             candidate.version, prereleases=True
         )
@@ -134,13 +134,13 @@ class VersionCatalogue(ABC, Generic[CandidateType]):
     @staticmethod
     @abstractmethod
     def pin_project(pin: Requirement) -> str:
-        """Normalize the project named by an original pin in the host namespace."""
+        """Return the normalized project name from the original requirement."""
         ...
 
     @staticmethod
     @abstractmethod
     def base_name(package: str) -> str:
-        """Remove the host's extras proxy from a package identifier."""
+        """Return the base project name for a package requested with extras."""
         ...
 
     @staticmethod
@@ -151,7 +151,7 @@ class VersionCatalogue(ABC, Generic[CandidateType]):
         )
 
     def candidate_prereleases(self, package: str) -> bool | None:
-        """Return the host's explicit prerelease policy, or automatic selection."""
+        """Return the prerelease setting, or None for automatic selection."""
         del package
         return None
 
@@ -168,7 +168,7 @@ class VersionCatalogue(ABC, Generic[CandidateType]):
         allowed: VersionRange,
         choices: Sequence[CandidateType],
     ) -> list[CandidateType]:
-        """Order live and withdrawn release batches using the host's policy."""
+        """Apply prerelease rules to each group, trying non-yanked files first."""
         result: list[CandidateType] = []
         prereleases = self.candidate_prereleases(package)
         for withdrawn in (False, True):
@@ -212,7 +212,7 @@ class PreparedVersionCatalogue(
         self.unavailable_reason = unavailable_reason
 
     def choices(self, package: str) -> tuple[CandidateType, ...]:
-        """Reuse a complete listing without rereading the host's source."""
+        """Read the list once per package and reuse it throughout this resolution."""
         cached = self.candidates.get(package)
         if cached is None:
             cached = tuple(dict.fromkeys(self.read_choices(package)))

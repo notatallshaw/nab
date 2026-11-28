@@ -46,19 +46,32 @@ WORKSPACES = {
         ["nab-resolver/tests"],
         ["nab_resolver"],
     ),
+    "candidates": (
+        ["nab-resolver", "nab-candidates"],
+        ["nab-candidates/tests"],
+        ["nab_candidates"],
+    ),
     "provider": (
-        ["nab-resolver", "nab-markersets", "nab-provider"],
+        ["nab-resolver", "nab-candidates", "nab-markersets", "nab-provider"],
         ["nab-markersets/tests", "nab-provider/tests"],
         ["nab_markersets"],
     ),
     "project": (
-        ["nab-resolver", "nab-markersets", "nab-provider", "nab-index", "nab-project"],
+        [
+            "nab-resolver",
+            "nab-candidates",
+            "nab-markersets",
+            "nab-provider",
+            "nab-index",
+            "nab-project",
+        ],
         ["nab-provider/tests", "nab-project/tests", "nab-index/tests"],
         ["nab_provider", "nab_project", "nab_index"],
     ),
     "umbrella": (
         [
             "nab-resolver",
+            "nab-candidates",
             "nab-markersets",
             "nab-provider",
             "nab-index",
@@ -74,6 +87,7 @@ WORKSPACES = {
 TYPED_TREES = [
     "nab-resolver/src",
     "nab-markersets/src",
+    "nab-candidates/src",
     "nab-provider/src",
     "nab-project/src",
     "nab-index/src",
@@ -276,7 +290,14 @@ def benchmarks(session: nox.Session) -> None:
     _install(
         session,
         "tests",
-        ["nab-resolver", "nab-markersets", "nab-provider", "nab-index", "nab-project"],
+        [
+            "nab-resolver",
+            "nab-candidates",
+            "nab-markersets",
+            "nab-provider",
+            "nab-index",
+            "nab-project",
+        ],
     )
     session.run(
         "python",

@@ -7,6 +7,7 @@ path = ".venv"
 workspace.members = [
     "nab-resolver",
     "nab-markersets",
+    "nab-candidates",
     "nab-provider",
     "nab-project",
     "nab-index",
@@ -20,7 +21,7 @@ pre-install-commands = [
     'python -m pip install "pip>=26.3"',
     'python -m pip install -r "{root}/.github/requirements/pylock.build.toml"',
     'python -m pip install -r "{root}/pylock.dev.toml"',
-    'python -m pip install --no-deps --no-build-isolation -e "{root}/nab-resolver" -e "{root}/nab-markersets" -e "{root}/nab-provider" -e "{root}/nab-index" -e "{root}/nab-project"',
+    'python -m pip install --no-deps --no-build-isolation -e "{root}/nab-resolver" -e "{root}/nab-markersets" -e "{root}/nab-candidates" -e "{root}/nab-provider" -e "{root}/nab-index" -e "{root}/nab-project"',
 ]
 
 [envs.hatch-test]
@@ -32,11 +33,12 @@ pre-install-commands = [
     'python -m pip install "pip>=26.3"',
     'python -m pip install -r "{root}/.github/requirements/pylock.build.toml"',
     'python -m pip install --group "{root}/pylock.dev.toml:hatch-test"',
-    'python -m pip install --no-deps --no-build-isolation -e "{root}/nab-resolver" -e "{root}/nab-markersets" -e "{root}/nab-provider" -e "{root}/nab-index" -e "{root}/nab-project"',
+    'python -m pip install --no-deps --no-build-isolation -e "{root}/nab-resolver" -e "{root}/nab-markersets" -e "{root}/nab-candidates" -e "{root}/nab-provider" -e "{root}/nab-index" -e "{root}/nab-project"',
 ]
 workspace.members = [
     "nab-resolver",
     "nab-markersets",
+    "nab-candidates",
     "nab-provider",
     "nab-project",
     "nab-index",
@@ -51,11 +53,12 @@ pre-install-commands = [
     'python -m pip install "pip>=26.3"',
     'python -m pip install -r "{root}/.github/requirements/pylock.build.toml"',
     'python -m pip install --group "{root}/pylock.dev.toml:crosshair"',
-    'python -m pip install --no-deps --no-build-isolation -e "{root}/nab-resolver" -e "{root}/nab-markersets" -e "{root}/nab-provider" -e "{root}/nab-index" -e "{root}/nab-project"',
+    'python -m pip install --no-deps --no-build-isolation -e "{root}/nab-resolver" -e "{root}/nab-markersets" -e "{root}/nab-candidates" -e "{root}/nab-provider" -e "{root}/nab-index" -e "{root}/nab-project"',
 ]
 workspace.members = [
     "nab-resolver",
     "nab-markersets",
+    "nab-candidates",
     "nab-provider",
     "nab-project",
     "nab-index",

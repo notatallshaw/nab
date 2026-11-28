@@ -310,6 +310,7 @@ def printer() -> Printer:
 _NAB_LOGGERS = (
     "nab",
     "nab_markersets",
+    "nab_candidates",
     "nab_provider",
     "nab_project",
     "nab_index",

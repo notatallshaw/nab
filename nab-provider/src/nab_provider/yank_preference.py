@@ -7,15 +7,16 @@ from typing import TYPE_CHECKING
 from packaging.ranges import VersionRange
 from packaging.requirements import Requirement
 
-from ._compat import override
-from .catalogue.provider import CataloguePreference
-from .preference import (
+from nab_candidates.preference import (
     IncompletePreferenceError,
     PreparationStatus,
 )
-from .preference import (
+from nab_candidates.preference import (
     PreferenceScope as CoreScope,
 )
+from nab_candidates.provider import CataloguePreference
+
+from ._compat import override
 from .yank_candidates import Candidate
 
 if TYPE_CHECKING:

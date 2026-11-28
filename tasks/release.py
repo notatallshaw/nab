@@ -36,6 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_PACKAGES = (
     "nab-resolver",
     "nab-markersets",
+    "nab-candidates",
     "nab-provider",
     "nab-project",
     "nab-index",

@@ -15,7 +15,7 @@ from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver
 from nab_resolver.result import IncompleteSelectionError, walk_selected
 
-from .._compat import override
+from ._compat import override
 from .provider import MetadataProxy, Package, PreferenceProvider
 
 if TYPE_CHECKING:
@@ -45,7 +45,7 @@ class PreparedSolution(Generic[CandidateType]):
         roots: tuple[str, ...],
         admission_sources: dict[str, tuple[str, ...]],
     ) -> None:
-        """Retain one exact selected model and its host-facing graph."""
+        """Store the candidates, roots, dependency edges and reasons for yanks."""
         self.candidates = candidates
         self.edges = edges
         self.roots = roots
@@ -53,7 +53,7 @@ class PreparedSolution(Generic[CandidateType]):
 
 
 class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType]):
-    """Keep one prepared snapshot and its preference-query lifetime together."""
+    """Share cached metadata and a solver round limit across selection attempts."""
 
     def __init__(
         self,
@@ -64,7 +64,7 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
         preferred_candidate: Callable[[str], CandidateType | None] | None = None,
         try_live: bool = False,
     ) -> None:
-        """Own query wiring while the supplied provider retains its facts."""
+        """Configure candidate selection using the provider's cached metadata."""
         self.provider = provider
         self.metadata_admission = metadata_admission
         self.preferred_candidate = preferred_candidate
@@ -73,7 +73,7 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
             provider.preferred_candidate = preferred_candidate
 
     @classmethod
-    def from_catalogue(  # noqa: PLR0913 - preserve independent public host hooks
+    def from_catalogue(  # noqa: PLR0913 - preserve independent catalogue callbacks
         cls,
         catalogue: PreparedCatalogue[CandidateType, RangeType, PinnedRequirementType],
         roots: Mapping[str, RangeType],
@@ -89,7 +89,7 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
         max_rounds: int | None = None,
         try_live: bool = False,
     ) -> PreparedResolution[CandidateType, RangeType, PinnedRequirementType]:
-        """Use the shared query engine with the host's preparation and policy.
+        """Resolve files using the supplied catalogue and selection rules.
 
         ``try_live`` first excludes withdrawn choices, returning to admission
         proofs when a matching exact pin could permit one.
@@ -325,7 +325,7 @@ class _LiveProvider(
 
 
 class _SelectedAdmission(Generic[CandidateType, RangeType, PinnedRequirementType]):
-    """Apply host admission to a complete selection of cached metadata."""
+    """Apply the selection policy once all reachable dependencies are known."""
 
     def __init__(
         self,

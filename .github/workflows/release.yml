@@ -89,6 +89,13 @@ jobs:
           print-hash: true
           skip-existing: true
 
+      - name: Publish nab-candidates
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
+        with:
+          packages-dir: dist/nab-candidates
+          print-hash: true
+          skip-existing: true
+
       - name: Publish nab-provider
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
         with:
