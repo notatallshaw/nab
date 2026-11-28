@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from typing import BinaryIO, TypeGuard
 
 __all__ = [
+    "ReadCache",
     "copy_table",
     "is_table",
     "load",
@@ -64,7 +65,26 @@ def load(f: BinaryIO) -> dict[str, Any]:
     return loads(f.read().decode())
 
 
-def load_path(path: Path) -> dict[str, Any]:
+class ReadCache:
+    """Share the last parsed document between read-only consumers in one operation."""
+
+    __slots__ = ("_last",)
+
+    def __init__(self) -> None:
+        """Start without a document."""
+        self._last: tuple[bytes, dict[str, Any]] | None = None
+
+    def parse(self, raw: bytes) -> dict[str, Any]:
+        """Reuse the table only if the bytes still match."""
+        if self._last is not None and raw == self._last[0]:
+            return self._last[1]
+
+        document = loads(raw.decode())
+        self._last = (raw, document)
+        return document
+
+
+def load_path(path: Path, *, cache: ReadCache | None = None) -> dict[str, Any]:
     """Parse the TOML document in the file at ``path``.
 
     Failures reach the caller unwrapped: :class:`OSError` for an unreadable
@@ -72,6 +92,9 @@ def load_path(path: Path) -> dict[str, Any]:
     :class:`~tomli.TOMLDecodeError` for a document that will not parse.
     """
     with path.open("rb") as f:
+        if cache is not None:
+            return cache.parse(f.read())
+
         return load(f)
 
 

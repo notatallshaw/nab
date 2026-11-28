@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 from pathlib import Path
 
 import pytest
@@ -107,3 +108,24 @@ def test_shared_containers_are_copied_once_and_remain_independent() -> None:
 
     item["tags"].append("test")
     assert not toml_io.values_match(source, result)
+
+
+def test_cached_reader_rereads_changed_bytes(tmp_path: Path) -> None:
+    path = tmp_path / "pylock.toml"
+    path.write_bytes(b'version = "1"')
+    cache = toml_io.ReadCache()
+    first = toml_io.load_path(path, cache=cache)
+
+    assert toml_io.load_path(path, cache=cache) is first
+    original = path.stat()
+    path.write_bytes(b'version = "2"')
+    os.utime(path, ns=(original.st_atime_ns, original.st_mtime_ns))
+    assert toml_io.load_path(path, cache=cache) == {"version": "2"}
+
+    path.write_bytes(b"invalid")
+    with pytest.raises(tomli.TOMLDecodeError):
+        toml_io.load_path(path, cache=cache)
+
+    path.unlink()
+    with pytest.raises(FileNotFoundError):
+        toml_io.load_path(path, cache=cache)

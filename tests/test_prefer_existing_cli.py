@@ -422,6 +422,28 @@ def test_reuse_keeps_a_valid_file_without_remote_discovery(
     assert len(registry.coordinators) == coordinator_count
 
 
+def test_reuse_parses_the_saved_lock_once(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert registry.command() == 0
+    saved = registry.output.read_bytes()
+    saved_text = saved.decode("utf-8")
+    parse = toml_io.loads
+    calls = 0
+
+    def count_saved(text: str) -> dict[str, object]:
+        nonlocal calls
+        if text == saved_text:
+            calls += 1
+        return parse(text)
+
+    monkeypatch.setattr(toml_io, "loads", count_saved)
+    assert registry.command("--lock-policy", "reuse") == 0
+
+    assert calls == 1
+    assert registry.output.read_bytes() == saved
+
+
 def test_reuse_accepts_compatible_bounds_without_rewriting(registry: Registry) -> None:
     assert registry.command() == 0
 
