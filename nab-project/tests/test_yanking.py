@@ -264,9 +264,9 @@ def test_inactive_marker_does_not_admit_a_yank() -> None:
 
 @pytest.mark.parametrize(
     ("roots", "succeeds"),
-    [(("app",), False), (("app[x]",), False), (("app[x]", "dep==2"), True)],
+    [(("app",), False), (("app[x]",), True), (("app[x]", "dep==2"), True)],
 )
-def test_extra_pin_may_need_an_explicit_input_pin(
+def test_an_active_extra_can_supply_the_exact_pin(
     roots: Sequence[str], succeeds: bool
 ) -> None:
     results, _ = run_graph(
@@ -1363,6 +1363,54 @@ def test_closed_live_frontier_does_not_search_for_an_undiscovered_pin(
     assert results[0].success is pinned, results[0].error
     if pinned:
         assert results[0].pins == {"app": Version("2"), "dep": Version("2")}
+
+
+@pytest.mark.parametrize("roots", [("app", "parent==1"), ("parent==1", "app")])
+def test_selected_parent_can_supply_a_pin_in_either_root_order(
+    roots: tuple[str, str],
+) -> None:
+    results, port = run_graph(
+        [
+            ("app", "1", False, ["leaf"]),
+            ("parent", "1", False, ["leaf==2"]),
+            ("leaf", "3", True, []),
+            ("leaf", "2", True, []),
+        ],
+        roots,
+    )
+
+    assert results[0].success, results[0].error
+    assert results[0].pins == {
+        "app": Version("1"),
+        "parent": Version("1"),
+        "leaf": Version("2"),
+    }
+    assert not _requested_metadata(port, "leaf", "3")
+
+
+@pytest.mark.parametrize("offline", [False, True])
+def test_unusable_selected_parent_metadata_does_not_grant_permission(
+    *, offline: bool
+) -> None:
+    search = graph_search(
+        [
+            ("app", "1", False, ["leaf"]),
+            ("parent", "1", False, ["leaf==2"]),
+            ("leaf", "2", True, []),
+        ],
+        ["app", "parent==1"],
+    )
+    index = search.catalogue.provider.coordinator.index
+    url = "https://example.test/parent-1-False.whl.metadata"
+    if offline:
+        index.record_offline_metadata_miss("parent", "1", url)
+    index.store_metadata("parent", "1", None, metadata_url=url)
+
+    with pytest.raises(ResolutionError) as caught:
+        search.resolve()
+
+    assert isinstance(caught.value, IncompletePreferenceError) is offline
+    assert not any(candidate.withdrawn for candidate in search.catalogue.facts)
 
 
 def test_rejected_witness_does_not_remove_an_independent_pin() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 __lazy_modules__ = (
+    "collections",
     "nab_provider._provider.listing_diagnosis",
     "nab_provider.diagnostics",
     "nab_provider.extra_keys",
@@ -14,6 +15,7 @@ __lazy_modules__ = (
     "packaging.utils",
 )
 
+from collections import deque
 from typing import TYPE_CHECKING, Final
 
 from packaging.utils import canonicalize_name
@@ -213,11 +215,51 @@ class YankProxyProvider(BaseProvider[Package, int]):
                 for choice in choices
             ):
                 self._mixed_release_packages.add(package)
-        return Range[int].from_versions(
+        encoded = Range[int].from_versions(
             self.identify(candidate)
             for candidate in choices
             if self.eligible(candidate)
         )
+        if self.live_trial and encoded.is_empty and self.decisions:
+            withdrawn = [candidate for candidate in choices if candidate.withdrawn]
+            if withdrawn and self._selected_parent_declares_pin(withdrawn):
+                # The admission search checks the witness against the final choices.
+                raise _AdmissionRequiredError
+
+        return encoded
+
+    def _selected_parent_declares_pin(self, withdrawn: Sequence[Candidate]) -> bool:
+        """Whether a reachable live decision declares a pin for this empty domain."""
+        pending = deque(self.roots)
+        seen = set(pending)
+        while pending:
+            package = pending.popleft()
+            token = self.decisions.get(package)
+            if token is None:
+                continue
+
+            # Live trials select only non-yanked candidates. Their metadata may
+            # still be pending when another parent requires a withdrawn release.
+            candidate = self.items[token]
+            data = self.catalogue.prepare(candidate)
+            if data is None:
+                if candidate in self.catalogue.unavailable:
+                    self.incomplete = True
+                continue
+
+            if any(
+                self.catalogue.pin_allows(pin, choice)
+                for pin in data.pins
+                for choice in withdrawn
+            ):
+                return True
+
+            for child in data.dependencies:
+                if child not in seen:
+                    seen.add(child)
+                    pending.append(child)
+
+        return False
 
     def receive_decision_scan_hint(
         self,
