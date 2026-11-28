@@ -13,6 +13,9 @@ provider uses int; the Python provider uses packaging.version.Version.
 
 from __future__ import annotations
 
+__lazy_modules__ = ("bisect",)
+
+from bisect import bisect_right
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast
 
 from ._compat import override
@@ -805,17 +808,20 @@ def _normalize_intervals(intervals: list[Interval]) -> tuple[Interval, ...]:
 
 
 class _IntegerMembershipEntry:
-    """Keep a range alive alongside its integer point lookup, if available."""
+    """Keep the range alive alongside its lookup for integer probes."""
 
-    __slots__ = ("owner", "points")
+    __slots__ = ("boundaries", "owner", "points")
 
-    def __init__(self, owner: object, points: frozenset[int] | None) -> None:
+    def __init__(self, owner: object, intervals: tuple[Interval, ...]) -> None:
         self.owner = owner
-        self.points = points
+        self.points = _integer_points(intervals)
+        self.boundaries = (
+            _integer_boundaries(intervals) if self.points is None else None
+        )
 
 
 class IntegerRangeMembership:
-    """Reuse integer point lookups until cleared or discarded.
+    """Reuse integer point and half-open interval lookups until cleared.
 
     Other probes and ranges retain their own membership behavior. Owners are
     retained until :meth:`clear`, so use one lookup for a bounded operation.
@@ -832,7 +838,7 @@ class IntegerRangeMembership:
         version_range: Range[VersionType] | RangeProtocol[VersionType],
         value: VersionType,
     ) -> bool:
-        """Test membership, caching only exact integer point representations."""
+        """Index integer points and sorted half-open integer intervals."""
         if (
             not isinstance(version_range, Range)
             or type(version_range) is not Range
@@ -847,15 +853,19 @@ class IntegerRangeMembership:
             # Retaining the owner prevents reuse of its identity before clear().
             entry = _IntegerMembershipEntry(
                 version_range,
-                _integer_points(version_range._intervals),  # noqa: SLF001 - this module owns the range representation
+                version_range._intervals,  # noqa: SLF001 - this module owns the range representation
             )
             self._entries[key] = entry
 
         points = entry.points
-        if points is None:
-            return value in version_range
+        if points is not None:
+            return value in points
 
-        return value in points
+        if entry.boundaries is not None:
+            # The exact type check above excludes int subclasses as well.
+            return bisect_right(entry.boundaries, cast("int", value)) % 2 == 1
+
+        return value in version_range
 
     def clear(self) -> None:
         """Release every retained range and derived lookup."""
@@ -863,18 +873,32 @@ class IntegerRangeMembership:
 
 
 def _integer_points(intervals: tuple[Interval, ...]) -> frozenset[int] | None:
-    """Return inclusive integer point values, or None for other intervals."""
+    """Return one integer per closed point or width-one half-open interval."""
     points: set[int] = set()
+    for lower, lower_inclusive, upper, upper_inclusive in intervals:
+        if type(lower) is not int or type(upper) is not int or not lower_inclusive:
+            return None
+
+        if upper != (lower if upper_inclusive else lower + 1):
+            return None
+
+        points.add(lower)
+    return frozenset(points)
+
+
+def _integer_boundaries(intervals: tuple[Interval, ...]) -> tuple[int, ...] | None:
+    """Index ordered finite integer cells without expanding them into points."""
+    boundaries: list[int] = []
     for lower, lower_inclusive, upper, upper_inclusive in intervals:
         if (
             type(lower) is not int
             or type(upper) is not int
-            or lower != upper
-            or lower_inclusive is not True
-            or upper_inclusive is not True
+            or not lower_inclusive
+            or upper_inclusive
+            or upper <= lower
+            or (boundaries and lower < boundaries[-1])
         ):
             return None
 
-        points.add(lower)
-
-    return frozenset(points)
+        boundaries.extend((lower, upper))
+    return tuple(boundaries)

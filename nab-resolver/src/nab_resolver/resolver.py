@@ -48,6 +48,7 @@ from .types import (
     IncompatibilityCause,
     IncompatibilityState,
     PackageType,
+    RangeFactory,
     RangeProtocol,
     RootRequirement,
     SelfDependency,
@@ -633,7 +634,7 @@ class Resolver(Generic[PackageType, VersionType]):
         provider: ResolverProvider[PackageType, VersionType],
         observer: ResolverObserver[PackageType, VersionType] | None = None,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
-        range_type: type[RangeProtocol[VersionType]] = Range,
+        range_type: type[RangeFactory[VersionType]] = Range,
         root_version: Any = 1,
         format_range: Callable[[RangeProtocol[VersionType]], str] = str,
     ) -> None:

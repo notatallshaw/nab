@@ -27,6 +27,7 @@ __all__ = [
     "IncompatibilityCause",
     "IncompatibilityState",
     "PackageType",
+    "RangeFactory",
     "RangeProtocol",
     "RangeRelation",
     "RelationProtocol",
@@ -136,6 +137,27 @@ class RangeProtocol(Protocol[_ContravariantVersion]):
 
     # __eq__ and __hash__ come from object; redeclaring them in the
     # Protocol adds no constraint and mypy and zuban disagree on @override.
+
+
+class RangeFactory(Protocol[_ContravariantVersion]):
+    """Construct compatible ranges for the resolver's initial state and decisions."""
+
+    @classmethod
+    def full(cls) -> RangeProtocol[_ContravariantVersion]:
+        """Return the unrestricted range."""
+        ...
+
+    @classmethod
+    def empty(cls) -> RangeProtocol[_ContravariantVersion]:
+        """Return the empty range."""
+        ...
+
+    @classmethod
+    def singleton(
+        cls, version: _ContravariantVersion, /
+    ) -> RangeProtocol[_ContravariantVersion]:
+        """Return a range selecting exactly this version in the host's domain."""
+        ...
 
 
 class Term(Generic[PackageType, VersionType]):

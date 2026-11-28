@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+__lazy_modules__ = ("nab_provider.candidate_tokens",)
+
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Hashable
@@ -17,6 +19,8 @@ from nab_resolver.errors import (
 )
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import BaseProvider, Resolver, ResolverStats
+
+from .candidate_tokens import CandidateTokenRange
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -579,8 +583,12 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
 
     def check_context(self, context: _Context[CandidateType]) -> None:
         """Check for known conflicts after the requesting solver unwinds."""
-        provider = _KnownFacts(self.catalogue, self.constraints, context)
-        solver: Resolver[str, int] = Resolver(provider, max_iterations=self.remaining)
+        provider = _KnownFacts(
+            self.catalogue, self.constraints, context, token_ranges=CandidateTokenRange
+        )
+        solver: Resolver[str, int] = Resolver(
+            provider, range_type=CandidateTokenRange, max_iterations=self.remaining
+        )
         refuted = False
         try:
             roots = {
@@ -620,7 +628,10 @@ class _KnownFacts(
         catalogue: PreferenceCatalogue[CandidateType, RangeType, PinnedRequirementType],
         constraints: Mapping[str, RangeType],
         context: _Context[CandidateType],
+        *,
+        token_ranges: type[Range[int]] = Range,
     ) -> None:
+        self._token_ranges = token_ranges
         self.catalogue = catalogue
         self.constraints = constraints
 
@@ -671,7 +682,7 @@ class _KnownFacts(
         ]
 
     def encode(self, package: str, allowed: RangeType) -> Range[int]:
-        return Range[int].from_versions(
+        return self._token_ranges.from_versions(
             self.identify(candidate) for candidate in self.choices(package, allowed)
         )
 
@@ -721,5 +732,5 @@ class _KnownFacts(
         base = self.catalogue.base_name(package)
         if base != package:
             underlying = self.catalogue.base_candidate(candidate)
-            result[base] = Range.singleton(self.identify(underlying))
+            result[base] = self._token_ranges.singleton(self.identify(underlying))
         return result

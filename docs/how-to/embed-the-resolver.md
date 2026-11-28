@@ -197,7 +197,10 @@ suits a real Python one.
 A host with its own range algebra replaces `Range` outright: pass `Resolver` a `range_type`
 satisfying `RangeProtocol`, a `root_version` to decide the virtual root at, which
 `range_type.singleton()` has to accept, and a `format_range` unless that type's `str` already reads
-as a constraint. nab drives the resolver this way, with a PEP 440 range type.
+as a constraint. nab drives the resolver this way, with a PEP 440 range type. The constructor also
+accepts a `RangeFactory` that produces compatible ranges with `full()`, `empty()`, and
+`singleton(version)`. The host must use the same representation for decisions and the constraints it
+supplies.
 
 Use `left.intersect(right)` or `left.union(right)` to combine terms for the same package. Both raise
 `ValueError` if the packages differ. Intersection returns a term even when its range is empty. Union
@@ -236,7 +239,7 @@ releases, so pin the version you tested.
 | `nab_resolver.root`        | `ROOT`                                                                                                                       |
 | `nab_resolver.priority`    | `compute_tier`                                                                                                               |
 | `nab_resolver.ranges`      | `Range`, `IntegerRangeMembership`                                                                                            |
-| `nab_resolver.types`       | `RootRequirement`, `Term`, `Incompatibility`, `IncompatibilityCause`, `RangeProtocol`                                        |
+| `nab_resolver.types`       | `RootRequirement`, `Term`, `Incompatibility`, `IncompatibilityCause`, `RangeProtocol`, `RangeFactory`                        |
 | `nab_resolver.errors`      | `ResolutionError`, `ResolutionTerminatedError`, `ResolutionLimitError`, `ResolutionInvariantError`, `ResolutionStalledError` |
 | `nab_resolver.diagnostics` | `DiagnosticMessage`, `Suggestion`, `error_message`, `suggestion_lines`                                                       |
 | `nab_resolver.testing`     | `ProviderScenario`, `ProviderConformanceError`, `check_provider`, `check_provider_scenarios`                                 |

@@ -48,6 +48,21 @@ class _TrackedFloat(float):
         ((), (0, 1), (False, False)),
         (((1, True, 1, True),), (0, 1, 2), (False, True, False)),
         (
+            ((1, True, 2, False), (4, True, 5, False)),
+            (1, 2, 3, 4),
+            (True, False, False, True),
+        ),
+        (
+            ((1, True, 4, False), (7, True, 9, False)),
+            (0, 1, 3, 4, 6, 7, 8, 9),
+            (False, True, True, False, False, True, True, False),
+        ),
+        (
+            ((7, True, 9, False), (1, True, 4, False)),
+            (1, 4, 7, 9),
+            (True, False, True, False),
+        ),
+        (
             ((5, True, 5, True), (-3, True, -3, True), (5, True, 5, True)),
             (-3, 0, 5, 6),
             (True, False, True, False),
