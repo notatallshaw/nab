@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from itertools import chain
 from typing import TYPE_CHECKING, Generic, TypeVar, cast
 
@@ -29,7 +30,7 @@ from .resolution import PreparedResolution
 from .versions import VersionCandidate
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Mapping
+    from collections.abc import Callable, Iterable, Iterator
 
     from nab_resolver.types import RangeProtocol
 
@@ -44,6 +45,29 @@ _METADATA_VERSION = Version("0")
 _METADATA_RANGE = VersionRange.singleton(_METADATA_VERSION)
 
 
+class _NamedRanges(Mapping[_Package, VersionRange]):
+    """Expose host package ranges to a resolver with extra metadata keys."""
+
+    def __init__(self, named: Mapping[str, VersionRange]) -> None:
+        self.named = named
+
+    @override
+    def __getitem__(self, package: _Package) -> VersionRange:
+        if isinstance(package, str):
+            allowed = self.named.get(package)
+            if allowed is not None:
+                return allowed
+        raise KeyError(package)
+
+    @override
+    def __iter__(self) -> Iterator[_Package]:
+        return iter(self.named)
+
+    @override
+    def __len__(self) -> int:
+        return len(self.named)
+
+
 class _NeedsFileSearchError(Exception):
     """A release number cannot represent the choice or its admission policy."""
 
@@ -54,10 +78,13 @@ class PreparedVersionResolution(PreparedResolution[_Choice, VersionRange, Requir
     @override
     def try_live_candidates(self) -> dict[str, _Choice] | None:
         """Try release ranges, falling back when a file identity matters."""
-        if not self.provider.roots:
-            return super().try_live_candidates()
-
         self.provider.preference.require_remaining_rounds()
+
+        # A nonempty model needs a decision and a completion round. Preserve
+        # the file query's failure path when the release trial cannot finish.
+        if not self.provider.roots or self.remaining_rounds == 1:
+            return self.try_live_files()
+
         query = _ReleaseProvider(self)
         resolver: Resolver[_Package, Version] = Resolver(
             query,
@@ -65,13 +92,9 @@ class PreparedVersionResolution(PreparedResolution[_Choice, VersionRange, Requir
             range_type=VersionRange,
             root_version=_METADATA_VERSION,
         )
-        # Only package names are roots. The query introduces metadata keys.
-        roots: dict[_Package, RangeProtocol[Version]] = dict(
-            self.provider.roots.items()
-        )
-        constraints: dict[_Package, RangeProtocol[Version]] = dict(
-            self.provider.constraints.items()
-        )
+        # Native constraints can answer extra names that the user never wrote.
+        roots = _NamedRanges(self.provider.roots)
+        constraints = _NamedRanges(self.provider.constraints)
         try:
             pins = resolver.resolve(roots, constraints)
         except ResolutionTerminatedError:
@@ -93,6 +116,10 @@ class PreparedVersionResolution(PreparedResolution[_Choice, VersionRange, Requir
             self.provider.preference.record_solver_stats(resolver.stats)
             self.provider.preference.spend(resolver.stats.rounds)
 
+        return self.try_live_files()
+
+    def try_live_files(self) -> dict[str, _Choice] | None:
+        """Try individual files using the host's ordering and metadata rules."""
         return super().try_live_candidates()
 
 

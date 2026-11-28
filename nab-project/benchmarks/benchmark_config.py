@@ -928,7 +928,9 @@ def retry_yanked_resolution(
         preferences={},
     )
     try:
-        return search.resolve()
+        return search.resolve(
+            withdrawal=error if isinstance(error, YankAdmissionRequiredError) else None
+        )
     finally:
         stats.rounds = search.stats.rounds
         for name in (

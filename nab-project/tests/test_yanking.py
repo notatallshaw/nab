@@ -19,11 +19,12 @@ from packaging.ranges import VersionRange
 from packaging.requirements import Requirement
 from packaging.version import Version
 
+from nab_candidates.lookahead import LOOKAHEAD_ABORT_THRESHOLD
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import IndexPin, build_pylock
 from nab_project.resolve import build_lock_input, resolve_with_coordinator
 from nab_provider import yanked_resolution
-from nab_provider.errors import MissingExtraError
+from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.overrides import PackageOverride
 from nab_provider.policy import BuildPolicy, DistPolicy, ExtrasMode, MetadataPolicy
@@ -855,6 +856,28 @@ def graph_search(
         ProxyConstraints({}),
         preferences=preferences or {},
     )
+
+
+def test_native_fallback_reconsiders_a_release_blocking_multiple_wheels() -> None:
+    releases: list[ReleaseRow] = [
+        ("runtime", "3", True, []),
+        ("runtime", "2", False, []),
+        ("runtime", "1", False, []),
+    ]
+    latest = 2 * LOOKAHEAD_ABORT_THRESHOLD
+    releases.extend(
+        ("plugin", str(version), False, ["runtime==1"])
+        for version in range(1, latest + 1)
+    )
+    search = graph_search(releases, ["runtime", "plugin"])
+
+    with pytest.raises(YankAdmissionRequiredError) as blocked:
+        search.catalogue.provider.get_dependencies("runtime", Version("3"))
+    pins, _ = search.resolve(withdrawal=blocked.value)
+
+    assert pins == {"runtime": Version("1"), "plugin": Version(str(latest))}
+    prepared = [file for file in search.catalogue.facts if file.package == "plugin"]
+    assert len(prepared) <= LOOKAHEAD_ABORT_THRESHOLD
 
 
 def test_direct_candidate_selection_cannot_read_with_an_exhausted_budget() -> None:

@@ -98,6 +98,15 @@ LATE_UNKNOWN = Case(
 @example(case=EXTRA_BACKTRACK)
 @example(case=LATE_PIN)
 @example(case=MIXED_FILES)
+@example(
+    case=Case(
+        (
+            Artifact("a", "1", withdrawn=False, dependencies=(Request("missing"),)),
+            Artifact("a", "2", withdrawn=True),
+        ),
+        (Request("a"),),
+    )
+)
 @example(case=UNSEEDED_CYCLE)
 @example(case=replace(UNSEEDED_CYCLE, roots=(Request("a", "==1"),)))
 @example(case=LATE_EXTRA)

@@ -10,6 +10,7 @@ from packaging.ranges import VersionRange
 from packaging.requirements import Requirement
 from packaging.version import Version
 
+from nab_candidates.releases import PreparedVersionResolution
 from nab_project._resolve.engine import _warn_selected_yanks
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import IndexPin, LocalPin, LockValidationError, TargetLock
@@ -20,6 +21,7 @@ from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
 from nab_provider.policy import DistPolicy, ExtrasMode, MetadataPolicy
 from nab_provider.provider import Provider, ResolutionStrategy
 from nab_provider.records import SdistFile
+from nab_provider.resolver_inputs import ProxyConstraints
 from nab_provider.target import ResolveTarget
 from nab_provider.yank_candidates import Candidate, YankCandidates, add_range, is_pin
 from nab_provider.yanking import mark_yanked
@@ -86,6 +88,31 @@ def test_only_a_final_rejection_can_rule_out_a_requested_extra(
         with pytest.raises(MissingExtraError, match="does not provide extra 'feature'"):
             files.prepare(candidate)
         assert files.facts[older] is None
+
+
+def test_prepared_release_search_honors_base_constraints_on_extra_queries() -> None:
+    port = make_release_coordinator(
+        [("app", "1", False, []), ("app", "2", False, [])],
+        {("app", "1", False): ("feature",), ("app", "2", False): ("feature",)},
+    )
+    factory = partial(
+        Provider, port, defer_yanked=True, extras_mode=ExtrasMode.BACKTRACK
+    )
+    files = YankCandidates(factory(), factory, preferences={})
+    allowed = VersionRange.singleton(Version("1"))
+    considered: list[Candidate] = []
+
+    solution = PreparedVersionResolution.from_catalogue(
+        files,
+        {"app[feature]": VersionRange.full()},
+        (),
+        ProxyConstraints({"app": allowed}),
+        on_candidate_considered=considered.append,
+        try_live=True,
+    ).solve()
+
+    assert all(file.version == Version("1") for file in solution.candidates.values())
+    assert [file.package for file in considered] == ["app[feature]", "app"]
 
 
 @pytest.mark.parametrize("requirement", ["dep", "dep==2"])
