@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 from packaging.ranges import VersionRange
 from packaging.requirements import Requirement
 from packaging.version import Version
@@ -492,3 +494,42 @@ def test_backtrack_the_hub_without_preparing_older_requested_releases(
     requested = apps if root == "app" else parents
     assert solution.candidates[root] == requested[-1]
     assert [file for file in host.reads if file.package == root] == [requested[-1]]
+
+
+@pytest.mark.property
+@given(
+    declarations=st.lists(
+        st.tuples(st.integers(1, 3), st.integers(1, 3)), min_size=1, max_size=7
+    ),
+    available=st.sets(st.integers(1, 3)),
+)
+def test_release_search_selects_the_first_compatible_file(
+    declarations: list[tuple[int, int]], available: set[int]
+) -> None:
+    # Equal release numbers can carry different dependency metadata.
+    apps = [
+        File("app", str(release), f"wheel-{index}")
+        for index, (release, _) in enumerate(declarations)
+    ]
+    libraries = {version: File("lib", str(version)) for version in available}
+    host = Wheels(*apps, *libraries.values())
+    eligible = []
+    for file, (_, required) in zip(apps, declarations, strict=True):
+        host.metadata[file] = VersionCandidateData(
+            {"lib": VersionRange.singleton(Version(str(required)))}, ()
+        )
+        if required in libraries:
+            eligible.append((file, libraries[required]))
+
+    session = PreparedVersionResolution.from_catalogue(
+        host, {"app": VersionRange.full()}, (), {}, try_live=True
+    )
+    if not eligible:
+        with pytest.raises(ResolutionError) as failure:
+            session.solve()
+        assert failure.value.incompatibility is not None
+        return
+
+    # max preserves the finder's order between eligible wheels at the same version.
+    app, library = max(eligible, key=lambda pair: pair[0].version)
+    assert session.solve().candidates == {"app": app, "lib": library}
