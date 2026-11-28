@@ -447,7 +447,7 @@ class TestDecisionLookAhead:
         assert resolver.stats.conflicts == 0
 
     def test_self_rejections_leave_a_filtered_release_out_of_the_clause(self) -> None:
-        versions = ("4.0", "3.0", "2.0", "1.0")
+        versions = ("5.0", "4.0", "3.0", "2.0", "1.0")
         coordinator = make_coordinator(
             [
                 make_wheel(v, requires_python=">=3.13" if v == "3.0" else None)
@@ -463,13 +463,18 @@ class TestDecisionLookAhead:
             coordinator, target=_PY312, root_requirements={"foo": requirement}
         )
 
+        assert provider.has_satisfying_version("foo", requirement)
         chosen = provider.choose_version("foo", requirement)
+        assert chosen == V("1.0")
+        assert provider.consume_pending_clauses() == []
+
+        assert provider.choose_version("foo", SpecifierSet(">=2").to_range()) is None
         (clause,) = provider.consume_pending_clauses()
         (term,) = clause.terms
 
-        assert chosen == V("1.0")
         assert term.package == "foo"
-        assert {v for v in versions if V(v) in term.constraint} == {"4.0", "2.0"}
+        assert {v for v in versions if V(v) in term.constraint} == {"5.0", "4.0", "2.0"}
+        assert V("4.5") in term.constraint
         assert clause.dependency_range == SpecifierSet("==1.0").to_range()
 
     def test_empty_rejection_group_excludes_no_release(self) -> None:
@@ -489,7 +494,8 @@ class TestDecisionLookAhead:
             for v in versions
         }
         coordinator = make_coordinator(
-            [make_wheel(v) for v in versions],
+            [make_wheel(v) for v in versions]
+            + [make_wheel(v, requires_python=">=3.13") for v in ("0.5", "3.5")],
             metadata_by_version=metadata,
             package="foo",
         )
@@ -498,13 +504,18 @@ class TestDecisionLookAhead:
             coordinator, target=_PY312, root_requirements={"foo": requirement}
         )
 
+        assert provider.choose_version("foo", requirement) == V("1")
+        assert provider.consume_pending_clauses() == []
+
         chosen = provider.choose_version("foo", requirement)
         clauses = provider.consume_pending_clauses()
 
         assert chosen == V("1")
         assert {
             clause.dependency_range: {
-                v for v in versions if V(v) in clause.terms[0].constraint
+                v
+                for v in (*versions, "0.5", "3.5")
+                if V(v) in clause.terms[0].constraint
             }
             for clause in clauses
         } == {

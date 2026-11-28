@@ -1075,28 +1075,29 @@ def dropped_release_in_range(
 ) -> bool:
     """Whether a file the filter dropped carries a version inside ``version_range``.
 
-    Look-ahead uses this to keep filtered releases out of a dependency clause.
-    Failure reporting uses it to find a release the requirement asked for.
+    Failure reporting uses this to find a release the requirement asked for.
     A dropped version equal to a survivor is represented by that survivor:
     :func:`filter_distributions` collapses equal versions onto one
     representative. ``===`` compares its string form. Filtering through
     ``version_range`` keeps the pre-release
     semantics candidate selection uses.
     """
+    return any(version_range.filter(dropped_versions(provider, normalized)))
+
+
+def dropped_versions(provider: Provider, normalized: str) -> Iterator[Version]:
+    """Yield listed versions with no surviving file."""
     files = provider.coordinator.index.get_listing(normalized)
     if not files:
-        return False
+        return
 
     surviving = {
         version for version, _dist in provider.versions_cache.get(normalized) or []
     }
-    dropped = (
-        version
-        for dist in files
-        if (version := parsed_version(dist.version)) is not None
-        and version not in surviving
-    )
-    return any(version_range.filter(dropped))
+    for dist in files:
+        version = parsed_version(dist.version)
+        if version is not None and version not in surviving:
+            yield version
 
 
 def sdist_required_wheel_only(
