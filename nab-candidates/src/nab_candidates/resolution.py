@@ -217,15 +217,19 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
         if trial.incomplete:
             return None
 
+        return selected if self.admits_selection(selected) else None
+
+    def admits_selection(self, selected: Mapping[str, CandidateType]) -> bool:
+        """Apply the host's metadata policy to a complete model."""
         admission = self.metadata_admission
-        if admission is not None:
-            subjects: Iterable[CandidateType] = selected.values()
-            if isinstance(admission, _SelectedAdmission):
-                # A requested root validates the whole reachable model in one call.
-                subjects = (selected[name] for name in islice(self.provider.roots, 1))
-            if any(not admission(candidate, selected) for candidate in subjects):
-                return None
-        return selected
+        if admission is None:
+            return True
+
+        subjects: Iterable[CandidateType] = selected.values()
+        if isinstance(admission, _SelectedAdmission):
+            # One requested root validates the whole reachable model.
+            subjects = (selected[name] for name in islice(self.provider.roots, 1))
+        return all(admission(candidate, selected) for candidate in subjects)
 
     def select(self) -> dict[str, CandidateType]:
         """Select exact candidates within the shared query budget."""

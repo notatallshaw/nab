@@ -3,6 +3,7 @@
 Supported imports:
 
     nab_candidates.resolution  PreparedResolution, PreparedSolution
+    nab_candidates.releases  PreparedVersionResolution
     nab_candidates.provider  PreparedCatalogue, PreferenceProvider, CataloguePreference,
                              MetadataProxy, PermissionProxy, Package
     nab_candidates.versions  PreparedVersionCatalogue, VersionCandidate,

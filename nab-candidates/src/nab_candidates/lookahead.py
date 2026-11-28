@@ -6,9 +6,18 @@ from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
+    from typing import Protocol, TypeVar
 
     from packaging.ranges import VersionRange
     from packaging.version import Version
+
+    _Value_co = TypeVar("_Value_co", covariant=True)
+
+    class _PackageLookup(Protocol[_Value_co]):
+        """Look up a package in a snapshot that may also contain metadata keys."""
+
+        def get(self, package: str, /) -> _Value_co | None: ...
+
 
 __all__ = [
     "LOOKAHEAD_ABORT_THRESHOLD",
@@ -45,8 +54,8 @@ class RangeConflict(NamedTuple):
 def find_dependency_conflict(
     dependencies: Mapping[str, VersionRange],
     roots: Mapping[str, VersionRange],
-    decisions: Mapping[str, Version] | None,
-    ranges: Mapping[str, VersionRange],
+    decisions: _PackageLookup[Version] | None,
+    ranges: _PackageLookup[VersionRange],
     *,
     normalize: Callable[[str], str] | None = None,
 ) -> DecisionConflict | RangeConflict | None:
