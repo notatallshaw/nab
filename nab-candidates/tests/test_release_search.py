@@ -458,3 +458,37 @@ def test_an_extra_alternative_requires_its_own_base_file(
     else:
         assert result.candidates == {"app": source, "app[x]": sibling}
         assert sibling in host.reads
+
+
+@pytest.mark.parametrize("root", ["app", "parent"])
+def test_backtrack_the_hub_without_preparing_older_requested_releases(
+    root: str,
+) -> None:
+    apps = [File("app", str(v)) for v in range(1, 5)]
+    parents = [File("parent", str(v)) for v in range(1, 6)]
+    newer, compatible = File("hub", "2"), File("hub", "1")
+    runtimes = [File("runtime", str(v)) for v in (1, 2, 3)]
+    host = Wheels(*apps, *parents, newer, compatible, *runtimes)
+
+    for app in apps:
+        host.metadata[app] = VersionCandidateData({"parent": VersionRange.full()}, ())
+    for parent in parents:
+        host.metadata[parent] = VersionCandidateData(
+            {"runtime": VersionRange.singleton(runtimes[0].version)}, ()
+        )
+    host.metadata[newer] = VersionCandidateData(
+        {"runtime": VersionRange.singleton(runtimes[-1].version)}, ()
+    )
+
+    solution = PreparedVersionResolution.from_catalogue(
+        host,
+        {root: VersionRange.full(), "hub": VersionRange.full()},
+        (),
+        {},
+        try_live=True,
+    ).solve()
+
+    assert solution.candidates["hub"] == compatible
+    requested = apps if root == "app" else parents
+    assert solution.candidates[root] == requested[-1]
+    assert [file for file in host.reads if file.package == root] == [requested[-1]]
