@@ -30,6 +30,7 @@ from .test_benchmark_parse_requirements import _harness
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from nab_provider.errors import YankAdmissionRequiredError
     from nab_provider.provider import Provider
     from nab_provider.testing import FakeFetchPort
     from nab_resolver.types import RangeProtocol, RootRequirement
@@ -113,10 +114,12 @@ def test_runners_admit_only_original_exact_pins(
     proxy_decisions: list[int] = []
     original_resolve = YankProxyProvider.resolve
 
-    def counted_resolve(self: YankProxyProvider) -> tuple[dict[str, Version], Provider]:
+    def counted_resolve(
+        self: YankProxyProvider, *, withdrawal: YankAdmissionRequiredError | None = None
+    ) -> tuple[dict[str, Version], Provider]:
         """Record decisions from the real admission solve, including failures."""
         try:
-            return original_resolve(self)
+            return original_resolve(self, withdrawal=withdrawal)
         finally:
             proxy_decisions.append(self.stats.decisions)
 

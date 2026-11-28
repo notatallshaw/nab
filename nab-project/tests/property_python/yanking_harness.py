@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
+from packaging.ranges import VersionRange
 from packaging.requirements import Requirement
+from packaging.version import Version
 
+from nab_provider.errors import YankAdmissionRequiredError
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.policy import ExtrasMode
 from nab_provider.provider import Provider
@@ -24,6 +27,7 @@ from nab_provider.yanked_resolution import (
 )
 from nab_provider.yanking import mark_yanked
 from nab_resolver.errors import ResolutionError
+from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility
 from nab_test_support.coordinator import make_coordinator
 
@@ -194,7 +198,27 @@ class Harness:
         def observe_clauses(query: YankProxyProvider) -> list[Incompatibility]:
             return self.consume_clauses(query)
 
+        original_resolve = Resolver.resolve
+
+        def observe_resolution(
+            solver: Resolver[Any, Any], *args: Any, **kwargs: Any
+        ) -> dict[Any, Any]:
+            if solver.range_type is not VersionRange:
+                return original_resolve(solver, *args, **kwargs)
+
+            def prepare_live(candidate: Candidate) -> CandidateData | None:
+                # Range lookahead may read a wheel before deciding its release.
+                allowed = solver.solution.get(candidate.package)
+                assert allowed is not None
+                assert candidate.version in allowed
+                assert not candidate.withdrawn
+                return self.original_prepare(candidate)
+
+            with patch.object(self.search.catalogue, "prepare", prepare_live):
+                return original_resolve(solver, *args, **kwargs)
+
         with (
+            patch.object(Resolver, "resolve", observe_resolution),
             patch.object(self.search.catalogue, "prepare", self.prepare),
             patch.object(self.search, "new_query", self.new_query),
             patch.object(YankProxyProvider, "consume_pending_clauses", observe_clauses),
@@ -204,7 +228,18 @@ class Harness:
                     selected = self.search.preference.run(self.search.run_query)
                     pins, provider = self.search.preference.adopt(selected)
                 else:
-                    pins, provider = self.search.resolve()
+                    # Supply a withdrawal only for a package requested by these roots.
+                    withdrawal = next(
+                        (
+                            YankAdmissionRequiredError(
+                                artifact.name, Version(artifact.version)
+                            )
+                            for artifact in self.artifacts.values()
+                            if artifact.withdrawn and artifact.name in self.search.roots
+                        ),
+                        None,
+                    )
+                    pins, provider = self.search.resolve(withdrawal=withdrawal)
             except ResolutionError as exc:
                 self.error = exc
                 return None

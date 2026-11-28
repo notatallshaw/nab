@@ -1250,9 +1250,9 @@ def _resolve_one_target(
                 root_requirements,
                 constraint_inputs.roots,
                 (*requirements, *constraints),
-                resolver_constraints,
                 preferences,
                 resolver.stats,
+                withdrawal=exc if isinstance(exc, YankAdmissionRequiredError) else None,
             )
             artifacts = ArtifactMemo()
 
@@ -1334,9 +1334,10 @@ def _resolve_yanked_target(
     roots: Sequence[RootRequirement[str, Version]],
     constraint_roots: Sequence[RootRequirement[str, Version]],
     requirements: Sequence[Requirement],
-    constraint_ranges: Mapping[str, VersionRange],
     preferences: Mapping[str, Version],
     stats: ResolverStats[str],
+    *,
+    withdrawal: YankAdmissionRequiredError | None,
 ) -> tuple[dict[str, Version], Provider]:
     """Preserve the caller's active declarations when restarting with admission."""
     active = {root.origin for root in (*roots, *constraint_roots)}
@@ -1346,11 +1347,11 @@ def _resolve_yanked_target(
         factory,
         roots,
         declarations,
-        constraint_ranges,
+        provider.constraints,
         preferences=preferences,
     )
     try:
-        return search.resolve()
+        return search.resolve(withdrawal=withdrawal)
     finally:
         stats.rounds += search.stats.rounds
         stats.decisions += search.stats.decisions

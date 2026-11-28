@@ -110,15 +110,21 @@ def test_another_wheel_can_supply_metadata_at_the_same_release() -> None:
 
 def test_extra_metadata_waits_for_its_exact_base_wheel() -> None:
     extra, base, library = File("app[x]", "1"), File("app", "1"), File("lib", "2")
-    catalogue = Wheels(extra, base, library)
+    newer = File("lib", "3")
+    catalogue = Wheels(extra, base, library, newer)
     catalogue.metadata[extra] = VersionCandidateData({"lib": VersionRange.full()}, ())
     session = PreparedVersionResolution.from_catalogue(
-        catalogue, {"app[x]": VersionRange.full()}, (), {}, try_live=True
+        catalogue,
+        {"app[x]": VersionRange.full()},
+        (),
+        {"lib": VersionRange.singleton(library.version)},
+        try_live=True,
     )
     result = session.solve()
 
     assert result.candidates == {"app[x]": extra, "app": base, "lib": library}
     assert set(result.edges) == {("app[x]", "app"), ("app[x]", "lib")}
+    assert newer not in catalogue.reads
     assert catalogue.reads.index(base) < catalogue.reads.index(extra)
 
 

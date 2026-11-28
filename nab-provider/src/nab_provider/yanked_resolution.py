@@ -21,9 +21,8 @@ from nab_candidates.provider import (
     PermissionProxy,
     PreferenceProvider,
 )
-from nab_candidates.resolution import PreparedResolution
+from nab_candidates.releases import PreparedVersionResolution
 from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
-from nab_resolver.priority import compute_tier
 from nab_resolver.ranges import IntegerRangeMembership, Range
 from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
@@ -50,6 +49,7 @@ if TYPE_CHECKING:
     from nab_resolver.types import RangeProtocol, RootRequirement
 
     from .diagnostics import Diagnostic
+    from .errors import YankAdmissionRequiredError
     from .provider import Provider
 
 __all__ = ["MetadataProxy", "PermissionProxy", "YankProxyProvider"]
@@ -174,20 +174,16 @@ class YankProxyProvider(PreferenceProvider["Candidate", "VersionRange", "Require
         version_range: RangeProtocol[int],
         conflict_counts: Mapping[Package, int],
         culprit_counts: Mapping[Package, int] | None = None,
-    ) -> tuple[int, int]:
-        """Choose real candidates using conflict evidence, then permitted metadata."""
-        del version_range
-        if isinstance(package, str):
-            # Restarts must revise real-package order while permission stays lazy.
-            tier = compute_tier(
-                package,
-                conflict_counts.get(package, 0),
-                0 if culprit_counts is None else culprit_counts.get(package, 0),
-                culprit_counts,
-            )
-            # Read parent requirements before ranking final and prerelease candidates.
-            return (2 if package in self._mixed_release_packages else 0, tier)
-        return (1 if isinstance(package, MetadataProxy) else 3, 0)
+    ) -> tuple[int, ...]:
+        """Read ready file metadata before choosing another package."""
+        rank = super().prioritize(
+            package, version_range, conflict_counts, culprit_counts
+        )
+        if isinstance(package, str) and package in self._mixed_release_packages:
+            # Parent declarations can change the preferred prerelease order.
+            return (1, *rank)
+
+        return rank
 
     @override
     def block_context(self, package: Package) -> None:
@@ -399,10 +395,13 @@ class YankProxyProvider(PreferenceProvider["Candidate", "VersionRange", "Require
         )
         return tuple(entries)
 
-    def resolve(self) -> tuple[dict[str, Version], Provider]:
-        """Check non-yanked alternatives before adopting the selected candidates."""
+    def resolve(
+        self, *, withdrawal: YankAdmissionRequiredError | None = None
+    ) -> tuple[dict[str, Version], Provider]:
+        """Check alternatives to a withdrawn release before adopting exact files."""
         session = _NativeResolution(
             self,
+            withdrawal=withdrawal,
             preferred_candidate=self.catalogue.preferred_candidate
             if self.catalogue.preferences
             else None,
@@ -428,20 +427,56 @@ class YankProxyProvider(PreferenceProvider["Candidate", "VersionRange", "Require
         return self.preference.adopt(selected)
 
 
-class _NativeResolution(PreparedResolution["Candidate", "VersionRange", "Requirement"]):
-    """Use target-specific prerelease order during the shared live-file trial."""
+class _NativeResolution(PreparedVersionResolution["Candidate"]):
+    """Use shared release ranges and the target's exact-file admission policy."""
 
     def __init__(
         self,
         query: YankProxyProvider,
         *,
+        withdrawal: YankAdmissionRequiredError | None,
         preferred_candidate: Callable[[str], Candidate | None] | None,
     ) -> None:
         super().__init__(query, preferred_candidate=preferred_candidate, try_live=True)
         self._query = query
+        self._withdrawal = withdrawal
 
     @override
     def try_live_candidates(self) -> dict[str, Candidate] | None:
+        withdrawal = self._withdrawal
+        if (
+            withdrawal is not None
+            and self.remaining_rounds > 1
+            and self._has_live_release_alternative(withdrawal)
+        ):
+            return super().try_live_candidates()
+
+        return self.try_live_files()
+
+    def _has_live_release_alternative(
+        self, withdrawal: YankAdmissionRequiredError
+    ) -> bool:
+        name = withdrawal.package
+        choices = self._query.catalogue.choices(name)
+        if any(
+            not choice.withdrawn and choice.version == withdrawal.version
+            for choice in choices
+        ):
+            # The blocked release has live and yanked files at the same version.
+            return False
+
+        # Only the original target bounds are fixed across backtracking.
+        allowed = self._query.roots.get(name, VersionRange.full())
+        constraint = self._query.constraints.get(name)
+        if constraint is not None:
+            allowed &= constraint
+
+        return any(
+            not choice.withdrawn and choice.version in allowed for choice in choices
+        )
+
+    @override
+    def try_live_files(self) -> dict[str, Candidate] | None:
         try:
             return self._query.run_query(_ROOT_SCOPE, live_trial=True)
         except _AdmissionRequiredError:

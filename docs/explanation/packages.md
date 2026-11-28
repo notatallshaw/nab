@@ -112,11 +112,13 @@ requirements, selected versions and derived bounds. The native provider fetches 
 records explanations for rejected files. Both the search limit for repeated blockers and the
 decision to queue a blocker belong with the candidate search.
 
-An installer with its own finder can use `nab_candidates.releases.PreparedVersionResolution`. Its
-release search uses those dependency checks and asks the catalogue to prepare the chosen file. The
-catalogue retains each file’s original declarations across backtracking. When a second wheel at a
-discarded version could change the result, the resolver tries individual files with the remaining
-work budget.
+An installer with its own finder can use `nab_candidates.releases.PreparedVersionResolution`. Nab
+uses the same release search when a wholly yanked release interrupts a target and its input bounds
+allow a live alternative. When the blocked release has both live and yanked files, the native
+provider checks the exact files directly. The catalogue retains each file’s original declarations
+across backtracking. If a different file at a discarded version could change the result, the
+remaining work budget carries over to the individual-file search. The native provider applies its
+prerelease ordering and checks which original pin permits a yanked file.
 
 ## Diagnostic suggestions
 
