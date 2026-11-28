@@ -541,6 +541,7 @@ def _filter_base(
         result,
         wheel_first=sort_with_wheel_first,
         zip_policy_active=provider.allow_zip_sdists or policy.overridden,
+        wheel_only=policy.default_drops_sdists and not policy.overridden,
     )
     return _canonicalize_equal_versions(result)
 
@@ -550,11 +551,17 @@ def _sort_listing(
     *,
     wheel_first: bool,
     zip_policy_active: bool,
+    wheel_only: bool,
 ) -> None:
     """Order candidates newest first, preferring gzip-tar to legacy ZIP ties."""
     if zip_policy_active:
         result.sort(key=lambda pair: pair[1].filename.endswith(".zip"))
-    if wheel_first:
+
+    if wheel_first and wheel_only:
+        # Tuple comparison skips equal interned versions by identity. Every file
+        # here is a wheel, so the artifact kind adds nothing to the key.
+        result.sort(key=lambda pair: (pair[0],), reverse=True)
+    elif wheel_first:
         result.sort(
             key=lambda pair: (pair[0], isinstance(pair[1], WheelFile)), reverse=True
         )

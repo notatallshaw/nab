@@ -9,7 +9,7 @@ import pytest
 from packaging.version import Version
 
 from nab_provider.overrides import IndexOverride
-from nab_provider.policy import DistPolicy
+from nab_provider.policy import DistPolicy, MetadataPolicy
 from nab_provider.provider import ListingFilterCache, Provider
 from nab_provider.records import DistFile, SdistFile
 from nab_provider.tags import PlatformSpec
@@ -19,6 +19,27 @@ from nab_provider.yanking import mark_yanked
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+
+@pytest.mark.parametrize("allow_source", [False, True])
+def test_wheel_only_default_preserves_artifact_priority(*, allow_source: bool) -> None:
+    sdist = make_sdist("1", package="pkg")
+    wheel = make_wheel("1", package="pkg")
+    overrides = (
+        [pkg_override("pkg==1", dist_policy=DistPolicy.WHEEL_OR_SDIST)]
+        if allow_source
+        else []
+    )
+    provider = Provider(
+        make_coordinator([sdist, wheel], package="pkg"),
+        dist_policy=DistPolicy.WHEEL_ONLY,
+        metadata_policy=MetadataPolicy.PREFER_WHEEL,
+        package_overrides=overrides,
+    )
+
+    files = provider.fetch_versions("pkg")
+
+    assert [file for _, file in files] == ([wheel, sdist] if allow_source else [wheel])
 
 
 @pytest.mark.parametrize("policy", ["default", "override", "cutoff"])
