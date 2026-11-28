@@ -351,9 +351,9 @@ def get_extra_dependencies(
     deps = dict(extra_map[extra])
     # Pin the base, intersected with any bound the extra itself
     # places on it (``foo>=2; extra == "bar"``).
-    deps[normalized] = deps.get(
-        normalized, VersionRange.full()
-    ) & VersionRange.singleton(version)
+    exact = VersionRange.singleton(version)
+    required = deps.get(normalized)
+    deps[normalized] = exact if required is None else required & exact
 
     provider.deps_cache[cache_key] = deps
     provider.prefetch_new_deps(deps)
