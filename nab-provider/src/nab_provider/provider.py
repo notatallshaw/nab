@@ -2009,6 +2009,26 @@ class Provider:
             self.prefetch_in_range(normalized, versions, version_range)
         return versions
 
+    def _live_releases_first(
+        self,
+        package: str,
+        files: list[tuple[Version, DistFile]],
+        candidates: Iterator[Version],
+    ) -> Iterator[Version]:
+        """Keep releases with a live file ahead of wholly withdrawn releases."""
+        withdrawn: list[Version] = []
+        for version in candidates:
+            # A mixed release keeps its place because its live file may be usable.
+            if (package, version) in self.yanked_versions and all(
+                file.yanked
+                for file in _metadata_resolver.dists_at_version(files, version)
+            ):
+                withdrawn.append(version)
+            else:
+                yield version
+
+        yield from withdrawn
+
     def _ordered_candidates(
         self,
         normalized: str,
@@ -2026,20 +2046,23 @@ class Provider:
         back to reversing the newest-first walk whenever its first match is
         a pre-release.
         """
-        if not self.wants_lowest(normalized):
-            return version_range.filter(all_versions)
+        if self.wants_lowest(normalized):
+            ascending = self._ascending_versions(normalized, version_list)
+            oldest_first = version_range.filter(ascending)
+            first = next(oldest_first, None)
+            if first is None:
+                return iter(())
 
-        ascending = self._ascending_versions(normalized, version_list)
-        oldest_first = version_range.filter(ascending)
-        first = next(oldest_first, None)
-        if first is None:
-            return iter(())
+            if first.is_prerelease:
+                candidates = reversed(list(version_range.filter(all_versions)))
+            else:
+                candidates = chain((first,), oldest_first)
+        else:
+            candidates = version_range.filter(all_versions)
 
-        if first.is_prerelease:
-            newest_first = version_range.filter(all_versions)
-            return reversed(list(newest_first))
-
-        return chain((first,), oldest_first)
+        if self.defer_yanked and self.yanked_versions:
+            return self._live_releases_first(normalized, version_list, candidates)
+        return candidates
 
     def _preferred_version(
         self,
