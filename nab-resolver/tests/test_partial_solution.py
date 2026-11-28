@@ -872,6 +872,21 @@ def test_items_view_keeps_decisions_after_backtracking() -> None:
     assert view == {("first", 1)}
 
 
+@pytest.mark.parametrize("backtrack", [False, True])
+def test_items_iterator_survives_the_next_decision(*, backtrack: bool) -> None:
+    ps = PartialSolution[str, int]()
+    ps.decide("first", 1)
+    ps.decide("second", 2)
+    entries = iter(ps.decisions().items())
+    assert next(entries) == ("first", 1)
+
+    if backtrack:
+        ps.backtrack(0)
+    ps.decide("later", 3)
+
+    assert list(entries) == [("second", 2)]
+
+
 def test_items_view_applies_frozen_values_and_omits_later_keys() -> None:
     ps = PartialSolution[str, int]()
     cause = Incompatibility([], cause=IncompatibilityCause.ROOT)
