@@ -26,6 +26,7 @@ from .preference import (
     PreferenceScope,
     PreferenceSearch,
     PreparationStatus,
+    dependency_names,
     encode_dependencies,
 )
 from .records import HashableRecord
@@ -470,7 +471,8 @@ class PreferenceProvider(
                 expanded.add(token)
                 support = admitted[token] | {token}
 
-                for child in data.dependencies:
+                base = self.catalogue.candidate_base(candidate)
+                for child in dependency_names(package, base, data.dependencies):
                     if child not in demand:
                         demand[child] = support
                         changed = True
@@ -491,12 +493,14 @@ class PreferenceProvider(
             if token is None or token in admitted:
                 continue
             admitted[token] = demand[package]
-            data = self.catalogue.facts.get(self.items[token])
+            candidate = self.items[token]
+            data = self.catalogue.facts.get(candidate)
             if data is None:
                 continue
 
             support = admitted[token] | {token}
-            for child in data.dependencies:
+            base = self.catalogue.candidate_base(candidate)
+            for child in dependency_names(package, base, data.dependencies):
                 if child not in demand:
                     demand[child] = support
                     pending.append(child)

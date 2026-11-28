@@ -93,6 +93,46 @@ def test_live_trial_keeps_candidate_specific_admission_checks() -> None:
     assert set(observed) == {app, dep}
 
 
+@pytest.mark.parametrize("try_live", [False, True])
+def test_extra_reaches_dependencies_declared_only_by_its_base(try_live: bool) -> None:
+    extra, base = Choice("app[x]", 1), Choice("app", 1)
+    newer, older = Choice("lib", 2), Choice("lib", 1)
+    catalogue = Catalogue((extra, base, newer, older))
+    catalogue.metadata[base] = Data({"lib": Range.full()})
+    observed: list[dict[str, Choice]] = []
+
+    def allow(selected: Mapping[str, Choice]) -> bool:
+        observed.append(dict(selected))
+        return selected["lib"] == older
+
+    result = PreparedResolution.from_catalogue(
+        catalogue,
+        {"app[x]": Range.full()},
+        (),
+        {},
+        selection_policy=allow,
+        try_live=try_live,
+    ).solve()
+
+    assert result.candidates == {"app[x]": extra, "app": base, "lib": older}
+    assert set(result.edges) == {("app[x]", "app"), ("app", "lib")}
+    assert all(set(model) == set(result.candidates) for model in observed)
+
+
+def test_extra_base_metadata_can_supply_a_pin_for_a_withdrawn_dependency() -> None:
+    extra, base = Choice("app[x]", 1), Choice("app", 1)
+    withdrawn = Choice("lib", 1, withdrawn=True)
+    catalogue = Catalogue((extra, base, withdrawn))
+    catalogue.metadata[base] = Data({"lib": Range.singleton(1)}, (Pin("lib", 1),))
+
+    result = PreparedResolution.from_catalogue(
+        catalogue, {"app[x]": Range.full()}, (), {}, try_live=True
+    ).solve()
+
+    assert result.candidates == {"app[x]": extra, "app": base, "lib": withdrawn}
+    assert result.admission_sources == {"lib": (f"app==1 requires {Pin('lib', 1)}",)}
+
+
 def test_live_trial_checks_extra_base_bounds_before_reading_its_metadata() -> None:
     extra = Choice("app[x]", 1)
     base = Choice("app", 2)

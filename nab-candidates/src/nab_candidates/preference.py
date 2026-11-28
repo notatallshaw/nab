@@ -19,7 +19,7 @@ from nab_resolver.ranges import Range
 from nab_resolver.resolver import BaseProvider, Resolver, ResolverStats
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Collection, Mapping, Sequence
     from collections.abc import Set as AbstractSet
     from typing import TypeGuard
 
@@ -144,6 +144,15 @@ class PreferenceCatalogue(Protocol[CandidateType, RangeType, PinnedRequirementTy
     def base_candidate(self, candidate: CandidateType) -> CandidateType:
         """Return the matching base identity for an extra candidate."""
         ...
+
+
+def dependency_names(
+    package: str, base: str, dependencies: Mapping[str, object]
+) -> Collection[str]:
+    """Include the base artifact required by an extra even if its metadata omits it."""
+    if base != package and base not in dependencies:
+        return (*dependencies, base)
+    return dependencies
 
 
 class UnavailableMetadataError(Exception):
@@ -367,7 +376,7 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
                 waiting.setdefault(base, []).append(name)
                 continue
 
-            for child in data.dependencies:
+            for child in dependency_names(name, base, data.dependencies):
                 parents.setdefault(child, []).append(name)
                 if child not in demanded:
                     demanded.add(child)
@@ -586,28 +595,26 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         while pending:
             package = pending.popleft()
             candidate, data = self._selected_data(package, selected)
+            base = self.catalogue.candidate_base(candidate)
+
             # An unadmitted yanked parent cannot supply pins to its children.
             if self.catalogue.candidate_withdrawn(candidate):
                 source = next(
                     (
                         text
-                        for requirement, text in declarations.get(
-                            self.catalogue.candidate_base(candidate), ()
-                        )
+                        for requirement, text in declarations.get(base, ())
                         if self.catalogue.pin_allows(requirement, candidate)
                     ),
                     None,
                 )
                 if source is None:
-                    waiting.setdefault(
-                        self.catalogue.candidate_base(candidate), set()
-                    ).add(package)
+                    waiting.setdefault(base, set()).add(package)
                     continue
 
-                sources.setdefault(self.catalogue.candidate_base(candidate), (source,))
+                sources.setdefault(base, (source,))
 
             expanded.add(package)
-            for child in data.dependencies:
+            for child in dependency_names(package, base, data.dependencies):
                 if child not in demanded:
                     demanded.add(child)
                     pending.append(child)

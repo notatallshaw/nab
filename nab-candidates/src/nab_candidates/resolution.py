@@ -16,6 +16,7 @@ from nab_resolver.resolver import Resolver
 from nab_resolver.result import IncompleteSelectionError, walk_selected
 
 from ._compat import override
+from .preference import dependency_names
 from .provider import MetadataProxy, Package, PreferenceProvider
 
 if TYPE_CHECKING:
@@ -251,7 +252,12 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
             if data is None:
                 message = f"Selected candidate {candidate!r} has no prepared metadata"
                 raise ResolutionInvariantError(message)
-            edges.extend((package, child) for child in data.dependencies)
+
+            base = self.provider.catalogue.candidate_base(candidate)
+            edges.extend(
+                (package, child)
+                for child in dependency_names(package, base, data.dependencies)
+            )
 
         return PreparedSolution(
             selected,
@@ -338,10 +344,14 @@ class _SelectedAdmission(Generic[CandidateType, RangeType, PinnedRequirementType
         self.selection_is_admitted = selection_is_admitted
 
     def _dependency_names(
-        self, _package: str, candidate: CandidateType
+        self, package: str, candidate: CandidateType
     ) -> Collection[str] | None:
         data = self.catalogue.facts.get(candidate)
-        return None if data is None else data.dependencies.keys()
+        if data is None:
+            return None
+
+        base = self.catalogue.candidate_base(candidate)
+        return dependency_names(package, base, data.dependencies)
 
     def __call__(
         self, candidate: CandidateType, selected: Mapping[str, CandidateType]
