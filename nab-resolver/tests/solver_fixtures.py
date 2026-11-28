@@ -120,6 +120,10 @@ class FlaggedRange:
     def is_empty(self) -> bool:
         return self.base.is_empty
 
+    def __bool__(self) -> bool:
+        """Return false even for nonempty sets. The protocol uses is_empty."""
+        return False
+
     def arbitrary_active(self) -> bool:
         """Whether the flag admits strings under ``VersionRange`` rules."""
         return self.arbitrary and self.base == Range.full()

@@ -65,7 +65,7 @@ def choose_package_to_decide(
     conflict_counts = resolver.stats.package_conflict_counts
     culprit_counts = resolver.stats.package_culprit_counts
     get_range = resolver.solution.get
-    any_range = resolver.range_type.full()
+    any_range = resolver.fold_identity
     prioritize = resolver.provider.prioritize
     is_ready = resolver.provider.is_ready
     tiebreak_cache = resolver.tiebreak_cache
@@ -74,7 +74,7 @@ def choose_package_to_decide(
     def sort_key(package: PackageType) -> tuple[int, Any, tuple[int, int, str]]:
         priority = prioritize(
             package,
-            get_range(package) or any_range,
+            get_range(package, any_range),
             conflict_counts,
             culprit_counts,
         )
@@ -106,7 +106,7 @@ def choose_version(
     as an incompatibility: it restricts which version is picked but never
     forces the package into the solution.
     """
-    current_range = resolver.solution.get(package) or resolver.range_type.full()
+    current_range = resolver.solution.get(package, resolver.fold_identity)
     constraint = resolver.constraints.get(package)
     if constraint is not None:
         current_range = current_range & constraint
@@ -215,7 +215,7 @@ def record_no_versions(
     if had_pending:
         return
 
-    current_range = resolver.solution.get(package) or resolver.term_top
+    current_range = resolver.solution.get(package, resolver.term_top)
     resolver.observer.on_no_versions(package, current_range)
 
     constraint = resolver.constraints.get(package)

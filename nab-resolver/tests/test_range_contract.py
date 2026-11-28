@@ -26,6 +26,7 @@ from nab_resolver.types import (
     Term,
 )
 
+from .preferred_provider import GraphProvider
 from .solver_fixtures import FlaggedRange
 
 if TYPE_CHECKING:
@@ -190,6 +191,30 @@ def constraints_for(
         for term in incompatibility.terms
         if term.package == package and term.is_positive() is positive
     ]
+
+
+def test_false_valued_requirement_guides_priority_and_version_choice() -> None:
+    provider = GraphProvider({"app": {1: {}, 2: {}}, "tool": {1: {}}})
+    resolver = Resolver(provider, range_type=FlaggedRange)
+    roots = {"app": FlaggedRange.singleton(1), "tool": FlaggedRange.full()}
+
+    pins = resolver.resolve(roots)
+
+    assert pins == {"app": 1, "tool": 1}
+    # Each root has one matching release, so the first root wins the tie.
+    assert provider.choices == ["app", "tool"]
+
+
+def test_missing_version_reports_the_assigned_range() -> None:
+    resolver = Resolver(GraphProvider({}), range_type=FlaggedRange)
+    required = FlaggedRange.singleton(1)
+
+    with pytest.raises(ResolutionError):
+        resolver.resolve({"app": required})
+
+    assert constraints_for(
+        resolver, "app", IncompatibilityCause.NO_VERSIONS, positive=True
+    ) == [required]
 
 
 class TestFlaggedRangeFidelity:
