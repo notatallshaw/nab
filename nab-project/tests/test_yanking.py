@@ -841,6 +841,26 @@ def test_root_listing_failure_cannot_certify_that_no_solution_exists(
         assert caught.value.__cause__ is failure
 
 
+def test_live_trial_uses_conflict_evidence_before_retrying_a_plugin() -> None:
+    search = graph_search(
+        [
+            ("app", "1", False, ["leaf==1"]),
+            ("app", "3", False, ["leaf"]),
+            ("plugin", "2", False, ["app<3"]),
+            ("plugin", "3", False, ["leaf>=2"]),
+            ("leaf", "1", False, []),
+        ],
+        ["app", "plugin"],
+    )
+    # Reading the implicated candidates' dependencies needs 20 rounds.
+    # Retrying plugin 3 after switching to app 1 would exhaust this budget.
+    search.preference.remaining = 20
+
+    pins, _ = search.resolve()
+
+    assert pins == {"app": Version("1"), "plugin": Version("2"), "leaf": Version("1")}
+
+
 @pytest.mark.parametrize("roots", list(permutations(("leaf", "app", "plugin"))))
 @pytest.mark.parametrize("noise_versions", [3, 5])
 def test_unpinned_yank_does_not_exhaust_unrelated_choice_products(

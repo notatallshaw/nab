@@ -315,7 +315,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
         conflict_counts: Mapping[Package, int],
         culprit_counts: Mapping[Package, int] | None = None,
     ) -> tuple[int, int]:
-        """Choose real candidates using conflict evidence, then permitted metadata."""
+        """Propagate a conflicted live package's metadata before unrelated choices."""
         del version_range
         if isinstance(package, str):
             # Restarts must revise real-package order while permission stays lazy.
@@ -327,7 +327,19 @@ class YankProxyProvider(BaseProvider[Package, int]):
             )
             # Read parent requirements before ranking final and prerelease candidates.
             return (2 if package in self._mixed_release_packages else 0, tier)
-        return (1 if isinstance(package, MetadataProxy) else 3, 0)
+
+        if isinstance(package, MetadataProxy):
+            if self.live_trial and conflict_counts:
+                # A different release of a package involved in a conflict can
+                # narrow the choices that would otherwise be made next.
+                parent = self.items[package.candidate].package
+                if conflict_counts.get(parent, 0) or (
+                    culprit_counts is not None and culprit_counts.get(parent, 0)
+                ):
+                    return (-1, 0)
+            return (1, 0)
+
+        return (3, 0)
 
     def block_context(self, package: Package) -> None:
         """Reject selected choices without excluding a candidate globally."""
