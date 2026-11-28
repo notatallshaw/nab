@@ -31,8 +31,11 @@ dependencies = ["lib==1.2"]
 ```
 
 If `app==2` requires yanked `lib==2`, nab can keep that combination even when older `app==1` would
-use non-yanked `lib==1`. Resolution may fail before discovering a transitive pin, so you may need to
-repeat it yourself to use the yanked release:
+use non-yanked `lib==1`. When a requirement matches only yanked files, nab checks already selected,
+reachable packages for an exact pin. An active extra can supply that pin.
+
+A pin from a parent that has yet to be selected can still go undiscovered. In that case, repeat the
+pin in your project.
 
 ```toml
 [project]
