@@ -472,6 +472,46 @@ class TestDecisionLookAhead:
         assert {v for v in versions if V(v) in term.constraint} == {"4.0", "2.0"}
         assert clause.dependency_range == SpecifierSet("==1.0").to_range()
 
+    def test_empty_rejection_group_excludes_no_release(self) -> None:
+        provider = Provider(make_coordinator([], package="foo"), target=_PY312)
+        required = SpecifierSet("==1").to_range()
+        provider.pending_self_blocks[("foo", required)] = []
+
+        provider._flush_pending_blocks()
+        (clause,) = provider.consume_pending_clauses()
+
+        assert clause.terms[0].constraint.is_empty
+
+    def test_alternating_self_requirements_keep_their_own_releases(self) -> None:
+        versions = tuple(str(v) for v in range(1, 8))
+        metadata = {
+            v: make_metadata("foo", v, "foo==1" if int(v) % 2 else "foo<=1")
+            for v in versions
+        }
+        coordinator = make_coordinator(
+            [make_wheel(v) for v in versions],
+            metadata_by_version=metadata,
+            package="foo",
+        )
+        requirement = SpecifierSet(">=1").to_range()
+        provider = Provider(
+            coordinator, target=_PY312, root_requirements={"foo": requirement}
+        )
+
+        chosen = provider.choose_version("foo", requirement)
+        clauses = provider.consume_pending_clauses()
+
+        assert chosen == V("1")
+        assert {
+            clause.dependency_range: {
+                v for v in versions if V(v) in clause.terms[0].constraint
+            }
+            for clause in clauses
+        } == {
+            SpecifierSet("==1").to_range(): {"3", "5", "7"},
+            SpecifierSet("<=1").to_range(): {"2", "4", "6"},
+        }
+
     def test_self_dependency_report_names_the_edge(self) -> None:
         """The report names both versions in the self-dependency.
 

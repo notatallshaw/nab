@@ -201,15 +201,16 @@ def _candidate_union(
     provider: Provider, package: str, versions: Iterable[Version]
 ) -> RangeProtocol[Version]:
     """Return the widened union of one group's rejected candidate versions."""
-    union = VersionRange.empty()
-    for version in versions:
-        union = union | _widen_or_singleton(provider, package, version)
-    return union
+    return _union_ranges(
+        _widen_or_singleton(provider, package, version) for version in versions
+    )
 
 
-def _exact_versions(versions: list[Version]) -> VersionRange:
-    """Build a union of the nonempty group's exact releases."""
-    ranges = deque(VersionRange.singleton(version) for version in versions)
+def _union_ranges(parts: Iterable[RangeProtocol[Version]]) -> RangeProtocol[Version]:
+    """Combine the ranges in a rejection group."""
+    ranges = deque(parts)
+    if not ranges:
+        return VersionRange.empty()
 
     # Pair the groups in rounds so no long prefix is copied at every step.
     while len(ranges) > 1:
@@ -356,7 +357,7 @@ def flush_pending_blocks(provider: Provider) -> None:
             provider, candidate_pkg, versions
         )
         self_exclusions = (
-            _exact_versions(versions)
+            _union_ranges(VersionRange.singleton(v) for v in versions)
             if dropped_release_in_range(provider, candidate_pkg, widened)
             else widened
         )
