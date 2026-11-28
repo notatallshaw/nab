@@ -50,6 +50,7 @@ from .types import (
     PackageType,
     RangeProtocol,
     RootRequirement,
+    SelfDependency,
     SetRelation,
     Term,
     VersionType,
@@ -1126,36 +1127,34 @@ class Resolver(Generic[PackageType, VersionType]):
         )
         for dependency_package, supplied_range in dependencies.items():
             dependency_range = self.as_term_range(supplied_range)
-            cross_package = dependency_package != package
-            if not cross_package:
-                # An incompatibility holds at most one term per package,
-                # so self-dependency terms merge to {v} & ~range: empty
-                # (a vacuous clause) when the range contains the chosen
-                # version, else exactly {v}.  The exact singleton is kept:
-                # widening a single-term clause only degrades error text.
-                if version in dependency_range:
-                    continue
-                terms = [Term(package, exact_range, positive=True)]
-            else:
-                terms = [
+            if dependency_package == package:
+                if version not in dependency_range:
+                    # Keep the whole decision point. A literal requirement can
+                    # distinguish equal versions such as 2 and 2.0 within it.
+                    excluded = exact_range
+                    if widened is not None:
+                        outside = parent_range - dependency_range
+                        excluded = (
+                            outside if exact_range.is_subset(outside) else exact_range
+                        )
+                    incompat_index.add_incompatibility(
+                        self,
+                        SelfDependency(package, version, excluded, dependency_range),
+                    )
+                continue
+
+            incompatibility = Incompatibility(
+                [
                     Term(package, parent_range, positive=True),
                     Term(dependency_package, dependency_range, positive=False),
-                ]
-
-            # The merged term drops the required range, so the clause carries
-            # it for the report.
-            incompatibility = Incompatibility(
-                terms,
+                ],
                 cause=IncompatibilityCause.DEPENDENCY,
-                dependency_range=None if cross_package else dependency_range,
             )
             incompat_index.add_incompatibility(self, incompatibility)
-
-            if cross_package:
-                record.refinement_causes.append(incompatibility)
-                decide.absorb_redundant_requirement(
-                    self, dependency_package, dependency_range, incompatibility
-                )
+            record.refinement_causes.append(incompatibility)
+            decide.absorb_redundant_requirement(
+                self, dependency_package, dependency_range, incompatibility
+            )
         self.recorded_dependencies[record_key] = record
 
     def _build_result(self) -> Solution[PackageType, VersionType]:

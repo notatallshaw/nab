@@ -69,6 +69,21 @@ class TestRefinedTermTop:
         assert Term("pkg", flagged_full).satisfies(plain_full)
 
 
+@pytest.mark.parametrize("release", ["2", "2.0"])
+def test_widened_self_dependency_keeps_the_observed_decision(
+    release: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    version = V(release)
+    provider = PackagingProvider({"a": {version: {"a": SpecifierSet("===2.0")}}})
+    # With one release, every selectable version has the same dependency.
+    monkeypatch.setattr(provider, "widen_decision", lambda *_: VersionRange.full())
+    resolver = Resolver(provider, range_type=VersionRange, root_version="0")
+
+    pins = resolve_or_prove_conflict(resolver, {"a": SpecifierSet("==2").to_range()})
+
+    assert pins == ({"a": version} if release == "2.0" else None)
+
+
 class TestTrivialResolution:
     """Resolve simple graphs with PEP 440 versions."""
 

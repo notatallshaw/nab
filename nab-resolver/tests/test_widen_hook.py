@@ -248,13 +248,13 @@ class TestSpanWideningContract:
         assert span == base == {"root": 1, "a": 1, "b": 1}
 
 
-class TestSelfDependencyStaysExact:
-    def test_self_dep_clause_keeps_singleton_term(self) -> None:
-        """foo@2 depends on foo=={1}: the single-term clause asserts exactly
-        "foo is never 2", even when the provider widens decisions."""
+class TestSelfDependencyWidening:
+    def test_neighbor_gap_excludes_only_the_rejected_release(self) -> None:
+        """The rejected release cannot rule out the version it requires."""
         provider = _WideningProvider({"foo": {2: {"foo": Range.singleton(1)}, 1: {}}})
         resolver = Resolver(provider, max_iterations=100)
         result = resolver.resolve({"foo": Range.full()})
+
         assert result == {"foo": 1}
 
         self_clauses = [
@@ -265,12 +265,12 @@ class TestSelfDependencyStaysExact:
             and inc.terms[0].package == "foo"
         ]
         assert len(self_clauses) == 1
-        assert self_clauses[0].terms[0].constraint == Range.singleton(2)
+        assert 2 in self_clauses[0].terms[0].constraint
+        assert 1 not in self_clauses[0].terms[0].constraint
         assert self_clauses[0].terms[0].is_positive()
 
-    def test_self_dep_clause_keeps_singleton_with_span_provider(self) -> None:
-        """A same-deps run must not leak the spanned range into self-dep
-        clauses; they are built resolver-side from the exact singleton."""
+    def test_one_clause_rejects_a_run_with_the_same_self_requirement(self) -> None:
+        """The two releases declaring the same requirement are rejected together."""
         provider = _SpanWideningProvider(
             {
                 "foo": {
@@ -282,6 +282,7 @@ class TestSelfDependencyStaysExact:
         )
         resolver = Resolver(provider, max_iterations=100)
         result = resolver.resolve({"foo": Range.full()})
+
         assert result == {"foo": 1}
 
         self_clauses = [
@@ -291,12 +292,27 @@ class TestSelfDependencyStaysExact:
             and len(inc.terms) == 1
             and inc.terms[0].package == "foo"
         ]
-        assert {c.terms[0].constraint for c in self_clauses} <= {
-            Range.singleton(3),
-            Range.singleton(2),
-        }
-        assert self_clauses
-        assert all(c.terms[0].is_positive() for c in self_clauses)
+        (clause,) = self_clauses
+        (term,) = clause.terms
+        assert term.is_positive()
+        assert {v for v in (1, 2, 3) if v in term.constraint} == {2, 3}
+
+    @pytest.mark.parametrize("minimum", [2, 3])
+    def test_failure_retains_the_listing_gap_within_the_requirement(
+        self, minimum: int
+    ) -> None:
+        provider = _SnappingProvider(
+            {
+                "app": {1: {"leaf": Range.at_least(minimum)}},
+                "leaf": {1: {}, 3: {"leaf": Range.at_least(4)}},
+            }
+        )
+
+        with pytest.raises(ResolutionError) as failure:
+            Resolver(provider).resolve({"app": Range.full()})
+
+        assert (2 in failure.value.unavailable_ranges["leaf"]) == (minimum == 2)
+        assert 3 not in failure.value.unavailable_ranges["leaf"]
 
 
 class TestRootIsNeverWidened:

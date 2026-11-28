@@ -4221,6 +4221,28 @@ class TestAugmentResolutionError:
         )
         assert _walk_no_versions_packages(clause) == [("cand", Range.full())]
 
+    def test_reported_gap_keeps_the_filtered_release_diagnosis(self) -> None:
+        provider = Provider(
+            make_coordinator(
+                listings={
+                    "leaf": [
+                        make_wheel("2", package="leaf", requires_python=">=3.13"),
+                        make_wheel("3", package="leaf"),
+                    ]
+                }
+            ),
+            target=ResolveTarget.for_host_python("3.12.0"),
+        )
+        missing = VersionRange.from_bounds(V("4"), None)
+        assert provider.choose_version("leaf", missing) is None
+        proof = self._no_versions_clause("leaf", missing)
+        gap = VersionRange.from_bounds(V("2"), V("3"), include_upper=False)
+        error = ResolutionError("base", proof, unavailable_ranges={"leaf": gap})
+
+        _augment_resolution_error(error, provider)
+
+        assert "2 requires >=3.13" in (error.verbose_message or "")
+
     def test_grouped_clause_hint_respects_failed_range(self) -> None:
         """A recorded mismatch applies only when the failure range excludes 1.0."""
         allowed = Requirement("cand>=3").specifier.to_range()

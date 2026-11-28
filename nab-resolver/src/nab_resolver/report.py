@@ -5,12 +5,13 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#error-repo
 
 from __future__ import annotations
 
-__lazy_modules__ = ("nab_resolver.root",)
+__lazy_modules__ = ("nab_resolver.errors", "nab_resolver.root")
 
 from typing import TYPE_CHECKING, TypeAlias
 
+from .errors import ResolutionError
 from .root import ROOT
-from .types import IncompatibilityCause, Term
+from .types import IncompatibilityCause, SelfDependency, Term
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -49,9 +50,19 @@ def format_error(
     ``str`` is a debug repr passes its own. Rendering a constraint as the
     empty string drops it from the line along with its separating space.
     """
+    return str(explain_failure(root_incompatibility, narrow, format_range))
+
+
+def explain_failure(
+    root: Incompatibility[PackageType, VersionType],
+    narrow: _NarrowRange[PackageType, VersionType] | None,
+    format_range: _FormatRange[VersionType],
+) -> ResolutionError:
+    """Render the failure and retain the listing gaps stated in its derivation."""
     lines: list[str] = []
-    explain_incompatibility(root_incompatibility, lines, set(), narrow, format_range)
-    return "\n".join(lines) if lines else "Resolution impossible"
+    unavailable = _append_proof(root, lines, set(), narrow, format_range)
+    message = "\n".join(lines) if lines else "Resolution impossible"
+    return ResolutionError(message, root, unavailable_ranges=unavailable)
 
 
 # DEPENDENCY/ROOT clauses have two terms (parent + dependency); a
@@ -72,11 +83,20 @@ def explain_incompatibility(
     narrow: _NarrowRange[PackageType, VersionType] | None = None,
     format_range: _FormatRange[VersionType] = str,
 ) -> None:
-    """Walk the cause tree appending one explanatory line per node.
+    """Append one explanatory line per node in the proof."""
+    _append_proof(incompatibility, lines, visited_ids, narrow, format_range)
 
-    The walk is iterative: the tree gains a level per conflict, so a deeply
-    backtracked resolve overflows the recursion limit.
-    """
+
+def _append_proof(
+    incompatibility: Incompatibility[PackageType, VersionType],
+    lines: list[str],
+    visited_ids: set[int],
+    narrow: _NarrowRange[PackageType, VersionType] | None,
+    format_range: _FormatRange[VersionType],
+) -> dict[PackageType, RangeProtocol[VersionType]]:
+    """Append the proof iteratively and collect the listing gaps it states."""
+    unavailable: dict[PackageType, RangeProtocol[VersionType]] = {}
+
     # The flag marks a node whose children are already pushed: it renders after them.
     stack: list[tuple[Incompatibility[PackageType, VersionType], bool]] = [
         (incompatibility, False)
@@ -93,6 +113,7 @@ def explain_incompatibility(
             for package in needed.get(id(node), ()):
                 gap = unstated.pop(package, None)
                 if gap is not None:
+                    unavailable[package] = gap
                     subject = _with_range(str(package), format_range(gap))
                     lines.append(f"because no versions of {subject} are available")
             lines.append(_render_line(node, narrow, format_range))
@@ -110,6 +131,8 @@ def explain_incompatibility(
                 stack.append((node.cause_right, False))
             if node.cause_left:
                 stack.append((node.cause_left, False))
+
+    return unavailable
 
 
 def _narrow_positive(
@@ -310,7 +333,18 @@ def _render_line(
             )
         verb = "depend on" if plural else "depends on"
         requirement = _format_requirement(dep.negate(), format_range)
-        return f"because {format_term(parent, format_range)} {verb} {requirement}"
+        subject = format_term(parent, format_range)
+        if isinstance(incompatibility, SelfDependency):
+            version = incompatibility.version
+            observed = parent.constraint.singleton(version)
+            if narrow is not None:
+                observed = narrow(parent.package, observed)
+            if plural or parent.constraint != observed:
+                return (
+                    f"because {parent.package} {version} depends on {requirement} "
+                    f"(as do all selectable releases in {subject})"
+                )
+        return f"because {subject} {verb} {requirement}"
 
     if cause is IncompatibilityCause.ROOT and len(terms) == _ATTRIBUTION_CLAUSE_TERMS:
         _, dep = terms
