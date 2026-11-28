@@ -1208,16 +1208,15 @@ class Resolver(Generic[PackageType, VersionType]):
     def _add_root_requirements(
         self, requirements: Sequence[RootRequirement[PackageType, VersionType]]
     ) -> None:
-        """Create one root incompatibility per requirement, and decide root."""
+        """Decide the virtual root and record each requirement as its dependency."""
+        root_range = self.solution.decide(ROOT, self.root_version)
+        self.stats.decisions += 1
+
         for idx, root in enumerate(requirements):
             term_range = self.as_term_range(root.constraint)
             root_clause: Incompatibility[object, Any] = Incompatibility(
                 [
-                    Term(
-                        ROOT,
-                        self.range_type.singleton(self.root_version),
-                        positive=True,
-                    ),
+                    Term(ROOT, root_range, positive=True),
                     Term(root.package, term_range, positive=False),
                 ],
                 cause=IncompatibilityCause.ROOT,
@@ -1227,5 +1226,3 @@ class Resolver(Generic[PackageType, VersionType]):
             # First mention fixes the tiebreak, so naming a package twice
             # does not push its decision later.
             self.root_package_order.setdefault(root.package, (0, idx, ""))
-        self.solution.decide(ROOT, self.root_version)
-        self.stats.decisions += 1
