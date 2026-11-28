@@ -189,6 +189,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
         self._trial_pins = self.input_pins
         self._full_version_range = VersionRange.full()
         self._full_integer_range: Range[int] = Range.full()
+        self._metadata_version = Range.singleton(0)
         self._integer_membership = IntegerRangeMembership()
         self.stats: ResolverStats[Package] = preference.stats
 
@@ -502,7 +503,7 @@ class YankProxyProvider(BaseProvider[Package, int]):
         if isinstance(package, str):
             candidate = self.items[version]
             result: dict[Package, Range[int]] = {
-                MetadataProxy(version): Range.singleton(0)
+                MetadataProxy(version): self._metadata_version
             }
             if candidate.withdrawn:
                 result[PermissionProxy(version)] = self._full_integer_range
