@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Hashable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, Final, Generic, Protocol, TypeVar
 
 from nab_resolver.errors import (
     ResolutionError,
@@ -29,6 +28,7 @@ from ..preference import (
     PreparationStatus,
     encode_dependencies,
 )
+from ..value import HashableRecord
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -113,22 +113,64 @@ class CataloguePreference(
         return self._catalogue
 
 
-@dataclass(frozen=True, slots=True)
-class PermissionProxy:
+class PermissionProxy(HashableRecord):
     """Choose selected parents that permit a yanked candidate."""
 
-    candidate: int
+    __slots__ = __match_args__ = ("candidate",)
+
+    candidate: Final[int]
+
+    def __init__(self, candidate: int) -> None:
+        """Retain the selected candidate identifier."""
+        self.candidate = candidate
+
+    @override
+    def _comparison_values(self) -> tuple[object, ...]:
+        """Return fixed identity fields, honoring subclass comparison declarations."""
+        if type(self) is not PermissionProxy:
+            return super()._comparison_values()
+
+        return (self.candidate,)
 
 
-@dataclass(frozen=True, slots=True)
-class MetadataProxy:
+class MetadataProxy(HashableRecord):
     """Expose a candidate's dependencies after establishing permission."""
 
-    candidate: int
+    __slots__ = __match_args__ = ("candidate",)
+
+    candidate: Final[int]
+
+    def __init__(self, candidate: int) -> None:
+        """Retain the selected candidate identifier."""
+        self.candidate = candidate
+
+    @override
+    def __hash__(self) -> int:
+        """Hash the candidate tuple, retaining subclass comparison overrides."""
+        if type(self) is not MetadataProxy:
+            return super().__hash__()
+
+        return hash((self.candidate,))
+
+    @override
+    def _comparison_values(self) -> tuple[object, ...]:
+        """Return fixed identity fields, honoring subclass comparison declarations."""
+        if type(self) is not MetadataProxy:
+            return super()._comparison_values()
+
+        return (self.candidate,)
 
 
 Package = str | PermissionProxy | MetadataProxy
 Support = frozenset[int]
+
+
+def _incomplete_query(detail: str) -> IncompletePreferenceError:
+    """Keep the reason a query stopped without a usable proof."""
+    message = "yanked dependency resolution is incomplete"
+    if detail:
+        message += f": {detail}"
+    return IncompletePreferenceError(message)
 
 
 class PreferenceProvider(
@@ -158,8 +200,8 @@ class PreferenceProvider(
         on_candidate_considered: Callable[[CandidateType], None] | None = None,
     ) -> None:
         """Retain one search and the host's metadata and completeness policies."""
-        self.preference = preference
-        self.catalogue = preference.catalogue
+        self._bound_preference = preference
+        self._bound_catalogue = preference.catalogue
         self.roots = preference.roots
         self.constraints = preference.constraints
         self.input_pins = preference.input_pins
@@ -192,6 +234,20 @@ class PreferenceProvider(
         self.resolver_factory = resolver_factory
         self.preferred_candidate = preferred_candidate
         self.on_candidate_considered = on_candidate_considered
+
+    @property
+    def preference(
+        self,
+    ) -> CataloguePreference[CandidateType, RangeType, PinnedRequirementType]:
+        """The search retaining outcomes and the round budget for this query."""
+        return self._bound_preference
+
+    @property
+    def catalogue(
+        self,
+    ) -> PreparedCatalogue[CandidateType, RangeType, PinnedRequirementType]:
+        """The candidate and metadata snapshot shared by this query."""
+        return self._bound_catalogue
 
     @staticmethod
     def from_catalogue(  # noqa: PLR0913 - preserve independent public host hooks
@@ -482,7 +538,7 @@ class PreferenceProvider(
         version_range: RangeProtocol[int],
         conflict_counts: Mapping[Package, int],
         culprit_counts: Mapping[Package, int] | None = None,
-    ) -> tuple[int, int, int, int]:
+    ) -> tuple[int, ...]:
         """Propagate live metadata, then rank forced and preferred package choices."""
         if isinstance(package, str):
             # Restarts must revise real-package order while permission stays lazy.
@@ -779,22 +835,26 @@ class PreferenceProvider(
         self, scope: PreferenceScope[CandidateType]
     ) -> dict[str, CandidateType]:
         """Resolve under one set of restrictions with the shared work budget."""
-        query = self.new_query(scope)
+        return self.new_query(scope).solve_query()
+
+    def solve_query(self) -> dict[str, CandidateType]:
+        """Resolve this scope and charge the rounds before returning its choices."""
+        self.preference.require_remaining_rounds()
         solver = (
-            Resolver(query, max_iterations=self.preference.remaining)
+            Resolver(self, max_iterations=self.preference.remaining)
             if self.resolver_factory is None
-            else self.resolver_factory(query, self.preference.remaining)
+            else self.resolver_factory(self, self.preference.remaining)
         )
         try:
             roots: dict[Package, Range[int]] = {
-                name: query.encode_range(name, allowed)
-                for name, allowed in query.roots.items()
+                name: self.encode_range(name, allowed)
+                for name, allowed in self.roots.items()
             }
         except ResolutionTerminatedError:
             raise
         except ResolutionError as exc:
             # A dependency conflict raised by the host does not prove this query failed.
-            raise IncompletePreferenceError(str(exc)) from exc
+            raise _incomplete_query(str(exc)) from exc
 
         try:
             selected = solver.resolve(roots)
@@ -802,21 +862,23 @@ class PreferenceProvider(
             raise
         except ResolutionError as exc:
             if (
-                query.incomplete
+                self.incomplete
                 or exc.incompatibility is None
                 or (
                     self._query_is_complete is not None
-                    and not self._query_is_complete(scope)
+                    and not self._query_is_complete(self.scope)
                 )
             ):
-                message = "yanked dependency resolution is incomplete"
-                if query.incomplete:
-                    message += ": " + self.catalogue.unavailable_reason
-                raise IncompletePreferenceError(message) from exc
+                detail = (
+                    self.catalogue.unavailable_reason if self.incomplete else str(exc)
+                )
+                raise _incomplete_query(detail) from exc
+
             raise
         finally:
             self.preference.record_solver_stats(solver.stats)
             self.preference.spend(solver.stats.rounds)
+
         return {
             name: self.items[token]
             for name, token in selected.items()

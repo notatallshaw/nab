@@ -26,14 +26,19 @@ from ._compat import override
 from ._provider.extras import version_provides_extra
 from ._provider.listing_diagnosis import MetadataBlock
 from ._provider.metadata_resolver import classify_requirement, dists_at_version
-from .catalogue.versions import VersionCandidate, VersionCatalogue, is_pin
+from .catalogue.versions import (
+    PreparedVersionCatalogue,
+    VersionCandidate,
+    VersionCandidateData,
+    is_pin,
+)
 from .errors import MetadataError, MissingExtraError
 from .extra_keys import split_extra
 from .metadata import intern_version
 from .policy import DistPolicy, ExtrasMode, MetadataPolicy
 from .preference import UnavailableMetadataError
 from .records import SdistFile, WheelFile
-from .value import Record, field_names
+from .value import field_names
 
 __all__ = [
     "Candidate",
@@ -132,14 +137,13 @@ class _CandidateOrder:
         self.result = result
 
 
-class CandidateData(Record):
+class CandidateData(VersionCandidateData):
     """Dependencies and the provider selecting the candidate's files."""
 
-    __slots__ = __match_args__ = ("provider", "dependencies", "pins")
+    __slots__ = ("provider",)
+    __match_args__ = ("provider", "dependencies", "pins")
 
     provider: Provider
-    dependencies: dict[str, VersionRange]
-    pins: tuple[Requirement, ...]
 
     def __init__(
         self,
@@ -148,9 +152,8 @@ class CandidateData(Record):
         pins: tuple[Requirement, ...],
     ) -> None:
         """Retain candidate dependencies and independent selected pins."""
+        super().__init__(dependencies, pins)
         self.provider = provider
-        self.dependencies = dependencies
-        self.pins = pins
 
 
 def add_range(ranges: dict[str, VersionRange], name: str, value: VersionRange) -> None:
@@ -159,7 +162,7 @@ def add_range(ranges: dict[str, VersionRange], name: str, value: VersionRange) -
     ranges[name] = value if previous is None else previous & value
 
 
-class YankCandidates(VersionCatalogue[Candidate]):
+class YankCandidates(PreparedVersionCatalogue[Candidate, CandidateData]):
     """Cache candidates and metadata without granting permission to use yanked files."""
 
     range_type = VersionRange
@@ -192,24 +195,18 @@ class YankCandidates(VersionCatalogue[Candidate]):
         preferences: Mapping[str, Version],
     ) -> None:
         """Start one target snapshot with the caller's preparation policy."""
+        super().__init__(unavailable_reason="required metadata is unavailable")
         self.provider = provider
         self.factory = factory
         self.preferences = preferences
-        self.candidates: dict[str, tuple[Candidate, ...]] = {}
         self._default_orders: dict[tuple[str, bool], _CandidateOrder] = {}
         self._candidate_groups: dict[str, _CandidateGroups] = {}
-        self.facts: dict[Candidate, CandidateData | None] = {}
-        self.unavailable: set[Candidate] = set()
-        self.missing_listings: set[str] = set()
-        self.unavailable_reason = "required metadata is unavailable"
         self.rejections: dict[Candidate, MetadataBlock] = {}
         self.child_stats: ProviderStats = type(provider.stats)()
 
-    def choices(self, package: str) -> tuple[Candidate, ...]:
+    @override
+    def read_choices(self, package: str) -> tuple[Candidate, ...]:
         """List compatible candidates without preparing their metadata."""
-        cached = self.candidates.get(package)
-        if cached is not None:
-            return cached
         versions = self.provider.fetch_versions(package)
         if self.provider.coordinator.index.is_offline_listing_miss(
             split_extra(package)[0]
@@ -220,7 +217,6 @@ class YankCandidates(VersionCatalogue[Candidate]):
             )
             self.unavailable_reason = msg
             self.missing_listings.add(package)
-            self.candidates[package] = ()
             return ()
         result = dict.fromkeys(
             Candidate(
@@ -228,13 +224,11 @@ class YankCandidates(VersionCatalogue[Candidate]):
             )
             for _version, file in versions
         )
-        cached = tuple(
+        return tuple(
             candidate
             for candidate in result
             if self.installable(candidate, versions, assume_sorted=True)
         )
-        self.candidates[package] = cached
-        return cached
 
     def installable(
         self,
@@ -310,15 +304,12 @@ class YankCandidates(VersionCatalogue[Candidate]):
             )
         return provider
 
-    def prepare(self, candidate: Candidate) -> CandidateData | None:
+    @override
+    def read_candidate(self, candidate: Candidate) -> CandidateData | None:
         """Prepare a candidate after the caller has checked permission to use it."""
-        if candidate in self.facts:
-            return self.facts[candidate]
-        if candidate in self.unavailable:
-            return None
         provider = self.preparation_provider(candidate)
         try:
-            data = self.read_metadata(provider, candidate)
+            return self.read_metadata(provider, candidate)
         except UnavailableMetadataError as exc:
             self.unavailable.add(candidate)
             self.unavailable_reason = str(exc)
@@ -327,8 +318,6 @@ class YankCandidates(VersionCatalogue[Candidate]):
             if provider is not self.provider:
                 merge_stats(self.child_stats, provider.stats)
                 self.provider.consulted_markers.update(provider.consulted_markers)
-        self.facts[candidate] = data
-        return data
 
     def read_metadata(
         self, provider: Provider, candidate: Candidate

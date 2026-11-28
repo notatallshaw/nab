@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 from nab_resolver.errors import (
     ResolutionError,
     ResolutionInvariantError,
-    ResolutionLimitError,
     ResolutionTerminatedError,
 )
 from nab_resolver.ranges import Range
@@ -132,12 +131,6 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
         """Return the solver rounds remaining across this session's queries."""
         return self.provider.preference.remaining
 
-    def _check_round_budget(self) -> None:
-        """Stop before another host callback when the cumulative budget is spent."""
-        if self.remaining_rounds <= 0:
-            message = "live preference analysis is incomplete: search limit reached"
-            raise ResolutionLimitError(message)
-
     def _new_resolver(
         self, provider: ResolverProvider[Package, int], limit: int
     ) -> Resolver[Package, int]:
@@ -187,9 +180,9 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
             if isinstance(package, str)
         }
 
-    def _try_live(self) -> dict[str, CandidateType] | None:
+    def try_live_candidates(self) -> dict[str, CandidateType] | None:
         """Try live choices, yielding to admission proofs when an exact pin matters."""
-        self._check_round_budget()
+        self.provider.preference.require_remaining_rounds()
         trial = _LiveProvider(
             self.provider.preference,
             preferred_candidate=self.preferred_candidate,
@@ -233,20 +226,25 @@ class PreparedResolution(Generic[CandidateType, RangeType, PinnedRequirementType
                 return None
         return selected
 
-    def solve(self) -> PreparedSolution[CandidateType]:
-        """Resolve once, retaining exact choices for host adoption and diagnostics."""
-        self._check_round_budget()
+    def select(self) -> dict[str, CandidateType]:
+        """Select exact candidates within the shared query budget."""
+        self.provider.preference.require_remaining_rounds()
         try:
             selected = self._try_preferred()
             if selected is None and self.try_live:
-                selected = self._try_live()
+                selected = self.try_live_candidates()
             if selected is None:
                 selected = self.provider.select()
         except ResolutionTerminatedError:
             raise
         except Exception:
-            self._check_round_budget()
+            self.provider.preference.require_remaining_rounds()
             raise
+        return selected
+
+    def solve(self) -> PreparedSolution[CandidateType]:
+        """Return the selected candidates and their prepared dependency graph."""
+        selected = self.select()
         edges: list[tuple[str, str]] = []
         for package, candidate in selected.items():
             data = self.provider.catalogue.facts.get(candidate)

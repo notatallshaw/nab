@@ -287,6 +287,12 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
             message = "live preference analysis is incomplete: search limit reached"
             raise ResolutionLimitError(message)
 
+    def require_remaining_rounds(self) -> None:
+        """Stop before consulting the host for another solver query."""
+        if self.remaining <= 0:
+            message = "live preference analysis is incomplete: search limit reached"
+            raise ResolutionLimitError(message)
+
     @property
     @abstractmethod
     def catalogue(
@@ -495,10 +501,7 @@ class PreferenceSearch(ABC, Generic[CandidateType, RangeType, PinnedRequirementT
         """Retry scopes after failed proofs and return a complete solution."""
         stack = [PreferenceScope[CandidateType]()]
         while True:
-            self.spend(0)
-            if not self.remaining:
-                message = "live preference analysis is incomplete: search limit reached"
-                raise ResolutionLimitError(message)
+            self.require_remaining_rounds()
 
             scope = stack[-1]
             # Unwind the callback before a prerequisite consumes the shared budget.
