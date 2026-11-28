@@ -40,7 +40,7 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
-from nab_candidates.resolution import PreparedResolution
+from nab_candidates.releases import PreparedVersionResolution
 from nab_candidates.versions import (
     PreparedVersionCatalogue,
     VersionCandidate,
@@ -77,14 +77,16 @@ class Wheels(PreparedVersionCatalogue[VersionCandidate, VersionCandidateData]):
 
 A root requirement asks the solver to include a package. A constraint narrows the allowed versions
 if the package is needed. Pass exact pins alongside the ranges to preserve the original
-declarations. With `try_live=True`, the solver tries live files first. A matching exact pin can
-trigger a check before the solver reads a yanked file’s metadata.
+declarations. With `try_live=True`, the solver first tries live releases using their dependency
+ranges. If a conflict rules out one wheel but another wheel at that version might work, it searches
+the individual files. A matching exact pin can trigger a check before it reads a yanked file’s
+metadata.
 
 ```python
 def resolve(text):
     root = Requirement(text)
     catalogue = Wheels(unavailable_reason="wheel metadata is unavailable")
-    return PreparedResolution.from_catalogue(
+    return PreparedVersionResolution.from_catalogue(
         catalogue,
         roots={canonicalize_name(root.name): root.specifier.to_range()},
         input_pins=(root,) if is_pin(root) else (),

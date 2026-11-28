@@ -112,6 +112,12 @@ requirements, selected versions and derived bounds. The native provider fetches 
 records explanations for rejected files. Both the search limit for repeated blockers and the
 decision to queue a blocker belong with the candidate search.
 
+An installer with its own finder can use `nab_candidates.releases.PreparedVersionResolution`. Its
+release search uses those dependency checks and asks the catalogue to prepare the chosen file. The
+catalogue retains each file’s original declarations across backtracking. When a second wheel at a
+discarded version could change the result, the resolver tries individual files with the remaining
+work budget.
+
 ## Diagnostic suggestions
 
 ```text

@@ -223,7 +223,10 @@ identities, even when they have the same package name and version.
    `read_candidate(candidate)` to read one candidate's dependency ranges and exact pins. Keep the
    original pins. A range alone cannot tell you whether the user wrote an exact pin.
 3. Pass your catalogue, root requirement ranges, original input pins and constraints to
-   `nab_candidates.resolution.PreparedResolution.from_catalogue()`.
+   `nab_candidates.releases.PreparedVersionResolution.from_catalogue()`. Set `try_live=True` to
+   resolve ordinary releases using PEP 440 ranges. The search checks whether their dependencies fit
+   before committing to a version. If a dependency binds a particular file or a yanked release needs
+   an admission decision, it can continue with individual file identities.
 4. Call `solve()` for the selected candidates, roots, dependency edges and the pin that permitted
    each selected yanked file. Call `select()` if you only need the mapping from package names to
    candidates. Nab uses `select()` when checking yanked files and records the choices in its lock.
