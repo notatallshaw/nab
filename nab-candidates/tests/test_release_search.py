@@ -139,13 +139,22 @@ def test_incompatible_base_does_not_read_the_extra_wheel() -> None:
     assert extra not in catalogue.reads
 
 
-def test_original_parent_pin_can_require_a_withdrawn_release() -> None:
+@pytest.mark.parametrize(
+    ("pinned", "broken_live_sibling"), [(True, False), (True, True), (False, True)]
+)
+def test_parent_pin_can_keep_a_release_with_a_withdrawn_file(
+    *, pinned: bool, broken_live_sibling: bool
+) -> None:
     newer, older = File("app", "2"), File("app", "1")
     yanked, live = File("lib", "2", withdrawn=True), File("lib", "1")
-    pin = Requirement("lib==2")
+    requirement = Requirement("lib==2" if pinned else "lib>=2")
     host = Wheels(newer, older, yanked, live)
+    if broken_live_sibling:
+        host.metadata[File("lib", "2")] = VersionCandidateData(
+            {"missing": VersionRange.full()}, ()
+        )
     host.metadata[newer] = VersionCandidateData(
-        {"lib": pin.specifier.to_range()}, (pin,)
+        {"lib": requirement.specifier.to_range()}, (requirement,) if pinned else ()
     )
     host.metadata[older] = VersionCandidateData(
         {"lib": VersionRange.singleton(live.version)}, ()
@@ -156,8 +165,12 @@ def test_original_parent_pin_can_require_a_withdrawn_release() -> None:
 
     model = session.solve()
 
-    assert model.candidates == {"app": newer, "lib": yanked}
-    assert model.admission_sources == {"lib": ("app==2 requires lib==2",)}
+    if pinned:
+        assert model.candidates == {"app": newer, "lib": yanked}
+        assert model.admission_sources == {"lib": ("app==2 requires lib==2",)}
+    else:
+        assert model.candidates == {"app": older, "lib": live}
+        assert yanked not in host.reads
 
 
 def test_unavailable_file_with_no_alternative_is_incomplete() -> None:

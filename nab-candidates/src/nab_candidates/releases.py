@@ -210,11 +210,7 @@ class _ReleaseProvider(BaseProvider[_Package, Version], Generic[_Choice]):
         """Keep a stable file identity for each version in this search."""
         for choice in self.catalogue.ordered(package, allowed):
             if self.catalogue.candidate_withdrawn(choice):
-                base = self.catalogue.candidate_base(choice)
-                if any(
-                    self.catalogue.pin_allows(pin, choice)
-                    for pin in self.pins.get(base, ())
-                ):
+                if self._matches_pin(choice):
                     raise _NeedsFileSearchError
                 continue
 
@@ -226,6 +222,12 @@ class _ReleaseProvider(BaseProvider[_Package, Version], Generic[_Choice]):
             if self.considered is not None:
                 self.considered(choice)
             yield choice
+
+    def _matches_pin(self, choice: _Choice) -> bool:
+        base = self.catalogue.candidate_base(choice)
+        return any(
+            self.catalogue.pin_allows(pin, choice) for pin in self.pins.get(base, ())
+        )
 
     def _file_rejected(self, choice: _Choice) -> bool:
         facts = self.catalogue.facts
@@ -254,14 +256,14 @@ class _ReleaseProvider(BaseProvider[_Package, Version], Generic[_Choice]):
         for package, releases in discarded.items():
             for file in self.catalogue.choices(package):
                 tried = releases.get(file.version)
-                if (
-                    tried is None
-                    or file == tried
-                    or self.catalogue.candidate_withdrawn(file)
-                ):
+                if tried is None or file == tried or self._file_rejected(file):
                     continue
 
-                if not self._file_rejected(file):
+                # A pin can permit a withdrawn file at this release. The file search
+                # checks whether the inputs or a selected parent supplied it.
+                if not self.catalogue.candidate_withdrawn(file) or self._matches_pin(
+                    file
+                ):
                     return True
         return False
 
