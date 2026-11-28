@@ -107,6 +107,11 @@ blames for them. The Python provider uses `nab_resolver.priority.compute_tier` t
 those counts. Within a tier it considers the number of candidates, then tries an extra before its
 base package if the counts are equal.
 
+Before choosing a release, `nab_candidates.lookahead` checks its dependencies against the root
+requirements, selected versions and derived bounds. The native provider fetches the metadata and
+records explanations for rejected files. Both the search limit for repeated blockers and the
+decision to queue a blocker belong with the candidate search.
+
 ## Diagnostic suggestions
 
 ```text

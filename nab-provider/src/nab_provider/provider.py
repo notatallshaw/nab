@@ -43,6 +43,11 @@ from packaging.markers import prepare_environment
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 
+from nab_candidates.lookahead import (
+    LOOKAHEAD_ABORT_THRESHOLD,
+    MAX_FORCE_BACKTRACKS_PER_PACKAGE,
+    queue_blocker,
+)
 from nab_resolver import priority as decision_priority
 from nab_resolver.diagnostics import DiagnosticMessage, Suggestion
 from nab_resolver.types import IncompatibilityCause
@@ -771,12 +776,12 @@ class Provider:
     # Set low because the trigger is conservative: a unique
     # ``(blocker_pkg, blocker_version)`` repeating across every rejection
     # is already a strong signal.
-    _LOOKAHEAD_ABORT_THRESHOLD = 4
+    _LOOKAHEAD_ABORT_THRESHOLD = LOOKAHEAD_ABORT_THRESHOLD
 
     # Max force-backtracks one blocker can drive per resolution.
     # One-shot misses sustained culprits; unlimited oscillates on
     # blockers that are also the right pin.
-    _MAX_FORCE_BACKTRACKS_PER_PKG = 3
+    _MAX_FORCE_BACKTRACKS_PER_PKG = MAX_FORCE_BACKTRACKS_PER_PACKAGE
 
     TIER_AFFECTED = decision_priority.TIER_AFFECTED
     TIER_NORMAL = decision_priority.TIER_NORMAL
@@ -2297,13 +2302,12 @@ class Provider:
             return False
         self._discard_pending_decision_blocks(normalized)
         blocker_pkg, _ = blocker
-        prior_fires = self._force_backtrack_counts.get(blocker_pkg, 0)
-        if (
-            blocker_pkg not in self._force_backtrack_targets
-            and prior_fires < self._MAX_FORCE_BACKTRACKS_PER_PKG
-        ):
-            self._force_backtrack_targets.append(blocker_pkg)
-            self._force_backtrack_counts[blocker_pkg] = prior_fires + 1
+        queue_blocker(
+            blocker_pkg,
+            self._force_backtrack_counts,
+            self._force_backtrack_targets,
+            limit=self._MAX_FORCE_BACKTRACKS_PER_PKG,
+        )
         return True
 
     def _should_abort_lookahead(self, normalized: str) -> tuple[str, Version] | None:
