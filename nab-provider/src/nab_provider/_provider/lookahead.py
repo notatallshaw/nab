@@ -35,13 +35,14 @@ from typing import TYPE_CHECKING, NamedTuple
 from packaging.ranges import VersionRange
 from packaging.utils import canonicalize_name
 
+from nab_candidates.lookahead import DecisionConflict, find_dependency_conflict
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 from ..errors import MetadataError
 from .listing_diagnosis import MetadataBlock
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Iterable
 
     from packaging.version import Version
 
@@ -115,71 +116,40 @@ def look_ahead_ok(
     deps = provider.deps_cache.get(cache_key, {})
     decisions = provider.solution_decisions if check_decisions else None
 
-    for dep_name, dep_range in deps.items():
-        dep_normalized = canonicalize_name(dep_name)
+    conflict = find_dependency_conflict(
+        deps,
+        provider.root_requirements,
+        decisions,
+        provider.solution_ranges,
+        normalize=canonicalize_name,
+    )
+    if conflict is None:
+        return True
 
-        if dep_normalized in provider.root_requirements:
-            root_range = provider.root_requirements[dep_normalized]
-            if dep_range.is_disjoint(root_range):
-                provider.pending_root_blocks[
-                    (package, dep_normalized, dep_range, root_range)
-                ].append(version)
-                return False
-
-        if decisions is not None and _blocked_by_solution(
-            provider, package, version, dep_normalized, dep_range, decisions
-        ):
-            return False
-
-    return True
-
-
-def _blocked_by_solution(
-    provider: Provider,
-    package: str,
-    version: Version,
-    dep_normalized: str,
-    dep_range: VersionRange,
-    decisions: Mapping[str, Version],
-) -> bool:
-    """Whether the partial solution already rules ``dep_range`` out.
-
-    Queues the rejection it finds: against the decision that contradicts the
-    range, against the positive range disjoint from it, or, when the candidate
-    named itself, under the range it declared.
-    """
-    decided_version = decisions.get(dep_normalized)
-    if decided_version is not None:
-        if decided_version in dep_range:
-            return False
-
-        decision_key = (package, dep_normalized, decided_version)
+    child = conflict.package
+    required = conflict.required
+    if isinstance(conflict, DecisionConflict):
+        decision_key = (package, child, conflict.version)
         provider.pending_blocks[decision_key].append(version)
         provider.pending_decision_dep_ranges[decision_key] = (
-            provider.pending_decision_dep_ranges[decision_key].record(dep_range)
+            provider.pending_decision_dep_ranges[decision_key].record(required)
         )
-        return True
-
-    # The candidate conflicts with the dependency's positive range. Reverting
-    # that range's derivation leaves the corresponding clause term undetermined.
-    positive_range = provider.solution_ranges.get(dep_normalized)
-    if positive_range is None or not dep_range.is_disjoint(positive_range):
-        return False
-
-    # A self-dependency is grouped by the range it declared, so the merged
-    # clause has one edge to name.
-    if dep_normalized == package:
-        provider.pending_self_blocks[(package, dep_range, positive_range)].append(
+    elif conflict.root:
+        provider.pending_root_blocks[
+            (package, child, required, conflict.allowed)
+        ].append(version)
+    elif child == package:
+        # Keep the declared self-dependency available to the failure explanation.
+        provider.pending_self_blocks[(package, required, conflict.allowed)].append(
             version
         )
-        return True
-
-    range_block_key = (package, dep_normalized, positive_range)
-    provider.pending_range_blocks[range_block_key].append(version)
-    provider.pending_range_dep_ranges[range_block_key] = (
-        provider.pending_range_dep_ranges[range_block_key].record(dep_range)
-    )
-    return True
+    else:
+        range_key = (package, child, conflict.allowed)
+        provider.pending_range_blocks[range_key].append(version)
+        provider.pending_range_dep_ranges[range_key] = (
+            provider.pending_range_dep_ranges[range_key].record(required)
+        )
+    return False
 
 
 # The two range builders below are typed as the resolver's range rather than

@@ -10,5 +10,8 @@ Supported imports:
     nab_candidates.preference  PreferenceSearch, PreferenceScope, PreferenceCatalogue,
                                DependencyData, PreparationStatus,
                                IncompletePreferenceError, UnavailableMetadataError
+    nab_candidates.lookahead  DecisionConflict, RangeConflict, find_dependency_conflict,
+                              queue_blocker, LOOKAHEAD_ABORT_THRESHOLD,
+                              MAX_FORCE_BACKTRACKS_PER_PACKAGE
     nab_candidates.records  Record, HashableRecord, record_fields
 """
