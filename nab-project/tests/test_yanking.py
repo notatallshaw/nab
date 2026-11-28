@@ -295,6 +295,38 @@ def test_late_extra_pin_may_need_an_explicit_input_pin(pinned: bool) -> None:
     assert results[0].success is pinned, results[0].error
 
 
+def test_mixed_files_elsewhere_do_not_hide_an_absent_root_extra() -> None:
+    releases: list[ReleaseRow] = [
+        ("gate", "2", True, []),
+        ("gate", "2", False, []),
+        ("gate", "1", False, []),
+        ("library", "1", False, []),
+        ("library", "2", False, []),
+        ("library", "3", False, []),
+    ]
+
+    with pytest.raises(MissingExtraError, match="does not provide extra 'absent'"):
+        run_graph(releases, ["gate==2", "library[absent]"])
+
+
+def test_an_older_file_can_supply_the_missing_root_extra() -> None:
+    (result,), _ = run_graph(
+        [
+            ("gate", "2", True, []),
+            ("gate", "2", False, []),
+            ("gate", "1", False, []),
+            ("library", "1", False, []),
+            ("library", "2", False, []),
+            ("library", "3", False, []),
+        ],
+        ["gate==2", "library[feature]"],
+        provided_extras={("library", "1", False): ("feature",)},
+    )
+
+    assert result.success, result.error
+    assert result.pins == {"gate": Version("2"), "library": Version("1")}
+
+
 def test_withdrawn_artifact_can_supply_the_required_extra() -> None:
     results, _ = run_graph(
         [("app", "2", False, []), ("app", "2", True, [])],

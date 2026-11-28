@@ -202,6 +202,7 @@ class YankCandidates(PreparedVersionCatalogue[Candidate, CandidateData]):
         self._default_orders: dict[tuple[str, bool], _CandidateOrder] = {}
         self._candidate_groups: dict[str, _CandidateGroups] = {}
         self.rejections: dict[Candidate, MetadataBlock] = {}
+        self._root_extra_absence: dict[tuple[str, str], bool] = {}
         self.child_stats: ProviderStats = type(provider.stats)()
 
     @override
@@ -350,7 +351,7 @@ class YankCandidates(PreparedVersionCatalogue[Candidate, CandidateData]):
         self, provider: Provider, candidate: Candidate
     ) -> CandidateData | None:
         """Read dependencies and their original pin declarations for one candidate."""
-        base = candidate.base
+        base, extra = split_extra(candidate.package)
         try:
             dependencies = _candidate_dependencies(provider, candidate)
         except (MetadataError, MissingExtraError) as exc:
@@ -370,9 +371,14 @@ class YankCandidates(PreparedVersionCatalogue[Candidate, CandidateData]):
                     )
                     raise UnavailableMetadataError(msg) from exc
             self.rejections[candidate] = MetadataBlock.from_error(exc)
+            if isinstance(exc, MissingExtraError) and self._root_extra_is_absent(
+                base, extra
+            ):
+                raise
+
             return None
+
         metadata = provider.metadata_cache[(base, candidate.version)]
-        extra = split_extra(candidate.package)[1]
         provided: set[str] = {
             canonicalize_name(value) for value in metadata.provides_extra
         }
@@ -386,6 +392,44 @@ class YankCandidates(PreparedVersionCatalogue[Candidate, CandidateData]):
             ):
                 pins.append(req)
         return CandidateData(provider, dict(dependencies), tuple(pins))
+
+    def _root_extra_is_absent(self, base: str, extra: str | None) -> bool:
+        """Check a missing user-requested extra against the original target bounds."""
+        if extra is None or (base, extra) not in self.provider.root_extras:
+            return False
+
+        key = base, extra
+        if key not in self._root_extra_absence:
+            self._root_extra_absence[key] = self._check_root_extra(base, extra)
+        return self._root_extra_absence[key]
+
+    def _check_root_extra(self, base: str, extra: str) -> bool:
+        """Return true only if every eligible file can be ruled out."""
+        allowed = self.provider.root_requirements.get(base, VersionRange.full())
+        constraint = self.provider.constraints.get(base)
+        if constraint is not None:
+            allowed &= constraint
+        choices = self.ordered(base, allowed)
+
+        # A missing listing or an unexamined withdrawn file leaves the answer open.
+        if base in self.missing_listings or any(file.withdrawn for file in choices):
+            return False
+
+        for file in choices:
+            data = self.prepare(file)
+            if data is None:
+                if file not in self.facts:
+                    return False
+                continue
+
+            metadata = data.provider.metadata_cache[base, file.version]
+            if any(
+                canonicalize_name(declared) == extra
+                for declared in metadata.provides_extra
+            ):
+                return False
+
+        return True
 
     def _sorted_groups(
         self,
